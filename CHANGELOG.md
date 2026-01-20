@@ -19,6 +19,7 @@
 - `docs/workflow.md` 标注为 `v0.1.1` legacy，`docs/start.md` 增加 vNext 文档导航。
 - 更新 `docs/research/README.md`：补齐新增调研条目并调整落地方向表述。
 - v0.2.0 方向明确：不使用 Docker；实现文档中移除/替换相关表述，并把 `docker` 纳入默认禁止的命令面。
+- 明确 v0.2.0 的“运行中可观测性”：中间态 artifacts 必须流式落盘；任意后台进程/多子 agent 进程必须可随时 inspect/attach/kill（文档层先固化要求）。
 
 ### Fixed
 

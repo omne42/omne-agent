@@ -29,6 +29,8 @@
 5. **workspace 生命周期脚本化**：至少支持 `setup/run/archive(或 teardown)` 三段，并落盘 stdout/stderr。
 6. **RTS 控制面最小集**：`pause/resume/interrupt/cancel` + “Attention/Inbox”视图（列出需要人介入的点）。
 7. **交付通道（先不绑定 git）**：默认 `patch-only`（产出可应用 patch + artifacts），git 分支交付放后面。
+8. **中间态 artifacts（必须）**：stdout/stderr/plan/diff/test progress 必须边产出边落盘，并能随时查询/预览。
+9. **进程可观测（必须）**：后台命令与多子 agent 的运行态必须可随时 inspect/attach/kill（事件化、可审计）。
 
 ### 1.2 暂缓（明确后做）
 
@@ -114,6 +116,7 @@
 - approvals（request/decision）
 - artifacts（新增/更新）
 - 状态变迁（pause/resume/interrupt/cancel）
+- **process 运行态**：running/exited/failed、以及 stdout/stderr 的 streaming 写入与定位信息（支持随时 inspect/attach）
 
 ---
 

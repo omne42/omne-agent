@@ -46,12 +46,24 @@
 - `interrupt`：打断当前工具/turn（防止卡死/循环烧钱）。
 - `cancel`：终止任务（并落盘原因与残留 artifacts）。
 - `escalate`：当出现越权操作时，必须进入 `NeedApproval`，由人决定放行/拒绝。
+- `inspect/attach`：随时查看任何运行中的后台进程/子 agent（状态 + 最近输出 + 完整 artifacts 路径）。
+- `kill`：强制停止某个后台进程（语义必须事件化并进入审计/回放）。
 
 RTS 的重点是 `Attention`：用户不应该刷屏看日志，而是看“系统现在需要我做哪三件事”。
 
 ---
 
-## 4) 两条硬约束（来自爆发期产品的共识）
+## 4) 中间态 artifacts（必须）
+
+> 结束时给一个 `result.json` 没用。RTS 场景下你需要“随时看中间态”：stdout/stderr、部分 diff、计划草案、测试进度。
+
+- stdout/stderr 必须 **边产出边落盘**（append），并能 `tail/follow`。
+- 每个后台进程都要有 `process_id`，并关联到 `thread/turn/agent`，便于定位。
+- “卡住/等待输入/等待批准”必须进入 `Attention`，并触发通知（否则就是黑盒）。
+
+---
+
+## 5) 两条硬约束（来自爆发期产品的共识）
 
 1. **workspace 生命周期脚本化**：并行开发真正的冲突点在外部资源（端口/DB/缓存/本地进程），必须靠 `setup/run/teardown` 自动化解决（参考 `docs/research/superset.md` 的“脚本化生命周期”思路）。
 2. **artifacts/preview 一等化**：你产出的不是 token，是文件与结果；没有预览与索引，RTS 只会变成“100 个黑盒在跑”（参考 `docs/research/aion-ui.md`）。
