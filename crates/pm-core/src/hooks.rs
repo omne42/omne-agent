@@ -140,7 +140,7 @@ mod tests {
 
         let repo = RepositoryName::sanitize("repo");
         let session_id = SessionId::new();
-        let session_paths = SessionPaths::new(&repo, session_id);
+        let session_paths = SessionPaths::new_in(tmp.path().join("tmp"), &repo, session_id);
         tokio::fs::create_dir_all(session_paths.root()).await?;
         tokio::fs::write(session_paths.root().join("result.json"), b"{}").await?;
 
@@ -221,7 +221,6 @@ mod tests {
         assert_eq!(lines[6], result_json.display().to_string());
         assert_eq!(lines[7], "1");
 
-        let _ = tokio::fs::remove_dir_all(ctx.session_paths.root()).await;
         Ok(())
     }
 
@@ -253,7 +252,6 @@ mod tests {
             "hello stderr\n"
         );
 
-        let _ = tokio::fs::remove_dir_all(ctx.session_paths.root()).await;
         Ok(())
     }
 
@@ -286,7 +284,6 @@ mod tests {
             "goodbye stderr\n"
         );
 
-        let _ = tokio::fs::remove_dir_all(ctx.session_paths.root()).await;
         Ok(())
     }
 }

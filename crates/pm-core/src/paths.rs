@@ -50,18 +50,17 @@ pub struct SessionPaths {
 
 impl SessionPaths {
     pub fn new(repo: &RepositoryName, session_id: SessionId) -> Self {
-        let tmp_root = match std::env::var_os("CODE_PM_TMP_ROOT").map(PathBuf::from) {
-            Some(path) => path,
-            None => {
-                let path = PathBuf::from("/tmp");
-                if path.is_dir() {
-                    path
-                } else {
-                    std::env::temp_dir()
-                }
-            }
-        };
-        let root = tmp_root.join(format!("{}_{}", repo.as_str(), session_id));
+        Self::new_in(resolve_tmp_root(), repo, session_id)
+    }
+
+    pub fn new_in(
+        tmp_root: impl Into<PathBuf>,
+        repo: &RepositoryName,
+        session_id: SessionId,
+    ) -> Self {
+        let root = tmp_root
+            .into()
+            .join(format!("{}_{}", repo.as_str(), session_id));
         Self { root }
     }
 
@@ -83,6 +82,20 @@ impl SessionPaths {
 
     pub fn merge_dir(&self) -> PathBuf {
         self.root.join("merge")
+    }
+}
+
+fn resolve_tmp_root() -> PathBuf {
+    match std::env::var_os("CODE_PM_TMP_ROOT") {
+        Some(value) if !value.is_empty() => PathBuf::from(value),
+        _ => {
+            let path = PathBuf::from("/tmp");
+            if path.is_dir() {
+                path
+            } else {
+                std::env::temp_dir()
+            }
+        }
     }
 }
 
