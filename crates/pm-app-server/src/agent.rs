@@ -10,6 +10,8 @@ use tokio_util::sync::CancellationToken;
 use super::ProcessCommand;
 
 const DEFAULT_MODEL: &str = "gpt-4.1";
+const MAX_AGENT_STEPS: usize = 24;
+const MAX_TOOL_CALLS: usize = 128;
 
 const DEFAULT_INSTRUCTIONS: &str = r#"
 You are a coding agent.
@@ -46,8 +48,10 @@ pub async fn run_agent_turn(
     let mut last_response_id = String::new();
     let mut last_usage: Option<Value> = None;
     let mut last_text = String::new();
+    let mut tool_calls_total = 0usize;
+    let mut finished = false;
 
-    for _step in 0..24usize {
+    for _step in 0..MAX_AGENT_STEPS {
         if cancel.is_cancelled() {
             anyhow::bail!("turn cancelled");
         }
@@ -83,10 +87,15 @@ pub async fn run_agent_turn(
         }
 
         if function_calls.is_empty() {
+            finished = true;
             break;
         }
 
         for (tool_name, arguments, call_id) in function_calls {
+            tool_calls_total += 1;
+            if tool_calls_total > MAX_TOOL_CALLS {
+                anyhow::bail!("tool call budget exceeded (max_tool_calls={MAX_TOOL_CALLS})");
+            }
             let args_json: Value = match serde_json::from_str(&arguments) {
                 Ok(v) => v,
                 Err(err) => {
@@ -122,6 +131,10 @@ pub async fn run_agent_turn(
                 output: serde_json::to_string(&output_value)?,
             });
         }
+    }
+
+    if !finished {
+        anyhow::bail!("agent step budget exceeded (max_steps={MAX_AGENT_STEPS})");
     }
 
     if !last_text.is_empty() {
