@@ -111,6 +111,8 @@ cargo run -p code-pm -- run \
   --max-concurrency 2
 ```
 
+注意：`--max-concurrency` 必须 `>= 1`。
+
 从 prompt 自动拆分 tasks（Phase 1：规则化；识别 checklist/编号/无序列表）：
 
 ```bash

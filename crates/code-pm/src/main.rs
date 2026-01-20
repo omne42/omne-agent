@@ -92,8 +92,12 @@ struct RunArgs {
     base: String,
     #[arg(long)]
     apply_patch: Option<PathBuf>,
-    #[arg(long, default_value_t = 1)]
-    max_concurrency: usize,
+    #[arg(
+        long,
+        default_value_t = 1,
+        value_parser = clap::value_parser!(u32).range(1..)
+    )]
+    max_concurrency: u32,
     #[arg(long, default_value_t = false)]
     stream_events: bool,
     #[arg(long, default_value_t = false)]
@@ -409,7 +413,7 @@ async fn run_session(
             base_branch: args.base,
             apply_patch: args.apply_patch,
             hook,
-            max_concurrency: args.max_concurrency,
+            max_concurrency: args.max_concurrency as usize,
             tasks,
         };
 
@@ -839,6 +843,25 @@ mod tests {
     #[test]
     fn resolve_stream_events_mode_rejects_conflicts() {
         assert!(resolve_stream_events_mode(true, true).is_err());
+    }
+
+    #[test]
+    fn cli_rejects_zero_max_concurrency() {
+        let err = Cli::try_parse_from([
+            "code-pm",
+            "run",
+            "--repo",
+            "repo",
+            "--pr-name",
+            "demo",
+            "--prompt",
+            "x",
+            "--max-concurrency",
+            "0",
+        ])
+        .err()
+        .expect("cli parse must fail");
+        assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
     }
 
     #[tokio::test]
