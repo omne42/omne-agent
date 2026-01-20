@@ -185,7 +185,9 @@ impl Storage for FsStorage {
     async fn put_json(&self, key: &str, value: &Value) -> anyhow::Result<()> {
         let path = self.key_to_path(key)?;
         if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent).await?;
+            tokio::fs::create_dir_all(parent)
+                .await
+                .with_context(|| format!("create dir {}", parent.display()))?;
         }
         let bytes = serde_json::to_vec_pretty(value)?;
         let tmp_path = path.with_extension(format!("json.tmp.{}", Uuid::new_v4()));
@@ -193,31 +195,33 @@ impl Storage for FsStorage {
             .await
             .with_context(|| format!("write json to {}", tmp_path.display()))?;
 
-        match tokio::fs::rename(&tmp_path, &path).await {
-            Ok(()) => {}
-            Err(err)
-                if matches!(
-                    err.kind(),
-                    std::io::ErrorKind::AlreadyExists | std::io::ErrorKind::PermissionDenied
-                ) =>
-            {
-                let remove = tokio::fs::remove_file(&path).await;
-                if let Err(remove_err) = remove {
-                    if remove_err.kind() != std::io::ErrorKind::NotFound {
+        if let Err(err) = tokio::fs::rename(&tmp_path, &path).await {
+            if matches!(
+                err.kind(),
+                std::io::ErrorKind::AlreadyExists | std::io::ErrorKind::PermissionDenied
+            ) {
+                match tokio::fs::remove_file(&path).await {
+                    Ok(()) => {}
+                    Err(remove_err) if remove_err.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(remove_err) => {
+                        let _ = tokio::fs::remove_file(&tmp_path).await;
                         return Err(remove_err)
                             .with_context(|| format!("remove old json {}", path.display()));
                     }
                 }
-                tokio::fs::rename(&tmp_path, &path).await.with_context(|| {
-                    format!("rename {} -> {}", tmp_path.display(), path.display())
-                })?;
-            }
-            Err(err) => {
+                if let Err(rename_err) = tokio::fs::rename(&tmp_path, &path).await {
+                    let _ = tokio::fs::remove_file(&tmp_path).await;
+                    return Err(rename_err).with_context(|| {
+                        format!("rename {} -> {}", tmp_path.display(), path.display())
+                    });
+                }
+            } else {
+                let _ = tokio::fs::remove_file(&tmp_path).await;
                 return Err(err).with_context(|| {
                     format!("rename {} -> {}", tmp_path.display(), path.display())
                 });
             }
-        };
+        }
         Ok(())
     }
 
