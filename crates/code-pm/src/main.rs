@@ -90,6 +90,10 @@ struct RunArgs {
     #[arg(long, default_value_t = false)]
     stream_events: bool,
     #[arg(long, default_value_t = false)]
+    strict: bool,
+    #[arg(long, default_value_t = false)]
+    json: bool,
+    #[arg(long, default_value_t = false)]
     auto_tasks: bool,
     #[arg(long)]
     tasks_file: Option<PathBuf>,
@@ -298,11 +302,39 @@ async fn run_session(
     }
     let result = result?;
 
-    println!("session: {}", result.session.id);
-    println!("repo: {}", repo_name.as_str());
-    println!("prs: {}", result.prs.len());
-    println!("merged: {}", result.merge.merged);
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&result)?);
+    } else {
+        println!("session: {}", result.session.id);
+        println!("repo: {}", repo_name.as_str());
+        println!("prs: {}", result.prs.len());
+        println!("merged: {}", result.merge.merged);
+    }
 
+    if args.strict {
+        validate_strict_run_result(&result)?;
+    }
+
+    Ok(())
+}
+
+fn validate_strict_run_result(result: &pm_core::RunResult) -> anyhow::Result<()> {
+    let failed: Vec<String> = result
+        .prs
+        .iter()
+        .filter(|pr| matches!(pr.status, pm_core::PullRequestStatus::Failed))
+        .map(|pr| pr.id.as_str().to_string())
+        .collect();
+    if !failed.is_empty() {
+        anyhow::bail!(
+            "session {} had failed tasks: {}",
+            result.session.id,
+            failed.join(", ")
+        );
+    }
+    if let Some(error) = result.merge.error.as_deref() {
+        anyhow::bail!("session {} merge failed: {}", result.session.id, error);
+    }
     Ok(())
 }
 
@@ -419,6 +451,7 @@ impl Architect for TemplateArchitect {
 mod tests {
     use super::*;
     use pm_core::Storage;
+    use time::OffsetDateTime;
 
     #[tokio::test]
     async fn list_sessions_returns_sorted_unique_ids() -> anyhow::Result<()> {
@@ -450,6 +483,100 @@ mod tests {
 
         assert_eq!(list_sessions(&storage).await?, vec![id1, id2]);
         Ok(())
+    }
+
+    fn make_run_result(
+        prs: Vec<pm_core::PullRequest>,
+        merge: pm_core::MergeResult,
+    ) -> pm_core::RunResult {
+        let session_id: SessionId = "00000000-0000-0000-0000-000000000123"
+            .parse()
+            .expect("valid uuid");
+        pm_core::RunResult {
+            session: pm_core::Session {
+                id: session_id,
+                repo: pm_core::RepositoryName::sanitize("repo"),
+                pr_name: pm_core::PrName::sanitize("demo"),
+                prompt: "x".to_string(),
+                base_branch: "main".to_string(),
+                created_at: OffsetDateTime::from_unix_timestamp(0).unwrap(),
+            },
+            tasks: Vec::new(),
+            prs,
+            merge,
+        }
+    }
+
+    #[test]
+    fn strict_validation_allows_no_changes_sessions() {
+        let result = make_run_result(
+            vec![pm_core::PullRequest {
+                id: pm_core::TaskId::sanitize("t1"),
+                head_branch: "ai/demo/123/t1".to_string(),
+                base_branch: "main".to_string(),
+                status: pm_core::PullRequestStatus::NoChanges,
+                checks: pm_core::CheckSummary::default(),
+                head_commit: None,
+            }],
+            pm_core::MergeResult {
+                merged: false,
+                base_branch: "main".to_string(),
+                merge_commit: None,
+                merged_prs: Vec::new(),
+                checks: pm_core::CheckSummary::default(),
+                error: None,
+                error_log_path: None,
+            },
+        );
+        assert!(validate_strict_run_result(&result).is_ok());
+    }
+
+    #[test]
+    fn strict_validation_fails_on_task_failure() {
+        let result = make_run_result(
+            vec![pm_core::PullRequest {
+                id: pm_core::TaskId::sanitize("t1"),
+                head_branch: "ai/demo/123/t1".to_string(),
+                base_branch: "main".to_string(),
+                status: pm_core::PullRequestStatus::Failed,
+                checks: pm_core::CheckSummary::default(),
+                head_commit: None,
+            }],
+            pm_core::MergeResult {
+                merged: false,
+                base_branch: "main".to_string(),
+                merge_commit: None,
+                merged_prs: Vec::new(),
+                checks: pm_core::CheckSummary::default(),
+                error: None,
+                error_log_path: None,
+            },
+        );
+        assert!(validate_strict_run_result(&result).is_err());
+    }
+
+    #[test]
+    fn strict_validation_fails_on_merge_error() {
+        let result = make_run_result(
+            vec![pm_core::PullRequest {
+                id: pm_core::TaskId::sanitize("t1"),
+                head_branch: "ai/demo/123/t1".to_string(),
+                base_branch: "main".to_string(),
+                status: pm_core::PullRequestStatus::Ready,
+                checks: pm_core::CheckSummary::default(),
+                head_commit: None,
+            }],
+            pm_core::MergeResult {
+                merged: false,
+                base_branch: "main".to_string(),
+                merge_commit: None,
+                merged_prs: Vec::new(),
+                checks: pm_core::CheckSummary::default(),
+                error: Some("boom".to_string()),
+                error_log_path: None,
+            },
+        );
+        assert!(validate_strict_run_result(&result).is_err());
     }
 
     #[tokio::test]
