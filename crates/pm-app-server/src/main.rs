@@ -202,7 +202,7 @@ impl ThreadRuntime {
             });
         }
 
-        tokio::spawn(async move {
+        tokio::task::spawn_local(async move {
             self.run_turn(server, turn_id, cancel, input).await;
         });
 
@@ -619,27 +619,30 @@ async fn main() -> anyhow::Result<()> {
         exec_policy,
     });
 
-    let stdin = tokio::io::stdin();
-    let mut lines = tokio::io::BufReader::new(stdin).lines();
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async move {
+            let stdin = tokio::io::stdin();
+            let mut lines = tokio::io::BufReader::new(stdin).lines();
 
-    let mut initialized = false;
+            let mut initialized = false;
 
-    while let Some(line) = lines.next_line().await? {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
+            while let Some(line) = lines.next_line().await? {
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
 
-        let request: JsonRpcRequest = match serde_json::from_str(line) {
-            Ok(req) => req,
-            Err(err) => {
-                eprintln!("app-server: invalid json: {err}");
-                continue;
-            }
-        };
+                let request: JsonRpcRequest = match serde_json::from_str(line) {
+                    Ok(req) => req,
+                    Err(err) => {
+                        eprintln!("app-server: invalid json: {err}");
+                        continue;
+                    }
+                };
 
-        let id = request.id.clone();
-        let response = match request.method.as_str() {
+                let id = request.id.clone();
+                let response = match request.method.as_str() {
             "initialize" => {
                 if initialized {
                     JsonRpcResponse::err(
@@ -1305,10 +1308,12 @@ async fn main() -> anyhow::Result<()> {
             ),
         };
 
-        println!("{}", serde_json::to_string(&response)?);
-    }
+                println!("{}", serde_json::to_string(&response)?);
+            }
 
-    Ok(())
+            Ok(())
+        })
+        .await
 }
 
 async fn handle_thread_attention(

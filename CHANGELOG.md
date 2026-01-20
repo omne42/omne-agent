@@ -33,6 +33,7 @@
 - `pm-app-server` 新增 `fs/*`：`fs/mkdir`（带 rooted path 校验，并记录 `ToolStarted/ToolCompleted` 事件）。
 - `pm-app-server` 新增 `artifact/*`：`artifact/write`（`.md + .metadata.json` 落盘并自动脱敏）、`artifact/list`、`artifact/read`、`artifact/delete`。
 - `pm-app-server` agent loop tool 覆盖：补齐 `file/edit`、`file/delete`、`process/tail`、`process/follow`、`artifact/list`、`artifact/read`、`artifact/delete`。
+- `pm-app-server agent loop`：新增 `agent_spawn`（fork + 启动子 agent turn）与 `thread_state`/`thread_events`（fan-in 读状态与事件）。
 
 ### Changed
 - 重写 `docs/implementation_plan.md`：以 Agent CLI（tool/sandbox/approvals + 事件流）为核心基建，Git 降级为交付适配层，并明确 RTS 控制面最小能力集。
