@@ -2053,8 +2053,40 @@ async fn load_thread_root(
     Ok((thread_rt, thread_root))
 }
 
+async fn resolve_dir_for_sandbox(
+    thread_root: &Path,
+    sandbox_policy: pm_protocol::SandboxPolicy,
+    input: &Path,
+) -> anyhow::Result<PathBuf> {
+    match sandbox_policy {
+        pm_protocol::SandboxPolicy::DangerFullAccess => {
+            pm_core::resolve_dir_unrestricted(thread_root, input).await
+        }
+        _ => pm_core::resolve_dir(thread_root, input).await,
+    }
+}
+
+async fn resolve_file_for_sandbox(
+    thread_root: &Path,
+    sandbox_policy: pm_protocol::SandboxPolicy,
+    input: &Path,
+    access: pm_core::PathAccess,
+    create_parent_dirs: bool,
+) -> anyhow::Result<PathBuf> {
+    match sandbox_policy {
+        pm_protocol::SandboxPolicy::DangerFullAccess => {
+            pm_core::resolve_file_unrestricted(thread_root, input, access, create_parent_dirs).await
+        }
+        _ => pm_core::resolve_file(thread_root, input, access, create_parent_dirs).await,
+    }
+}
+
 async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Result<Value> {
     let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
+    let sandbox_policy = {
+        let handle = thread_rt.handle.lock().await;
+        handle.state().sandbox_policy
+    };
 
     let max_bytes = params.max_bytes.unwrap_or(256 * 1024).min(4 * 1024 * 1024);
     let tool_id = pm_protocol::ToolId::new();
@@ -2072,8 +2104,9 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
         .await?;
 
     let outcome: anyhow::Result<(PathBuf, String, bool, usize)> = async {
-        let path = pm_core::resolve_file(
+        let path = resolve_file_for_sandbox(
             &thread_root,
+            sandbox_policy,
             Path::new(&params.path),
             pm_core::PathAccess::Read,
             false,
@@ -2530,8 +2563,9 @@ async fn handle_file_write(server: &Server, params: FileWriteParams) -> anyhow::
         .await?;
 
     let outcome: anyhow::Result<PathBuf> = async {
-        let path = pm_core::resolve_file(
+        let path = resolve_file_for_sandbox(
             &thread_root,
+            sandbox_policy,
             Path::new(&params.path),
             pm_core::PathAccess::Write,
             create_parent_dirs,
@@ -2713,8 +2747,9 @@ async fn handle_file_patch(server: &Server, params: FilePatchParams) -> anyhow::
         .await?;
 
     let outcome: anyhow::Result<(PathBuf, bool, usize, usize)> = async {
-        let path = pm_core::resolve_file(
+        let path = resolve_file_for_sandbox(
             &thread_root,
+            sandbox_policy,
             Path::new(&params.path),
             pm_core::PathAccess::Write,
             false,
@@ -2945,8 +2980,9 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
         .await?;
 
     let outcome: anyhow::Result<(PathBuf, bool, usize, usize)> = async {
-        let path = pm_core::resolve_file(
+        let path = resolve_file_for_sandbox(
             &thread_root,
+            sandbox_policy,
             Path::new(&params.path),
             pm_core::PathAccess::Write,
             false,
@@ -3155,8 +3191,9 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
 
     let thread_root = thread_root.clone();
     let outcome: anyhow::Result<(bool, PathBuf)> = async {
-        let path = pm_core::resolve_file(
+        let path = resolve_file_for_sandbox(
             &thread_root,
+            sandbox_policy,
             Path::new(&params.path),
             pm_core::PathAccess::Write,
             false,
@@ -3345,8 +3382,9 @@ async fn handle_fs_mkdir(server: &Server, params: FsMkdirParams) -> anyhow::Resu
 
     let thread_root = thread_root.clone();
     let outcome: anyhow::Result<(bool, PathBuf)> = async {
-        let path = pm_core::resolve_file(
+        let path = resolve_file_for_sandbox(
             &thread_root,
+            sandbox_policy,
             Path::new(&params.path),
             pm_core::PathAccess::Write,
             params.recursive,
@@ -3857,7 +3895,7 @@ async fn handle_process_start(
     };
 
     let cwd_path = if let Some(cwd) = params.cwd.as_deref() {
-        pm_core::resolve_dir(&thread_root, Path::new(cwd)).await?
+        resolve_dir_for_sandbox(&thread_root, sandbox_policy, Path::new(cwd)).await?
     } else {
         thread_root.clone()
     };

@@ -114,6 +114,72 @@ pub async fn resolve_file(
     }
 }
 
+pub async fn resolve_dir_unrestricted(base: &Path, input: &Path) -> anyhow::Result<PathBuf> {
+    let base = tokio::fs::canonicalize(base)
+        .await
+        .with_context(|| format!("canonicalize base {}", base.display()))?;
+
+    reject_parent_components(input)?;
+
+    let candidate = if input.is_absolute() {
+        input.to_path_buf()
+    } else {
+        base.join(input)
+    };
+    let candidate = strip_cur_dir_components(&candidate);
+
+    let canon = tokio::fs::canonicalize(&candidate)
+        .await
+        .with_context(|| format!("canonicalize {}", candidate.display()))?;
+    let meta = tokio::fs::metadata(&canon)
+        .await
+        .with_context(|| format!("stat {}", canon.display()))?;
+    if !meta.is_dir() {
+        anyhow::bail!("not a directory: {}", canon.display());
+    }
+    Ok(canon)
+}
+
+pub async fn resolve_file_unrestricted(
+    base: &Path,
+    input: &Path,
+    access: PathAccess,
+    create_parent_dirs: bool,
+) -> anyhow::Result<PathBuf> {
+    let base = tokio::fs::canonicalize(base)
+        .await
+        .with_context(|| format!("canonicalize base {}", base.display()))?;
+
+    reject_parent_components(input)?;
+
+    let candidate = if input.is_absolute() {
+        input.to_path_buf()
+    } else {
+        base.join(input)
+    };
+    let candidate = strip_cur_dir_components(&candidate);
+
+    let Some(parent) = candidate.parent() else {
+        anyhow::bail!("path has no parent: {}", candidate.display());
+    };
+
+    if create_parent_dirs {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .with_context(|| format!("create dir {}", parent.display()))?;
+    }
+
+    match access {
+        PathAccess::Read => {
+            let canon = tokio::fs::canonicalize(&candidate)
+                .await
+                .with_context(|| format!("canonicalize {}", candidate.display()))?;
+            Ok(canon)
+        }
+        PathAccess::Write => Ok(candidate),
+    }
+}
+
 fn reject_parent_components(path: &Path) -> anyhow::Result<()> {
     if path.components().any(|c| matches!(c, Component::ParentDir)) {
         anyhow::bail!("parent traversal is not allowed: {}", path.display());
@@ -196,6 +262,17 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn resolve_file_unrestricted_rejects_parent_traversal() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+
+        let err = resolve_file_unrestricted(root, Path::new("../x"), PathAccess::Read, false)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("parent traversal"));
+    }
+
+    #[tokio::test]
     async fn resolve_file_rejects_symlink_escape_on_read() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("root");
@@ -213,6 +290,32 @@ mod tests {
                 .await
                 .unwrap_err();
             assert!(err.to_string().contains("escapes root"));
+        }
+    }
+
+    #[tokio::test]
+    async fn resolve_file_unrestricted_allows_symlink_escape_on_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        let outside = dir.path().join("outside");
+        tokio::fs::create_dir_all(&root).await.unwrap();
+        tokio::fs::create_dir_all(&outside).await.unwrap();
+        tokio::fs::write(outside.join("secret.txt"), "ok")
+            .await
+            .unwrap();
+
+        #[cfg(unix)]
+        {
+            symlink(&outside, &root.join("link")).unwrap();
+            let resolved = resolve_file_unrestricted(
+                &root,
+                Path::new("link/secret.txt"),
+                PathAccess::Read,
+                false,
+            )
+            .await
+            .unwrap();
+            assert!(resolved.ends_with("outside/secret.txt"));
         }
     }
 

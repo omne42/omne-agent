@@ -68,6 +68,7 @@
 - `pm-eventlog`：`read_events_since` 忽略并发写入时可能出现的尾部半行（避免 reader 在 writer 追加期间误报 parse error）。
 - `pm-app-server file/*`：失败路径也会写入 `ToolCompleted`（避免工具卡在 “started but never finished”）。
 - `pm-core::redaction`：修正 token 脱敏正则（Bearer/Google key），避免漏打码。
+- `pm-core::sandbox`/`pm-app-server`：`sandbox_policy=danger_full_access` 现在会使用 unrestricted 路径解析（允许绝对路径与系统 symlink，如 macOS `/tmp`），不再误报 “escapes root”。
 
 ### Security
 - `pm-core::threads`：落盘事件前自动脱敏（Turn input/argv/approval params/tool results 等），避免 secrets 进入 event log；`pm-app-server process/tail`/`process/follow` 返回内容也会脱敏展示。
