@@ -61,6 +61,8 @@ struct SessionListArgs {
     verbose: bool,
     #[arg(long)]
     limit: Option<usize>,
+    #[arg(long, default_value_t = false)]
+    json: bool,
 }
 
 #[derive(Parser, Clone)]
@@ -150,19 +152,23 @@ async fn main() -> anyhow::Result<()> {
                         Some(limit) => sessions.into_iter().take(limit).collect::<Vec<_>>(),
                         None => sessions,
                     };
-                    for session in sessions {
-                        let created_at = session
-                            .created_at
-                            .format(&Rfc3339)
-                            .unwrap_or_else(|_| session.created_at.to_string());
-                        println!(
-                            "{} repo={} pr={} base={} created_at={}",
-                            session.id,
-                            session.repo.as_str(),
-                            session.pr_name.as_str(),
-                            session.base_branch,
-                            created_at
-                        );
+                    if args.json {
+                        println!("{}", serde_json::to_string_pretty(&sessions)?);
+                    } else {
+                        for session in sessions {
+                            let created_at = session
+                                .created_at
+                                .format(&Rfc3339)
+                                .unwrap_or_else(|_| session.created_at.to_string());
+                            println!(
+                                "{} repo={} pr={} base={} created_at={}",
+                                session.id,
+                                session.repo.as_str(),
+                                session.pr_name.as_str(),
+                                session.base_branch,
+                                created_at
+                            );
+                        }
                     }
                 } else {
                     let sessions = list_sessions(&storage).await?;
@@ -170,8 +176,12 @@ async fn main() -> anyhow::Result<()> {
                         Some(limit) => sessions.into_iter().take(limit).collect::<Vec<_>>(),
                         None => sessions,
                     };
-                    for id in sessions {
-                        println!("{id}");
+                    if args.json {
+                        println!("{}", serde_json::to_string_pretty(&sessions)?);
+                    } else {
+                        for id in sessions {
+                            println!("{id}");
+                        }
                     }
                 }
             }
