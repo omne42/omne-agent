@@ -71,10 +71,47 @@ pub async fn serve(pm_paths: PmPaths, addr: SocketAddr) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn api_list_repos(State(state): State<Arc<AppState>>) -> Result<Response<Body>, ApiError> {
+#[derive(Debug, Deserialize)]
+struct ReposQuery {
+    verbose: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+struct RepoListItem {
+    name: String,
+    bare_path: String,
+    lock_path: String,
+}
+
+async fn api_list_repos(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<ReposQuery>,
+) -> Result<Response<Body>, ApiError> {
     let repos = state.repo_manager.list_repos().await?;
-    let json = serde_json::to_vec(&repos)?;
-    Ok(json_response(json))
+    let verbose = query.verbose.as_deref().is_some_and(parse_bool_flag);
+    if verbose {
+        let items = repos
+            .iter()
+            .map(|name| RepoListItem {
+                name: name.as_str().to_string(),
+                bare_path: state
+                    .repo_manager
+                    .paths()
+                    .repo_bare_path(name)
+                    .display()
+                    .to_string(),
+                lock_path: state
+                    .repo_manager
+                    .paths()
+                    .repo_lock_path(name)
+                    .display()
+                    .to_string(),
+            })
+            .collect::<Vec<_>>();
+        Ok(json_response(serde_json::to_vec(&items)?))
+    } else {
+        Ok(json_response(serde_json::to_vec(&repos)?))
+    }
 }
 
 #[derive(Debug, Deserialize)]
