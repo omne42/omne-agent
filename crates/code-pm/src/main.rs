@@ -181,7 +181,7 @@ async fn main() -> anyhow::Result<()> {
             RepoCommand::Inject { source, name, json } => {
                 let repo_name = name
                     .as_deref()
-                    .map(pm_core::RepositoryName::sanitize)
+                    .map(sanitize_repo_name_input)
                     .unwrap_or_else(|| RepoManager::default_repo_name_from_source(&source));
                 let repo = repo_manager.inject(&repo_name, &source).await?;
                 if json {
@@ -404,14 +404,14 @@ async fn run_session(
 
     let (repo_name, repo) = match (&args.repo, &args.repo_src) {
         (Some(name), None) => {
-            let repo_name = pm_core::RepositoryName::sanitize(name);
+            let repo_name = sanitize_repo_name_input(name);
             let repo = repo_manager.load(&repo_name).await?;
             (repo_name, repo)
         }
         (maybe_name, Some(source)) => {
             let repo_name = maybe_name
                 .as_deref()
-                .map(pm_core::RepositoryName::sanitize)
+                .map(sanitize_repo_name_input)
                 .unwrap_or_else(|| RepoManager::default_repo_name_from_source(source));
             let repo = repo_manager.inject(&repo_name, source).await?;
             (repo_name, repo)
@@ -556,6 +556,13 @@ fn parse_non_empty_trimmed(value: &str) -> Result<String, String> {
     } else {
         Ok(trimmed.to_string())
     }
+}
+
+fn sanitize_repo_name_input(value: &str) -> pm_core::RepositoryName {
+    let value = value.trim();
+    let value = value.trim_end_matches(['/', '\\']);
+    let value = value.strip_suffix(".git").unwrap_or(value);
+    pm_core::RepositoryName::sanitize(value)
 }
 
 fn resolve_stream_events_mode(
@@ -1135,6 +1142,14 @@ mod tests {
             panic!("expected repo inject");
         };
         assert!(json);
+    }
+
+    #[test]
+    fn sanitize_repo_name_input_strips_dot_git_suffix() {
+        assert_eq!(sanitize_repo_name_input("demo.git").as_str(), "demo");
+        assert_eq!(sanitize_repo_name_input("demo.git/").as_str(), "demo");
+        assert_eq!(sanitize_repo_name_input(" demo.git/ ").as_str(), "demo");
+        assert_eq!(sanitize_repo_name_input("demo").as_str(), "demo");
     }
 
     #[tokio::test]
