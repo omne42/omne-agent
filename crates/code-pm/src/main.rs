@@ -302,7 +302,14 @@ async fn run_session(
                         StreamEventsMode::Text => eprintln!("[event] {event}"),
                         StreamEventsMode::Json => match serde_json::to_string(&event) {
                             Ok(json) => eprintln!("{json}"),
-                            Err(err) => eprintln!("[event] json serialize error: {err}"),
+                            Err(err) => {
+                                let line = serde_json::json!({
+                                    "type": "error",
+                                    "error": "event_json_serialize",
+                                    "message": err.to_string(),
+                                });
+                                eprintln!("{line}");
+                            }
                         },
                     },
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
