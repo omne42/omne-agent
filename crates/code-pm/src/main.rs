@@ -107,7 +107,11 @@ struct RunArgs {
     strict: bool,
     #[arg(long, default_value_t = false)]
     json: bool,
-    #[arg(long, default_value_t = false)]
+    #[arg(
+        long,
+        default_value_t = false,
+        conflicts_with_all = ["tasks_file", "task"]
+    )]
     auto_tasks: bool,
     #[arg(long)]
     tasks_file: Option<PathBuf>,
@@ -890,6 +894,46 @@ mod tests {
         .err()
         .expect("cli parse must fail");
         assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
+    }
+
+    #[test]
+    fn cli_rejects_auto_tasks_with_task_override() {
+        let err = Cli::try_parse_from([
+            "code-pm",
+            "run",
+            "--repo",
+            "repo",
+            "--pr-name",
+            "demo",
+            "--prompt",
+            "x",
+            "--auto-tasks",
+            "--task",
+            "t1:foo",
+        ])
+        .err()
+        .expect("cli parse must fail");
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn cli_rejects_auto_tasks_with_tasks_file_override() {
+        let err = Cli::try_parse_from([
+            "code-pm",
+            "run",
+            "--repo",
+            "repo",
+            "--pr-name",
+            "demo",
+            "--prompt",
+            "x",
+            "--auto-tasks",
+            "--tasks-file",
+            "tasks.json",
+        ])
+        .err()
+        .expect("cli parse must fail");
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
     }
 
     #[test]

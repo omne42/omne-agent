@@ -114,6 +114,7 @@ cargo run -p code-pm -- run \
 注意：`--max-concurrency` 必须 `>= 1`。
 注意：`--repo` / `--repo-src` / `--pr-name` / `--base` 不得为空（包括仅空白字符）。
 注意：`--prompt` / `--prompt-file` 的内容不得为空（包括仅空白字符）。
+注意：`--auto-tasks` 不能与 `--task` / `--tasks-file` 同时使用。
 
 从 prompt 自动拆分 tasks（Phase 1：规则化；识别 checklist/编号/无序列表）：
 
