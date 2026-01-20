@@ -35,7 +35,7 @@ fn patterns() -> &'static [Pattern] {
                 replacement: "github_pat_<REDACTED>",
             },
             Pattern {
-                regex: Regex::new(r"AIza[0-9A-Za-z\\-_]{35}").expect("google api key regex"),
+                regex: Regex::new(r"AIza[0-9A-Za-z_-]{35}").expect("google api key regex"),
                 replacement: "AIza<REDACTED>",
             },
             Pattern {
@@ -43,7 +43,7 @@ fn patterns() -> &'static [Pattern] {
                 replacement: "AKIA<REDACTED>",
             },
             Pattern {
-                regex: Regex::new(r"(?i)\\bbearer\\s+[A-Za-z0-9._-]{20,}").expect("bearer regex"),
+                regex: Regex::new(r"(?i)\bbearer\s+[A-Za-z0-9._-]{20,}").expect("bearer regex"),
                 replacement: "Bearer <REDACTED>",
             },
         ]
