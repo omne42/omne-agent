@@ -28,6 +28,7 @@
 - `pm-app-server` 新增 `thread/config/explain`：返回最小 config layer stack（当前覆盖 `approval_policy`/`sandbox_policy`/`model`/`openai_base_url`），用于回答“为什么生效的是这个值”。
 - `pm-protocol`/`pm-eventlog` 新增 thread-level 模型配置：`ThreadConfigUpdated.model/openai_base_url` + `ThreadState.model/openai_base_url`。
 - `pm-app-server` 新增 `thread/attention`：派生 RTS “收件箱”视图（pending approvals + running processes），减少 UI/CLI 人肉扫描 event log。
+- `pm-app-server` 新增 `thread/disk_usage` 与 `thread/disk_report`：返回 thread 目录磁盘占用，并可生成 `disk_report` markdown artifact 便于清理。
 - `pm-app-server` 新增 `process/*`：`process/start`（落盘 stdout/stderr）、`process/list`、`process/inspect`（元信息 + tail）、`process/tail`（只读查看）、`process/follow`（增量查看）、`process/kill`（终止后台进程）。
 - `pm-app-server` 新增 `file/*`：`file/read`、`file/glob`、`file/grep`、`file/write`、`file/patch`、`file/edit`、`file/delete`（带 rooted path 校验，并记录 `ToolStarted/ToolCompleted` 事件）。
 - `pm-app-server` 新增 `fs/*`：`fs/mkdir`（带 rooted path 校验，并记录 `ToolStarted/ToolCompleted` 事件）。

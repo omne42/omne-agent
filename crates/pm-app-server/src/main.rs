@@ -335,6 +335,18 @@ struct ThreadAttentionParams {
 }
 
 #[derive(Debug, Deserialize)]
+struct ThreadDiskUsageParams {
+    thread_id: ThreadId,
+}
+
+#[derive(Debug, Deserialize)]
+struct ThreadDiskReportParams {
+    thread_id: ThreadId,
+    #[serde(default)]
+    top_files: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
 struct ThreadConfigureParams {
     thread_id: ThreadId,
     #[serde(default)]
@@ -900,6 +912,38 @@ async fn main() -> anyhow::Result<()> {
                     ),
                 }
             }
+            "thread/disk_usage" => {
+                match serde_json::from_value::<ThreadDiskUsageParams>(request.params) {
+                    Ok(params) => match handle_thread_disk_usage(&server, params).await {
+                        Ok(result) => JsonRpcResponse::ok(id, result),
+                        Err(err) => {
+                            JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None)
+                        }
+                    },
+                    Err(err) => JsonRpcResponse::err(
+                        id,
+                        JSONRPC_INVALID_PARAMS,
+                        "invalid params",
+                        Some(serde_json::json!({ "error": err.to_string() })),
+                    ),
+                }
+            }
+            "thread/disk_report" => {
+                match serde_json::from_value::<ThreadDiskReportParams>(request.params) {
+                    Ok(params) => match handle_thread_disk_report(&server, params).await {
+                        Ok(result) => JsonRpcResponse::ok(id, result),
+                        Err(err) => {
+                            JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None)
+                        }
+                    },
+                    Err(err) => JsonRpcResponse::err(
+                        id,
+                        JSONRPC_INVALID_PARAMS,
+                        "invalid params",
+                        Some(serde_json::json!({ "error": err.to_string() })),
+                    ),
+                }
+            }
             "thread/configure" => {
                 match serde_json::from_value::<ThreadConfigureParams>(request.params) {
                     Ok(params) => match handle_thread_configure(&server, params).await {
@@ -1441,6 +1485,195 @@ async fn handle_thread_attention(
         "attention_state": attention_state,
         "pending_approvals": pending_approvals,
         "running_processes": running_processes,
+    }))
+}
+
+#[derive(Debug)]
+struct ThreadDiskUsage {
+    total_bytes: u64,
+    events_log_bytes: u64,
+    artifacts_bytes: u64,
+    file_count: usize,
+    top_files: Vec<(u64, String)>,
+}
+
+fn scan_thread_disk_usage(
+    thread_dir: &Path,
+    events_log_path: &Path,
+    top_n: usize,
+) -> anyhow::Result<ThreadDiskUsage> {
+    let artifacts_dir = thread_dir.join("artifacts");
+
+    let events_log_bytes = std::fs::metadata(events_log_path)
+        .map(|m| m.len())
+        .unwrap_or(0);
+
+    let mut total_bytes = 0u64;
+    let mut artifacts_bytes = 0u64;
+    let mut file_count = 0usize;
+    let mut top_files: Vec<(u64, String)> = Vec::new();
+
+    for entry in WalkDir::new(thread_dir)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|e| e.depth() == 0 || !e.file_type().is_symlink())
+    {
+        let entry = entry?;
+        if !entry.file_type().is_file() {
+            continue;
+        }
+
+        let meta = entry.metadata()?;
+        let size = meta.len();
+        file_count += 1;
+        total_bytes = total_bytes.saturating_add(size);
+        if entry.path().starts_with(&artifacts_dir) {
+            artifacts_bytes = artifacts_bytes.saturating_add(size);
+        }
+
+        if top_n == 0 {
+            continue;
+        }
+
+        let rel = entry
+            .path()
+            .strip_prefix(thread_dir)
+            .unwrap_or(entry.path());
+        let rel = rel.to_string_lossy().to_string();
+
+        if top_files.len() < top_n {
+            top_files.push((size, rel));
+            top_files.sort_by_key(|(b, _)| *b);
+            continue;
+        }
+        if let Some((smallest, _)) = top_files.first() {
+            if size > *smallest {
+                top_files[0] = (size, rel);
+                top_files.sort_by_key(|(b, _)| *b);
+            }
+        }
+    }
+
+    top_files.sort_by(|a, b| b.0.cmp(&a.0));
+
+    Ok(ThreadDiskUsage {
+        total_bytes,
+        events_log_bytes,
+        artifacts_bytes,
+        file_count,
+        top_files,
+    })
+}
+
+async fn handle_thread_disk_usage(
+    server: &Server,
+    params: ThreadDiskUsageParams,
+) -> anyhow::Result<Value> {
+    let thread_dir = server.thread_store.thread_dir(params.thread_id);
+    let events_log_path = server.thread_store.events_log_path(params.thread_id);
+
+    match tokio::fs::metadata(&thread_dir).await {
+        Ok(meta) if meta.is_dir() => {}
+        Ok(_) => anyhow::bail!("thread dir is not a directory: {}", thread_dir.display()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            anyhow::bail!("thread not found: {}", params.thread_id)
+        }
+        Err(err) => return Err(err).with_context(|| format!("stat {}", thread_dir.display())),
+    }
+
+    let thread_dir_for_task = thread_dir.clone();
+    let events_log_path_for_task = events_log_path.clone();
+    let usage = tokio::task::spawn_blocking(move || {
+        scan_thread_disk_usage(&thread_dir_for_task, &events_log_path_for_task, 0)
+    })
+    .await
+    .context("join disk usage task")??;
+
+    Ok(serde_json::json!({
+        "thread_id": params.thread_id,
+        "thread_dir": thread_dir.display().to_string(),
+        "events_log_path": events_log_path.display().to_string(),
+        "events_log_bytes": usage.events_log_bytes,
+        "artifacts_bytes": usage.artifacts_bytes,
+        "total_bytes": usage.total_bytes,
+        "file_count": usage.file_count,
+    }))
+}
+
+async fn handle_thread_disk_report(
+    server: &Server,
+    params: ThreadDiskReportParams,
+) -> anyhow::Result<Value> {
+    let thread_dir = server.thread_store.thread_dir(params.thread_id);
+    let events_log_path = server.thread_store.events_log_path(params.thread_id);
+
+    match tokio::fs::metadata(&thread_dir).await {
+        Ok(meta) if meta.is_dir() => {}
+        Ok(_) => anyhow::bail!("thread dir is not a directory: {}", thread_dir.display()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            anyhow::bail!("thread not found: {}", params.thread_id)
+        }
+        Err(err) => return Err(err).with_context(|| format!("stat {}", thread_dir.display())),
+    }
+
+    let top_n = params.top_files.unwrap_or(40).min(200);
+    let thread_dir_for_task = thread_dir.clone();
+    let events_log_path_for_task = events_log_path.clone();
+    let usage = tokio::task::spawn_blocking(move || {
+        scan_thread_disk_usage(&thread_dir_for_task, &events_log_path_for_task, top_n)
+    })
+    .await
+    .context("join disk report task")??;
+
+    let now = OffsetDateTime::now_utc().format(&Rfc3339)?;
+
+    let mut report = String::new();
+    report.push_str("# Thread disk usage report\n\n");
+    report.push_str(&format!("- thread_id: {}\n", params.thread_id));
+    report.push_str(&format!("- generated_at: {}\n", now));
+    report.push_str(&format!("- thread_dir: {}\n", thread_dir.display()));
+    report.push_str(&format!(
+        "- events_log_path: {}\n",
+        events_log_path.display()
+    ));
+    report.push_str(&format!("- total_bytes: {}\n", usage.total_bytes));
+    report.push_str(&format!("- artifacts_bytes: {}\n", usage.artifacts_bytes));
+    report.push_str(&format!("- events_log_bytes: {}\n", usage.events_log_bytes));
+    report.push_str(&format!("- file_count: {}\n", usage.file_count));
+
+    if !usage.top_files.is_empty() {
+        report.push_str("\n## Top files\n");
+        for (size, rel) in &usage.top_files {
+            report.push_str(&format!("- {}  {}\n", size, rel));
+        }
+    }
+
+    report.push_str("\n## Cleanup\n");
+    report.push_str("- Use `thread/clear_artifacts` to remove `artifacts/` (requires force=true if processes are running).\n");
+    report.push_str("- Use `thread/delete` to remove the entire thread directory (requires force=true if processes are running).\n");
+
+    let artifact = handle_artifact_write(
+        server,
+        ArtifactWriteParams {
+            thread_id: params.thread_id,
+            turn_id: None,
+            artifact_id: None,
+            artifact_type: "disk_report".to_string(),
+            summary: "Thread disk usage report".to_string(),
+            text: report,
+        },
+    )
+    .await?;
+
+    Ok(serde_json::json!({
+        "thread_id": params.thread_id,
+        "disk_usage": {
+            "events_log_bytes": usage.events_log_bytes,
+            "artifacts_bytes": usage.artifacts_bytes,
+            "total_bytes": usage.total_bytes,
+            "file_count": usage.file_count,
+        },
+        "artifact": artifact,
     }))
 }
 
