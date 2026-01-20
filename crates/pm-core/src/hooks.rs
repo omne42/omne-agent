@@ -1,4 +1,6 @@
 use async_trait::async_trait;
+use std::process::Stdio;
+use tokio::io::AsyncWriteExt;
 
 use crate::domain::{HookSpec, RunResult};
 use crate::paths::{PmPaths, SessionPaths};
@@ -49,7 +51,12 @@ impl HookRunner for CommandHookRunner {
         let tmp_session_dir = session_paths.root();
         let result_json = tmp_session_dir.join("result.json");
 
-        let status = tokio::process::Command::new(program)
+        let logs_dir = session_paths.logs_dir();
+        tokio::fs::create_dir_all(&logs_dir).await?;
+        let stdout_log = logs_dir.join("hook.stdout.log");
+        let stderr_log = logs_dir.join("hook.stderr.log");
+
+        let mut child = tokio::process::Command::new(program)
             .args(args)
             .env("CODE_PM_SESSION_ID", session.id.to_string())
             .env("CODE_PM_REPO", session.repo.as_str())
@@ -62,11 +69,47 @@ impl HookRunner for CommandHookRunner {
                 "CODE_PM_MERGED",
                 if result.merge.merged { "1" } else { "0" },
             )
-            .status()
-            .await?;
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("missing child stdout"))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("missing child stderr"))?;
+
+        let stdout_log_task_path = stdout_log.clone();
+        let stderr_log_task_path = stderr_log.clone();
+
+        let stdout_task = tokio::spawn(async move {
+            let mut stdout = stdout;
+            let mut file = tokio::fs::File::create(&stdout_log_task_path).await?;
+            tokio::io::copy(&mut stdout, &mut file).await?;
+            file.flush().await?;
+            Ok::<(), anyhow::Error>(())
+        });
+        let stderr_task = tokio::spawn(async move {
+            let mut stderr = stderr;
+            let mut file = tokio::fs::File::create(&stderr_log_task_path).await?;
+            tokio::io::copy(&mut stderr, &mut file).await?;
+            file.flush().await?;
+            Ok::<(), anyhow::Error>(())
+        });
+
+        let status = child.wait().await?;
+        stdout_task.await??;
+        stderr_task.await??;
 
         if !status.success() {
-            anyhow::bail!("hook command failed with status {status}");
+            anyhow::bail!(
+                "hook command failed with status {status}; logs: {} / {}",
+                stdout_log.display(),
+                stderr_log.display()
+            );
         }
         Ok(())
     }
@@ -84,18 +127,22 @@ mod tests {
         SessionId,
     };
 
-    #[tokio::test]
-    async fn command_hook_runner_exports_expected_env_vars() -> anyhow::Result<()> {
-        let dir = tempfile::tempdir()?;
-        let pm_paths = PmPaths::new(dir.path().join(".code_pm"));
+    struct TestContext {
+        _tmp: tempfile::TempDir,
+        pm_paths: PmPaths,
+        session_paths: SessionPaths,
+        result: RunResult,
+    }
+
+    async fn setup() -> anyhow::Result<TestContext> {
+        let tmp = tempfile::tempdir()?;
+        let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
 
         let repo = RepositoryName::sanitize("repo");
         let session_id = SessionId::new();
         let session_paths = SessionPaths::new(&repo, session_id);
         tokio::fs::create_dir_all(session_paths.root()).await?;
-
-        let result_json = session_paths.root().join("result.json");
-        tokio::fs::write(&result_json, b"{}").await?;
+        tokio::fs::write(session_paths.root().join("result.json"), b"{}").await?;
 
         let session = Session {
             id: session_id,
@@ -121,7 +168,20 @@ mod tests {
             },
         };
 
-        let out_path = session_paths.root().join("hook-env.txt");
+        Ok(TestContext {
+            _tmp: tmp,
+            pm_paths,
+            session_paths,
+            result,
+        })
+    }
+
+    #[tokio::test]
+    async fn command_hook_runner_exports_expected_env_vars() -> anyhow::Result<()> {
+        let ctx = setup().await?;
+        let result_json = ctx.session_paths.root().join("result.json");
+
+        let out_path = ctx.session_paths.root().join("hook-env.txt");
         let script = format!(
             "printf '%s\\n' \\\n  \"$CODE_PM_SESSION_ID\" \\\n  \"$CODE_PM_REPO\" \\\n  \"$CODE_PM_PR_NAME\" \\\n  \"$CODE_PM_PM_ROOT\" \\\n  \"$CODE_PM_SESSION_DIR\" \\\n  \"$CODE_PM_TMP_DIR\" \\\n  \"$CODE_PM_RESULT_JSON\" \\\n  \"$CODE_PM_MERGED\" \\\n  > '{}'",
             out_path.display()
@@ -134,29 +194,99 @@ mod tests {
 
         let runner = CommandHookRunner;
         runner
-            .run(&hook, &pm_paths, &session_paths, &result)
+            .run(&hook, &ctx.pm_paths, &ctx.session_paths, &ctx.result)
             .await?;
+
+        let hook_stdout_log = ctx.session_paths.logs_dir().join("hook.stdout.log");
+        let hook_stderr_log = ctx.session_paths.logs_dir().join("hook.stderr.log");
+        assert!(tokio::fs::try_exists(&hook_stdout_log).await?);
+        assert!(tokio::fs::try_exists(&hook_stderr_log).await?);
 
         let text = tokio::fs::read_to_string(&out_path).await?;
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(lines.len(), 8);
 
-        assert_eq!(lines[0], result.session.id.to_string());
-        assert_eq!(lines[1], result.session.repo.as_str());
-        assert_eq!(lines[2], result.session.pr_name.as_str());
-        assert_eq!(lines[3], pm_paths.root().display().to_string());
+        assert_eq!(lines[0], ctx.result.session.id.to_string());
+        assert_eq!(lines[1], ctx.result.session.repo.as_str());
+        assert_eq!(lines[2], ctx.result.session.pr_name.as_str());
+        assert_eq!(lines[3], ctx.pm_paths.root().display().to_string());
         assert_eq!(
             lines[4],
-            pm_paths
-                .session_dir(result.session.id)
+            ctx.pm_paths
+                .session_dir(ctx.result.session.id)
                 .display()
                 .to_string()
         );
-        assert_eq!(lines[5], session_paths.root().display().to_string());
+        assert_eq!(lines[5], ctx.session_paths.root().display().to_string());
         assert_eq!(lines[6], result_json.display().to_string());
         assert_eq!(lines[7], "1");
 
-        let _ = tokio::fs::remove_dir_all(session_paths.root()).await;
+        let _ = tokio::fs::remove_dir_all(ctx.session_paths.root()).await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn command_hook_runner_captures_stdout_and_stderr() -> anyhow::Result<()> {
+        let ctx = setup().await?;
+
+        let hook = HookSpec::Command {
+            program: PathBuf::from("sh"),
+            args: vec![
+                "-c".to_string(),
+                "printf 'hello stdout\\n'; printf 'hello stderr\\n' 1>&2".to_string(),
+            ],
+        };
+
+        let runner = CommandHookRunner;
+        runner
+            .run(&hook, &ctx.pm_paths, &ctx.session_paths, &ctx.result)
+            .await?;
+
+        let stdout_log = ctx.session_paths.logs_dir().join("hook.stdout.log");
+        let stderr_log = ctx.session_paths.logs_dir().join("hook.stderr.log");
+        assert_eq!(
+            tokio::fs::read_to_string(&stdout_log).await?,
+            "hello stdout\n"
+        );
+        assert_eq!(
+            tokio::fs::read_to_string(&stderr_log).await?,
+            "hello stderr\n"
+        );
+
+        let _ = tokio::fs::remove_dir_all(ctx.session_paths.root()).await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn command_hook_runner_writes_logs_on_failure() -> anyhow::Result<()> {
+        let ctx = setup().await?;
+
+        let hook = HookSpec::Command {
+            program: PathBuf::from("sh"),
+            args: vec![
+                "-c".to_string(),
+                "printf 'goodbye stderr\\n' 1>&2; exit 7".to_string(),
+            ],
+        };
+
+        let runner = CommandHookRunner;
+        let err = runner
+            .run(&hook, &ctx.pm_paths, &ctx.session_paths, &ctx.result)
+            .await
+            .unwrap_err();
+
+        let msg = err.to_string();
+        assert!(msg.contains("hook command failed"));
+        assert!(msg.contains("hook.stdout.log"));
+        assert!(msg.contains("hook.stderr.log"));
+
+        let stderr_log = ctx.session_paths.logs_dir().join("hook.stderr.log");
+        assert_eq!(
+            tokio::fs::read_to_string(&stderr_log).await?,
+            "goodbye stderr\n"
+        );
+
+        let _ = tokio::fs::remove_dir_all(ctx.session_paths.root()).await;
         Ok(())
     }
 }

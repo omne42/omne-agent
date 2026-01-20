@@ -7,6 +7,9 @@
 
 ## [Unreleased]
 
+### Added
+- Hook 执行现在会把 stdout/stderr 写入 session artifacts：`/tmp/<repo>_<session_id>/logs/hook.{stdout,stderr}.log`，便于排查失败原因。
+
 ### Fixed
 - `pm-http` 的 session API（`/api/v0/sessions/:id/*`）现在只接受 UUID 格式的 session id，避免非法路径段触发 storage key 校验错误导致 500。
 
