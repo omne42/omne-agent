@@ -351,6 +351,12 @@ struct ThreadAttentionParams {
 }
 
 #[derive(Debug, Deserialize)]
+struct ThreadListMetaParams {
+    #[serde(default)]
+    include_archived: bool,
+}
+
+#[derive(Debug, Deserialize)]
 struct ThreadDiskUsageParams {
     thread_id: ThreadId,
 }
@@ -855,6 +861,21 @@ async fn main() -> anyhow::Result<()> {
                     }),
                 ),
                 Err(err) => JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None),
+            },
+            "thread/list_meta" => match serde_json::from_value::<ThreadListMetaParams>(request.params)
+            {
+                Ok(params) => match handle_thread_list_meta(&server, params).await {
+                    Ok(result) => JsonRpcResponse::ok(id, result),
+                    Err(err) => {
+                        JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None)
+                    }
+                },
+                Err(err) => JsonRpcResponse::err(
+                    id,
+                    JSONRPC_INVALID_PARAMS,
+                    "invalid params",
+                    Some(serde_json::json!({ "error": err.to_string() })),
+                ),
             },
             "thread/loaded" => {
                 let mut threads = server
@@ -1577,6 +1598,61 @@ async fn handle_thread_attention(
         "pending_approvals": pending_approvals,
         "running_processes": running_processes,
     }))
+}
+
+async fn handle_thread_list_meta(
+    server: &Server,
+    params: ThreadListMetaParams,
+) -> anyhow::Result<Value> {
+    let thread_ids = server.thread_store.list_threads().await?;
+    let mut threads = Vec::<Value>::new();
+
+    for thread_id in thread_ids {
+        let Some(state) = server.thread_store.read_state(thread_id).await? else {
+            continue;
+        };
+
+        if state.archived && !params.include_archived {
+            continue;
+        }
+
+        let archived_at = state.archived_at.and_then(|ts| ts.format(&Rfc3339).ok());
+
+        let attention_state = if state.archived {
+            "archived"
+        } else if state.active_turn_id.is_some() {
+            "running"
+        } else {
+            match state.last_turn_status {
+                Some(pm_protocol::TurnStatus::Completed) => "done",
+                Some(pm_protocol::TurnStatus::Interrupted) => "interrupted",
+                Some(pm_protocol::TurnStatus::Failed) => "failed",
+                Some(pm_protocol::TurnStatus::Cancelled) => "cancelled",
+                None => "idle",
+            }
+        };
+
+        threads.push(serde_json::json!({
+            "thread_id": thread_id,
+            "cwd": state.cwd,
+            "archived": state.archived,
+            "archived_at": archived_at,
+            "archived_reason": state.archived_reason,
+            "approval_policy": state.approval_policy,
+            "sandbox_policy": state.sandbox_policy,
+            "model": state.model,
+            "openai_base_url": state.openai_base_url,
+            "last_seq": state.last_seq.0,
+            "active_turn_id": state.active_turn_id,
+            "active_turn_interrupt_requested": state.active_turn_interrupt_requested,
+            "last_turn_id": state.last_turn_id,
+            "last_turn_status": state.last_turn_status,
+            "last_turn_reason": state.last_turn_reason,
+            "attention_state": attention_state,
+        }));
+    }
+
+    Ok(serde_json::json!({ "threads": threads }))
 }
 
 async fn handle_thread_subscribe(

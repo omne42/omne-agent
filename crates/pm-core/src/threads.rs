@@ -155,6 +155,18 @@ impl ThreadStore {
             read_events_since_jsonl(thread_id, &log_path, since_seq).await?,
         ))
     }
+
+    pub async fn read_state(&self, thread_id: ThreadId) -> anyhow::Result<Option<ThreadState>> {
+        let Some(events) = self.read_events_since(thread_id, EventSeq::ZERO).await? else {
+            return Ok(None);
+        };
+
+        let mut state = ThreadState::new(thread_id);
+        for event in &events {
+            state.apply(event)?;
+        }
+        Ok(Some(state))
+    }
 }
 
 pub struct ThreadHandle {
