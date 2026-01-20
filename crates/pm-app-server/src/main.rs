@@ -299,6 +299,11 @@ struct ThreadConfigureParams {
 }
 
 #[derive(Debug, Deserialize)]
+struct ThreadConfigExplainParams {
+    thread_id: ThreadId,
+}
+
+#[derive(Debug, Deserialize)]
 struct ThreadEventsParams {
     thread_id: ThreadId,
     #[serde(default)]
@@ -759,6 +764,22 @@ async fn main() -> anyhow::Result<()> {
             "thread/configure" => {
                 match serde_json::from_value::<ThreadConfigureParams>(request.params) {
                     Ok(params) => match handle_thread_configure(&server, params).await {
+                        Ok(result) => JsonRpcResponse::ok(id, result),
+                        Err(err) => {
+                            JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None)
+                        }
+                    },
+                    Err(err) => JsonRpcResponse::err(
+                        id,
+                        JSONRPC_INVALID_PARAMS,
+                        "invalid params",
+                        Some(serde_json::json!({ "error": err.to_string() })),
+                    ),
+                }
+            }
+            "thread/config/explain" => {
+                match serde_json::from_value::<ThreadConfigExplainParams>(request.params) {
+                    Ok(params) => match handle_thread_config_explain(&server, params).await {
                         Ok(result) => JsonRpcResponse::ok(id, result),
                         Err(err) => {
                             JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None)
@@ -1253,6 +1274,44 @@ async fn handle_thread_configure(
     })
     .await?;
     Ok(serde_json::json!({ "ok": true }))
+}
+
+async fn handle_thread_config_explain(
+    server: &Server,
+    params: ThreadConfigExplainParams,
+) -> anyhow::Result<Value> {
+    let events = server
+        .thread_store
+        .read_events_since(params.thread_id, EventSeq::ZERO)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("thread not found: {}", params.thread_id))?;
+
+    let mut effective_approval_policy = pm_protocol::ApprovalPolicy::AutoApprove;
+    let mut layers = vec![serde_json::json!({
+        "source": "default",
+        "approval_policy": effective_approval_policy,
+    })];
+
+    for event in events {
+        if let pm_protocol::ThreadEventKind::ThreadConfigUpdated { approval_policy } = event.kind {
+            let ts = event.timestamp.format(&Rfc3339)?;
+            effective_approval_policy = approval_policy;
+            layers.push(serde_json::json!({
+                "source": "thread",
+                "seq": event.seq.0,
+                "timestamp": ts,
+                "approval_policy": approval_policy,
+            }));
+        }
+    }
+
+    Ok(serde_json::json!({
+        "thread_id": params.thread_id,
+        "effective": {
+            "approval_policy": effective_approval_policy,
+        },
+        "layers": layers,
+    }))
 }
 
 async fn handle_approval_decide(
