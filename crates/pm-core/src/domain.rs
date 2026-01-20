@@ -345,6 +345,10 @@ pub struct RunResult {
 mod tests {
     use super::*;
 
+    use serde::{Deserialize, Serialize};
+    use time::format_description::well_known::Rfc3339;
+    use time::{OffsetDateTime, UtcOffset};
+
     #[test]
     fn sanitize_produces_path_safe_names() {
         assert_eq!(RepositoryName::sanitize(" Foo/Bar ").as_str(), "foo-bar");
@@ -359,5 +363,61 @@ mod tests {
             panic!("unexpected error: {err:?}");
         };
         assert_eq!(ch, ' ');
+    }
+
+    #[derive(Debug, Serialize, Deserialize)]
+    struct CreatedAtPayload {
+        #[serde(with = "super::serde_rfc3339_datetime")]
+        created_at: OffsetDateTime,
+    }
+
+    #[test]
+    fn created_at_serializes_as_rfc3339_string() {
+        let payload = CreatedAtPayload {
+            created_at: OffsetDateTime::from_unix_timestamp(0).unwrap(),
+        };
+        let value = serde_json::to_value(&payload).unwrap();
+        let created_at = value
+            .get("created_at")
+            .and_then(serde_json::Value::as_str)
+            .expect("created_at must be a JSON string");
+        assert_eq!(
+            OffsetDateTime::parse(created_at, &Rfc3339).unwrap(),
+            payload.created_at
+        );
+    }
+
+    #[test]
+    fn created_at_deserializes_from_rfc3339_string() {
+        let json = r#"{"created_at":"1970-01-01T08:00:00+08:00"}"#;
+        let payload: CreatedAtPayload = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            payload.created_at,
+            OffsetDateTime::from_unix_timestamp(0)
+                .unwrap()
+                .to_offset(UtcOffset::from_hms(8, 0, 0).unwrap())
+        );
+    }
+
+    #[test]
+    fn created_at_deserializes_from_unix_timestamp() {
+        let json = r#"{"created_at":0}"#;
+        let payload: CreatedAtPayload = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            payload.created_at,
+            OffsetDateTime::from_unix_timestamp(0).unwrap()
+        );
+    }
+
+    #[test]
+    fn created_at_deserializes_from_legacy_tuple() {
+        let json = r#"{"created_at":[1970,1,8,0,0,0,8,0,0]}"#;
+        let payload: CreatedAtPayload = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            payload.created_at,
+            OffsetDateTime::from_unix_timestamp(0)
+                .unwrap()
+                .to_offset(UtcOffset::from_hms(8, 0, 0).unwrap())
+        );
     }
 }
