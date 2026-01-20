@@ -18,6 +18,9 @@ use tracing_subscriber::EnvFilter;
 #[command(name = "code-pm")]
 #[command(about = "Local Git service + concurrent AI task pipeline (Phase 1 skeleton)", long_about = None)]
 struct Cli {
+    /// Override `.code_pm` root directory. Relative paths are resolved against repo root.
+    #[arg(long, global = true)]
+    pm_root: Option<PathBuf>,
     #[command(subcommand)]
     command: Command,
 }
@@ -123,7 +126,8 @@ async fn main() -> anyhow::Result<()> {
     let cwd = std::env::current_dir()?;
     let repo_root = find_repo_root(&cwd)?;
 
-    let pm_root = resolve_pm_root(&repo_root, std::env::var_os("CODE_PM_ROOT").as_deref());
+    let env_pm_root = std::env::var_os("CODE_PM_ROOT");
+    let pm_root = resolve_pm_root(&repo_root, cli.pm_root.as_deref(), env_pm_root.as_deref());
     let pm_paths = PmPaths::new(pm_root.clone());
     let storage = FsStorage::new(pm_paths.data_dir());
 
@@ -211,7 +215,12 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn resolve_pm_root(repo_root: &std::path::Path, override_root: Option<&OsStr>) -> PathBuf {
+fn resolve_pm_root(
+    repo_root: &std::path::Path,
+    cli_root: Option<&std::path::Path>,
+    env_root: Option<&OsStr>,
+) -> PathBuf {
+    let override_root = cli_root.map(std::path::Path::as_os_str).or(env_root);
     match override_root {
         Some(value) if !value.is_empty() => {
             let path = PathBuf::from(value);
@@ -979,5 +988,35 @@ mod tests {
             assert!(value.get(key).is_some(), "missing key {key}");
         }
         Ok(())
+    }
+
+    #[test]
+    fn resolve_pm_root_defaults_to_repo_root_dot_code_pm() {
+        let repo_root = PathBuf::from("/repo");
+        assert_eq!(
+            resolve_pm_root(&repo_root, None, None),
+            repo_root.join(".code_pm")
+        );
+    }
+
+    #[test]
+    fn resolve_pm_root_prefers_cli_override() {
+        let repo_root = PathBuf::from("/repo");
+        let cli = PathBuf::from("cli-root");
+        let env = std::ffi::OsString::from("env-root");
+        assert_eq!(
+            resolve_pm_root(&repo_root, Some(&cli), Some(env.as_os_str())),
+            repo_root.join("cli-root")
+        );
+    }
+
+    #[test]
+    fn resolve_pm_root_resolves_relative_env_to_repo_root() {
+        let repo_root = PathBuf::from("/repo");
+        let env = std::ffi::OsString::from("state");
+        assert_eq!(
+            resolve_pm_root(&repo_root, None, Some(env.as_os_str())),
+            repo_root.join("state")
+        );
     }
 }
