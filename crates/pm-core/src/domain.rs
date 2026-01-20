@@ -355,6 +355,7 @@ pub struct RunRequest {
     pub apply_patch: Option<PathBuf>,
     pub hook: Option<HookSpec>,
     pub max_concurrency: usize,
+    pub cargo_test: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

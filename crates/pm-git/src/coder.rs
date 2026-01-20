@@ -243,6 +243,7 @@ impl pm_core::Coder for GitCoder {
         if is_rust_repo(&repo_dir) {
             let fmt_log = artifacts_dir.join("cargo-fmt.log");
             let check_log = artifacts_dir.join("cargo-check.log");
+            let test_log = artifacts_dir.join("cargo-test.log");
             let cargo_target_dir = task_paths.cargo_target_dir();
             let had_cargo_lock = repo_dir.join("Cargo.lock").is_file();
 
@@ -296,6 +297,32 @@ impl pm_core::Coder for GitCoder {
                     head_commit,
                 )
                 .await;
+            }
+
+            if request.cargo_test {
+                let test_step = match run_cargo_step(
+                    &repo_dir,
+                    "cargo_test",
+                    &["test", "--workspace", "--all-targets"],
+                    &test_log,
+                    Some(&cargo_target_dir),
+                )
+                .await
+                {
+                    Ok(step) => step,
+                    Err(err) => return Self::failed_pr(&fail_ctx, checks, err, head_commit).await,
+                };
+                let test_ok = test_step.ok;
+                checks.steps.push(test_step);
+                if !test_ok {
+                    return Self::failed_pr(
+                        &fail_ctx,
+                        checks,
+                        anyhow::anyhow!("cargo test failed; see {}", test_log.display()),
+                        head_commit,
+                    )
+                    .await;
+                }
             }
 
             if !had_cargo_lock {

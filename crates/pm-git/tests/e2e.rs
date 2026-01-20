@@ -275,6 +275,7 @@ async fn inject_run_merge_updates_base_branch() -> anyhow::Result<()> {
                 apply_patch: Some(patch_path),
                 hook: None,
                 max_concurrency: 1,
+                cargo_test: false,
             },
         )
         .await?;
@@ -344,6 +345,7 @@ async fn inject_run_merge_uses_concurrent_path() -> anyhow::Result<()> {
                 apply_patch: Some(patch_path),
                 hook: None,
                 max_concurrency: 2,
+                cargo_test: false,
             },
         )
         .await?;
@@ -412,6 +414,7 @@ index 1111111..2222222 100644
                 apply_patch: Some(patch_path),
                 hook: None,
                 max_concurrency: 1,
+                cargo_test: false,
             },
         )
         .await?;
@@ -578,6 +581,7 @@ async fn run_with_missing_bare_repo_records_clone_failure() -> anyhow::Result<()
                 apply_patch: None,
                 hook: None,
                 max_concurrency: 1,
+                cargo_test: false,
             },
         )
         .await?;
@@ -650,6 +654,7 @@ async fn rust_repo_does_not_pollute_task_repo_with_target_dir() -> anyhow::Resul
                 apply_patch: None,
                 hook: None,
                 max_concurrency: 1,
+                cargo_test: false,
             },
         )
         .await?;
@@ -713,6 +718,7 @@ async fn rust_repo_without_lockfile_does_not_create_noise_pr() -> anyhow::Result
                 apply_patch: None,
                 hook: None,
                 max_concurrency: 1,
+                cargo_test: false,
             },
         )
         .await?;
@@ -730,6 +736,63 @@ async fn rust_repo_without_lockfile_does_not_create_noise_pr() -> anyhow::Result
     let session_paths = SessionPaths::new(&repo.name, result.session.id);
     let task_paths = session_paths.task_paths(&TaskId::sanitize("main"));
     assert!(!task_paths.repo_dir().join("target").exists());
+    assert!(!task_paths.repo_dir().join("Cargo.lock").exists());
+
+    let _ = tokio::fs::remove_dir_all(session_paths.root()).await;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn rust_repo_without_lockfile_does_not_create_noise_pr_with_cargo_test() -> anyhow::Result<()>
+{
+    let tmp = tempfile::tempdir()?;
+    let source_repo = tmp.path().join("source-rust-nolock");
+    init_rust_source_repo_without_lock(&source_repo)?;
+
+    let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
+    let repo_manager = RepoManager::new(pm_paths.clone());
+    let repo_name = RepositoryName::sanitize("source-rust-nolock");
+    let source_repo_arg = source_repo.to_string_lossy();
+    let repo = repo_manager
+        .inject(&repo_name, source_repo_arg.as_ref())
+        .await?;
+
+    let storage = FsStorage::new(pm_paths.data_dir());
+
+    let orchestrator = Orchestrator {
+        storage: Arc::new(storage),
+        hook_runner: Arc::new(NoopHookRunner),
+        events: EventBus::default(),
+        architect: Arc::new(SingleTaskArchitect),
+        coder: Arc::new(GitCoder::default()),
+        merger: Arc::new(GitMerger::default()),
+    };
+
+    let result = orchestrator
+        .run(
+            &pm_paths,
+            repo.clone(),
+            pm_core::RunRequest {
+                pr_name: PrName::sanitize("test"),
+                prompt: "no changes".to_string(),
+                base_branch: "main".to_string(),
+                tasks: None,
+                apply_patch: None,
+                hook: None,
+                max_concurrency: 1,
+                cargo_test: true,
+            },
+        )
+        .await?;
+
+    assert_eq!(result.prs.len(), 1);
+    let pr = &result.prs[0];
+    assert_eq!(pr.status, PullRequestStatus::NoChanges);
+    assert!(pr.checks.steps.iter().any(|step| step.name == "cargo_test"));
+
+    let session_paths = SessionPaths::new(&repo.name, result.session.id);
+    let task_paths = session_paths.task_paths(&TaskId::sanitize("main"));
     assert!(!task_paths.repo_dir().join("Cargo.lock").exists());
 
     let _ = tokio::fs::remove_dir_all(session_paths.root()).await;

@@ -840,6 +840,7 @@ Some intro.
                     apply_patch: None,
                     hook: None,
                     max_concurrency: 8,
+                    cargo_test: false,
                 },
             )
             .await?;
@@ -904,6 +905,7 @@ Some intro.
             apply_patch: None,
             hook: None,
             max_concurrency: 8,
+            cargo_test: false,
         };
         let run =
             tokio::spawn(async move { orchestrator.run(&pm_paths_run, repo_run, request).await });
@@ -1035,6 +1037,7 @@ Some intro.
                     apply_patch: None,
                     hook: None,
                     max_concurrency: 8,
+                    cargo_test: false,
                 },
             )
             .await?;

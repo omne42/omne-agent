@@ -123,6 +123,9 @@ struct RunArgs {
     strict: bool,
     #[arg(long, default_value_t = false)]
     json: bool,
+    /// For Rust repos, also run `cargo test` before committing.
+    #[arg(long, default_value_t = false)]
+    cargo_test: bool,
     #[arg(
         long,
         default_value_t = false,
@@ -516,6 +519,7 @@ async fn run_session(
             hook,
             max_concurrency: args.max_concurrency as usize,
             tasks,
+            cargo_test: args.cargo_test,
         };
 
         orchestrator.run(repo_manager.paths(), repo, request).await
@@ -982,6 +986,27 @@ mod tests {
     }
 
     #[test]
+    fn cli_run_parses_cargo_test_flag() {
+        let cli = Cli::try_parse_from([
+            "code-pm",
+            "run",
+            "--repo",
+            "repo",
+            "--pr-name",
+            "demo",
+            "--prompt",
+            "x",
+            "--cargo-test",
+        ])
+        .unwrap();
+
+        let Command::Run(args) = cli.command else {
+            panic!("expected run subcommand");
+        };
+        assert!(args.cargo_test);
+    }
+
+    #[test]
     fn cli_rejects_auto_tasks_with_task_override() {
         let err = Cli::try_parse_from([
             "code-pm",
@@ -1167,6 +1192,7 @@ mod tests {
             stream_events_json: false,
             strict: false,
             json: false,
+            cargo_test: false,
             auto_tasks: false,
             tasks_file: None,
             task: Vec::new(),
@@ -1198,6 +1224,7 @@ mod tests {
             stream_events_json: false,
             strict: false,
             json: false,
+            cargo_test: false,
             auto_tasks: false,
             tasks_file: None,
             task: Vec::new(),
@@ -1459,6 +1486,7 @@ mod tests {
             stream_events_json: false,
             strict: false,
             json: false,
+            cargo_test: false,
             auto_tasks: false,
             tasks_file: Some(path),
             task: Vec::new(),
@@ -1487,6 +1515,7 @@ mod tests {
             stream_events_json: false,
             strict: false,
             json: false,
+            cargo_test: false,
             auto_tasks: false,
             tasks_file: None,
             task: vec![":x".to_string()],
