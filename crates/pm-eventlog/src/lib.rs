@@ -204,6 +204,7 @@ async fn sanitize_and_get_last_seq(
 #[derive(Debug, Clone)]
 pub struct ThreadState {
     pub thread_id: ThreadId,
+    pub cwd: Option<String>,
     pub last_seq: EventSeq,
     pub active_turn_id: Option<TurnId>,
     pub active_turn_interrupt_requested: bool,
@@ -213,6 +214,7 @@ impl ThreadState {
     pub fn new(thread_id: ThreadId) -> Self {
         Self {
             thread_id,
+            cwd: None,
             last_seq: EventSeq::ZERO,
             active_turn_id: None,
             active_turn_interrupt_requested: false,
@@ -236,7 +238,9 @@ impl ThreadState {
         }
 
         match &event.kind {
-            ThreadEventKind::ThreadCreated { .. } => {}
+            ThreadEventKind::ThreadCreated { cwd } => {
+                self.cwd = Some(cwd.clone());
+            }
             ThreadEventKind::TurnStarted { turn_id, .. } => {
                 if self.active_turn_id.is_some() {
                     anyhow::bail!("turn started while another turn is active");

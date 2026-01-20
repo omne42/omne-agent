@@ -509,6 +509,7 @@ async fn main() -> anyhow::Result<()> {
                             id,
                             serde_json::json!({
                                 "thread_id": handle.thread_id(),
+                                "cwd": state.cwd,
                                 "last_seq": handle.last_seq().0,
                                 "active_turn_id": state.active_turn_id,
                                 "active_turn_interrupt_requested": state.active_turn_interrupt_requested,
