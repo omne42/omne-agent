@@ -131,6 +131,30 @@ impl FromStr for ApprovalId {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
 #[serde(transparent)]
+pub struct ArtifactId(pub Uuid);
+
+impl ArtifactId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+}
+
+impl fmt::Display for ArtifactId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl FromStr for ArtifactId {
+    type Err = uuid::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self(Uuid::parse_str(s)?))
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct EventSeq(pub u64);
 
 impl EventSeq {
@@ -173,6 +197,33 @@ pub enum ApprovalPolicy {
 pub enum ApprovalDecision {
     Approved,
     Denied,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ArtifactProvenance {
+    pub thread_id: ThreadId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<TurnId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_id: Option<ToolId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_id: Option<ProcessId>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ArtifactMetadata {
+    pub artifact_id: ArtifactId,
+    pub artifact_type: String,
+    pub summary: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    pub updated_at: OffsetDateTime,
+    pub version: u32,
+    pub content_path: String,
+    pub size_bytes: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<ArtifactProvenance>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
