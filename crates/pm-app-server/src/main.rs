@@ -321,6 +321,16 @@ struct ProcessTailParams {
     max_lines: Option<usize>,
 }
 
+#[derive(Debug, Deserialize)]
+struct ProcessFollowParams {
+    process_id: ProcessId,
+    stream: ProcessStream,
+    #[serde(default)]
+    since_offset: u64,
+    #[serde(default)]
+    max_bytes: Option<u64>,
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -643,6 +653,21 @@ async fn main() -> anyhow::Result<()> {
             },
             "process/tail" => match serde_json::from_value::<ProcessTailParams>(request.params) {
                 Ok(params) => match handle_process_tail(&server, params).await {
+                    Ok(result) => JsonRpcResponse::ok(id, result),
+                    Err(err) => {
+                        JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None)
+                    }
+                },
+                Err(err) => JsonRpcResponse::err(
+                    id,
+                    JSONRPC_INVALID_PARAMS,
+                    "invalid params",
+                    Some(serde_json::json!({ "error": err.to_string() })),
+                ),
+            },
+            "process/follow" => match serde_json::from_value::<ProcessFollowParams>(request.params)
+            {
+                Ok(params) => match handle_process_follow(&server, params).await {
                     Ok(result) => JsonRpcResponse::ok(id, result),
                     Err(err) => {
                         JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None)
@@ -998,27 +1023,7 @@ async fn run_process_actor(
 }
 
 async fn handle_process_tail(server: &Server, params: ProcessTailParams) -> anyhow::Result<Value> {
-    let entry = {
-        server
-            .processes
-            .lock()
-            .await
-            .get(&params.process_id)
-            .cloned()
-    };
-
-    let (stdout_path, stderr_path) = if let Some(entry) = entry {
-        let info = entry.info.lock().await;
-        (info.stdout_path.clone(), info.stderr_path.clone())
-    } else {
-        let mut processes =
-            handle_process_list(server, ProcessListParams { thread_id: None }).await?;
-        let info = processes
-            .iter_mut()
-            .find(|p| p.process_id == params.process_id)
-            .ok_or_else(|| anyhow::anyhow!("process not found: {}", params.process_id))?;
-        (info.stdout_path.clone(), info.stderr_path.clone())
-    };
+    let (stdout_path, stderr_path) = resolve_process_log_paths(server, params.process_id).await?;
 
     let path = match params.stream {
         ProcessStream::Stdout => stdout_path,
@@ -1060,4 +1065,79 @@ async fn tail_file_lines(path: PathBuf, max_lines: usize) -> anyhow::Result<Stri
     let lines = text.lines().collect::<Vec<_>>();
     let start_line = lines.len().saturating_sub(max_lines);
     Ok(lines[start_line..].join("\n"))
+}
+
+async fn handle_process_follow(
+    server: &Server,
+    params: ProcessFollowParams,
+) -> anyhow::Result<Value> {
+    let (stdout_path, stderr_path) = resolve_process_log_paths(server, params.process_id).await?;
+
+    let path = match params.stream {
+        ProcessStream::Stdout => stdout_path,
+        ProcessStream::Stderr => stderr_path,
+    };
+
+    let max_bytes = params.max_bytes.unwrap_or(64 * 1024).min(1024 * 1024);
+    let (text, next_offset, eof) =
+        read_file_chunk(PathBuf::from(path), params.since_offset, max_bytes).await?;
+
+    Ok(serde_json::json!({
+        "text": text,
+        "next_offset": next_offset,
+        "eof": eof,
+    }))
+}
+
+async fn resolve_process_log_paths(
+    server: &Server,
+    process_id: ProcessId,
+) -> anyhow::Result<(String, String)> {
+    let entry = server.processes.lock().await.get(&process_id).cloned();
+
+    if let Some(entry) = entry {
+        let info = entry.info.lock().await;
+        return Ok((info.stdout_path.clone(), info.stderr_path.clone()));
+    }
+
+    let mut processes = handle_process_list(server, ProcessListParams { thread_id: None }).await?;
+    let info = processes
+        .iter_mut()
+        .find(|p| p.process_id == process_id)
+        .ok_or_else(|| anyhow::anyhow!("process not found: {}", process_id))?;
+    Ok((info.stdout_path.clone(), info.stderr_path.clone()))
+}
+
+async fn read_file_chunk(
+    path: PathBuf,
+    since_offset: u64,
+    max_bytes: u64,
+) -> anyhow::Result<(String, u64, bool)> {
+    let mut file = tokio::fs::File::open(&path)
+        .await
+        .with_context(|| format!("open {}", path.display()))?;
+    let len = file
+        .metadata()
+        .await
+        .with_context(|| format!("stat {}", path.display()))?
+        .len();
+
+    let start = since_offset.min(len);
+    file.seek(SeekFrom::Start(start))
+        .await
+        .with_context(|| format!("seek {}", path.display()))?;
+
+    let max_bytes = max_bytes.min(1024 * 1024);
+    let buf_len = usize::try_from(max_bytes).unwrap_or(1024 * 1024);
+    let mut buf = vec![0u8; buf_len];
+    let n = file
+        .read(&mut buf)
+        .await
+        .with_context(|| format!("read {}", path.display()))?;
+    buf.truncate(n);
+
+    let text = String::from_utf8_lossy(&buf).to_string();
+    let next_offset = start + n as u64;
+    let eof = next_offset >= len;
+    Ok((text, next_offset, eof))
 }

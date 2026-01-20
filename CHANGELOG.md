@@ -16,7 +16,7 @@
 - 新增 `pm-app-server`：最小 JSON-RPC over stdio 控制面（`initialize` + `thread/*` + `turn/*`），用于验证 v0.2.0 的 thread/turn/interrupt 与落盘回放。
 - 新增 `pm-core::threads`：`ThreadStore` + `ThreadHandle`，基于 JSONL event log 实现 thread 创建/列举/resume（resume 会修复未完成 turn/进程并落盘）。
 - `pm-app-server` 新增 `thread/state`：返回 thread 派生状态（active turn、`last_seq`、interrupt 标记）。
-- `pm-app-server` 新增 `process/*`：`process/start`（落盘 stdout/stderr）、`process/list`、`process/tail`（只读查看）、`process/kill`（终止后台进程）。
+- `pm-app-server` 新增 `process/*`：`process/start`（落盘 stdout/stderr）、`process/list`、`process/tail`（只读查看）、`process/follow`（增量查看）、`process/kill`（终止后台进程）。
 
 ### Changed
 - 重写 `docs/implementation_plan.md`：以 Agent CLI（tool/sandbox/approvals + 事件流）为核心基建，Git 降级为交付适配层，并明确 RTS 控制面最小能力集。
