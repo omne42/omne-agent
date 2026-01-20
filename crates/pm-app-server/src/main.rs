@@ -2261,7 +2261,29 @@ async fn handle_file_write(server: &Server, params: FileWriteParams) -> anyhow::
                 match remembered {
                     Some(pm_protocol::ApprovalDecision::Approved) => {}
                     Some(pm_protocol::ApprovalDecision::Denied) => {
-                        anyhow::bail!("approval denied (remembered): file/write {}", params.path);
+                        thread_rt
+                            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                                tool_id,
+                                turn_id: params.turn_id,
+                                tool: "file/write".to_string(),
+                                params: Some(approval_params),
+                            })
+                            .await?;
+                        thread_rt
+                            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                                tool_id,
+                                status: pm_protocol::ToolStatus::Denied,
+                                error: Some("approval denied (remembered)".to_string()),
+                                result: Some(serde_json::json!({
+                                    "approval_policy": approval_policy,
+                                })),
+                            })
+                            .await?;
+                        return Ok(serde_json::json!({
+                            "tool_id": tool_id,
+                            "denied": true,
+                            "remembered": true,
+                        }));
                     }
                     None => {
                         let approval_id = pm_protocol::ApprovalId::new();
@@ -2418,7 +2440,29 @@ async fn handle_file_patch(server: &Server, params: FilePatchParams) -> anyhow::
                 match remembered {
                     Some(pm_protocol::ApprovalDecision::Approved) => {}
                     Some(pm_protocol::ApprovalDecision::Denied) => {
-                        anyhow::bail!("approval denied (remembered): file/patch {}", params.path);
+                        thread_rt
+                            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                                tool_id,
+                                turn_id: params.turn_id,
+                                tool: "file/patch".to_string(),
+                                params: Some(approval_params),
+                            })
+                            .await?;
+                        thread_rt
+                            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                                tool_id,
+                                status: pm_protocol::ToolStatus::Denied,
+                                error: Some("approval denied (remembered)".to_string()),
+                                result: Some(serde_json::json!({
+                                    "approval_policy": approval_policy,
+                                })),
+                            })
+                            .await?;
+                        return Ok(serde_json::json!({
+                            "tool_id": tool_id,
+                            "denied": true,
+                            "remembered": true,
+                        }));
                     }
                     None => {
                         let approval_id = pm_protocol::ApprovalId::new();
@@ -2628,7 +2672,29 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
                 match remembered {
                     Some(pm_protocol::ApprovalDecision::Approved) => {}
                     Some(pm_protocol::ApprovalDecision::Denied) => {
-                        anyhow::bail!("approval denied (remembered): file/edit {}", params.path);
+                        thread_rt
+                            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                                tool_id,
+                                turn_id: params.turn_id,
+                                tool: "file/edit".to_string(),
+                                params: Some(approval_params),
+                            })
+                            .await?;
+                        thread_rt
+                            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                                tool_id,
+                                status: pm_protocol::ToolStatus::Denied,
+                                error: Some("approval denied (remembered)".to_string()),
+                                result: Some(serde_json::json!({
+                                    "approval_policy": approval_policy,
+                                })),
+                            })
+                            .await?;
+                        return Ok(serde_json::json!({
+                            "tool_id": tool_id,
+                            "denied": true,
+                            "remembered": true,
+                        }));
                     }
                     None => {
                         let approval_id = pm_protocol::ApprovalId::new();
@@ -2819,7 +2885,29 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
                 match remembered {
                     Some(pm_protocol::ApprovalDecision::Approved) => {}
                     Some(pm_protocol::ApprovalDecision::Denied) => {
-                        anyhow::bail!("approval denied (remembered): file/delete {}", params.path);
+                        thread_rt
+                            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                                tool_id,
+                                turn_id: params.turn_id,
+                                tool: "file/delete".to_string(),
+                                params: Some(approval_params),
+                            })
+                            .await?;
+                        thread_rt
+                            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                                tool_id,
+                                status: pm_protocol::ToolStatus::Denied,
+                                error: Some("approval denied (remembered)".to_string()),
+                                result: Some(serde_json::json!({
+                                    "approval_policy": approval_policy,
+                                })),
+                            })
+                            .await?;
+                        return Ok(serde_json::json!({
+                            "tool_id": tool_id,
+                            "denied": true,
+                            "remembered": true,
+                        }));
                     }
                     None => {
                         let approval_id = pm_protocol::ApprovalId::new();
@@ -2987,7 +3075,29 @@ async fn handle_fs_mkdir(server: &Server, params: FsMkdirParams) -> anyhow::Resu
                 match remembered {
                     Some(pm_protocol::ApprovalDecision::Approved) => {}
                     Some(pm_protocol::ApprovalDecision::Denied) => {
-                        anyhow::bail!("approval denied (remembered): fs/mkdir {}", params.path);
+                        thread_rt
+                            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                                tool_id,
+                                turn_id: params.turn_id,
+                                tool: "fs/mkdir".to_string(),
+                                params: Some(approval_params),
+                            })
+                            .await?;
+                        thread_rt
+                            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                                tool_id,
+                                status: pm_protocol::ToolStatus::Denied,
+                                error: Some("approval denied (remembered)".to_string()),
+                                result: Some(serde_json::json!({
+                                    "approval_policy": approval_policy,
+                                })),
+                            })
+                            .await?;
+                        return Ok(serde_json::json!({
+                            "tool_id": tool_id,
+                            "denied": true,
+                            "remembered": true,
+                        }));
                     }
                     None => {
                         let approval_id = pm_protocol::ApprovalId::new();
@@ -3652,7 +3762,30 @@ async fn handle_process_start(
                 match remembered {
                     Some(pm_protocol::ApprovalDecision::Approved) => {}
                     Some(pm_protocol::ApprovalDecision::Denied) => {
-                        anyhow::bail!("approval denied (remembered): process/start");
+                        let tool_id = pm_protocol::ToolId::new();
+                        thread_rt
+                            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                                tool_id,
+                                turn_id: params.turn_id,
+                                tool: "process/start".to_string(),
+                                params: Some(approval_params),
+                            })
+                            .await?;
+                        thread_rt
+                            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                                tool_id,
+                                status: pm_protocol::ToolStatus::Denied,
+                                error: Some("approval denied (remembered)".to_string()),
+                                result: Some(serde_json::json!({
+                                    "approval_policy": approval_policy,
+                                })),
+                            })
+                            .await?;
+                        return Ok(serde_json::json!({
+                            "tool_id": tool_id,
+                            "denied": true,
+                            "remembered": true,
+                        }));
                     }
                     None => {
                         let approval_id = pm_protocol::ApprovalId::new();
