@@ -52,6 +52,42 @@ impl FsStorage {
         Ok(ids)
     }
 
+    pub async fn get_session_bundle(
+        &self,
+        id: SessionId,
+        all: bool,
+    ) -> anyhow::Result<Option<Value>> {
+        let mut out = serde_json::Map::new();
+
+        let result_key = format!("sessions/{id}/result");
+        if !all {
+            if let Some(value) = self.get_json(&result_key).await? {
+                out.insert("result".to_string(), value);
+                return Ok(Some(Value::Object(out)));
+            }
+        }
+
+        for (name, key) in [
+            ("session", format!("sessions/{id}/session")),
+            ("tasks", format!("sessions/{id}/tasks")),
+            ("prs", format!("sessions/{id}/prs")),
+            ("merge", format!("sessions/{id}/merge")),
+            ("result", result_key),
+        ] {
+            if let Some(value) = self.get_json(&key).await? {
+                if !all && name == "result" {
+                    continue;
+                }
+                out.insert(name.to_string(), value);
+            }
+        }
+
+        if out.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(Value::Object(out)))
+    }
+
     fn key_to_path(&self, key: &str) -> anyhow::Result<PathBuf> {
         let mut path = self.root.clone();
         for segment in key.split('/') {
@@ -257,6 +293,86 @@ mod tests {
             .await?;
 
         assert_eq!(storage.list_session_ids().await?, vec![id1, id2]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn get_session_bundle_prefers_result_by_default() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let storage = FsStorage::new(dir.path().to_path_buf());
+
+        let id: SessionId = "00000000-0000-0000-0000-000000000123".parse()?;
+        storage
+            .put_json(
+                &format!("sessions/{id}/session"),
+                &serde_json::json!({"id": id, "stage": "session"}),
+            )
+            .await?;
+        storage
+            .put_json(
+                &format!("sessions/{id}/result"),
+                &serde_json::json!({"id": id, "stage": "result"}),
+            )
+            .await?;
+
+        let bundle = storage.get_session_bundle(id, false).await?.unwrap();
+        assert_eq!(bundle["result"]["stage"], "result");
+        assert!(bundle.get("session").is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn get_session_bundle_falls_back_when_result_missing() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let storage = FsStorage::new(dir.path().to_path_buf());
+
+        let id: SessionId = "00000000-0000-0000-0000-000000000456".parse()?;
+        storage
+            .put_json(
+                &format!("sessions/{id}/session"),
+                &serde_json::json!({"id": id, "stage": "session"}),
+            )
+            .await?;
+        storage
+            .put_json(
+                &format!("sessions/{id}/tasks"),
+                &serde_json::json!([{"id":"t1"}]),
+            )
+            .await?;
+
+        let bundle = storage.get_session_bundle(id, false).await?.unwrap();
+        assert_eq!(bundle["session"]["stage"], "session");
+        assert_eq!(bundle["tasks"][0]["id"], "t1");
+        assert!(bundle.get("result").is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn get_session_bundle_all_includes_all_keys() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let storage = FsStorage::new(dir.path().to_path_buf());
+
+        let id: SessionId = "00000000-0000-0000-0000-000000000789".parse()?;
+        storage
+            .put_json(&format!("sessions/{id}/session"), &serde_json::json!({"id": id}))
+            .await?;
+        storage
+            .put_json(&format!("sessions/{id}/tasks"), &serde_json::json!([{"id":"t1"}]))
+            .await?;
+        storage
+            .put_json(&format!("sessions/{id}/prs"), &serde_json::json!([]))
+            .await?;
+        storage
+            .put_json(&format!("sessions/{id}/merge"), &serde_json::json!({"merged": true}))
+            .await?;
+        storage
+            .put_json(&format!("sessions/{id}/result"), &serde_json::json!({"id": id}))
+            .await?;
+
+        let bundle = storage.get_session_bundle(id, true).await?.unwrap();
+        for key in ["session", "tasks", "prs", "merge", "result"] {
+            assert!(bundle.get(key).is_some(), "missing key {key}");
+        }
         Ok(())
     }
 }
