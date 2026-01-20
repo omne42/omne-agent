@@ -48,8 +48,7 @@ impl FsStorage {
             };
             ids.push(id);
         }
-        ids.sort();
-        ids.dedup();
+        ids.sort_unstable();
         Ok(ids)
     }
 
