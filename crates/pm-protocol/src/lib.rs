@@ -79,6 +79,30 @@ impl FromStr for ProcessId {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
 #[serde(transparent)]
+pub struct ToolId(pub Uuid);
+
+impl ToolId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+}
+
+impl fmt::Display for ToolId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl FromStr for ToolId {
+    type Err = uuid::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self(Uuid::parse_str(s)?))
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct EventSeq(pub u64);
 
 impl EventSeq {
@@ -97,6 +121,15 @@ pub enum TurnStatus {
     Completed,
     Interrupted,
     Failed,
+    Cancelled,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolStatus {
+    Completed,
+    Failed,
+    Denied,
     Cancelled,
 }
 
@@ -132,6 +165,24 @@ pub enum ThreadEventKind {
         status: TurnStatus,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
+    },
+
+    ToolStarted {
+        tool_id: ToolId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        turn_id: Option<TurnId>,
+        tool: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        params: Option<serde_json::Value>,
+    },
+
+    ToolCompleted {
+        tool_id: ToolId,
+        status: ToolStatus,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        result: Option<serde_json::Value>,
     },
 
     ProcessStarted {

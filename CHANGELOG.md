@@ -31,6 +31,7 @@
 - 细化 v0.2.0 “不会丢”的事件流语义：订阅端 `since_seq` 重放、允许重复（at-least-once）+ `seq` 去重；补齐 approval 记忆范围、artifact metadata/分片、通知节流与 process registry 最小字段（见 `docs/v0.2.0_parity.md` / `docs/rts_workflow.md`）。
 - `pm-protocol`：`TurnCompleted` 事件增加可选 `reason` 字段（便于 resume 修复与审计）。
 - `pm-protocol`：新增 `ProcessId` 与 `ProcessStarted/ProcessKillRequested/ProcessExited` 事件，作为 process registry 的可回放真相来源。
+- `pm-protocol`：新增 `ToolId` 与 `ToolStarted/ToolCompleted` 事件，作为 tool runtime 的可审计边界。
 - workspace `tokio` 特性启用 `io-std`（支持 app-server 的 stdio 读写）。
 
 ### Fixed
