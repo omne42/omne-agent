@@ -89,6 +89,9 @@ impl FsStorage {
     }
 
     pub async fn get_session_meta(&self, id: SessionId) -> anyhow::Result<Option<SessionMeta>> {
+        if let Some(meta) = self.get_typed_json(&format!("sessions/{id}/meta")).await? {
+            return Ok(Some(meta));
+        }
         self.get_typed_json(&format!("sessions/{id}/session")).await
     }
 
@@ -421,6 +424,45 @@ mod tests {
         for key in ["session", "tasks", "prs", "merge", "result"] {
             assert!(bundle.get(key).is_some(), "missing key {key}");
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn get_session_meta_prefers_meta_file_when_present() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let storage = FsStorage::new(dir.path().to_path_buf());
+
+        let id: SessionId = "00000000-0000-0000-0000-000000000999".parse()?;
+        storage
+            .put_json(
+                &format!("sessions/{id}/meta"),
+                &serde_json::json!({
+                    "id": id,
+                    "repo": "repo-meta",
+                    "pr_name": "pr-meta",
+                    "base_branch": "main",
+                    "created_at": "2026-01-20T00:00:00Z",
+                }),
+            )
+            .await?;
+        storage
+            .put_json(
+                &format!("sessions/{id}/session"),
+                &serde_json::json!({
+                    "id": id,
+                    "repo": "repo-session",
+                    "pr_name": "pr-session",
+                    "prompt": "big prompt",
+                    "base_branch": "dev",
+                    "created_at": "2026-01-20T00:00:00Z",
+                }),
+            )
+            .await?;
+
+        let meta = storage.get_session_meta(id).await?.unwrap();
+        assert_eq!(meta.repo.as_str(), "repo-meta");
+        assert_eq!(meta.pr_name.as_str(), "pr-meta");
+        assert_eq!(meta.base_branch, "main");
         Ok(())
     }
 

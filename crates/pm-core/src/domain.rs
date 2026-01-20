@@ -254,6 +254,18 @@ pub struct SessionMeta {
     pub created_at: OffsetDateTime,
 }
 
+impl Session {
+    pub fn meta(&self) -> SessionMeta {
+        SessionMeta {
+            id: self.id,
+            repo: self.repo.clone(),
+            pr_name: self.pr_name.clone(),
+            base_branch: self.base_branch.clone(),
+            created_at: self.created_at,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TaskSpec {
     pub id: TaskId,

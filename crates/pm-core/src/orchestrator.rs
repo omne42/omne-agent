@@ -202,9 +202,8 @@ impl Orchestrator {
         tokio::fs::create_dir_all(session_paths.root()).await?;
         tokio::fs::create_dir_all(session_paths.logs_dir()).await?;
         tokio::fs::create_dir_all(session_paths.tasks_dir()).await?;
-        tokio::fs::create_dir_all(pm_paths.session_dir(session.id)).await?;
 
-        self.write_session_artifacts(pm_paths, session_paths.as_ref(), session.as_ref())
+        self.write_session_artifacts(session_paths.as_ref(), session.as_ref())
             .await?;
 
         self.events.emit(RunEvent::SessionCreated {
@@ -329,7 +328,7 @@ impl Orchestrator {
             merge,
         };
 
-        self.write_result_artifacts(pm_paths, session_paths.as_ref(), &result)
+        self.write_result_artifacts(session_paths.as_ref(), &result)
             .await?;
 
         self.storage
@@ -360,22 +359,23 @@ impl Orchestrator {
 
     async fn write_session_artifacts(
         &self,
-        pm_paths: &PmPaths,
         session_paths: &SessionPaths,
         session: &Session,
     ) -> anyhow::Result<()> {
         let session_json = serde_json::to_vec_pretty(session)?;
         tokio::fs::write(session_paths.root().join("session.json"), &session_json).await?;
-        tokio::fs::write(
-            pm_paths.session_dir(session.id).join("session.json"),
-            &session_json,
-        )
-        .await?;
 
         self.storage
             .put_json(
                 &format!("sessions/{}/session", session.id),
                 &serde_json::to_value(session)?,
+            )
+            .await?;
+
+        self.storage
+            .put_json(
+                &format!("sessions/{}/meta", session.id),
+                &serde_json::to_value(session.meta())?,
             )
             .await?;
         Ok(())
@@ -621,17 +621,11 @@ impl Orchestrator {
 
     async fn write_result_artifacts(
         &self,
-        pm_paths: &PmPaths,
         session_paths: &SessionPaths,
         result: &RunResult,
     ) -> anyhow::Result<()> {
         let result_json = serde_json::to_vec_pretty(result)?;
         tokio::fs::write(session_paths.root().join("result.json"), &result_json).await?;
-        tokio::fs::write(
-            pm_paths.session_dir(result.session.id).join("result.json"),
-            &result_json,
-        )
-        .await?;
         Ok(())
     }
 }
