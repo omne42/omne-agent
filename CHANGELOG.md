@@ -47,6 +47,7 @@
 - `pm-eventlog ThreadState`：增加 `approval_policy`（默认 auto-approve）；`pm-app-server thread/state` 返回当前策略。
 - `pm-eventlog ThreadState`：增加 `sandbox_policy`（默认 `workspace_write`）；`pm-app-server thread/state`/`thread/attention` 返回当前策略。
 - `pm-eventlog ThreadState`：增加 `model`/`openai_base_url`（默认跟随 env/default）；`pm-app-server thread/state`/`thread/attention`/`thread/config/explain` 返回当前值。
+- `pm-eventlog ThreadState`：增加 `last_turn_id/last_turn_status/last_turn_reason`；`pm-app-server thread/state`/`thread/attention` 返回 last turn 信息与 `attention_state`。
 - `pm-app-server thread/configure`：`approval_policy` 现在可选（省略时沿用当前），并支持设置 `model`/`openai_base_url`（thread override）。
 - `pm-app-server`：当 `approval_policy=manual` 时，`file/write`/`file/delete`/`fs/mkdir`/`process/start` 会返回 `needs_approval` 并写入 `ApprovalRequested`；提供 `approval_id` 且已 `approval/decide` 后才会执行。
 - `pm-app-server`：当 `sandbox_policy=read_only` 时，`file/write`/`file/patch`/`file/edit`/`file/delete`/`fs/mkdir`/`process/start` 会直接拒绝（ToolStatus=Denied）。

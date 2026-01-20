@@ -4,6 +4,7 @@ use anyhow::Context;
 use fs2::FileExt;
 use pm_protocol::{
     ApprovalPolicy, EventSeq, SandboxPolicy, ThreadEvent, ThreadEventKind, ThreadId, TurnId,
+    TurnStatus,
 };
 use time::OffsetDateTime;
 use tokio::io::AsyncWriteExt;
@@ -214,6 +215,9 @@ pub struct ThreadState {
     pub last_seq: EventSeq,
     pub active_turn_id: Option<TurnId>,
     pub active_turn_interrupt_requested: bool,
+    pub last_turn_id: Option<TurnId>,
+    pub last_turn_status: Option<TurnStatus>,
+    pub last_turn_reason: Option<String>,
 }
 
 impl ThreadState {
@@ -228,6 +232,9 @@ impl ThreadState {
             last_seq: EventSeq::ZERO,
             active_turn_id: None,
             active_turn_interrupt_requested: false,
+            last_turn_id: None,
+            last_turn_status: None,
+            last_turn_reason: None,
         }
     }
 
@@ -281,12 +288,19 @@ impl ThreadState {
                 }
                 self.active_turn_interrupt_requested = true;
             }
-            ThreadEventKind::TurnCompleted { turn_id, .. } => {
+            ThreadEventKind::TurnCompleted {
+                turn_id,
+                status,
+                reason,
+            } => {
                 if self.active_turn_id != Some(*turn_id) {
                     anyhow::bail!("turn completed for non-active turn");
                 }
                 self.active_turn_id = None;
                 self.active_turn_interrupt_requested = false;
+                self.last_turn_id = Some(*turn_id);
+                self.last_turn_status = Some(*status);
+                self.last_turn_reason = reason.clone();
             }
             _ => {}
         }

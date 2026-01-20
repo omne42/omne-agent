@@ -867,6 +867,9 @@ async fn main() -> anyhow::Result<()> {
                                 "last_seq": handle.last_seq().0,
                                 "active_turn_id": state.active_turn_id,
                                 "active_turn_interrupt_requested": state.active_turn_interrupt_requested,
+                                "last_turn_id": state.last_turn_id,
+                                "last_turn_status": state.last_turn_status,
+                                "last_turn_reason": state.last_turn_reason,
                             }),
                         )
                     }
@@ -1326,6 +1329,9 @@ async fn handle_thread_attention(
         last_seq,
         active_turn_id,
         active_turn_interrupt_requested,
+        last_turn_id,
+        last_turn_status,
+        last_turn_reason,
         approval_policy,
         sandbox_policy,
         model,
@@ -1338,6 +1344,9 @@ async fn handle_thread_attention(
             handle.last_seq().0,
             state.active_turn_id,
             state.active_turn_interrupt_requested,
+            state.last_turn_id,
+            state.last_turn_status,
+            state.last_turn_reason.clone(),
             state.approval_policy,
             state.sandbox_policy,
             state.model.clone(),
@@ -1402,6 +1411,20 @@ async fn handle_thread_attention(
         .map(|p| serde_json::to_value(p))
         .collect::<Result<Vec<_>, _>>()?;
 
+    let attention_state = if !pending_approvals.is_empty() {
+        "need_approval"
+    } else if active_turn_id.is_some() || !running_processes.is_empty() {
+        "running"
+    } else {
+        match last_turn_status {
+            Some(pm_protocol::TurnStatus::Completed) => "done",
+            Some(pm_protocol::TurnStatus::Interrupted) => "interrupted",
+            Some(pm_protocol::TurnStatus::Failed) => "failed",
+            Some(pm_protocol::TurnStatus::Cancelled) => "cancelled",
+            None => "idle",
+        }
+    };
+
     Ok(serde_json::json!({
         "thread_id": params.thread_id,
         "cwd": cwd,
@@ -1412,6 +1435,10 @@ async fn handle_thread_attention(
         "last_seq": last_seq,
         "active_turn_id": active_turn_id,
         "active_turn_interrupt_requested": active_turn_interrupt_requested,
+        "last_turn_id": last_turn_id,
+        "last_turn_status": last_turn_status,
+        "last_turn_reason": last_turn_reason,
+        "attention_state": attention_state,
         "pending_approvals": pending_approvals,
         "running_processes": running_processes,
     }))

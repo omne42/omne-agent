@@ -968,6 +968,9 @@ async fn run_tool_call_once(
                 "last_seq": handle.last_seq().0,
                 "active_turn_id": state.active_turn_id,
                 "active_turn_interrupt_requested": state.active_turn_interrupt_requested,
+                "last_turn_id": state.last_turn_id,
+                "last_turn_status": state.last_turn_status,
+                "last_turn_reason": state.last_turn_reason,
             }))
         }
         "thread_events" => {
