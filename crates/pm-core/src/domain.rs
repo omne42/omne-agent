@@ -4,6 +4,105 @@ use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
+mod serde_rfc3339_datetime {
+    use core::fmt;
+
+    use serde::de::{self, SeqAccess, Visitor};
+    use serde::{Deserializer, Serializer};
+    use time::format_description::well_known::Rfc3339;
+    use time::{Date, OffsetDateTime, UtcOffset};
+
+    pub fn serialize<S>(datetime: &OffsetDateTime, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let value = datetime
+            .format(&Rfc3339)
+            .map_err(serde::ser::Error::custom)?;
+        serializer.serialize_str(&value)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<OffsetDateTime, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(OffsetDateTimeVisitor)
+    }
+
+    struct OffsetDateTimeVisitor;
+
+    impl<'de> Visitor<'de> for OffsetDateTimeVisitor {
+        type Value = OffsetDateTime;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("RFC3339 datetime string, unix timestamp, or legacy tuple")
+        }
+
+        fn visit_str<E>(self, value: &str) -> Result<OffsetDateTime, E>
+        where
+            E: de::Error,
+        {
+            OffsetDateTime::parse(value, &Rfc3339).map_err(E::custom)
+        }
+
+        fn visit_i64<E>(self, value: i64) -> Result<OffsetDateTime, E>
+        where
+            E: de::Error,
+        {
+            OffsetDateTime::from_unix_timestamp(value).map_err(E::custom)
+        }
+
+        fn visit_u64<E>(self, value: u64) -> Result<OffsetDateTime, E>
+        where
+            E: de::Error,
+        {
+            let value = i64::try_from(value).map_err(|_| E::custom("timestamp out of range"))?;
+            OffsetDateTime::from_unix_timestamp(value).map_err(E::custom)
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> Result<OffsetDateTime, A::Error>
+        where
+            A: SeqAccess<'de>,
+        {
+            let year: i32 = seq
+                .next_element()?
+                .ok_or_else(|| de::Error::custom("expected year"))?;
+            let ordinal: u16 = seq
+                .next_element()?
+                .ok_or_else(|| de::Error::custom("expected day of year"))?;
+            let hour: u8 = seq
+                .next_element()?
+                .ok_or_else(|| de::Error::custom("expected hour"))?;
+            let minute: u8 = seq
+                .next_element()?
+                .ok_or_else(|| de::Error::custom("expected minute"))?;
+            let second: u8 = seq
+                .next_element()?
+                .ok_or_else(|| de::Error::custom("expected second"))?;
+            let nanosecond: u32 = seq
+                .next_element()?
+                .ok_or_else(|| de::Error::custom("expected nanosecond"))?;
+            let offset_hours: i8 = seq
+                .next_element()?
+                .ok_or_else(|| de::Error::custom("expected offset hours"))?;
+            let offset_minutes: i8 = seq
+                .next_element()?
+                .ok_or_else(|| de::Error::custom("expected offset minutes"))?;
+            let offset_seconds: i8 = seq
+                .next_element()?
+                .ok_or_else(|| de::Error::custom("expected offset seconds"))?;
+
+            Date::from_ordinal_date(year, ordinal)
+                .and_then(|date| date.with_hms_nano(hour, minute, second, nanosecond))
+                .and_then(|datetime| {
+                    UtcOffset::from_hms(offset_hours, offset_minutes, offset_seconds)
+                        .map(|offset| datetime.assume_offset(offset))
+                })
+                .map_err(de::Error::custom)
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum NameError {
     #[error("name must not be empty")]
@@ -141,6 +240,7 @@ pub struct Session {
     pub pr_name: PrName,
     pub prompt: String,
     pub base_branch: String,
+    #[serde(with = "serde_rfc3339_datetime")]
     pub created_at: OffsetDateTime,
 }
 
@@ -150,6 +250,7 @@ pub struct SessionMeta {
     pub repo: RepositoryName,
     pub pr_name: PrName,
     pub base_branch: String,
+    #[serde(with = "serde_rfc3339_datetime")]
     pub created_at: OffsetDateTime,
 }
 

@@ -277,7 +277,7 @@ async fn list_sessions_verbose_returns_session_meta_sorted() -> anyhow::Result<(
                 "pr_name": "pr",
                 "prompt": "old",
                 "base_branch": "main",
-                "created_at": [2026, 20, 0, 0, 10, 0, 0, 0, 0],
+                "created_at": "2026-01-20T00:00:10Z",
             }),
         )
         .await?;
@@ -290,7 +290,7 @@ async fn list_sessions_verbose_returns_session_meta_sorted() -> anyhow::Result<(
                 "pr_name": "pr",
                 "prompt": "new",
                 "base_branch": "main",
-                "created_at": [2026, 20, 0, 0, 20, 0, 0, 0, 0],
+                "created_at": "2026-01-20T00:00:20Z",
             }),
         )
         .await?;
@@ -329,7 +329,7 @@ async fn list_sessions_verbose_flag_without_value_is_true() -> anyhow::Result<()
                 "pr_name": "pr",
                 "prompt": "old",
                 "base_branch": "main",
-                "created_at": [2026, 20, 0, 0, 10, 0, 0, 0, 0],
+                "created_at": "2026-01-20T00:00:10Z",
             }),
         )
         .await?;
@@ -342,7 +342,7 @@ async fn list_sessions_verbose_flag_without_value_is_true() -> anyhow::Result<()
                 "pr_name": "pr",
                 "prompt": "new",
                 "base_branch": "main",
-                "created_at": [2026, 20, 0, 0, 20, 0, 0, 0, 0],
+                "created_at": "2026-01-20T00:00:20Z",
             }),
         )
         .await?;
@@ -382,7 +382,7 @@ async fn list_sessions_verbose_limit_truncates() -> anyhow::Result<()> {
                 "pr_name": "pr",
                 "prompt": "old",
                 "base_branch": "main",
-                "created_at": [2026, 20, 0, 0, 10, 0, 0, 0, 0],
+                "created_at": "2026-01-20T00:00:10Z",
             }),
         )
         .await?;
@@ -395,7 +395,7 @@ async fn list_sessions_verbose_limit_truncates() -> anyhow::Result<()> {
                 "pr_name": "pr",
                 "prompt": "new",
                 "base_branch": "main",
-                "created_at": [2026, 20, 0, 0, 20, 0, 0, 0, 0],
+                "created_at": "2026-01-20T00:00:20Z",
             }),
         )
         .await?;
