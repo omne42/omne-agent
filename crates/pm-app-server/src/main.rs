@@ -363,6 +363,30 @@ struct FileWriteParams {
 }
 
 #[derive(Debug, Deserialize)]
+struct FileDeleteParams {
+    thread_id: ThreadId,
+    #[serde(default)]
+    turn_id: Option<TurnId>,
+    #[serde(default)]
+    approval_id: Option<pm_protocol::ApprovalId>,
+    path: String,
+    #[serde(default)]
+    recursive: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct FsMkdirParams {
+    thread_id: ThreadId,
+    #[serde(default)]
+    turn_id: Option<TurnId>,
+    #[serde(default)]
+    approval_id: Option<pm_protocol::ApprovalId>,
+    path: String,
+    #[serde(default)]
+    recursive: bool,
+}
+
+#[derive(Debug, Deserialize)]
 struct ApprovalDecideParams {
     thread_id: ThreadId,
     approval_id: pm_protocol::ApprovalId,
@@ -773,6 +797,34 @@ async fn main() -> anyhow::Result<()> {
                     Some(serde_json::json!({ "error": err.to_string() })),
                 ),
             },
+            "file/delete" => match serde_json::from_value::<FileDeleteParams>(request.params) {
+                Ok(params) => match handle_file_delete(&server, params).await {
+                    Ok(result) => JsonRpcResponse::ok(id, result),
+                    Err(err) => {
+                        JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None)
+                    }
+                },
+                Err(err) => JsonRpcResponse::err(
+                    id,
+                    JSONRPC_INVALID_PARAMS,
+                    "invalid params",
+                    Some(serde_json::json!({ "error": err.to_string() })),
+                ),
+            },
+            "fs/mkdir" => match serde_json::from_value::<FsMkdirParams>(request.params) {
+                Ok(params) => match handle_fs_mkdir(&server, params).await {
+                    Ok(result) => JsonRpcResponse::ok(id, result),
+                    Err(err) => {
+                        JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None)
+                    }
+                },
+                Err(err) => JsonRpcResponse::err(
+                    id,
+                    JSONRPC_INVALID_PARAMS,
+                    "invalid params",
+                    Some(serde_json::json!({ "error": err.to_string() })),
+                ),
+            },
             "approval/decide" => {
                 match serde_json::from_value::<ApprovalDecideParams>(request.params) {
                     Ok(params) => match handle_approval_decide(&server, params).await {
@@ -1165,6 +1217,247 @@ async fn handle_file_write(server: &Server, params: FileWriteParams) -> anyhow::
                 "tool_id": tool_id,
                 "resolved_path": path.display().to_string(),
                 "bytes_written": bytes,
+            }))
+        }
+        Err(err) => {
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: pm_protocol::ToolStatus::Failed,
+                    error: Some(err.to_string()),
+                    result: None,
+                })
+                .await?;
+            Err(err)
+        }
+    }
+}
+
+async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow::Result<Value> {
+    let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
+
+    let approval_policy = {
+        let handle = thread_rt.handle.lock().await;
+        handle.state().approval_policy
+    };
+    let tool_id = pm_protocol::ToolId::new();
+
+    let approval_params = serde_json::json!({
+        "path": params.path.clone(),
+        "recursive": params.recursive,
+    });
+    if approval_policy == pm_protocol::ApprovalPolicy::Manual {
+        match params.approval_id {
+            Some(approval_id) => {
+                ensure_approval(
+                    server,
+                    params.thread_id,
+                    approval_id,
+                    "file/delete",
+                    &approval_params,
+                )
+                .await?;
+            }
+            None => {
+                let approval_id = pm_protocol::ApprovalId::new();
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ApprovalRequested {
+                        approval_id,
+                        turn_id: params.turn_id,
+                        action: "file/delete".to_string(),
+                        params: approval_params,
+                    })
+                    .await?;
+                return Ok(serde_json::json!({
+                    "needs_approval": true,
+                    "approval_id": approval_id,
+                }));
+            }
+        }
+    }
+
+    thread_rt
+        .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+            tool_id,
+            turn_id: params.turn_id,
+            tool: "file/delete".to_string(),
+            params: Some(approval_params),
+        })
+        .await?;
+
+    let thread_root = thread_root.clone();
+    let outcome: anyhow::Result<(bool, PathBuf)> = async {
+        let path = pm_core::resolve_file(
+            &thread_root,
+            Path::new(&params.path),
+            pm_core::PathAccess::Write,
+            false,
+        )
+        .await?;
+
+        if path == thread_root {
+            anyhow::bail!("refusing to delete thread root: {}", path.display());
+        }
+
+        let meta = match tokio::fs::symlink_metadata(&path).await {
+            Ok(meta) => meta,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok((false, path)),
+            Err(err) => return Err(err).with_context(|| format!("stat {}", path.display())),
+        };
+
+        if meta.is_dir() {
+            if params.recursive {
+                tokio::fs::remove_dir_all(&path)
+                    .await
+                    .with_context(|| format!("remove dir {}", path.display()))?;
+            } else {
+                tokio::fs::remove_dir(&path)
+                    .await
+                    .with_context(|| format!("remove dir {}", path.display()))?;
+            }
+        } else {
+            tokio::fs::remove_file(&path)
+                .await
+                .with_context(|| format!("remove file {}", path.display()))?;
+        }
+
+        Ok((true, path))
+    }
+    .await;
+
+    match outcome {
+        Ok((deleted, path)) => {
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: pm_protocol::ToolStatus::Completed,
+                    error: None,
+                    result: Some(serde_json::json!({
+                        "deleted": deleted,
+                        "path": path.display().to_string(),
+                    })),
+                })
+                .await?;
+            Ok(serde_json::json!({
+                "tool_id": tool_id,
+                "deleted": deleted,
+                "resolved_path": path.display().to_string(),
+            }))
+        }
+        Err(err) => {
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: pm_protocol::ToolStatus::Failed,
+                    error: Some(err.to_string()),
+                    result: None,
+                })
+                .await?;
+            Err(err)
+        }
+    }
+}
+
+async fn handle_fs_mkdir(server: &Server, params: FsMkdirParams) -> anyhow::Result<Value> {
+    let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
+
+    let approval_policy = {
+        let handle = thread_rt.handle.lock().await;
+        handle.state().approval_policy
+    };
+    let tool_id = pm_protocol::ToolId::new();
+
+    let approval_params = serde_json::json!({
+        "path": params.path.clone(),
+        "recursive": params.recursive,
+    });
+    if approval_policy == pm_protocol::ApprovalPolicy::Manual {
+        match params.approval_id {
+            Some(approval_id) => {
+                ensure_approval(
+                    server,
+                    params.thread_id,
+                    approval_id,
+                    "fs/mkdir",
+                    &approval_params,
+                )
+                .await?;
+            }
+            None => {
+                let approval_id = pm_protocol::ApprovalId::new();
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ApprovalRequested {
+                        approval_id,
+                        turn_id: params.turn_id,
+                        action: "fs/mkdir".to_string(),
+                        params: approval_params,
+                    })
+                    .await?;
+                return Ok(serde_json::json!({
+                    "needs_approval": true,
+                    "approval_id": approval_id,
+                }));
+            }
+        }
+    }
+
+    thread_rt
+        .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+            tool_id,
+            turn_id: params.turn_id,
+            tool: "fs/mkdir".to_string(),
+            params: Some(approval_params),
+        })
+        .await?;
+
+    let thread_root = thread_root.clone();
+    let outcome: anyhow::Result<(bool, PathBuf)> = async {
+        let path = pm_core::resolve_file(
+            &thread_root,
+            Path::new(&params.path),
+            pm_core::PathAccess::Write,
+            params.recursive,
+        )
+        .await?;
+
+        if path == thread_root {
+            anyhow::bail!("refusing to create thread root: {}", path.display());
+        }
+
+        match tokio::fs::create_dir(&path).await {
+            Ok(()) => Ok((true, path)),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                let meta = tokio::fs::metadata(&path)
+                    .await
+                    .with_context(|| format!("stat {}", path.display()))?;
+                if meta.is_dir() {
+                    Ok((false, path))
+                } else {
+                    anyhow::bail!("path exists and is not a directory: {}", path.display());
+                }
+            }
+            Err(err) => Err(err).with_context(|| format!("create dir {}", path.display())),
+        }
+    }
+    .await;
+
+    match outcome {
+        Ok((created, path)) => {
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: pm_protocol::ToolStatus::Completed,
+                    error: None,
+                    result: Some(serde_json::json!({
+                        "created": created,
+                        "path": path.display().to_string(),
+                    })),
+                })
+                .await?;
+            Ok(serde_json::json!({
+                "tool_id": tool_id,
+                "created": created,
+                "resolved_path": path.display().to_string(),
             }))
         }
         Err(err) => {

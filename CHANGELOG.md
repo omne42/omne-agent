@@ -19,7 +19,8 @@
 - `pm-app-server` 新增 `thread/state`：返回 thread 派生状态（active turn、`last_seq`、interrupt 标记）。
 - `pm-app-server` 新增 approvals 控制面：`thread/configure(approval_policy)`、`approval/list`、`approval/decide`。
 - `pm-app-server` 新增 `process/*`：`process/start`（落盘 stdout/stderr）、`process/list`、`process/tail`（只读查看）、`process/follow`（增量查看）、`process/kill`（终止后台进程）。
-- `pm-app-server` 新增 `file/*`：`file/read`、`file/write`（带 rooted path 校验，并记录 `ToolStarted/ToolCompleted` 事件）。
+- `pm-app-server` 新增 `file/*`：`file/read`、`file/write`、`file/delete`（带 rooted path 校验，并记录 `ToolStarted/ToolCompleted` 事件）。
+- `pm-app-server` 新增 `fs/*`：`fs/mkdir`（带 rooted path 校验，并记录 `ToolStarted/ToolCompleted` 事件）。
 
 ### Changed
 - 重写 `docs/implementation_plan.md`：以 Agent CLI（tool/sandbox/approvals + 事件流）为核心基建，Git 降级为交付适配层，并明确 RTS 控制面最小能力集。
