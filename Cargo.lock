@@ -771,6 +771,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "pm-eventlog"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "fs2",
+ "pm-protocol",
+ "serde_json",
+ "tempfile",
+ "time",
+ "tokio",
+]
+
+[[package]]
 name = "pm-git"
 version = "0.1.1"
 dependencies = [
@@ -803,6 +816,16 @@ dependencies = [
  "tower",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "pm-protocol"
+version = "0.1.1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "time",
+ "uuid",
 ]
 
 [[package]]

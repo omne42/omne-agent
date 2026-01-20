@@ -1,0 +1,16 @@
+[package]
+name = "pm-eventlog"
+edition.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+fs2.workspace = true
+pm-protocol = { path = "../pm-protocol" }
+serde_json.workspace = true
+time.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
