@@ -12,7 +12,7 @@ use pm_protocol::{EventSeq, ProcessId, ThreadEvent, ThreadId, TurnId, TurnStatus
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use time::format_description::well_known::Rfc3339;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::process::Command;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -329,6 +329,27 @@ struct ProcessFollowParams {
     since_offset: u64,
     #[serde(default)]
     max_bytes: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FileReadParams {
+    thread_id: ThreadId,
+    #[serde(default)]
+    turn_id: Option<TurnId>,
+    path: String,
+    #[serde(default)]
+    max_bytes: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FileWriteParams {
+    thread_id: ThreadId,
+    #[serde(default)]
+    turn_id: Option<TurnId>,
+    path: String,
+    text: String,
+    #[serde(default)]
+    create_parent_dirs: Option<bool>,
 }
 
 #[tokio::main]
@@ -681,6 +702,34 @@ async fn main() -> anyhow::Result<()> {
                     Some(serde_json::json!({ "error": err.to_string() })),
                 ),
             },
+            "file/read" => match serde_json::from_value::<FileReadParams>(request.params) {
+                Ok(params) => match handle_file_read(&server, params).await {
+                    Ok(result) => JsonRpcResponse::ok(id, result),
+                    Err(err) => {
+                        JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None)
+                    }
+                },
+                Err(err) => JsonRpcResponse::err(
+                    id,
+                    JSONRPC_INVALID_PARAMS,
+                    "invalid params",
+                    Some(serde_json::json!({ "error": err.to_string() })),
+                ),
+            },
+            "file/write" => match serde_json::from_value::<FileWriteParams>(request.params) {
+                Ok(params) => match handle_file_write(&server, params).await {
+                    Ok(result) => JsonRpcResponse::ok(id, result),
+                    Err(err) => {
+                        JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None)
+                    }
+                },
+                Err(err) => JsonRpcResponse::err(
+                    id,
+                    JSONRPC_INVALID_PARAMS,
+                    "invalid params",
+                    Some(serde_json::json!({ "error": err.to_string() })),
+                ),
+            },
             _ => JsonRpcResponse::err(
                 id,
                 JSONRPC_METHOD_NOT_FOUND,
@@ -693,6 +742,138 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+async fn load_thread_root(
+    server: &Server,
+    thread_id: ThreadId,
+) -> anyhow::Result<(Arc<ThreadRuntime>, PathBuf)> {
+    let thread_rt = server.get_or_load_thread(thread_id).await?;
+    let thread_cwd = {
+        let handle = thread_rt.handle.lock().await;
+        handle
+            .state()
+            .cwd
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("thread cwd is missing: {}", thread_id))?
+    };
+    let thread_root = pm_core::resolve_dir(Path::new(&thread_cwd), Path::new(".")).await?;
+    Ok((thread_rt, thread_root))
+}
+
+async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Result<Value> {
+    let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
+
+    let max_bytes = params.max_bytes.unwrap_or(256 * 1024).min(4 * 1024 * 1024);
+    let tool_id = pm_protocol::ToolId::new();
+
+    thread_rt
+        .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+            tool_id,
+            turn_id: params.turn_id,
+            tool: "file/read".to_string(),
+            params: Some(serde_json::json!({
+                "path": params.path.clone(),
+                "max_bytes": max_bytes,
+            })),
+        })
+        .await?;
+
+    let path = pm_core::resolve_file(
+        &thread_root,
+        Path::new(&params.path),
+        pm_core::PathAccess::Read,
+        false,
+    )
+    .await?;
+
+    let limit = max_bytes + 1;
+    let file = tokio::fs::File::open(&path)
+        .await
+        .with_context(|| format!("open {}", path.display()))?;
+    let mut buf = Vec::new();
+    file.take(limit).read_to_end(&mut buf).await?;
+
+    let truncated = buf.len() > max_bytes as usize;
+    if truncated {
+        buf.truncate(max_bytes as usize);
+    }
+    let bytes = buf.len();
+    let text = String::from_utf8(buf).context("file is not valid utf-8")?;
+
+    thread_rt
+        .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+            tool_id,
+            status: pm_protocol::ToolStatus::Completed,
+            error: None,
+            result: Some(serde_json::json!({
+                "bytes": bytes,
+                "truncated": truncated,
+            })),
+        })
+        .await?;
+
+    Ok(serde_json::json!({
+        "tool_id": tool_id,
+        "resolved_path": path.display().to_string(),
+        "text": text,
+        "truncated": truncated,
+    }))
+}
+
+async fn handle_file_write(server: &Server, params: FileWriteParams) -> anyhow::Result<Value> {
+    let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
+
+    let create_parent_dirs = params.create_parent_dirs.unwrap_or(true);
+    let tool_id = pm_protocol::ToolId::new();
+    let bytes = params.text.as_bytes().len();
+
+    thread_rt
+        .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+            tool_id,
+            turn_id: params.turn_id,
+            tool: "file/write".to_string(),
+            params: Some(serde_json::json!({
+                "path": params.path.clone(),
+                "bytes": bytes,
+                "create_parent_dirs": create_parent_dirs,
+            })),
+        })
+        .await?;
+
+    let path = pm_core::resolve_file(
+        &thread_root,
+        Path::new(&params.path),
+        pm_core::PathAccess::Write,
+        create_parent_dirs,
+    )
+    .await?;
+
+    tokio::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&path)
+        .await
+        .with_context(|| format!("open {}", path.display()))?
+        .write_all(params.text.as_bytes())
+        .await
+        .with_context(|| format!("write {}", path.display()))?;
+
+    thread_rt
+        .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+            tool_id,
+            status: pm_protocol::ToolStatus::Completed,
+            error: None,
+            result: Some(serde_json::json!({ "bytes": bytes })),
+        })
+        .await?;
+
+    Ok(serde_json::json!({
+        "tool_id": tool_id,
+        "resolved_path": path.display().to_string(),
+        "bytes_written": bytes,
+    }))
 }
 
 async fn handle_process_list(
@@ -835,16 +1016,7 @@ async fn handle_process_start(
         anyhow::bail!("argv must not be empty");
     }
 
-    let thread_rt = server.get_or_load_thread(params.thread_id).await?;
-    let thread_cwd = {
-        let handle = thread_rt.handle.lock().await;
-        handle
-            .state()
-            .cwd
-            .clone()
-            .ok_or_else(|| anyhow::anyhow!("thread cwd is missing: {}", params.thread_id))?
-    };
-    let thread_root = pm_core::resolve_dir(Path::new(&thread_cwd), Path::new(".")).await?;
+    let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
 
     let process_id = ProcessId::new();
     let thread_dir = server.thread_store.thread_dir(params.thread_id);
