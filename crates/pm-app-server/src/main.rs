@@ -263,6 +263,12 @@ struct ThreadStateParams {
 }
 
 #[derive(Debug, Deserialize)]
+struct ThreadConfigureParams {
+    thread_id: ThreadId,
+    approval_policy: pm_protocol::ApprovalPolicy,
+}
+
+#[derive(Debug, Deserialize)]
 struct ThreadEventsParams {
     thread_id: ThreadId,
     #[serde(default)]
@@ -350,6 +356,22 @@ struct FileWriteParams {
     text: String,
     #[serde(default)]
     create_parent_dirs: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApprovalDecideParams {
+    thread_id: ThreadId,
+    approval_id: pm_protocol::ApprovalId,
+    decision: pm_protocol::ApprovalDecision,
+    #[serde(default)]
+    reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApprovalListParams {
+    thread_id: ThreadId,
+    #[serde(default)]
+    include_decided: bool,
 }
 
 #[tokio::main]
@@ -549,6 +571,22 @@ async fn main() -> anyhow::Result<()> {
                     Some(serde_json::json!({ "error": err.to_string() })),
                 ),
             },
+            "thread/configure" => {
+                match serde_json::from_value::<ThreadConfigureParams>(request.params) {
+                    Ok(params) => match handle_thread_configure(&server, params).await {
+                        Ok(result) => JsonRpcResponse::ok(id, result),
+                        Err(err) => {
+                            JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None)
+                        }
+                    },
+                    Err(err) => JsonRpcResponse::err(
+                        id,
+                        JSONRPC_INVALID_PARAMS,
+                        "invalid params",
+                        Some(serde_json::json!({ "error": err.to_string() })),
+                    ),
+                }
+            }
             "turn/start" => match serde_json::from_value::<TurnStartParams>(request.params) {
                 Ok(params) => match server.get_or_load_thread(params.thread_id).await {
                     Ok(rt) => match rt.start_turn(params.input).await {
@@ -731,6 +769,36 @@ async fn main() -> anyhow::Result<()> {
                     Some(serde_json::json!({ "error": err.to_string() })),
                 ),
             },
+            "approval/decide" => {
+                match serde_json::from_value::<ApprovalDecideParams>(request.params) {
+                    Ok(params) => match handle_approval_decide(&server, params).await {
+                        Ok(result) => JsonRpcResponse::ok(id, result),
+                        Err(err) => {
+                            JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None)
+                        }
+                    },
+                    Err(err) => JsonRpcResponse::err(
+                        id,
+                        JSONRPC_INVALID_PARAMS,
+                        "invalid params",
+                        Some(serde_json::json!({ "error": err.to_string() })),
+                    ),
+                }
+            }
+            "approval/list" => match serde_json::from_value::<ApprovalListParams>(request.params) {
+                Ok(params) => match handle_approval_list(&server, params).await {
+                    Ok(result) => JsonRpcResponse::ok(id, result),
+                    Err(err) => {
+                        JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None)
+                    }
+                },
+                Err(err) => JsonRpcResponse::err(
+                    id,
+                    JSONRPC_INVALID_PARAMS,
+                    "invalid params",
+                    Some(serde_json::json!({ "error": err.to_string() })),
+                ),
+            },
             _ => JsonRpcResponse::err(
                 id,
                 JSONRPC_METHOD_NOT_FOUND,
@@ -743,6 +811,104 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+async fn handle_thread_configure(
+    server: &Server,
+    params: ThreadConfigureParams,
+) -> anyhow::Result<Value> {
+    let rt = server.get_or_load_thread(params.thread_id).await?;
+    rt.append_event(pm_protocol::ThreadEventKind::ThreadConfigUpdated {
+        approval_policy: params.approval_policy,
+    })
+    .await?;
+    Ok(serde_json::json!({ "ok": true }))
+}
+
+async fn handle_approval_decide(
+    server: &Server,
+    params: ApprovalDecideParams,
+) -> anyhow::Result<Value> {
+    let rt = server.get_or_load_thread(params.thread_id).await?;
+    rt.append_event(pm_protocol::ThreadEventKind::ApprovalDecided {
+        approval_id: params.approval_id,
+        decision: params.decision,
+        reason: params.reason,
+    })
+    .await?;
+    Ok(serde_json::json!({ "ok": true }))
+}
+
+async fn handle_approval_list(
+    server: &Server,
+    params: ApprovalListParams,
+) -> anyhow::Result<Value> {
+    let events = server
+        .thread_store
+        .read_events_since(params.thread_id, EventSeq::ZERO)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("thread not found: {}", params.thread_id))?;
+
+    let mut requested = HashMap::<pm_protocol::ApprovalId, serde_json::Value>::new();
+    let mut decided = HashMap::<pm_protocol::ApprovalId, serde_json::Value>::new();
+
+    for event in events {
+        let ts = event.timestamp.format(&Rfc3339)?;
+        match event.kind {
+            pm_protocol::ThreadEventKind::ApprovalRequested {
+                approval_id,
+                turn_id,
+                action,
+                params,
+            } => {
+                requested.insert(
+                    approval_id,
+                    serde_json::json!({
+                        "approval_id": approval_id,
+                        "turn_id": turn_id,
+                        "action": action,
+                        "params": params,
+                        "requested_at": ts,
+                    }),
+                );
+            }
+            pm_protocol::ThreadEventKind::ApprovalDecided {
+                approval_id,
+                decision,
+                reason,
+            } => {
+                decided.insert(
+                    approval_id,
+                    serde_json::json!({
+                        "approval_id": approval_id,
+                        "decision": decision,
+                        "reason": reason,
+                        "decided_at": ts,
+                    }),
+                );
+            }
+            _ => {}
+        }
+    }
+
+    let mut approvals = Vec::new();
+    for (id, req) in requested {
+        if let Some(decision) = decided.get(&id) {
+            if params.include_decided {
+                approvals.push(serde_json::json!({
+                    "request": req,
+                    "decision": decision,
+                }));
+            }
+        } else {
+            approvals.push(serde_json::json!({
+                "request": req,
+                "decision": null,
+            }));
+        }
+    }
+
+    Ok(serde_json::json!({ "approvals": approvals }))
 }
 
 async fn load_thread_root(

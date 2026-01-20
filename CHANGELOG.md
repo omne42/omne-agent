@@ -17,6 +17,7 @@
 - 新增 `pm-core::threads`：`ThreadStore` + `ThreadHandle`，基于 JSONL event log 实现 thread 创建/列举/resume（resume 会修复未完成 turn/进程并落盘）。
 - 新增 `pm-core::sandbox`：rooted path 解析与边界校验（拒绝 `..` 穿越与 symlink 逃逸）。
 - `pm-app-server` 新增 `thread/state`：返回 thread 派生状态（active turn、`last_seq`、interrupt 标记）。
+- `pm-app-server` 新增 approvals 控制面：`thread/configure(approval_policy)`、`approval/list`、`approval/decide`。
 - `pm-app-server` 新增 `process/*`：`process/start`（落盘 stdout/stderr）、`process/list`、`process/tail`（只读查看）、`process/follow`（增量查看）、`process/kill`（终止后台进程）。
 - `pm-app-server` 新增 `file/*`：`file/read`、`file/write`（带 rooted path 校验，并记录 `ToolStarted/ToolCompleted` 事件）。
 
