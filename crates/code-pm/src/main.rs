@@ -287,17 +287,35 @@ async fn show_session_json(
     Ok(serde_json::to_string_pretty(&value)?)
 }
 
+async fn read_prompt(args: &RunArgs) -> anyhow::Result<String> {
+    match (&args.prompt, &args.prompt_file) {
+        (Some(text), None) => {
+            if text.trim().is_empty() {
+                anyhow::bail!("--prompt must not be empty");
+            }
+            Ok(text.clone())
+        }
+        (None, Some(path)) => {
+            let text = tokio::fs::read_to_string(path).await?;
+            if text.trim().is_empty() {
+                anyhow::bail!(
+                    "--prompt-file content must not be empty: {}",
+                    path.display()
+                );
+            }
+            Ok(text)
+        }
+        (None, None) => anyhow::bail!("missing --prompt or --prompt-file"),
+        (Some(_), Some(_)) => anyhow::bail!("use only one of --prompt or --prompt-file"),
+    }
+}
+
 async fn run_session(
     repo_manager: RepoManager,
     storage: FsStorage,
     mut args: RunArgs,
 ) -> anyhow::Result<()> {
-    let prompt = match (&args.prompt, &args.prompt_file) {
-        (Some(text), None) => text.clone(),
-        (None, Some(path)) => tokio::fs::read_to_string(path).await?,
-        (None, None) => anyhow::bail!("missing --prompt or --prompt-file"),
-        (Some(_), Some(_)) => anyhow::bail!("use only one of --prompt or --prompt-file"),
-    };
+    let prompt = read_prompt(&args).await?;
 
     let pr_name = PrName::sanitize(&args.pr_name);
     let tasks = parse_tasks_override(&args).await?;
@@ -958,6 +976,68 @@ mod tests {
             .err()
             .expect("cli parse must fail");
         assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
+    }
+
+    #[tokio::test]
+    async fn read_prompt_rejects_blank_prompt_arg() {
+        let args = RunArgs {
+            repo: Some("repo".to_string()),
+            repo_src: None,
+            pr_name: "demo".to_string(),
+            prompt: Some(" \n\t".to_string()),
+            prompt_file: None,
+            base: "main".to_string(),
+            apply_patch: None,
+            max_concurrency: 1,
+            stream_events: false,
+            stream_events_json: false,
+            strict: false,
+            json: false,
+            auto_tasks: false,
+            tasks_file: None,
+            task: Vec::new(),
+            hook_cmd: None,
+            hook_arg: Vec::new(),
+            hook_url: None,
+        };
+
+        let err = read_prompt(&args).await.unwrap_err();
+        assert!(err.to_string().contains("--prompt must not be empty"));
+    }
+
+    #[tokio::test]
+    async fn read_prompt_rejects_blank_prompt_file() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let path = tmp.path().join("prompt.txt");
+        tokio::fs::write(&path, " \n\t").await?;
+
+        let args = RunArgs {
+            repo: Some("repo".to_string()),
+            repo_src: None,
+            pr_name: "demo".to_string(),
+            prompt: None,
+            prompt_file: Some(path),
+            base: "main".to_string(),
+            apply_patch: None,
+            max_concurrency: 1,
+            stream_events: false,
+            stream_events_json: false,
+            strict: false,
+            json: false,
+            auto_tasks: false,
+            tasks_file: None,
+            task: Vec::new(),
+            hook_cmd: None,
+            hook_arg: Vec::new(),
+            hook_url: None,
+        };
+
+        let err = read_prompt(&args).await.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("--prompt-file content must not be empty")
+        );
+        Ok(())
     }
 
     #[tokio::test]
