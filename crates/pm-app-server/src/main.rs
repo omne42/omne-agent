@@ -7,9 +7,11 @@ use std::time::Duration;
 
 use anyhow::Context;
 use clap::Parser;
+use globset::Glob;
 use pm_core::{PmPaths, ThreadStore};
 use pm_execpolicy::{Decision as ExecDecision, RuleMatch as ExecRuleMatch};
 use pm_protocol::{EventSeq, ProcessId, ThreadEvent, ThreadId, TurnId, TurnStatus};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use time::format_description::well_known::Rfc3339;
@@ -18,6 +20,7 @@ use tokio::process::Command;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
+use walkdir::WalkDir;
 
 #[derive(Parser)]
 #[command(name = "pm-app-server")]
@@ -356,6 +359,34 @@ struct FileReadParams {
 }
 
 #[derive(Debug, Deserialize)]
+struct FileGlobParams {
+    thread_id: ThreadId,
+    #[serde(default)]
+    turn_id: Option<TurnId>,
+    pattern: String,
+    #[serde(default)]
+    max_results: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FileGrepParams {
+    thread_id: ThreadId,
+    #[serde(default)]
+    turn_id: Option<TurnId>,
+    query: String,
+    #[serde(default)]
+    is_regex: bool,
+    #[serde(default)]
+    include_glob: Option<String>,
+    #[serde(default)]
+    max_matches: Option<usize>,
+    #[serde(default)]
+    max_bytes_per_file: Option<u64>,
+    #[serde(default)]
+    max_files: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
 struct FileWriteParams {
     thread_id: ThreadId,
     #[serde(default)]
@@ -366,6 +397,27 @@ struct FileWriteParams {
     text: String,
     #[serde(default)]
     create_parent_dirs: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FileEditParams {
+    thread_id: ThreadId,
+    #[serde(default)]
+    turn_id: Option<TurnId>,
+    #[serde(default)]
+    approval_id: Option<pm_protocol::ApprovalId>,
+    path: String,
+    edits: Vec<FileEditOp>,
+    #[serde(default)]
+    max_bytes: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FileEditOp {
+    old: String,
+    new: String,
+    #[serde(default)]
+    expected_replacements: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -796,8 +848,50 @@ async fn main() -> anyhow::Result<()> {
                     Some(serde_json::json!({ "error": err.to_string() })),
                 ),
             },
+            "file/glob" => match serde_json::from_value::<FileGlobParams>(request.params) {
+                Ok(params) => match handle_file_glob(&server, params).await {
+                    Ok(result) => JsonRpcResponse::ok(id, result),
+                    Err(err) => {
+                        JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None)
+                    }
+                },
+                Err(err) => JsonRpcResponse::err(
+                    id,
+                    JSONRPC_INVALID_PARAMS,
+                    "invalid params",
+                    Some(serde_json::json!({ "error": err.to_string() })),
+                ),
+            },
+            "file/grep" => match serde_json::from_value::<FileGrepParams>(request.params) {
+                Ok(params) => match handle_file_grep(&server, params).await {
+                    Ok(result) => JsonRpcResponse::ok(id, result),
+                    Err(err) => {
+                        JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None)
+                    }
+                },
+                Err(err) => JsonRpcResponse::err(
+                    id,
+                    JSONRPC_INVALID_PARAMS,
+                    "invalid params",
+                    Some(serde_json::json!({ "error": err.to_string() })),
+                ),
+            },
             "file/write" => match serde_json::from_value::<FileWriteParams>(request.params) {
                 Ok(params) => match handle_file_write(&server, params).await {
+                    Ok(result) => JsonRpcResponse::ok(id, result),
+                    Err(err) => {
+                        JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None)
+                    }
+                },
+                Err(err) => JsonRpcResponse::err(
+                    id,
+                    JSONRPC_INVALID_PARAMS,
+                    "invalid params",
+                    Some(serde_json::json!({ "error": err.to_string() })),
+                ),
+            },
+            "file/edit" => match serde_json::from_value::<FileEditParams>(request.params) {
+                Ok(params) => match handle_file_edit(&server, params).await {
                     Ok(result) => JsonRpcResponse::ok(id, result),
                     Err(err) => {
                         JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None)
@@ -1136,6 +1230,283 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
     }
 }
 
+const DEFAULT_IGNORED_DIRS: &[&str] = &[".git", ".code_pm", "target", "node_modules", "example"];
+
+fn should_walk_entry(entry: &walkdir::DirEntry) -> bool {
+    if entry.depth() == 0 {
+        return true;
+    }
+    if !entry.file_type().is_dir() {
+        return true;
+    }
+    let name = entry.file_name().to_string_lossy();
+    !DEFAULT_IGNORED_DIRS.iter().any(|dir| *dir == name)
+}
+
+async fn handle_file_glob(server: &Server, params: FileGlobParams) -> anyhow::Result<Value> {
+    let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
+
+    let max_results = params.max_results.unwrap_or(2000).min(20_000);
+    let tool_id = pm_protocol::ToolId::new();
+
+    thread_rt
+        .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+            tool_id,
+            turn_id: params.turn_id,
+            tool: "file/glob".to_string(),
+            params: Some(serde_json::json!({
+                "pattern": params.pattern.clone(),
+                "max_results": max_results,
+            })),
+        })
+        .await?;
+
+    let pattern = params.pattern.clone();
+    let root = thread_root.clone();
+    let outcome = tokio::task::spawn_blocking(move || -> anyhow::Result<(Vec<String>, bool)> {
+        let matcher = Glob::new(&pattern)
+            .with_context(|| format!("invalid glob pattern: {pattern}"))?
+            .compile_matcher();
+
+        let mut paths = Vec::new();
+        let mut truncated = false;
+
+        for entry in WalkDir::new(&root)
+            .follow_links(false)
+            .into_iter()
+            .filter_entry(should_walk_entry)
+        {
+            let entry = entry?;
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            let rel = entry.path().strip_prefix(&root).unwrap_or(entry.path());
+            if matcher.is_match(rel) {
+                paths.push(rel.to_string_lossy().to_string());
+                if paths.len() >= max_results {
+                    truncated = true;
+                    break;
+                }
+            }
+        }
+
+        Ok((paths, truncated))
+    })
+    .await
+    .context("join glob task")?;
+
+    match outcome {
+        Ok((paths, truncated)) => {
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: pm_protocol::ToolStatus::Completed,
+                    error: None,
+                    result: Some(serde_json::json!({
+                        "matches": paths.len(),
+                        "truncated": truncated,
+                    })),
+                })
+                .await?;
+            Ok(serde_json::json!({
+                "tool_id": tool_id,
+                "paths": paths,
+                "truncated": truncated,
+            }))
+        }
+        Err(err) => {
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: pm_protocol::ToolStatus::Failed,
+                    error: Some(err.to_string()),
+                    result: None,
+                })
+                .await?;
+            Err(err)
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct GrepMatch {
+    path: String,
+    line_number: u64,
+    line: String,
+}
+
+fn truncate_line(line: &str, max_chars: usize) -> String {
+    let mut out = String::new();
+    for (idx, ch) in line.chars().enumerate() {
+        if idx >= max_chars {
+            out.push('…');
+            break;
+        }
+        out.push(ch);
+    }
+    out
+}
+
+async fn handle_file_grep(server: &Server, params: FileGrepParams) -> anyhow::Result<Value> {
+    let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
+
+    let max_matches = params.max_matches.unwrap_or(200).min(2000);
+    let max_bytes_per_file = params
+        .max_bytes_per_file
+        .unwrap_or(1024 * 1024)
+        .min(16 * 1024 * 1024);
+    let max_files = params.max_files.unwrap_or(20_000).min(200_000);
+    let tool_id = pm_protocol::ToolId::new();
+
+    thread_rt
+        .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+            tool_id,
+            turn_id: params.turn_id,
+            tool: "file/grep".to_string(),
+            params: Some(serde_json::json!({
+                "query": params.query.clone(),
+                "is_regex": params.is_regex,
+                "include_glob": params.include_glob,
+                "max_matches": max_matches,
+                "max_bytes_per_file": max_bytes_per_file,
+                "max_files": max_files,
+            })),
+        })
+        .await?;
+
+    let pattern = if params.is_regex {
+        params.query.clone()
+    } else {
+        regex::escape(&params.query)
+    };
+    let re = Regex::new(&pattern).with_context(|| format!("invalid regex: {}", params.query))?;
+    let include_matcher = match params.include_glob.as_deref() {
+        Some(glob) => Some(
+            Glob::new(glob)
+                .with_context(|| format!("invalid glob pattern: {glob}"))?
+                .compile_matcher(),
+        ),
+        None => None,
+    };
+
+    let root = thread_root.clone();
+    let outcome = tokio::task::spawn_blocking(
+        move || -> anyhow::Result<(Vec<GrepMatch>, bool, usize, usize, usize)> {
+            let mut matches = Vec::new();
+            let mut truncated = false;
+            let mut files_scanned = 0usize;
+            let mut files_skipped_too_large = 0usize;
+            let mut files_skipped_binary = 0usize;
+
+            for entry in WalkDir::new(&root)
+                .follow_links(false)
+                .into_iter()
+                .filter_entry(should_walk_entry)
+            {
+                let entry = entry?;
+                if !entry.file_type().is_file() {
+                    continue;
+                }
+                if files_scanned >= max_files {
+                    break;
+                }
+                let rel = entry.path().strip_prefix(&root).unwrap_or(entry.path());
+                if let Some(ref matcher) = include_matcher {
+                    if !matcher.is_match(rel) {
+                        continue;
+                    }
+                }
+
+                files_scanned += 1;
+
+                let meta = entry.metadata()?;
+                if meta.len() > max_bytes_per_file {
+                    files_skipped_too_large += 1;
+                    continue;
+                }
+
+                let bytes = match std::fs::read(entry.path()) {
+                    Ok(bytes) => bytes,
+                    Err(_) => continue,
+                };
+                if bytes.iter().any(|b| *b == 0) {
+                    files_skipped_binary += 1;
+                    continue;
+                }
+
+                let text = String::from_utf8_lossy(&bytes);
+                for (idx, line) in text.lines().enumerate() {
+                    if !re.is_match(line) {
+                        continue;
+                    }
+
+                    matches.push(GrepMatch {
+                        path: rel.to_string_lossy().to_string(),
+                        line_number: (idx + 1) as u64,
+                        line: truncate_line(line, 4000),
+                    });
+                    if matches.len() >= max_matches {
+                        truncated = true;
+                        break;
+                    }
+                }
+
+                if truncated {
+                    break;
+                }
+            }
+
+            Ok((
+                matches,
+                truncated,
+                files_scanned,
+                files_skipped_too_large,
+                files_skipped_binary,
+            ))
+        },
+    )
+    .await
+    .context("join grep task")?;
+
+    match outcome {
+        Ok((matches, truncated, files_scanned, files_skipped_too_large, files_skipped_binary)) => {
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: pm_protocol::ToolStatus::Completed,
+                    error: None,
+                    result: Some(serde_json::json!({
+                        "matches": matches.len(),
+                        "truncated": truncated,
+                        "files_scanned": files_scanned,
+                        "files_skipped_too_large": files_skipped_too_large,
+                        "files_skipped_binary": files_skipped_binary,
+                    })),
+                })
+                .await?;
+            Ok(serde_json::json!({
+                "tool_id": tool_id,
+                "matches": matches,
+                "truncated": truncated,
+                "files_scanned": files_scanned,
+                "files_skipped_too_large": files_skipped_too_large,
+                "files_skipped_binary": files_skipped_binary,
+            }))
+        }
+        Err(err) => {
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: pm_protocol::ToolStatus::Failed,
+                    error: Some(err.to_string()),
+                    result: None,
+                })
+                .await?;
+            Err(err)
+        }
+    }
+}
+
 async fn handle_file_write(server: &Server, params: FileWriteParams) -> anyhow::Result<Value> {
     let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
 
@@ -1230,6 +1601,181 @@ async fn handle_file_write(server: &Server, params: FileWriteParams) -> anyhow::
                 "tool_id": tool_id,
                 "resolved_path": path.display().to_string(),
                 "bytes_written": bytes,
+            }))
+        }
+        Err(err) => {
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: pm_protocol::ToolStatus::Failed,
+                    error: Some(err.to_string()),
+                    result: None,
+                })
+                .await?;
+            Err(err)
+        }
+    }
+}
+
+fn count_non_overlapping(haystack: &str, needle: &str) -> usize {
+    if needle.is_empty() {
+        return 0;
+    }
+
+    let mut count = 0usize;
+    let mut rest = haystack;
+    while let Some(pos) = rest.find(needle) {
+        count += 1;
+        rest = &rest[(pos + needle.len())..];
+    }
+    count
+}
+
+async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Result<Value> {
+    if params.edits.is_empty() {
+        anyhow::bail!("edits must not be empty");
+    }
+    if params.edits.iter().any(|e| e.old.is_empty()) {
+        anyhow::bail!("edit.old must not be empty");
+    }
+
+    let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
+
+    let max_bytes = params
+        .max_bytes
+        .unwrap_or(4 * 1024 * 1024)
+        .min(16 * 1024 * 1024);
+
+    let approval_policy = {
+        let handle = thread_rt.handle.lock().await;
+        handle.state().approval_policy
+    };
+    let tool_id = pm_protocol::ToolId::new();
+
+    let approval_params = serde_json::json!({
+        "path": params.path.clone(),
+        "edits": params.edits.len(),
+        "max_bytes": max_bytes,
+    });
+    if approval_policy == pm_protocol::ApprovalPolicy::Manual {
+        match params.approval_id {
+            Some(approval_id) => {
+                ensure_approval(
+                    server,
+                    params.thread_id,
+                    approval_id,
+                    "file/edit",
+                    &approval_params,
+                )
+                .await?;
+            }
+            None => {
+                let approval_id = pm_protocol::ApprovalId::new();
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ApprovalRequested {
+                        approval_id,
+                        turn_id: params.turn_id,
+                        action: "file/edit".to_string(),
+                        params: approval_params,
+                    })
+                    .await?;
+                return Ok(serde_json::json!({
+                    "needs_approval": true,
+                    "approval_id": approval_id,
+                }));
+            }
+        }
+    }
+
+    thread_rt
+        .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+            tool_id,
+            turn_id: params.turn_id,
+            tool: "file/edit".to_string(),
+            params: Some(serde_json::json!({
+                "path": params.path.clone(),
+                "edits": params.edits.len(),
+                "max_bytes": max_bytes,
+            })),
+        })
+        .await?;
+
+    let outcome: anyhow::Result<(PathBuf, bool, usize, usize)> = async {
+        let path = pm_core::resolve_file(
+            &thread_root,
+            Path::new(&params.path),
+            pm_core::PathAccess::Write,
+            false,
+        )
+        .await?;
+
+        let bytes = tokio::fs::read(&path)
+            .await
+            .with_context(|| format!("read {}", path.display()))?;
+        if bytes.len() > max_bytes as usize {
+            anyhow::bail!(
+                "file too large for edit: {} ({} bytes)",
+                path.display(),
+                bytes.len()
+            );
+        }
+        let mut text = String::from_utf8(bytes).context("file is not valid utf-8")?;
+
+        let mut total_replacements = 0usize;
+        let mut changed = false;
+        for edit in &params.edits {
+            let expected = edit.expected_replacements.unwrap_or(1);
+            let found = count_non_overlapping(&text, &edit.old);
+            if found != expected {
+                anyhow::bail!(
+                    "edit mismatch for {}: expected {} replacements, found {}",
+                    path.display(),
+                    expected,
+                    found
+                );
+            }
+            if edit.old != edit.new {
+                changed = true;
+            }
+            total_replacements += expected;
+            text = text.replacen(&edit.old, &edit.new, expected);
+        }
+
+        let bytes_written = text.as_bytes().len();
+        tokio::fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(&path)
+            .await
+            .with_context(|| format!("open {}", path.display()))?
+            .write_all(text.as_bytes())
+            .await
+            .with_context(|| format!("write {}", path.display()))?;
+
+        Ok((path, changed, total_replacements, bytes_written))
+    }
+    .await;
+
+    match outcome {
+        Ok((path, changed, replacements, bytes_written)) => {
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: pm_protocol::ToolStatus::Completed,
+                    error: None,
+                    result: Some(serde_json::json!({
+                        "changed": changed,
+                        "replacements": replacements,
+                        "bytes": bytes_written,
+                    })),
+                })
+                .await?;
+            Ok(serde_json::json!({
+                "tool_id": tool_id,
+                "resolved_path": path.display().to_string(),
+                "changed": changed,
+                "replacements": replacements,
+                "bytes_written": bytes_written,
             }))
         }
         Err(err) => {
