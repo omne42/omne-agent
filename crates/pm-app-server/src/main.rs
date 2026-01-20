@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use clap::Parser;
+use diffy::{Patch, apply};
 use globset::Glob;
 use pm_core::{PmPaths, ThreadStore};
 use pm_execpolicy::{Decision as ExecDecision, RuleMatch as ExecRuleMatch};
@@ -402,6 +403,19 @@ struct FileWriteParams {
     text: String,
     #[serde(default)]
     create_parent_dirs: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FilePatchParams {
+    thread_id: ThreadId,
+    #[serde(default)]
+    turn_id: Option<TurnId>,
+    #[serde(default)]
+    approval_id: Option<pm_protocol::ApprovalId>,
+    path: String,
+    patch: String,
+    #[serde(default)]
+    max_bytes: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -899,6 +913,20 @@ async fn main() -> anyhow::Result<()> {
             },
             "file/write" => match serde_json::from_value::<FileWriteParams>(request.params) {
                 Ok(params) => match handle_file_write(&server, params).await {
+                    Ok(result) => JsonRpcResponse::ok(id, result),
+                    Err(err) => {
+                        JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None)
+                    }
+                },
+                Err(err) => JsonRpcResponse::err(
+                    id,
+                    JSONRPC_INVALID_PARAMS,
+                    "invalid params",
+                    Some(serde_json::json!({ "error": err.to_string() })),
+                ),
+            },
+            "file/patch" => match serde_json::from_value::<FilePatchParams>(request.params) {
+                Ok(params) => match handle_file_patch(&server, params).await {
                     Ok(result) => JsonRpcResponse::ok(id, result),
                     Err(err) => {
                         JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None)
@@ -1708,6 +1736,153 @@ async fn handle_file_write(server: &Server, params: FileWriteParams) -> anyhow::
                 "tool_id": tool_id,
                 "resolved_path": path.display().to_string(),
                 "bytes_written": bytes,
+            }))
+        }
+        Err(err) => {
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: pm_protocol::ToolStatus::Failed,
+                    error: Some(err.to_string()),
+                    result: None,
+                })
+                .await?;
+            Err(err)
+        }
+    }
+}
+
+async fn handle_file_patch(server: &Server, params: FilePatchParams) -> anyhow::Result<Value> {
+    let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
+
+    let max_bytes = params
+        .max_bytes
+        .unwrap_or(4 * 1024 * 1024)
+        .min(16 * 1024 * 1024);
+    let patch_bytes = params.patch.as_bytes().len();
+
+    let approval_policy = {
+        let handle = thread_rt.handle.lock().await;
+        handle.state().approval_policy
+    };
+    let tool_id = pm_protocol::ToolId::new();
+
+    let approval_params = serde_json::json!({
+        "path": params.path.clone(),
+        "patch_bytes": patch_bytes,
+        "max_bytes": max_bytes,
+    });
+    if approval_policy == pm_protocol::ApprovalPolicy::Manual {
+        match params.approval_id {
+            Some(approval_id) => {
+                ensure_approval(
+                    server,
+                    params.thread_id,
+                    approval_id,
+                    "file/patch",
+                    &approval_params,
+                )
+                .await?;
+            }
+            None => {
+                let approval_id = pm_protocol::ApprovalId::new();
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ApprovalRequested {
+                        approval_id,
+                        turn_id: params.turn_id,
+                        action: "file/patch".to_string(),
+                        params: approval_params,
+                    })
+                    .await?;
+                return Ok(serde_json::json!({
+                    "needs_approval": true,
+                    "approval_id": approval_id,
+                }));
+            }
+        }
+    }
+
+    thread_rt
+        .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+            tool_id,
+            turn_id: params.turn_id,
+            tool: "file/patch".to_string(),
+            params: Some(serde_json::json!({
+                "path": params.path.clone(),
+                "patch_bytes": patch_bytes,
+                "max_bytes": max_bytes,
+            })),
+        })
+        .await?;
+
+    let outcome: anyhow::Result<(PathBuf, bool, usize, usize)> = async {
+        let path = pm_core::resolve_file(
+            &thread_root,
+            Path::new(&params.path),
+            pm_core::PathAccess::Write,
+            false,
+        )
+        .await?;
+
+        let bytes = tokio::fs::read(&path)
+            .await
+            .with_context(|| format!("read {}", path.display()))?;
+        if bytes.len() > max_bytes as usize {
+            anyhow::bail!(
+                "file too large for patch: {} ({} bytes)",
+                path.display(),
+                bytes.len()
+            );
+        }
+
+        let original = String::from_utf8(bytes).context("file is not valid utf-8")?;
+        let patch = Patch::from_str(&params.patch).context("parse unified diff patch")?;
+        let updated = apply(&original, &patch).context("apply patch")?;
+        let changed = updated != original;
+        let bytes_written = updated.as_bytes().len();
+        if bytes_written > max_bytes as usize {
+            anyhow::bail!(
+                "patched file too large: {} ({} bytes)",
+                path.display(),
+                bytes_written
+            );
+        }
+
+        tokio::fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(&path)
+            .await
+            .with_context(|| format!("open {}", path.display()))?
+            .write_all(updated.as_bytes())
+            .await
+            .with_context(|| format!("write {}", path.display()))?;
+
+        Ok((path, changed, patch_bytes, bytes_written))
+    }
+    .await;
+
+    match outcome {
+        Ok((path, changed, patch_bytes, bytes_written)) => {
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: pm_protocol::ToolStatus::Completed,
+                    error: None,
+                    result: Some(serde_json::json!({
+                        "changed": changed,
+                        "patch_bytes": patch_bytes,
+                        "bytes": bytes_written,
+                    })),
+                })
+                .await?;
+
+            Ok(serde_json::json!({
+                "tool_id": tool_id,
+                "resolved_path": path.display().to_string(),
+                "changed": changed,
+                "patch_bytes": patch_bytes,
+                "bytes_written": bytes_written,
             }))
         }
         Err(err) => {

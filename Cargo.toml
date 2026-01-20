@@ -13,6 +13,7 @@ async-trait = "0.1"
 axum = "0.7"
 bytes = "1"
 clap = { version = "4", features = ["derive"] }
+diffy = "0.4"
 fs2 = "0.4"
 globset = "0.4"
 http-body-util = "0.1"

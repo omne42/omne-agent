@@ -7,6 +7,7 @@ version.workspace = true
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+diffy.workspace = true
 globset.workspace = true
 pm-core = { path = "../pm-core" }
 pm-execpolicy = { path = "../pm-execpolicy" }
