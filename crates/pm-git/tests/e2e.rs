@@ -57,6 +57,7 @@ fn init_source_repo(dir: &Path) -> anyhow::Result<()> {
     run_git(dir, &["init", "-b", "main"])?;
     run_git(dir, &["config", "user.email", "test@example.com"])?;
     run_git(dir, &["config", "user.name", "Test"])?;
+    run_git(dir, &["config", "commit.gpgsign", "false"])?;
 
     write_file(&dir.join("hello.txt"), "hello\n")?;
     run_git(dir, &["add", "hello.txt"])?;
@@ -177,6 +178,36 @@ async fn repo_inject_accepts_relative_source_paths() -> anyhow::Result<()> {
         .to_string();
     let repo = repo_manager.inject(&repo_name, &source_repo_rel).await?;
     assert!(repo.bare_path.exists());
+    Ok(())
+}
+
+#[tokio::test]
+async fn repo_inject_updates_origin_when_repo_exists() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let source_repo_1 = tmp.path().join("source1");
+    init_source_repo(&source_repo_1)?;
+
+    let source_repo_2 = tmp.path().join("source2");
+    init_source_repo(&source_repo_2)?;
+    write_file(&source_repo_2.join("hello.txt"), "hello from source2\n")?;
+    run_git(&source_repo_2, &["add", "hello.txt"])?;
+    run_git(&source_repo_2, &["commit", "-m", "chore(test): update"])?;
+
+    let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
+    let repo_manager = RepoManager::new(pm_paths.clone());
+    let repo_name = RepositoryName::sanitize("source");
+
+    let repo = repo_manager
+        .inject(&repo_name, source_repo_1.to_string_lossy().as_ref())
+        .await?;
+    repo_manager
+        .inject(&repo_name, source_repo_2.to_string_lossy().as_ref())
+        .await?;
+
+    let verify_dir = tmp.path().join("verify");
+    git_clone(tmp.path(), &repo.bare_path, &verify_dir)?;
+    let contents = read_file(&verify_dir.join("hello.txt"))?;
+    assert_eq!(contents, "hello from source2\n");
     Ok(())
 }
 

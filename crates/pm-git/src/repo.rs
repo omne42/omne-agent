@@ -61,6 +61,42 @@ impl RepoManager {
         let bare_path = self.paths.repo_bare_path(name);
         if tokio::fs::try_exists(&bare_path).await? {
             info!(repo = %name, "updating injected repo");
+            let source_arg = normalize_git_source_arg(source).await?;
+
+            let has_origin_args = vec![os_arg("remote"), os_arg("get-url"), os_arg("origin")];
+            let has_origin = self.git.run(&bare_path, &has_origin_args, None).await?;
+            if has_origin.ok {
+                let set_url_args = vec![
+                    os_arg("remote"),
+                    os_arg("set-url"),
+                    os_arg("origin"),
+                    source_arg.clone(),
+                ];
+                let output = self.git.run(&bare_path, &set_url_args, None).await?;
+                if !output.ok {
+                    anyhow::bail!(
+                        "git remote set-url origin failed (exit {:?}): {}",
+                        output.exit_code,
+                        output.stderr
+                    );
+                }
+            } else {
+                let add_remote_args = vec![
+                    os_arg("remote"),
+                    os_arg("add"),
+                    os_arg("origin"),
+                    source_arg.clone(),
+                ];
+                let output = self.git.run(&bare_path, &add_remote_args, None).await?;
+                if !output.ok {
+                    anyhow::bail!(
+                        "git remote add origin failed (exit {:?}): {}",
+                        output.exit_code,
+                        output.stderr
+                    );
+                }
+            }
+
             let fetch_args = vec![os_arg("fetch"), os_arg("--all"), os_arg("--prune")];
             let output = self.git.run(&bare_path, &fetch_args, None).await?;
             if !output.ok {
