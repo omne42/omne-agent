@@ -29,6 +29,7 @@
 - `pm-http GET /api/v0/sessions/:id`：默认返回 `result`；`?all=true` 返回 session/tasks/prs/merge/result bundle。
 - `pm-http GET /api/v0/sessions/:id/meta`：返回 `SessionMeta`（不含 prompt）。
 - `pm-http`：支持 `CODE_PM_HTTP_MAX_BODY_BYTES`（默认 1GiB）限制 git smart-http 请求体大小；超限返回 413。
+- `pm-http git`：`CODE_PM_HTTP_MAX_BODY_BYTES` 现在会对实际请求体字节数强制生效（不再仅信任 `Content-Length` header），避免超大 body 绕过限制。
 - `pm-http serve`：强制 loopback-only（拒绝绑定非 `127.0.0.1`/`::1` 地址），避免无鉴权服务被意外暴露到公网。
 - `pm-http git`：拒绝除 GET/POST 之外的 HTTP method（返回 405），减少非预期攻击面。
 - `pm-http git`：405 响应包含 `Allow: GET, POST`，便于客户端/调试工具正确处理。

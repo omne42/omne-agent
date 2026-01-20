@@ -23,9 +23,17 @@ struct AppState {
     repos_root: PathBuf,
     repo_manager: RepoManager,
     storage: FsStorage,
+    git_http_max_body_bytes: usize,
 }
 
 pub fn router(pm_paths: PmPaths) -> anyhow::Result<Router> {
+    router_with_max_body_bytes(pm_paths, git_http_max_body_bytes())
+}
+
+fn router_with_max_body_bytes(
+    pm_paths: PmPaths,
+    git_http_max_body_bytes: usize,
+) -> anyhow::Result<Router> {
     let repos_root = pm_paths.repos_dir();
     let storage = FsStorage::new(pm_paths.data_dir());
     let repo_manager = RepoManager::new(pm_paths);
@@ -34,6 +42,7 @@ pub fn router(pm_paths: PmPaths) -> anyhow::Result<Router> {
         repos_root,
         repo_manager,
         storage,
+        git_http_max_body_bytes,
     });
 
     Ok(Router::new()
@@ -275,18 +284,20 @@ async fn git_http_backend(
         "git smart http request"
     );
 
-    let max_body_bytes = git_http_max_body_bytes();
-    if let Some(value) = header_content_length.as_deref() {
-        let content_length: usize = value
-            .trim()
-            .parse()
-            .map_err(|_| ApiError::bad_request("invalid content-length"))?;
-        if content_length > max_body_bytes {
-            return Err(ApiError::payload_too_large("request body too large"));
+    let max_body_bytes = state.git_http_max_body_bytes;
+    if method == "POST" {
+        if let Some(value) = header_content_length.as_deref() {
+            let content_length: usize = value
+                .trim()
+                .parse()
+                .map_err(|_| ApiError::bad_request("invalid content-length"))?;
+            if content_length > max_body_bytes {
+                return Err(ApiError::payload_too_large("request body too large"));
+            }
         }
     }
 
-    let (content_length, body) = if method == "POST" && header_content_length.is_none() {
+    let (content_length, body) = if method == "POST" {
         let (path, len) = spool_body_to_tempfile(req_body, max_body_bytes).await?;
         (Some(len.to_string()), RequestBody::TempFile { path })
     } else {
@@ -702,6 +713,32 @@ mod tests {
         let body = response.into_body().collect().await?.to_bytes();
         assert_eq!(body.as_ref(), b"method not allowed");
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn git_http_backend_enforces_max_body_even_with_content_length() -> anyhow::Result<()> {
+        use axum::http::Request;
+        use axum::http::header::CONTENT_LENGTH;
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+
+        let tmp = tempfile::tempdir()?;
+        let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
+        tokio::fs::create_dir_all(pm_paths.repos_dir().join("repo.git")).await?;
+
+        let app = router_with_max_body_bytes(pm_paths, 5)?;
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/git/repo.git/git-receive-pack")
+            .header(CONTENT_LENGTH, "1")
+            .body(Body::from(vec![0u8; 6]))?;
+        let response = app.oneshot(request).await?;
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+
+        let body = response.into_body().collect().await?.to_bytes();
+        assert_eq!(body.as_ref(), b"request body too large");
         Ok(())
     }
 }
