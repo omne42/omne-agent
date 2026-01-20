@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -905,8 +905,8 @@ async fn handle_approval_list(
         .await?
         .ok_or_else(|| anyhow::anyhow!("thread not found: {}", params.thread_id))?;
 
-    let mut requested = HashMap::<pm_protocol::ApprovalId, serde_json::Value>::new();
-    let mut decided = HashMap::<pm_protocol::ApprovalId, serde_json::Value>::new();
+    let mut requested = BTreeMap::<pm_protocol::ApprovalId, serde_json::Value>::new();
+    let mut decided = BTreeMap::<pm_protocol::ApprovalId, serde_json::Value>::new();
 
     for event in events {
         let ts = event.timestamp.format(&Rfc3339)?;
