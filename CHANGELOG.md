@@ -33,6 +33,7 @@
 - `pm-http serve`：强制 loopback-only（拒绝绑定非 `127.0.0.1`/`::1` 地址），避免无鉴权服务被意外暴露到公网。
 - `pm-http git`：拒绝除 GET/POST 之外的 HTTP method（返回 405），减少非预期攻击面。
 - `pm-http git`：405 响应包含 `Allow: GET, POST`，便于客户端/调试工具正确处理。
+- `pm-git`：repo lock 文件缺失父目录时会自动创建（避免 `.code_pm/locks` 被手动删除后运行失败）。
 - Orchestrator：改进并发调度（以 worker-pool 方式限流，不再一次性 spawn 所有 tasks；不会再因为并发限流导致 `TaskFinished` 事件延迟），并在 `--max-concurrency 1` 场景下也会把 task 的 panic/cancel 转为 `Failed` PR（避免直接崩溃整个 session）。
 - `pm-git`：identity 配置步骤现在会严格校验每一步的 `ok`（避免静默忽略 `git config --get` 的异常失败）。
 - `code-pm run --task/--tasks-file`：显式空 task id 现在会被拒绝（避免意外回退到 `task` 造成重复/混乱）。
