@@ -64,4 +64,3 @@ async fn get_session_returns_json_when_present() -> anyhow::Result<()> {
     assert_eq!(value["ok"], serde_json::Value::Bool(true));
     Ok(())
 }
-
