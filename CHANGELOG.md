@@ -44,7 +44,7 @@
 - `docs/workflow.md` 标注为 `v0.1.1` legacy，`docs/start.md` 增加 vNext 文档导航。
 - 更新 `docs/research/README.md`：补齐新增调研条目并调整落地方向表述。
 - `githooks/pre-commit`：强制每次提交同时包含 `CHANGELOG.md` 与实际变更（禁止 changelog-only / non-changelog commit）。
-- `pm-app-server agent loop`：增加最小长任务预算（`max_steps`/`max_tool_calls`）；超限会使 turn 失败并写入失败原因，避免无限循环烧钱。
+- `pm-app-server agent loop`：增加最小长任务预算（`max_steps`/`max_tool_calls`/`max_turn_seconds` + 单次 OpenAI 请求超时）；超限会使 turn 失败并写入失败原因，避免无限循环烧钱/卡死。
 - v0.2.0 方向明确：基建不依赖 Docker（git/workspace 实现不以 Docker 为前提）；实现文档中移除/替换相关表述。
 - `pm-eventlog ThreadState`：记录 thread 的 `cwd`；`pm-app-server thread/state` 返回 `cwd` 便于后续 sandbox/root 约束。
 - `pm-eventlog ThreadState`：增加 `approval_policy`（默认 auto-approve）；`pm-app-server thread/state` 返回当前策略。

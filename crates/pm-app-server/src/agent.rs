@@ -13,6 +13,8 @@ use super::ProcessCommand;
 const DEFAULT_MODEL: &str = "gpt-4.1";
 const MAX_AGENT_STEPS: usize = 24;
 const MAX_TOOL_CALLS: usize = 128;
+const MAX_TURN_SECONDS: u64 = 10 * 60;
+const MAX_OPENAI_REQUEST_SECONDS: u64 = 120;
 
 const DEFAULT_INSTRUCTIONS: &str = r#"
 You are a coding agent.
@@ -67,10 +69,14 @@ pub async fn run_agent_turn(
     let mut last_text = String::new();
     let mut tool_calls_total = 0usize;
     let mut finished = false;
+    let started_at = tokio::time::Instant::now();
 
     for _step in 0..MAX_AGENT_STEPS {
         if cancel.is_cancelled() {
             anyhow::bail!("turn cancelled");
+        }
+        if started_at.elapsed() > Duration::from_secs(MAX_TURN_SECONDS) {
+            anyhow::bail!("turn time budget exceeded (max_seconds={MAX_TURN_SECONDS})");
         }
 
         let req = pm_openai::ResponsesApiRequest {
@@ -84,7 +90,12 @@ pub async fn run_agent_turn(
             stream: false,
         };
 
-        let resp = openai.create_response(&req).await?;
+        let resp = tokio::time::timeout(
+            Duration::from_secs(MAX_OPENAI_REQUEST_SECONDS),
+            openai.create_response(&req),
+        )
+        .await
+        .context("openai response timed out")??;
         last_response_id = resp.id.clone();
         last_usage = resp.usage.clone();
 
