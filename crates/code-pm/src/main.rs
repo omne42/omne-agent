@@ -48,7 +48,15 @@ enum RepoCommand {
         #[arg(long, value_parser = parse_non_empty_trimmed)]
         name: Option<String>,
     },
-    List,
+    List(RepoListArgs),
+}
+
+#[derive(Parser, Clone)]
+struct RepoListArgs {
+    #[arg(long, default_value_t = false)]
+    verbose: bool,
+    #[arg(long, default_value_t = false)]
+    json: bool,
 }
 
 #[derive(Subcommand)]
@@ -161,9 +169,52 @@ async fn main() -> anyhow::Result<()> {
                 println!("repo: {}", repo.name.as_str());
                 println!("bare: {}", repo.bare_path.display());
             }
-            RepoCommand::List => {
-                for name in repo_manager.list_repos().await? {
-                    println!("{}", name.as_str());
+            RepoCommand::List(args) => {
+                let repos = repo_manager.list_repos().await?;
+                if args.verbose {
+                    #[derive(serde::Serialize)]
+                    struct RepoListItem {
+                        name: String,
+                        bare_path: String,
+                        lock_path: String,
+                    }
+
+                    if args.json {
+                        let items = repos
+                            .iter()
+                            .map(|name| RepoListItem {
+                                name: name.as_str().to_string(),
+                                bare_path: repo_manager
+                                    .paths()
+                                    .repo_bare_path(name)
+                                    .display()
+                                    .to_string(),
+                                lock_path: repo_manager
+                                    .paths()
+                                    .repo_lock_path(name)
+                                    .display()
+                                    .to_string(),
+                            })
+                            .collect::<Vec<_>>();
+                        println!("{}", serde_json::to_string_pretty(&items)?);
+                    } else {
+                        for name in repos {
+                            let bare = repo_manager.paths().repo_bare_path(&name);
+                            let lock = repo_manager.paths().repo_lock_path(&name);
+                            println!(
+                                "{} bare={} lock={}",
+                                name.as_str(),
+                                bare.display(),
+                                lock.display()
+                            );
+                        }
+                    }
+                } else if args.json {
+                    println!("{}", serde_json::to_string_pretty(&repos)?);
+                } else {
+                    for name in repos {
+                        println!("{}", name.as_str());
+                    }
                 }
             }
         },
@@ -1020,6 +1071,20 @@ mod tests {
             .err()
             .expect("cli parse must fail");
         assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
+    }
+
+    #[test]
+    fn cli_repo_list_parses_json_and_verbose_flags() {
+        let cli = Cli::try_parse_from(["code-pm", "repo", "list", "--json", "--verbose"]).unwrap();
+
+        let Command::Repo { command } = cli.command else {
+            panic!("expected repo subcommand");
+        };
+        let RepoCommand::List(args) = command else {
+            panic!("expected repo list");
+        };
+        assert!(args.json);
+        assert!(args.verbose);
     }
 
     #[tokio::test]

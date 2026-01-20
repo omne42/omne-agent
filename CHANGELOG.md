@@ -11,6 +11,7 @@
 - Hook 执行现在会把 stdout/stderr 写入 session artifacts：`/tmp/<repo>_<session_id>/logs/hook.{stdout,stderr}.log`，便于排查失败原因。
 - `--pm-root` / `CODE_PM_ROOT`：允许覆盖 `.code_pm` 数据目录位置（相对路径按 repo root 解析）。
 - 兼容提示：当默认使用 `.code_pm` 且检测到旧目录 `.codex_pm` 存在（但 `.code_pm` 尚未创建）时，CLI 会输出 warning，提示手动迁移或通过 `--pm-root .codex_pm` / `CODE_PM_ROOT=.codex_pm` 复用旧数据。
+- `code-pm repo list --json/--verbose`：支持 JSON 输出与 verbose 输出（包含 bare/lock 路径），便于脚本/调试。
 - `code-pm session list/show`：从本地 `.code_pm/data/` 查询 session（默认优先输出 `result`；`--all` 输出 session/tasks/prs/merge/result）。
 - `code-pm session list [--limit N] [--json]`：按 session id 顺序列出 sessions；`--json` 输出 JSON 数组。
 - `code-pm session list --verbose [--limit N] [--json]`：按 `created_at`（RFC3339）倒序输出 session 元信息（不含 prompt）；`--json` 输出 JSON 数组。
