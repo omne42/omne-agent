@@ -42,7 +42,7 @@ Git 不再是核心域模型，而是一个可插拔 adapter：
 
 RTS 不是“开更多并发”。它要求控制面具备下面这些硬能力（不然就是失控的 token 烧钱机）：
 
-1. **事件流是一等 API**：终端输出/文件编辑/工具调用/审批/产物（artifacts）全部事件化，客户端只消费事件流（参考 `docs/research/codex.md` 的 `Thread/Turn/Item`）。
+1. **事件流是一等 API**：终端输出/文件编辑/工具调用/审批/产物（artifacts）全部事件化，客户端只消费事件流（artifact 指“给用户看的文档 + 不进 repo 的临时产物”，repo/workspace 内的代码改动不算 artifact；参考 `docs/research/codex.md` 的 `Thread/Turn/Item`）。
 2. **注意力队列（Attention / Inbox）**：把“需要人介入”的点变成可枚举状态：`NeedApproval` / `PlanReady` / `DiffReady` / `TestFailed` / `Stuck` / `Done`。
 3. **可暂停/可打断/可步进**：至少要能 `pause/resume/interrupt/cancel`；更进一步要支持 turn 级 step（默认 plan → approve → act）。
 4. **workspace 生命周期脚本化**：`setup/run/archive(or teardown)` 必须是约定俗成的 hook（参考 `docs/research/onecode.md`、`docs/research/superset.md`）。

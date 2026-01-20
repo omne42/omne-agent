@@ -85,6 +85,7 @@
 - `Artifact`：产物（log/diff/patch/html/截图…）+ 索引元数据（类型、生成者、时间、路径、可预览）。
 - `ApprovalRequest/ApprovalDecision`：审批请求与决定（必须落盘，必须可回放）。
 - `AttentionState`：从事件流派生的“需要人介入”的状态机（不是 UI 临时计算）。
+  - 已定：artifact 主要指“给用户看的文档 + 不进 repo 的临时产物”；repo/workspace 内的代码改动不算 artifact。
 
 所有权原则（Rust 视角）：
 
@@ -117,6 +118,7 @@
 - artifacts（新增/更新）
 - 状态变迁（pause/resume/interrupt/cancel）
 - **process 运行态**：running/exited/failed、以及 stdout/stderr 的 streaming 写入与定位信息（支持随时 inspect/attach）
+  - 已定：事件落盘是权威来源；流式订阅丢了也能通过 `resume + 重放` 补齐（需要单调序号/offset）。
 
 ---
 
@@ -128,6 +130,7 @@
 - `interrupt`：打断当前 turn/tool（类似“停手”）。
 - `cancel`：终止 task（并落盘原因/残留 artifacts）。
 - `step`：在 plan/execute 之间做硬切换（默认先 plan）。
+- `inspect/attach`：只读查看运行中进程/子 agent 输出（禁止 stdin 交互）；必要时可 `kill`。
 
 Attention/Inbox（派生视图）至少包含：
 
