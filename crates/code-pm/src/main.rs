@@ -596,7 +596,7 @@ fn resolve_run_repo(
             let repo_name = repo_root
                 .file_name()
                 .and_then(|name| name.to_str())
-                .map(pm_core::RepositoryName::sanitize)
+                .map(sanitize_repo_name_input)
                 .unwrap_or_else(|| pm_core::RepositoryName::sanitize("repo"));
             let source = repo_root.to_string_lossy().to_string();
             Ok(ResolvedRunRepo::Inject { repo_name, source })
@@ -1106,13 +1106,50 @@ mod tests {
             panic!("expected inject");
         };
         assert_eq!(source, repo_root.to_string_lossy());
-        let expected = pm_core::RepositoryName::sanitize(
+        let expected = sanitize_repo_name_input(
             repo_root
                 .file_name()
                 .and_then(|name| name.to_str())
                 .expect("tmp dir has file name"),
         );
         assert_eq!(repo_name, expected);
+    }
+
+    #[test]
+    fn resolve_run_repo_strips_dot_git_suffix_from_repo_root_dir_name() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo_root = tmp.path().join("demo.git");
+        std::fs::create_dir_all(repo_root.join(".git")).expect("create .git dir");
+
+        let args = RunArgs {
+            repo: None,
+            repo_src: None,
+            pr_name: "demo".to_string(),
+            prompt: Some("x".to_string()),
+            prompt_file: None,
+            base: "main".to_string(),
+            apply_patch: None,
+            max_concurrency: 1,
+            stream_events: false,
+            stream_events_json: false,
+            strict: false,
+            json: false,
+            cargo_test: false,
+            auto_tasks: false,
+            tasks_file: None,
+            task: Vec::new(),
+            hook_cmd: None,
+            hook_arg: Vec::new(),
+            hook_url: None,
+        };
+
+        let ResolvedRunRepo::Inject { repo_name, source } =
+            resolve_run_repo(&repo_root, &args).expect("resolve")
+        else {
+            panic!("expected inject");
+        };
+        assert_eq!(source, repo_root.to_string_lossy());
+        assert_eq!(repo_name.as_str(), "demo");
     }
 
     #[test]
