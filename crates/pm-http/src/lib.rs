@@ -16,6 +16,8 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 use tokio_util::io::ReaderStream;
 use tracing::{debug, info, warn};
 
+const DEFAULT_GIT_HTTP_MAX_BODY_BYTES: usize = 1024 * 1024 * 1024;
+
 #[derive(Clone)]
 struct AppState {
     repos_root: PathBuf,
@@ -267,8 +269,19 @@ async fn git_http_backend(
         "git smart http request"
     );
 
+    let max_body_bytes = git_http_max_body_bytes();
+    if let Some(value) = header_content_length.as_deref() {
+        let content_length: usize = value
+            .trim()
+            .parse()
+            .map_err(|_| ApiError::bad_request("invalid content-length"))?;
+        if content_length > max_body_bytes {
+            return Err(ApiError::payload_too_large("request body too large"));
+        }
+    }
+
     let (content_length, body) = if method == "POST" && header_content_length.is_none() {
-        let (path, len) = spool_body_to_tempfile(req_body).await?;
+        let (path, len) = spool_body_to_tempfile(req_body, max_body_bytes).await?;
         (Some(len.to_string()), RequestBody::TempFile { path })
     } else {
         (header_content_length, RequestBody::Stream(req_body))
@@ -391,7 +404,29 @@ enum RequestBody {
     TempFile { path: tempfile::TempPath },
 }
 
-async fn spool_body_to_tempfile(body: Body) -> Result<(tempfile::TempPath, usize), ApiError> {
+fn git_http_max_body_bytes() -> usize {
+    match std::env::var("CODE_PM_HTTP_MAX_BODY_BYTES") {
+        Ok(value) => {
+            let trimmed = value.trim();
+            match trimmed.parse::<usize>() {
+                Ok(0) | Err(_) => {
+                    warn!(
+                        value = %trimmed,
+                        "invalid CODE_PM_HTTP_MAX_BODY_BYTES; using default"
+                    );
+                    DEFAULT_GIT_HTTP_MAX_BODY_BYTES
+                }
+                Ok(value) => value,
+            }
+        }
+        Err(_) => DEFAULT_GIT_HTTP_MAX_BODY_BYTES,
+    }
+}
+
+async fn spool_body_to_tempfile(
+    body: Body,
+    max_bytes: usize,
+) -> Result<(tempfile::TempPath, usize), ApiError> {
     let temp = tempfile::Builder::new()
         .prefix("code-pm-http-body-")
         .tempfile()?;
@@ -406,9 +441,13 @@ async fn spool_body_to_tempfile(body: Body) -> Result<(tempfile::TempPath, usize
     while let Some(frame) = body.frame().await {
         let frame = frame.map_err(|_| ApiError::internal("request body read failed"))?;
         if let Some(data) = frame.data_ref() {
-            len = len
+            let next_len = len
                 .checked_add(data.len())
-                .ok_or_else(|| ApiError::internal("request body too large"))?;
+                .ok_or_else(|| ApiError::payload_too_large("request body too large"))?;
+            if next_len > max_bytes {
+                return Err(ApiError::payload_too_large("request body too large"));
+            }
+            len = next_len;
             file.write_all(data).await?;
         }
     }
@@ -512,6 +551,20 @@ impl ApiError {
         }
     }
 
+    fn bad_request(message: &'static str) -> Self {
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            message,
+        }
+    }
+
+    fn payload_too_large(message: &'static str) -> Self {
+        Self {
+            status: StatusCode::PAYLOAD_TOO_LARGE,
+            message,
+        }
+    }
+
     fn internal(message: &'static str) -> Self {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
@@ -575,7 +628,7 @@ mod tests {
     #[tokio::test]
     async fn spool_body_to_tempfile_writes_payload() -> anyhow::Result<()> {
         let body = Body::from("hello");
-        let (path, len) = spool_body_to_tempfile(body)
+        let (path, len) = spool_body_to_tempfile(body, 1024)
             .await
             .map_err(|err| anyhow::anyhow!("spool failed: {err:?}"))?;
 
@@ -584,6 +637,14 @@ mod tests {
         assert_eq!(bytes, b"hello");
 
         path.close()?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn spool_body_to_tempfile_rejects_large_payload() -> anyhow::Result<()> {
+        let body = Body::from(vec![0u8; 6]);
+        let err = spool_body_to_tempfile(body, 5).await.unwrap_err();
+        assert_eq!(err.status, StatusCode::PAYLOAD_TOO_LARGE);
         Ok(())
     }
 }
