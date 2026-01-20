@@ -117,7 +117,11 @@ fn is_allowed_char(ch: char) -> bool {
     ch.is_ascii_alphanumeric() || ch == '.' || ch == '_' || ch == '-'
 }
 
-fn validate_name(value: &str) -> Result<(), NameError> {
+fn is_allowed_ref_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || ch == '_' || ch == '-'
+}
+
+fn validate_name_with(value: &str, allowed: fn(char) -> bool) -> Result<(), NameError> {
     if value.is_empty() {
         return Err(NameError::Empty);
     }
@@ -125,20 +129,20 @@ fn validate_name(value: &str) -> Result<(), NameError> {
         return Err(NameError::ForbiddenSegment(value.to_string()));
     }
     for ch in value.chars() {
-        if !is_allowed_char(ch) {
+        if !allowed(ch) {
             return Err(NameError::InvalidChar(ch));
         }
     }
     Ok(())
 }
 
-fn sanitize_name(input: &str, fallback: &str) -> String {
+fn sanitize_name_with(input: &str, fallback: &str, allowed: fn(char) -> bool) -> String {
     let trimmed = input.trim();
     let mut out = String::with_capacity(trimmed.len());
 
     let mut last_dash = false;
     for ch in trimmed.chars() {
-        let mapped = if is_allowed_char(ch) {
+        let mapped = if allowed(ch) {
             ch.to_ascii_lowercase()
         } else {
             '-'
@@ -163,7 +167,7 @@ fn sanitize_name(input: &str, fallback: &str) -> String {
 }
 
 macro_rules! name_type {
-    ($ty:ident, $fallback:literal) => {
+    ($ty:ident, $fallback:literal, $allowed:path) => {
         #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
         #[serde(transparent)]
         pub struct $ty(String);
@@ -171,12 +175,12 @@ macro_rules! name_type {
         impl $ty {
             pub fn new(value: impl Into<String>) -> Result<Self, NameError> {
                 let value = value.into();
-                validate_name(&value)?;
+                validate_name_with(&value, $allowed)?;
                 Ok(Self(value))
             }
 
             pub fn sanitize(input: &str) -> Self {
-                Self(sanitize_name(input, $fallback))
+                Self(sanitize_name_with(input, $fallback, $allowed))
             }
 
             pub fn as_str(&self) -> &str {
@@ -192,9 +196,9 @@ macro_rules! name_type {
     };
 }
 
-name_type!(RepositoryName, "repo");
-name_type!(PrName, "pr");
-name_type!(TaskId, "task");
+name_type!(RepositoryName, "repo", is_allowed_char);
+name_type!(PrName, "pr", is_allowed_ref_char);
+name_type!(TaskId, "task", is_allowed_ref_char);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -354,7 +358,11 @@ mod tests {
     fn sanitize_produces_path_safe_names() {
         assert_eq!(RepositoryName::sanitize(" Foo/Bar ").as_str(), "foo-bar");
         assert_eq!(PrName::sanitize("..").as_str(), "pr");
+        assert_eq!(PrName::sanitize(".hidden").as_str(), "hidden");
+        assert_eq!(PrName::sanitize("a..b").as_str(), "a-b");
         assert_eq!(TaskId::sanitize("").as_str(), "task");
+        assert_eq!(TaskId::sanitize(".t1").as_str(), "t1");
+        assert_eq!(TaskId::sanitize("a..b").as_str(), "a-b");
     }
 
     #[test]

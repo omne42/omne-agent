@@ -20,6 +20,7 @@
 - `code-pm` CLI：`--repo/--repo-src/--pr-name/--base` 以及 `repo inject` 的 `source/--name` 现在会拒绝空值（包括仅空白字符），避免静默回退到默认 sanitize 值。
 - `code-pm run`：现在会拒绝空/纯空白的 prompt（`--prompt` 或 `--prompt-file`），避免生成无意义 session。
 - `code-pm run --auto-tasks`：现在会拒绝与 `--task/--tasks-file` 同时使用（避免 task 来源冲突）。
+- `PrName/TaskId` 的 sanitize 规则收紧为 git-ref 安全：不再保留 `.`（例如 `.hidden` → `hidden`、`a..b` → `a-b`），避免生成无效分支名导致运行失败。
 - `code-pm run --stream-events-json`：以 JSON Lines（NDJSON）格式输出 `RunEvent` 到 stderr（每行包含 `type` 字段），便于实时消费事件流。
 - `code-pm run --hook-url <url>`：完成后向 webhook `POST` JSON（`session_id/repo/pr_name/base_branch/pm_root/session_dir/tmp_dir/result_json/merged/merge_error`）。
 - `pm-http GET /api/v0/sessions`：新增 `?verbose=true`（返回 `SessionMeta[]`）与 `?limit=N`（截断结果）；默认仍返回 `SessionId[]`。
