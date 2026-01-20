@@ -28,17 +28,33 @@ pub async fn run_agent_turn(
     _input: String,
     cancel: CancellationToken,
 ) -> anyhow::Result<()> {
-    let thread_id = {
+    let (thread_id, thread_model, thread_openai_base_url) = {
         let handle = thread_rt.handle.lock().await;
-        handle.thread_id()
+        let state = handle.state();
+        (
+            handle.thread_id(),
+            state.model.clone(),
+            state.openai_base_url.clone(),
+        )
     };
 
     let api_key = std::env::var("OPENAI_API_KEY")
         .or_else(|_| std::env::var("CODE_PM_OPENAI_API_KEY"))
         .context("OPENAI_API_KEY is required")?;
-    let model = std::env::var("CODE_PM_OPENAI_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_string());
-    let base_url = std::env::var("CODE_PM_OPENAI_BASE_URL")
-        .unwrap_or_else(|_| "https://api.openai.com".to_string());
+    let model = thread_model
+        .or_else(|| {
+            std::env::var("CODE_PM_OPENAI_MODEL")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+        })
+        .unwrap_or_else(|| DEFAULT_MODEL.to_string());
+    let base_url = thread_openai_base_url
+        .or_else(|| {
+            std::env::var("CODE_PM_OPENAI_BASE_URL")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+        })
+        .unwrap_or_else(|| "https://api.openai.com".to_string());
 
     let openai = pm_openai::Client::new_with_base_url(api_key, base_url)?;
     let tools = build_tools();

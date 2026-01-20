@@ -337,9 +337,14 @@ struct ThreadAttentionParams {
 #[derive(Debug, Deserialize)]
 struct ThreadConfigureParams {
     thread_id: ThreadId,
-    approval_policy: pm_protocol::ApprovalPolicy,
+    #[serde(default)]
+    approval_policy: Option<pm_protocol::ApprovalPolicy>,
     #[serde(default)]
     sandbox_policy: Option<pm_protocol::SandboxPolicy>,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    openai_base_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -817,6 +822,8 @@ async fn main() -> anyhow::Result<()> {
                                 "cwd": state.cwd,
                                 "approval_policy": state.approval_policy,
                                 "sandbox_policy": state.sandbox_policy,
+                                "model": state.model,
+                                "openai_base_url": state.openai_base_url,
                                 "last_seq": handle.last_seq().0,
                                 "active_turn_id": state.active_turn_id,
                                 "active_turn_interrupt_requested": state.active_turn_interrupt_requested,
@@ -1279,6 +1286,8 @@ async fn handle_thread_attention(
         active_turn_interrupt_requested,
         approval_policy,
         sandbox_policy,
+        model,
+        openai_base_url,
         cwd,
     ) = {
         let handle = rt.handle.lock().await;
@@ -1289,6 +1298,8 @@ async fn handle_thread_attention(
             state.active_turn_interrupt_requested,
             state.approval_policy,
             state.sandbox_policy,
+            state.model.clone(),
+            state.openai_base_url.clone(),
             state.cwd.clone(),
         )
     };
@@ -1354,6 +1365,8 @@ async fn handle_thread_attention(
         "cwd": cwd,
         "approval_policy": approval_policy,
         "sandbox_policy": sandbox_policy,
+        "model": model,
+        "openai_base_url": openai_base_url,
         "last_seq": last_seq,
         "active_turn_id": active_turn_id,
         "active_turn_interrupt_requested": active_turn_interrupt_requested,
@@ -1367,11 +1380,37 @@ async fn handle_thread_configure(
     params: ThreadConfigureParams,
 ) -> anyhow::Result<Value> {
     let rt = server.get_or_load_thread(params.thread_id).await?;
-    rt.append_event(pm_protocol::ThreadEventKind::ThreadConfigUpdated {
-        approval_policy: params.approval_policy,
-        sandbox_policy: params.sandbox_policy,
-    })
-    .await?;
+    let (current_approval_policy, current_sandbox_policy, current_model, current_openai_base_url) = {
+        let handle = rt.handle.lock().await;
+        let state = handle.state();
+        (
+            state.approval_policy,
+            state.sandbox_policy,
+            state.model.clone(),
+            state.openai_base_url.clone(),
+        )
+    };
+
+    let approval_policy = params.approval_policy.unwrap_or(current_approval_policy);
+    let model = params.model.filter(|s| !s.trim().is_empty());
+    let openai_base_url = params.openai_base_url.filter(|s| !s.trim().is_empty());
+
+    let changed = approval_policy != current_approval_policy
+        || params
+            .sandbox_policy
+            .is_some_and(|p| p != current_sandbox_policy)
+        || model.as_ref() != current_model.as_ref()
+        || openai_base_url.as_ref() != current_openai_base_url.as_ref();
+
+    if changed {
+        rt.append_event(pm_protocol::ThreadEventKind::ThreadConfigUpdated {
+            approval_policy,
+            sandbox_policy: params.sandbox_policy,
+            model,
+            openai_base_url,
+        })
+        .await?;
+    }
     Ok(serde_json::json!({ "ok": true }))
 }
 
@@ -1385,18 +1424,47 @@ async fn handle_thread_config_explain(
         .await?
         .ok_or_else(|| anyhow::anyhow!("thread not found: {}", params.thread_id))?;
 
+    let default_model = "gpt-4.1".to_string();
+    let default_openai_base_url = "https://api.openai.com".to_string();
+
     let mut effective_approval_policy = pm_protocol::ApprovalPolicy::AutoApprove;
     let mut effective_sandbox_policy = pm_protocol::SandboxPolicy::WorkspaceWrite;
+    let mut effective_model = default_model.clone();
+    let mut effective_openai_base_url = default_openai_base_url.clone();
     let mut layers = vec![serde_json::json!({
         "source": "default",
         "approval_policy": effective_approval_policy,
         "sandbox_policy": effective_sandbox_policy,
+        "model": effective_model,
+        "openai_base_url": effective_openai_base_url,
     })];
+
+    let env_model = std::env::var("CODE_PM_OPENAI_MODEL")
+        .ok()
+        .filter(|s| !s.trim().is_empty());
+    let env_openai_base_url = std::env::var("CODE_PM_OPENAI_BASE_URL")
+        .ok()
+        .filter(|s| !s.trim().is_empty());
+    if env_model.is_some() || env_openai_base_url.is_some() {
+        if let Some(model) = env_model {
+            effective_model = model;
+        }
+        if let Some(openai_base_url) = env_openai_base_url {
+            effective_openai_base_url = openai_base_url;
+        }
+        layers.push(serde_json::json!({
+            "source": "env",
+            "model": effective_model,
+            "openai_base_url": effective_openai_base_url,
+        }));
+    }
 
     for event in events {
         if let pm_protocol::ThreadEventKind::ThreadConfigUpdated {
             approval_policy,
             sandbox_policy,
+            model,
+            openai_base_url,
         } = event.kind
         {
             let ts = event.timestamp.format(&Rfc3339)?;
@@ -1404,12 +1472,20 @@ async fn handle_thread_config_explain(
             if let Some(policy) = sandbox_policy {
                 effective_sandbox_policy = policy;
             }
+            if let Some(model) = model {
+                effective_model = model;
+            }
+            if let Some(openai_base_url) = openai_base_url {
+                effective_openai_base_url = openai_base_url;
+            }
             layers.push(serde_json::json!({
                 "source": "thread",
                 "seq": event.seq.0,
                 "timestamp": ts,
                 "approval_policy": approval_policy,
                 "sandbox_policy": effective_sandbox_policy,
+                "model": effective_model,
+                "openai_base_url": effective_openai_base_url,
             }));
         }
     }
@@ -1419,6 +1495,8 @@ async fn handle_thread_config_explain(
         "effective": {
             "approval_policy": effective_approval_policy,
             "sandbox_policy": effective_sandbox_policy,
+            "model": effective_model,
+            "openai_base_url": effective_openai_base_url,
         },
         "layers": layers,
     }))
@@ -1426,7 +1504,7 @@ async fn handle_thread_config_explain(
 
 async fn handle_thread_fork(server: &Server, params: ThreadForkParams) -> anyhow::Result<Value> {
     let thread_rt = server.get_or_load_thread(params.thread_id).await?;
-    let (cwd, approval_policy, sandbox_policy, active_turn_id) = {
+    let (cwd, active_turn_id) = {
         let handle = thread_rt.handle.lock().await;
         let state = handle.state();
         (
@@ -1434,8 +1512,6 @@ async fn handle_thread_fork(server: &Server, params: ThreadForkParams) -> anyhow
                 .cwd
                 .clone()
                 .ok_or_else(|| anyhow::anyhow!("thread cwd is missing: {}", params.thread_id))?,
-            state.approval_policy,
-            state.sandbox_policy,
             state.active_turn_id,
         )
     };
@@ -1455,13 +1531,6 @@ async fn handle_thread_fork(server: &Server, params: ThreadForkParams) -> anyhow
         .create_thread(PathBuf::from(&cwd))
         .await?;
     let forked_id = forked.thread_id();
-
-    forked
-        .append(pm_protocol::ThreadEventKind::ThreadConfigUpdated {
-            approval_policy,
-            sandbox_policy: Some(sandbox_policy),
-        })
-        .await?;
 
     for event in events {
         let kind = event.kind;

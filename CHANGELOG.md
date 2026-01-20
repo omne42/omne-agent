@@ -23,7 +23,8 @@
 - `pm-app-server` 新增 `thread/fork`：复制 thread 的对话/审批/配置事件到新 thread（跳过 tool/process 事件与 thread 专属 artifact 路径），用于多子 agent 并行。
 - `pm-app-server` 新增 thread 清理 API：`thread/delete(force?)` 与 `thread/clear_artifacts(force?)`，用于一键清除 history 与中间态产物。
 - `pm-app-server` 新增 approvals 控制面：`thread/configure(approval_policy,sandbox_policy?)`、`approval/list`、`approval/decide`。
-- `pm-app-server` 新增 `thread/config/explain`：返回最小 config layer stack（当前覆盖 `approval_policy`/`sandbox_policy`），用于回答“为什么生效的是这个值”。
+- `pm-app-server` 新增 `thread/config/explain`：返回最小 config layer stack（当前覆盖 `approval_policy`/`sandbox_policy`/`model`/`openai_base_url`），用于回答“为什么生效的是这个值”。
+- `pm-protocol`/`pm-eventlog` 新增 thread-level 模型配置：`ThreadConfigUpdated.model/openai_base_url` + `ThreadState.model/openai_base_url`。
 - `pm-app-server` 新增 `thread/attention`：派生 RTS “收件箱”视图（pending approvals + running processes），减少 UI/CLI 人肉扫描 event log。
 - `pm-app-server` 新增 `process/*`：`process/start`（落盘 stdout/stderr）、`process/list`、`process/inspect`（元信息 + tail）、`process/tail`（只读查看）、`process/follow`（增量查看）、`process/kill`（终止后台进程）。
 - `pm-app-server` 新增 `file/*`：`file/read`、`file/glob`、`file/grep`、`file/write`、`file/patch`、`file/edit`、`file/delete`（带 rooted path 校验，并记录 `ToolStarted/ToolCompleted` 事件）。
@@ -42,6 +43,8 @@
 - `pm-eventlog ThreadState`：记录 thread 的 `cwd`；`pm-app-server thread/state` 返回 `cwd` 便于后续 sandbox/root 约束。
 - `pm-eventlog ThreadState`：增加 `approval_policy`（默认 auto-approve）；`pm-app-server thread/state` 返回当前策略。
 - `pm-eventlog ThreadState`：增加 `sandbox_policy`（默认 `workspace_write`）；`pm-app-server thread/state`/`thread/attention` 返回当前策略。
+- `pm-eventlog ThreadState`：增加 `model`/`openai_base_url`（默认跟随 env/default）；`pm-app-server thread/state`/`thread/attention`/`thread/config/explain` 返回当前值。
+- `pm-app-server thread/configure`：`approval_policy` 现在可选（省略时沿用当前），并支持设置 `model`/`openai_base_url`（thread override）。
 - `pm-app-server`：当 `approval_policy=manual` 时，`file/write`/`file/delete`/`fs/mkdir`/`process/start` 会返回 `needs_approval` 并写入 `ApprovalRequested`；提供 `approval_id` 且已 `approval/decide` 后才会执行。
 - `pm-app-server`：当 `sandbox_policy=read_only` 时，`file/write`/`file/patch`/`file/edit`/`file/delete`/`fs/mkdir`/`process/start` 会直接拒绝（ToolStatus=Denied）。
 - `pm-app-server approvals`：`approval/decide` 支持 `remember=true`（session 内记忆 approve/deny），同类操作无需重复弹审批；拒绝也会被记住并直接拦截。

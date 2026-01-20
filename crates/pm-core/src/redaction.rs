@@ -157,7 +157,18 @@ pub(crate) fn redact_thread_event_kind(kind: &mut ThreadEventKind) {
                 *reason = redact_text(reason);
             }
         }
-        ThreadEventKind::ThreadConfigUpdated { .. } => {}
+        ThreadEventKind::ThreadConfigUpdated {
+            model,
+            openai_base_url,
+            ..
+        } => {
+            if let Some(model) = model {
+                *model = redact_text(model);
+            }
+            if let Some(openai_base_url) = openai_base_url {
+                *openai_base_url = redact_text(openai_base_url);
+            }
+        }
         ThreadEventKind::ApprovalRequested { params, .. } => {
             redact_json_value(params);
         }

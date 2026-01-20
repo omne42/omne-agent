@@ -209,6 +209,8 @@ pub struct ThreadState {
     pub cwd: Option<String>,
     pub approval_policy: ApprovalPolicy,
     pub sandbox_policy: SandboxPolicy,
+    pub model: Option<String>,
+    pub openai_base_url: Option<String>,
     pub last_seq: EventSeq,
     pub active_turn_id: Option<TurnId>,
     pub active_turn_interrupt_requested: bool,
@@ -221,6 +223,8 @@ impl ThreadState {
             cwd: None,
             approval_policy: ApprovalPolicy::AutoApprove,
             sandbox_policy: SandboxPolicy::WorkspaceWrite,
+            model: None,
+            openai_base_url: None,
             last_seq: EventSeq::ZERO,
             active_turn_id: None,
             active_turn_interrupt_requested: false,
@@ -250,10 +254,18 @@ impl ThreadState {
             ThreadEventKind::ThreadConfigUpdated {
                 approval_policy,
                 sandbox_policy,
+                model,
+                openai_base_url,
             } => {
                 self.approval_policy = *approval_policy;
                 if let Some(policy) = sandbox_policy {
                     self.sandbox_policy = *policy;
+                }
+                if let Some(model) = model {
+                    self.model = Some(model.clone());
+                }
+                if let Some(openai_base_url) = openai_base_url {
+                    self.openai_base_url = Some(openai_base_url.clone());
                 }
             }
             ThreadEventKind::TurnStarted { turn_id, .. } => {
