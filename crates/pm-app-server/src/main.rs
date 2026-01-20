@@ -283,6 +283,20 @@ struct ThreadResumeParams {
 }
 
 #[derive(Debug, Deserialize)]
+struct ThreadDeleteParams {
+    thread_id: ThreadId,
+    #[serde(default)]
+    force: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct ThreadClearArtifactsParams {
+    thread_id: ThreadId,
+    #[serde(default)]
+    force: bool,
+}
+
+#[derive(Debug, Deserialize)]
 struct ThreadStateParams {
     thread_id: ThreadId,
 }
@@ -672,6 +686,36 @@ async fn main() -> anyhow::Result<()> {
                     Some(serde_json::json!({ "error": err.to_string() })),
                 ),
             },
+            "thread/delete" => match serde_json::from_value::<ThreadDeleteParams>(request.params) {
+                Ok(params) => match handle_thread_delete(&server, params).await {
+                    Ok(result) => JsonRpcResponse::ok(id, result),
+                    Err(err) => {
+                        JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None)
+                    }
+                },
+                Err(err) => JsonRpcResponse::err(
+                    id,
+                    JSONRPC_INVALID_PARAMS,
+                    "invalid params",
+                    Some(serde_json::json!({ "error": err.to_string() })),
+                ),
+            },
+            "thread/clear_artifacts" => {
+                match serde_json::from_value::<ThreadClearArtifactsParams>(request.params) {
+                    Ok(params) => match handle_thread_clear_artifacts(&server, params).await {
+                        Ok(result) => JsonRpcResponse::ok(id, result),
+                        Err(err) => {
+                            JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None)
+                        }
+                    },
+                    Err(err) => JsonRpcResponse::err(
+                        id,
+                        JSONRPC_INVALID_PARAMS,
+                        "invalid params",
+                        Some(serde_json::json!({ "error": err.to_string() })),
+                    ),
+                }
+            }
             "thread/list" => match server.thread_store.list_threads().await {
                 Ok(threads) => JsonRpcResponse::ok(
                     id,
@@ -1311,6 +1355,162 @@ async fn handle_thread_config_explain(
             "approval_policy": effective_approval_policy,
         },
         "layers": layers,
+    }))
+}
+
+async fn handle_thread_delete(
+    server: &Server,
+    params: ThreadDeleteParams,
+) -> anyhow::Result<Value> {
+    let thread_dir = server.thread_store.thread_dir(params.thread_id);
+
+    let mut running = Vec::<ProcessId>::new();
+    let mut to_kill = Vec::<ProcessEntry>::new();
+    let mut to_remove = Vec::<ProcessId>::new();
+    {
+        let entries = {
+            let entries = server.processes.lock().await;
+            entries
+                .iter()
+                .map(|(process_id, entry)| (*process_id, entry.clone()))
+                .collect::<Vec<_>>()
+        };
+        for (process_id, entry) in entries {
+            let info = entry.info.lock().await;
+            if info.thread_id != params.thread_id {
+                continue;
+            }
+            to_remove.push(process_id);
+            if matches!(info.status, ProcessStatus::Running) {
+                running.push(process_id);
+                to_kill.push(entry.clone());
+            }
+        }
+    }
+
+    if !running.is_empty() && !params.force {
+        anyhow::bail!(
+            "refusing to delete thread with running processes (use force=true): {:?}",
+            running
+        );
+    }
+
+    if params.force {
+        for entry in to_kill {
+            let _ = entry
+                .cmd_tx
+                .send(ProcessCommand::Kill {
+                    reason: Some("thread deleted".to_string()),
+                })
+                .await;
+        }
+    }
+
+    server.threads.lock().await.remove(&params.thread_id);
+    {
+        let mut entries = server.processes.lock().await;
+        for process_id in to_remove {
+            entries.remove(&process_id);
+        }
+    }
+
+    let deleted = match tokio::fs::remove_dir_all(&thread_dir).await {
+        Ok(()) => true,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => false,
+        Err(err) => return Err(err).with_context(|| format!("remove {}", thread_dir.display())),
+    };
+
+    Ok(serde_json::json!({
+        "thread_id": params.thread_id,
+        "deleted": deleted,
+        "thread_dir": thread_dir.display().to_string(),
+    }))
+}
+
+async fn handle_thread_clear_artifacts(
+    server: &Server,
+    params: ThreadClearArtifactsParams,
+) -> anyhow::Result<Value> {
+    let thread_rt = server.get_or_load_thread(params.thread_id).await?;
+
+    let mut running = Vec::<ProcessId>::new();
+    let mut to_kill = Vec::<ProcessEntry>::new();
+    {
+        let entries = {
+            let entries = server.processes.lock().await;
+            entries
+                .iter()
+                .map(|(process_id, entry)| (*process_id, entry.clone()))
+                .collect::<Vec<_>>()
+        };
+        for (process_id, entry) in entries {
+            let info = entry.info.lock().await;
+            if info.thread_id != params.thread_id {
+                continue;
+            }
+            if matches!(info.status, ProcessStatus::Running) {
+                running.push(process_id);
+                to_kill.push(entry.clone());
+            }
+        }
+    }
+
+    if !running.is_empty() && !params.force {
+        anyhow::bail!(
+            "refusing to clear artifacts with running processes (use force=true): {:?}",
+            running
+        );
+    }
+
+    if params.force {
+        for entry in to_kill {
+            let _ = entry
+                .cmd_tx
+                .send(ProcessCommand::Kill {
+                    reason: Some("artifacts cleared".to_string()),
+                })
+                .await;
+        }
+    }
+
+    let tool_id = pm_protocol::ToolId::new();
+    thread_rt
+        .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+            tool_id,
+            turn_id: None,
+            tool: "thread/clear_artifacts".to_string(),
+            params: Some(serde_json::json!({
+                "force": params.force,
+            })),
+        })
+        .await?;
+
+    let artifacts_dir = server
+        .thread_store
+        .thread_dir(params.thread_id)
+        .join("artifacts");
+    let removed = match tokio::fs::remove_dir_all(&artifacts_dir).await {
+        Ok(()) => true,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => false,
+        Err(err) => return Err(err).with_context(|| format!("remove {}", artifacts_dir.display())),
+    };
+
+    thread_rt
+        .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+            tool_id,
+            status: pm_protocol::ToolStatus::Completed,
+            error: None,
+            result: Some(serde_json::json!({
+                "removed": removed,
+                "artifacts_dir": artifacts_dir.display().to_string(),
+            })),
+        })
+        .await?;
+
+    Ok(serde_json::json!({
+        "tool_id": tool_id,
+        "removed": removed,
+        "artifacts_dir": artifacts_dir.display().to_string(),
     }))
 }
 
