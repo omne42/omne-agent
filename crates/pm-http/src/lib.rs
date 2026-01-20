@@ -69,7 +69,8 @@ struct SessionBundleQuery {
 
 fn parse_bool_flag(value: &str) -> bool {
     let value = value.trim();
-    value == "1"
+    value.is_empty()
+        || value == "1"
         || value.eq_ignore_ascii_case("true")
         || value.eq_ignore_ascii_case("yes")
         || value.eq_ignore_ascii_case("on")
