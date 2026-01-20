@@ -354,19 +354,31 @@ mod tests {
 
         let id: SessionId = "00000000-0000-0000-0000-000000000789".parse()?;
         storage
-            .put_json(&format!("sessions/{id}/session"), &serde_json::json!({"id": id}))
+            .put_json(
+                &format!("sessions/{id}/session"),
+                &serde_json::json!({"id": id}),
+            )
             .await?;
         storage
-            .put_json(&format!("sessions/{id}/tasks"), &serde_json::json!([{"id":"t1"}]))
+            .put_json(
+                &format!("sessions/{id}/tasks"),
+                &serde_json::json!([{"id":"t1"}]),
+            )
             .await?;
         storage
             .put_json(&format!("sessions/{id}/prs"), &serde_json::json!([]))
             .await?;
         storage
-            .put_json(&format!("sessions/{id}/merge"), &serde_json::json!({"merged": true}))
+            .put_json(
+                &format!("sessions/{id}/merge"),
+                &serde_json::json!({"merged": true}),
+            )
             .await?;
         storage
-            .put_json(&format!("sessions/{id}/result"), &serde_json::json!({"id": id}))
+            .put_json(
+                &format!("sessions/{id}/result"),
+                &serde_json::json!({"id": id}),
+            )
             .await?;
 
         let bundle = storage.get_session_bundle(id, true).await?.unwrap();

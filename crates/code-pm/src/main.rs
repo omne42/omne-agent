@@ -5,7 +5,7 @@ use std::sync::Arc;
 use clap::{Parser, Subcommand};
 use pm_core::{
     Architect, CommandHookRunner, EventBus, FsStorage, HookRunner, HookSpec, Orchestrator, PmPaths,
-    PrName, RuleBasedArchitect, SessionId, Storage,
+    PrName, RuleBasedArchitect, SessionId,
 };
 use pm_git::{RepoManager, find_repo_root};
 use pm_http::serve as serve_http;
@@ -165,32 +165,11 @@ async fn show_session_json(
     id: SessionId,
     all: bool,
 ) -> anyhow::Result<String> {
-    let mut out = serde_json::Map::new();
-    let result_key = format!("sessions/{id}/result");
-    if !all {
-        if let Some(value) = storage.get_json(&result_key).await? {
-            out.insert("result".to_string(), value);
-            return Ok(serde_json::to_string_pretty(&out)?);
-        }
-    }
-
-    for (name, key) in [
-        ("session", format!("sessions/{id}/session")),
-        ("tasks", format!("sessions/{id}/tasks")),
-        ("prs", format!("sessions/{id}/prs")),
-        ("merge", format!("sessions/{id}/merge")),
-        ("result", result_key),
-    ] {
-        if let Some(value) = storage.get_json(&key).await? {
-            out.insert(name.to_string(), value);
-        }
-    }
-
-    if out.is_empty() {
-        anyhow::bail!("session not found: {id}");
-    }
-
-    Ok(serde_json::to_string_pretty(&out)?)
+    let value = storage
+        .get_session_bundle(id, all)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("session not found: {id}"))?;
+    Ok(serde_json::to_string_pretty(&value)?)
 }
 
 async fn run_session(
@@ -404,6 +383,7 @@ impl Architect for TemplateArchitect {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pm_core::Storage;
 
     #[tokio::test]
     async fn list_sessions_returns_sorted_unique_ids() -> anyhow::Result<()> {

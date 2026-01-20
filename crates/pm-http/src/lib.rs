@@ -5,12 +5,13 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::body::Body;
-use axum::extract::{Path as AxumPath, State};
+use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Request, Response, StatusCode};
 use axum::routing::{any, get};
 use http_body_util::BodyExt;
 use pm_core::{FsStorage, PmPaths, RepositoryName, SessionId, Storage};
 use pm_git::{RepoManager, lock_exclusive, lock_shared};
+use serde::Deserialize;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 use tokio_util::io::ReaderStream;
 use tracing::{debug, info, warn};
@@ -36,6 +37,7 @@ pub fn router(pm_paths: PmPaths) -> anyhow::Result<Router> {
     Ok(Router::new()
         .route("/api/v0/repos", get(api_list_repos))
         .route("/api/v0/sessions", get(api_list_sessions))
+        .route("/api/v0/sessions/:id", get(api_get_session_bundle))
         .route("/api/v0/sessions/:id/session", get(api_get_session))
         .route("/api/v0/sessions/:id/tasks", get(api_get_tasks))
         .route("/api/v0/sessions/:id/prs", get(api_get_prs))
@@ -64,6 +66,32 @@ async fn api_list_sessions(State(state): State<Arc<AppState>>) -> Result<Respons
     let sessions = state.storage.list_session_ids().await?;
     let json = serde_json::to_vec(&sessions)?;
     Ok(json_response(json))
+}
+
+#[derive(Debug, Deserialize)]
+struct SessionBundleQuery {
+    all: Option<String>,
+}
+
+fn parse_bool_flag(value: &str) -> bool {
+    let value = value.trim();
+    value == "1"
+        || value.eq_ignore_ascii_case("true")
+        || value.eq_ignore_ascii_case("yes")
+        || value.eq_ignore_ascii_case("on")
+}
+
+async fn api_get_session_bundle(
+    State(state): State<Arc<AppState>>,
+    AxumPath(session_id): AxumPath<SessionId>,
+    Query(query): Query<SessionBundleQuery>,
+) -> Result<Response<Body>, ApiError> {
+    let all = query.all.as_deref().is_some_and(parse_bool_flag);
+    let value = state.storage.get_session_bundle(session_id, all).await?;
+    match value {
+        Some(value) => Ok(json_response(serde_json::to_vec(&value)?)),
+        None => Err(ApiError::not_found("session not found")),
+    }
 }
 
 async fn api_get_session(
