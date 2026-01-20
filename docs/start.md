@@ -141,6 +141,11 @@ cargo run -p code-pm -- run \
 - 默认：`/tmp`
 - 覆盖：`CODE_PM_TMP_ROOT=/your/tmp/root`
 
+数据目录根路径（`PmPaths` / `.code_pm`）：
+
+- 默认：`<repo_root>/.code_pm`（`repo_root` 为当前目录的 git root；若不在 git repo 中则为当前目录）
+- 覆盖：`CODE_PM_ROOT=/path/to/.code_pm`（相对路径会按 `repo_root` 解析）
+
 可选：完成后执行 hook 命令（将通过环境变量拿到 session 上下文）：
 
 ```bash

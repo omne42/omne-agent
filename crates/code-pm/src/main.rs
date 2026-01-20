@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -122,7 +123,7 @@ async fn main() -> anyhow::Result<()> {
     let cwd = std::env::current_dir()?;
     let repo_root = find_repo_root(&cwd)?;
 
-    let pm_root = repo_root.join(".code_pm");
+    let pm_root = resolve_pm_root(&repo_root, std::env::var_os("CODE_PM_ROOT").as_deref());
     let pm_paths = PmPaths::new(pm_root.clone());
     let storage = FsStorage::new(pm_paths.data_dir());
 
@@ -208,6 +209,20 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn resolve_pm_root(repo_root: &std::path::Path, override_root: Option<&OsStr>) -> PathBuf {
+    match override_root {
+        Some(value) if !value.is_empty() => {
+            let path = PathBuf::from(value);
+            if path.is_absolute() {
+                path
+            } else {
+                repo_root.join(path)
+            }
+        }
+        _ => repo_root.join(".code_pm"),
+    }
 }
 
 async fn list_sessions(storage: &FsStorage) -> anyhow::Result<Vec<SessionId>> {
