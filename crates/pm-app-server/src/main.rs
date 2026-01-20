@@ -306,6 +306,11 @@ struct ThreadResumeParams {
 }
 
 #[derive(Debug, Deserialize)]
+struct ThreadForkParams {
+    thread_id: ThreadId,
+}
+
+#[derive(Debug, Deserialize)]
 struct ThreadDeleteParams {
     thread_id: ThreadId,
     #[serde(default)]
@@ -700,6 +705,20 @@ async fn main() -> anyhow::Result<()> {
                             }),
                         )
                     }
+                    Err(err) => {
+                        JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None)
+                    }
+                },
+                Err(err) => JsonRpcResponse::err(
+                    id,
+                    JSONRPC_INVALID_PARAMS,
+                    "invalid params",
+                    Some(serde_json::json!({ "error": err.to_string() })),
+                ),
+            },
+            "thread/fork" => match serde_json::from_value::<ThreadForkParams>(request.params) {
+                Ok(params) => match handle_thread_fork(&server, params).await {
+                    Ok(result) => JsonRpcResponse::ok(id, result),
                     Err(err) => {
                         JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None)
                     }
@@ -1402,6 +1421,79 @@ async fn handle_thread_config_explain(
             "sandbox_policy": effective_sandbox_policy,
         },
         "layers": layers,
+    }))
+}
+
+async fn handle_thread_fork(server: &Server, params: ThreadForkParams) -> anyhow::Result<Value> {
+    let thread_rt = server.get_or_load_thread(params.thread_id).await?;
+    let (cwd, approval_policy, sandbox_policy, active_turn_id) = {
+        let handle = thread_rt.handle.lock().await;
+        let state = handle.state();
+        (
+            state
+                .cwd
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("thread cwd is missing: {}", params.thread_id))?,
+            state.approval_policy,
+            state.sandbox_policy,
+            state.active_turn_id,
+        )
+    };
+
+    if let Some(turn_id) = active_turn_id {
+        anyhow::bail!("cannot fork thread with active turn: {}", turn_id);
+    }
+
+    let events = server
+        .thread_store
+        .read_events_since(params.thread_id, EventSeq::ZERO)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("thread not found: {}", params.thread_id))?;
+
+    let mut forked = server
+        .thread_store
+        .create_thread(PathBuf::from(&cwd))
+        .await?;
+    let forked_id = forked.thread_id();
+
+    forked
+        .append(pm_protocol::ThreadEventKind::ThreadConfigUpdated {
+            approval_policy,
+            sandbox_policy: Some(sandbox_policy),
+        })
+        .await?;
+
+    for event in events {
+        let kind = event.kind;
+        match kind {
+            pm_protocol::ThreadEventKind::ThreadCreated { .. } => {}
+            kind @ pm_protocol::ThreadEventKind::ThreadConfigUpdated { .. }
+            | kind @ pm_protocol::ThreadEventKind::TurnStarted { .. }
+            | kind @ pm_protocol::ThreadEventKind::TurnInterruptRequested { .. }
+            | kind @ pm_protocol::ThreadEventKind::TurnCompleted { .. }
+            | kind @ pm_protocol::ThreadEventKind::ApprovalRequested { .. }
+            | kind @ pm_protocol::ThreadEventKind::ApprovalDecided { .. }
+            | kind @ pm_protocol::ThreadEventKind::AssistantMessage { .. } => {
+                forked.append(kind).await?;
+            }
+            pm_protocol::ThreadEventKind::ToolStarted { .. }
+            | pm_protocol::ThreadEventKind::ToolCompleted { .. }
+            | pm_protocol::ThreadEventKind::ProcessStarted { .. }
+            | pm_protocol::ThreadEventKind::ProcessKillRequested { .. }
+            | pm_protocol::ThreadEventKind::ProcessExited { .. } => {}
+        }
+    }
+
+    let log_path = forked.log_path().display().to_string();
+    let last_seq = forked.last_seq().0;
+
+    let rt = Arc::new(ThreadRuntime::new(forked));
+    server.threads.lock().await.insert(forked_id, rt);
+
+    Ok(serde_json::json!({
+        "thread_id": forked_id,
+        "log_path": log_path,
+        "last_seq": last_seq,
     }))
 }
 
