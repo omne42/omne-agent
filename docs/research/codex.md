@@ -2,7 +2,7 @@
 
 > Snapshot: `example/codex` @ `b66018a`
 >
-> 结论先行：Codex 的 Rust 实现（`example/codex/codex-rs`）已经具备我们要做“并发 AI task + /tmp 临时目录隔离 + 工具执行 + 审批/沙箱 + 可被 UI 驱动”的大部分底座能力。`codex_pm` 最合理的路线是：**基于 codex-rs 魔改/复用**，先把我们缺失的“多任务编排 + Git PR 流水线 + PR 合并”补上；并且**第一阶段仅启用 Responses API（wire_api = responses）**。
+> 结论先行：Codex 的 Rust 实现（`example/codex/codex-rs`）已经具备我们要做“并发 AI task + /tmp 临时目录隔离 + 工具执行 + 审批/沙箱 + 可被 UI 驱动”的大部分底座能力。`CodePM` 最合理的路线是：**基于 codex-rs 魔改/复用**，先把我们缺失的“多任务编排 + Git PR 流水线 + PR 合并”补上；并且**第一阶段仅启用 Responses API（wire_api = responses）**。
 
 ---
 
@@ -14,7 +14,7 @@
 - `example/codex/codex-cli/`：Node 打包与发布脚本（用于分发 Rust 二进制、安装 native deps）
 - `example/codex/sdk/`：SDK（可作为未来外部集成参考）
 
-对 `codex_pm`（Rust-only）而言，优先研究 `codex-rs`。
+对 `CodePM`（Rust-only）而言，优先研究 `codex-rs`。
 
 ---
 
@@ -64,7 +64,7 @@ Codex 的安全与执行底座很厚，相关 crate/文档：
 - `codex-exec-server`：**patched Bash + execve wrapper**（把 Bash 内部所有 execve 调用“上报”到 MCP server 决策，支持 Run/Escalate/Deny）——这是 Codex CLI “可审批执行”的关键工程实现（`example/codex/codex-rs/exec-server/README.md`）
 - `codex-process-hardening`：pre-main hardening（禁 core dump、禁 ptrace、清理危险 env vars）（`example/codex/codex-rs/process-hardening/README.md`）
 
-对 `codex_pm` 的意义：
+对 `CodePM` 的意义：
 
 - 我们要做自动化的 git/format/check/build，风险面比单纯改文件更大。
 - Codex 的安全底座可以直接复用（尤其 approvals + execpolicy），避免我们自研“命令白名单/审批系统”。
@@ -77,7 +77,7 @@ Codex 的安全与执行底座很厚，相关 crate/文档：
 - MCP server（实验）：`codex mcp-server` 让“其它 agent”把 Codex 当工具用（`example/codex/codex-rs/README.md`）
 - 独立的 `mcp-types`：对 MCP schema 做类型化建模（类似 lsp-types）（`example/codex/codex-rs/mcp-types/README.md`）
 
-对 `codex_pm` 的意义：
+对 `CodePM` 的意义：
 
 - 我们的 builder/reviewer/merger 后续可能需要外部工具（CI、issue tracker、code search、browser automation…）。
 - 用 MCP 做生态扩展是可行路线，但 MVP 不必依赖。
@@ -92,7 +92,7 @@ Codex 的安全与执行底座很厚，相关 crate/文档：
   - `chat`（`/v1/chat/completions`，默认但已明确 deprecated）
 - `CHAT_WIRE_API_DEPRECATION_SUMMARY` 表明未来会移除 chat wire API。
 
-对 `codex_pm` 的明确约束：
+对 `CodePM` 的明确约束：
 
 - **第一阶段只支持 Responses**：我们应在配置层与代码路径上“默认且优先 Responses”，并尽量不要引入 chat 兼容逻辑到新模块里。
 
@@ -107,7 +107,7 @@ Codex 的安全与执行底座很厚，相关 crate/文档：
 - **notify hook（与我们需求直接对齐）**：
   - `notify: Option<Vec<String>>`：每个 turn 完成后执行外部程序，并附加一个 JSON 参数（文件内注释给了完整示例）。
 
-> 这说明 Codex 已经把 “完成时 hook 回调” 做成了第一等能力。`codex_pm` 不应重复造轮子，应该直接复用（或在其上扩展）这一套 hook 机制，补齐我们“session/task/pr 合并完成后回调”的语义即可。
+> 这说明 Codex 已经把 “完成时 hook 回调” 做成了第一等能力。`CodePM` 不应重复造轮子，应该直接复用（或在其上扩展）这一套 hook 机制，补齐我们“session/task/pr 合并完成后回调”的语义即可。
 
 ---
 
@@ -131,7 +131,7 @@ Codex 的安全与执行底座很厚，相关 crate/文档：
 - `text`：verbosity + `text.format`（JSON schema 输出约束）
 - `include`、`prompt_cache_key`、`parallel_tool_calls` 等都被显式建模
 
-这对 `codex_pm` 的价值：
+这对 `CodePM` 的价值：
 
 - 我们未来的 `Architect`/`Merger` 很可能需要结构化输出（DAG、合并计划、风险列表）。
 - Codex 已内置 JSON schema 输出控制接口，可直接复用，而不必自己在 prompt 上“正则约束输出”。
@@ -164,7 +164,7 @@ Codex 的安全与执行底座很厚，相关 crate/文档：
 - 对 Bearer token 做 `mlock(2)` 与 `zeroize` 等硬化，减少泄露风险
 - 支持 `--http-shutdown` 让非特权用户能关停代理
 
-对 `codex_pm`：
+对 `CodePM`：
 
 - 我们的 worker 如果运行在“低权限用户”上下文（或者未来有远端执行/多租户），这套代理可以作为“安全传递 OpenAI key”的参考实现。
 
@@ -189,7 +189,7 @@ Codex 的安全与执行底座很厚，相关 crate/文档：
 - 支持 skill invocation（把 skill 文件作为 input item 发送）
 - 事件流：`item/*` notifications（agent message delta、tool started/completed、diff items 等）
 
-> 对 `codex_pm`：如果我们要做“并发 worker + 状态订阅 + hook 回调”，app-server 协议几乎是现成的“编排协议”。我们可以选择：
+> 对 `CodePM`：如果我们要做“并发 worker + 状态订阅 + hook 回调”，app-server 协议几乎是现成的“编排协议”。我们可以选择：
 >
 > - 直接复用 app-server 作为 worker 的控制面（orchestrator 作为 client）
 > - 或在 codex-core 上层嵌入，但保留同样的事件模型（Thread/Turn/Item）
@@ -229,11 +229,11 @@ Codex 的安全与执行底座很厚，相关 crate/文档：
 
 ---
 
-## 6. `codex_pm` 应如何“基于 codex 魔改”（推荐路线）
+## 6. `CodePM` 应如何“基于 codex 魔改”（推荐路线）
 
 > 这里给出两条路线：A 更像 fork + 新 crate；B 更像外部 orchestrator 驱动 `codex exec/app-server`。
 
-### 路线 A：fork codex-rs，加一个 `codex-pm` crate（推荐长期）
+### 路线 A：fork codex-rs，加一个 `code-pm` crate（推荐长期）
 
 - 优点：
   - 直接复用 `codex-core`、`codex-api`、`codex-protocol` 的内部接口
@@ -260,7 +260,7 @@ Codex 的安全与执行底座很厚，相关 crate/文档：
 
 ---
 
-## 6.5 `codex_pm` 需要优先补齐的“Codex 未覆盖领域”
+## 6.5 `CodePM` 需要优先补齐的“Codex 未覆盖领域”
 
 即便 Codex 底座很强，但它不是“PR 工厂”。我们要新增的差异化能力主要是：
 
@@ -272,7 +272,7 @@ Codex 的安全与执行底座很厚，相关 crate/文档：
 
 ---
 
-## 7. 对 `codex_pm` 的第一阶段约束（Responses-only 的落地建议）
+## 7. 对 `CodePM` 的第一阶段约束（Responses-only 的落地建议）
 
 1. 配置层：默认 `wire_api = "responses"`，并在我们的 orchestrator 配置中不暴露 chat 选项。
 2. Provider 层：只保留/测试 Responses 路径（包括 SSE 事件解析）。

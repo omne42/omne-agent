@@ -1,4 +1,8 @@
-我希望实现这样的功能。(仅rust)
+# 项目启动（CodePM / Rust）
+
+## 需求草案（早期记录）
+
+我希望实现这样的功能（仅 Rust）：
 
 1. 创建本地的git服务
 2. 注入仓库
@@ -16,3 +20,134 @@
 feature，仅占位即可。
 
 所有的一次完整的修改必须经过format check(type/lint等) changelog记录 commit
+
+---
+
+## 当前进度（Phase 1：单进程骨架）
+
+已落地最小 Rust workspace 与 CLI（`code-pm`），用于验证端到端链路：
+
+- 本地 bare repo 注入（`repo inject`）
+- `/tmp/{repo}_{session_id}/tasks/{task_id}/repo` 隔离工作区
+- task：clone →（可选）`git apply` →（Rust repo）`cargo fmt`/`cargo check` → commit → push 分支
+- merge：顺序合并多个分支回 `base`（默认 `main`）
+- artifacts：`/tmp/.../session.json` + `result.json` + `tasks/<id>/task.json`，并保留每一步的 `checks.steps` 日志（`tasks/<id>/artifacts/*.log`、`merge/artifacts/*.log`、失败时的 `error.log`/`merge-error.log`），以及 `.code_pm/data/sessions/<id>/`
+
+## 开发/试跑
+
+初始化本地数据目录：
+
+```bash
+cargo run -p code-pm -- init
+```
+
+注入一个仓库（本地路径或远端 URL）：
+
+```bash
+cargo run -p code-pm -- repo inject <repo_path_or_url> --name <repo_name>
+```
+
+启动本地 Git Smart HTTP（Phase 2，可选）：
+
+```bash
+cargo run -p code-pm -- serve --addr 127.0.0.1:9417
+```
+
+此时可通过 HTTP 访问 bare repo（例如 clone/push）：
+
+```bash
+git clone http://127.0.0.1:9417/git/<repo_name>.git
+git push http://127.0.0.1:9417/git/<repo_name>.git <branch>
+```
+
+生成 patch（示例：在源 repo 内）：
+
+```bash
+git diff > /tmp/change.patch
+```
+
+跑一次 session：
+
+```bash
+cargo run -p code-pm -- run \
+  --repo <repo_name> \
+  --pr-name <pr_name> \
+  --prompt "your spec + requirements + goals" \
+  --apply-patch /tmp/change.patch
+```
+
+可选：实时输出任务/合并进度（stderr）：
+
+```bash
+cargo run -p code-pm -- run \
+  --repo <repo_name> \
+  --pr-name <pr_name> \
+  --prompt "..." \
+  --apply-patch /tmp/change.patch \
+  --stream-events
+```
+
+多任务并发（CLI 显式提供 task 列表，绕过 Phase 1 的模板 Architect）：
+
+```bash
+cargo run -p code-pm -- run \
+  --repo <repo_name> \
+  --pr-name <pr_name> \
+  --prompt "..." \
+  --apply-patch /tmp/change.patch \
+  --task a:apply-patch \
+  --task b:apply-patch \
+  --max-concurrency 2
+```
+
+从 prompt 自动拆分 tasks（Phase 1：规则化；识别 checklist/编号/无序列表）：
+
+```bash
+cargo run -p code-pm -- run \
+  --repo <repo_name> \
+  --pr-name <pr_name> \
+  --prompt "...\n- [ ] task A\n- [ ] task B\n" \
+  --auto-tasks \
+  --max-concurrency 2
+```
+
+多任务文件（JSON）：
+
+```json
+{
+  "tasks": [
+    { "id": "a", "title": "apply patch A" },
+    { "id": "b", "title": "apply patch B", "description": "optional" }
+  ]
+}
+```
+
+```bash
+cargo run -p code-pm -- run \
+  --repo <repo_name> \
+  --pr-name <pr_name> \
+  --prompt "..." \
+  --apply-patch /tmp/change.patch \
+  --tasks-file /tmp/tasks.json \
+  --max-concurrency 2
+```
+
+分支命名约定：
+
+- `ai/<pr_name>/<session_id>/<task_id>`
+
+临时目录根路径：
+
+- 默认：`/tmp`
+- 覆盖：`CODE_PM_TMP_ROOT=/your/tmp/root`
+
+可选：完成后执行 hook 命令（将通过环境变量拿到 session 上下文）：
+
+```bash
+cargo run -p code-pm -- run \
+  --repo <repo_name> \
+  --pr-name <pr_name> \
+  --prompt "..." \
+  --hook-cmd /usr/bin/env \
+  --hook-arg bash --hook-arg -lc --hook-arg 'echo "$CODE_PM_SESSION_ID $CODE_PM_RESULT_JSON"'
+```

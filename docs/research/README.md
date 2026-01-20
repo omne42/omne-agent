@@ -1,6 +1,6 @@
 # Example 仓库调研索引
 
-本目录收录对 `example/` 下各仓库的“长篇能力与设计分析”，用于指导 `codex_pm` 的架构取舍与实现优先级。
+本目录收录对 `example/` 下各仓库的“长篇能力与设计分析”，用于指导 `CodePM` 的架构取舍与实现优先级。
 
 > 说明：调研基于本仓库内的 snapshot（`example/<repo>`），与上游可能存在差异。每篇文档顶部会标注对应 snapshot 的 git commit。
 
@@ -17,7 +17,7 @@
 
 ## 我们的落地方向（先写在这里，便于对齐）
 
-- `codex_pm` 以 `example/codex` 为主底座进行“魔改/复用”，允许直接复制/挪用其能力（优先 Rust 侧 `codex-rs`）。
+- `CodePM` 以 `example/codex` 为主底座进行“魔改/复用”，允许直接复制/挪用其能力（优先 Rust 侧 `codex-rs`）。
 - **第一阶段只要求支持 OpenAI Responses API**（未来再扩展到其它接口/Provider）。
 - 本项目当前核心目标是：**临时目录隔离 + 多任务并发 + Git PR 流水线 + AI 合并**；其它 UI/生态能力以“可插拔”方式预留。
 

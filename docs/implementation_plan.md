@@ -1,4 +1,4 @@
-# Codex PM（Rust）实现计划：本地 Git 服务 + 并发 AI 任务流水线
+# CodePM（Rust）实现计划：本地 Git 服务 + 并发 AI 任务流水线
 
 > 目标：用 Rust 构建一个“自包含”的 Agent 系统，覆盖代码全生命周期（任务拆分→并发开发→校验→提交 PR→AI 合并），重点解决：**/tmp 临时目录隔离**与**并发执行多个 AI task**。
 
@@ -53,7 +53,7 @@
 
 为了未来持续跟进 codex 上游，我们需要从 Day 1 引入 marker 体系（类似 kilocode 的 `kilocode_change`）：
 
-- `codex_pm_change`（单行）/ `codex_pm_change start/end`（多行）
+- `code_pm_change`（单行）/ `code_pm_change start/end`（多行）
 - 新增文件统一标注（可选）
 - 仅对“来自上游 codex 的共享文件”强制 marker；我们自有目录不强制
 
@@ -122,6 +122,8 @@ pub struct RunRequest {
 }
 ```
 
+> 实现注记（Phase 1/当前代码）：CLI 额外提供 `--base`、`--apply-patch`、`--task/--tasks-file`、`--max-concurrency`、`--hook-cmd/--hook-arg`，用于演示端到端链路；未来可收敛为更稳定的 API contract。
+
 输出（对外）：
 
 - `session_id`
@@ -143,7 +145,7 @@ pub struct RunRequest {
   tasks/
     {task_id}/
       repo/               # task 独立工作副本（避免并发写同一 .git 元数据）
-      artifacts/          # fmt/check 输出、patch、诊断信息
+      artifacts/          # fmt/check 输出、patch、诊断信息（并将 `CARGO_TARGET_DIR` 指向 artifacts，避免污染 repo/）
 ```
 
 关键决策：**每个 task 使用独立 clone**（从本地 bare repo 克隆），而不是共享 worktree。
@@ -174,7 +176,7 @@ pub struct RunRequest {
 目录（默认）：
 
 ```
-.codex_pm/
+.code_pm/
   repos/
     {repo_name}.git/      # bare repo（中心）
   data/                   # 元数据（session/task/pr）
@@ -185,7 +187,7 @@ pub struct RunRequest {
 
 **Phase 1（最先落地）**：不做网络服务，直接使用本地路径作为 remote
 
-- Worker push：`git push /abs/path/to/.codex_pm/repos/{repo}.git <branch>`
+- Worker push：`git push /abs/path/to/.code_pm/repos/{repo}.git <branch>`
 - 优点：实现简单、稳定。
 
 **Phase 2（增强）**：提供 Smart HTTP（git clone/push over http）
@@ -193,6 +195,8 @@ pub struct RunRequest {
 - Rust `axum`/`hyper` Server + 子进程 `git http-backend` 作为实现（最省力、兼容 git 协议）。
 - 仅绑定 `127.0.0.1`，默认无鉴权（后续可加 token）。
 - 同时提供 JSON API（PR 列表、session 状态等）。
+
+> 实现注记（当前代码）：已提供 `code-pm serve`（`pm-http` crate）作为 Smart HTTP POC，并有集成测试覆盖 `clone/push`。
 
 > 纯 Rust 实现 Git Smart HTTP 协议工作量巨大，不建议自研；优先复用 git 官方后端。
 
@@ -347,11 +351,11 @@ pub trait Storage: Send + Sync {
 codex/                          # 我们的 codex fork（或 vendor）
   codex-rs/                     # 上游主体（尽量少改）
     ...                         # 原有 crates
-    crates/                     # ✅ 新增：codex_pm 相关 crates（与上游隔离）
+    crates/                     # ✅ 新增：code_pm 相关 crates（与上游隔离）
       pm-core/                  # domain + orchestration（复用 opencode 的 Storage/Bus 思路）
       pm-git/                   # repo injection / bare repo / push / merge helpers
       pm-agents/                # 角色实现（Architect/Coder/Reviewer/Merger/…）
-      pm-cli/                   # `codex pm ...` 或独立 `codex-pm` CLI
+      pm-cli/                   # `code pm ...` 或独立 `code-pm` CLI
       pm-server/                # 可选：HTTP/JSON-RPC 控制面（未来 UI/CI/远控）
   docs/
     implementation_plan.md
@@ -360,7 +364,7 @@ codex/                          # 我们的 codex fork（或 vendor）
 
 强约束：
 
-- 新增 `pm-*` crates 尽量不侵入上游 `codex-*` crates；若必须改上游，使用 `codex_pm_change` markers 标注。
+- 新增 `pm-*` crates 尽量不侵入上游 `codex-*` crates；若必须改上游，使用 `code_pm_change` markers 标注。
 - `pm-core`（domain）不直接依赖网络/子进程；IO 通过 trait 由 `pm-git/pm-server/pm-agents` 实现。
 - 所有 LLM 调用第一阶段统一走 `codex-api`（Responses-only），避免引入第二套 client。
 
