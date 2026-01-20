@@ -355,6 +355,13 @@ struct ProcessFollowParams {
 }
 
 #[derive(Debug, Deserialize)]
+struct ProcessInspectParams {
+    process_id: ProcessId,
+    #[serde(default)]
+    max_lines: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
 struct FileReadParams {
     thread_id: ThreadId,
     #[serde(default)]
@@ -812,6 +819,22 @@ async fn main() -> anyhow::Result<()> {
                     Some(serde_json::json!({ "error": err.to_string() })),
                 ),
             },
+            "process/inspect" => {
+                match serde_json::from_value::<ProcessInspectParams>(request.params) {
+                    Ok(params) => match handle_process_inspect(&server, params).await {
+                        Ok(result) => JsonRpcResponse::ok(id, result),
+                        Err(err) => {
+                            JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None)
+                        }
+                    },
+                    Err(err) => JsonRpcResponse::err(
+                        id,
+                        JSONRPC_INVALID_PARAMS,
+                        "invalid params",
+                        Some(serde_json::json!({ "error": err.to_string() })),
+                    ),
+                }
+            }
             "process/kill" => match serde_json::from_value::<ProcessKillParams>(request.params) {
                 Ok(params) => {
                     let entry = {
@@ -2961,9 +2984,11 @@ async fn handle_process_tail(server: &Server, params: ProcessTailParams) -> anyh
 
 async fn tail_file_lines(path: PathBuf, max_lines: usize) -> anyhow::Result<String> {
     let max_bytes: u64 = 64 * 1024;
-    let mut file = tokio::fs::File::open(&path)
-        .await
-        .with_context(|| format!("open {}", path.display()))?;
+    let mut file = match tokio::fs::File::open(&path).await {
+        Ok(file) => file,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(String::new()),
+        Err(err) => return Err(err).with_context(|| format!("open {}", path.display())),
+    };
     let len = file
         .metadata()
         .await
@@ -3038,9 +3063,13 @@ async fn read_file_chunk(
     since_offset: u64,
     max_bytes: u64,
 ) -> anyhow::Result<(String, u64, bool)> {
-    let mut file = tokio::fs::File::open(&path)
-        .await
-        .with_context(|| format!("open {}", path.display()))?;
+    let mut file = match tokio::fs::File::open(&path).await {
+        Ok(file) => file,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Ok((String::new(), since_offset, true));
+        }
+        Err(err) => return Err(err).with_context(|| format!("open {}", path.display())),
+    };
     let len = file
         .metadata()
         .await
@@ -3065,4 +3094,44 @@ async fn read_file_chunk(
     let next_offset = start + n as u64;
     let eof = next_offset >= len;
     Ok((text, next_offset, eof))
+}
+
+async fn handle_process_inspect(
+    server: &Server,
+    params: ProcessInspectParams,
+) -> anyhow::Result<Value> {
+    let mut info: Option<ProcessInfo> = None;
+    if let Some(entry) = server
+        .processes
+        .lock()
+        .await
+        .get(&params.process_id)
+        .cloned()
+    {
+        info = Some(entry.info.lock().await.clone());
+    }
+
+    let info = match info {
+        Some(info) => info,
+        None => {
+            let processes =
+                handle_process_list(server, ProcessListParams { thread_id: None }).await?;
+            processes
+                .into_iter()
+                .find(|p| p.process_id == params.process_id)
+                .ok_or_else(|| anyhow::anyhow!("process not found: {}", params.process_id))?
+        }
+    };
+
+    let max_lines = params.max_lines.unwrap_or(200).min(2000);
+    let stdout_tail =
+        pm_core::redact_text(&tail_file_lines(PathBuf::from(&info.stdout_path), max_lines).await?);
+    let stderr_tail =
+        pm_core::redact_text(&tail_file_lines(PathBuf::from(&info.stderr_path), max_lines).await?);
+
+    Ok(serde_json::json!({
+        "process": info,
+        "stdout_tail": stdout_tail,
+        "stderr_tail": stderr_tail,
+    }))
 }
