@@ -185,13 +185,16 @@ impl RepoManager {
     }
 
     pub fn default_repo_name_from_source(source: &str) -> RepositoryName {
-        let base = source
-            .trim_end_matches('/')
-            .rsplit('/')
-            .next()
-            .unwrap_or(source);
-        let base = base.trim_end_matches(".git");
-        RepositoryName::sanitize(base)
+        let mut base = source.trim();
+        base = base.trim_end_matches(['/', '\\']);
+
+        if base.contains('/') || base.contains('\\') {
+            base = base.rsplit(['/', '\\']).next().unwrap_or(base);
+        } else if base.contains('@') {
+            base = base.rsplit(':').next().unwrap_or(base);
+        }
+
+        RepositoryName::sanitize(base.trim_end_matches(".git"))
     }
 }
 
@@ -211,5 +214,38 @@ pub fn find_repo_root(cwd: &Path) -> anyhow::Result<PathBuf> {
             Ok(PathBuf::from(text.trim()))
         }
         _ => Ok(cwd.to_path_buf()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_repo_name_handles_urls_and_paths() {
+        assert_eq!(
+            RepoManager::default_repo_name_from_source("https://example.com/foo/bar.git").as_str(),
+            "bar"
+        );
+        assert_eq!(
+            RepoManager::default_repo_name_from_source("git@github.com:foo/bar.git").as_str(),
+            "bar"
+        );
+        assert_eq!(
+            RepoManager::default_repo_name_from_source("git@github.com:foo").as_str(),
+            "foo"
+        );
+        assert_eq!(
+            RepoManager::default_repo_name_from_source("/tmp/MyRepo").as_str(),
+            "myrepo"
+        );
+        assert_eq!(
+            RepoManager::default_repo_name_from_source(r"C:\Users\me\Repo.git").as_str(),
+            "repo"
+        );
+        assert_eq!(
+            RepoManager::default_repo_name_from_source(" ").as_str(),
+            "repo"
+        );
     }
 }
