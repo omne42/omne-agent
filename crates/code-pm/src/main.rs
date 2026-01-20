@@ -43,8 +43,9 @@ enum Command {
 #[derive(Subcommand)]
 enum RepoCommand {
     Inject {
+        #[arg(value_parser = parse_non_empty_trimmed)]
         source: String,
-        #[arg(long)]
+        #[arg(long, value_parser = parse_non_empty_trimmed)]
         name: Option<String>,
     },
     List,
@@ -78,17 +79,17 @@ struct ServeArgs {
 
 #[derive(Parser, Clone)]
 struct RunArgs {
-    #[arg(long)]
+    #[arg(long, value_parser = parse_non_empty_trimmed)]
     repo: Option<String>,
-    #[arg(long)]
+    #[arg(long, value_parser = parse_non_empty_trimmed)]
     repo_src: Option<String>,
-    #[arg(long)]
+    #[arg(long, value_parser = parse_non_empty_trimmed)]
     pr_name: String,
     #[arg(long)]
     prompt: Option<String>,
     #[arg(long)]
     prompt_file: Option<PathBuf>,
-    #[arg(long, default_value = "main")]
+    #[arg(long, default_value = "main", value_parser = parse_non_empty_trimmed)]
     base: String,
     #[arg(long)]
     apply_patch: Option<PathBuf>,
@@ -446,6 +447,15 @@ async fn run_session(
 enum StreamEventsMode {
     Text,
     Json,
+}
+
+fn parse_non_empty_trimmed(value: &str) -> Result<String, String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        Err("value must not be empty".to_string())
+    } else {
+        Ok(trimmed.to_string())
+    }
 }
 
 fn resolve_stream_events_mode(
@@ -861,6 +871,92 @@ mod tests {
         ])
         .err()
         .expect("cli parse must fail");
+        assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
+    }
+
+    #[test]
+    fn cli_rejects_empty_pr_name() {
+        let err = Cli::try_parse_from([
+            "code-pm",
+            "run",
+            "--repo",
+            "repo",
+            "--pr-name",
+            " ",
+            "--prompt",
+            "x",
+        ])
+        .err()
+        .expect("cli parse must fail");
+        assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
+    }
+
+    #[test]
+    fn cli_rejects_empty_base_branch() {
+        let err = Cli::try_parse_from([
+            "code-pm",
+            "run",
+            "--repo",
+            "repo",
+            "--pr-name",
+            "demo",
+            "--prompt",
+            "x",
+            "--base",
+            " ",
+        ])
+        .err()
+        .expect("cli parse must fail");
+        assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
+    }
+
+    #[test]
+    fn cli_rejects_empty_repo_name() {
+        let err = Cli::try_parse_from([
+            "code-pm",
+            "run",
+            "--repo",
+            " ",
+            "--pr-name",
+            "demo",
+            "--prompt",
+            "x",
+        ])
+        .err()
+        .expect("cli parse must fail");
+        assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
+    }
+
+    #[test]
+    fn cli_rejects_empty_repo_source() {
+        let err = Cli::try_parse_from([
+            "code-pm",
+            "run",
+            "--repo-src",
+            " ",
+            "--pr-name",
+            "demo",
+            "--prompt",
+            "x",
+        ])
+        .err()
+        .expect("cli parse must fail");
+        assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
+    }
+
+    #[test]
+    fn cli_rejects_empty_inject_source() {
+        let err = Cli::try_parse_from(["code-pm", "repo", "inject", " "])
+            .err()
+            .expect("cli parse must fail");
+        assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
+    }
+
+    #[test]
+    fn cli_rejects_empty_inject_name() {
+        let err = Cli::try_parse_from(["code-pm", "repo", "inject", "src", "--name", " "])
+            .err()
+            .expect("cli parse must fail");
         assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
     }
 
