@@ -1,5 +1,7 @@
 # 项目启动（CodePM / Rust）
 
+> 想直接跑通端到端流程（含 serve/API、hooks、session 查询）看：`docs/workflow.md`。
+
 ## 需求草案（早期记录）
 
 我希望实现这样的功能（仅 Rust）：
@@ -71,6 +73,15 @@ git diff > /tmp/change.patch
 ```bash
 cargo run -p code-pm -- run \
   --repo <repo_name> \
+  --pr-name <pr_name> \
+  --prompt "your spec + requirements + goals" \
+  --apply-patch /tmp/change.patch
+```
+
+如果你就在目标 git repo 内运行，也可以省略 `--repo/--repo-src`（会默认以当前 `repo_root` 作为 `--repo-src` 注入并运行）：
+
+```bash
+cargo run -p code-pm -- run \
   --pr-name <pr_name> \
   --prompt "your spec + requirements + goals" \
   --apply-patch /tmp/change.patch
