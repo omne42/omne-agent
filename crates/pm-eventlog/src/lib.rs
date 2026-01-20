@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use fs2::FileExt;
-use pm_protocol::{EventSeq, ThreadEvent, ThreadEventKind, ThreadId};
+use pm_protocol::{EventSeq, ThreadEvent, ThreadEventKind, ThreadId, TurnId};
 use time::OffsetDateTime;
 use tokio::io::AsyncWriteExt;
 
@@ -33,7 +33,7 @@ impl EventLogWriter {
             .lock_exclusive()
             .with_context(|| format!("lock {}", lock_path.display()))?;
 
-        let last_seq = sanitize_and_get_last_seq(&log_path).await?;
+        let last_seq = sanitize_and_get_last_seq(thread_id, &log_path).await?;
         let file = tokio::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -81,6 +81,7 @@ impl EventLogWriter {
 }
 
 pub async fn read_events_since(
+    expected_thread_id: ThreadId,
     log_path: &Path,
     since_seq: EventSeq,
 ) -> anyhow::Result<Vec<ThreadEvent>> {
@@ -98,6 +99,13 @@ pub async fn read_events_since(
         }
         let event: ThreadEvent =
             serde_json::from_slice(line).context("parse event line from jsonl")?;
+        if event.thread_id != expected_thread_id {
+            anyhow::bail!(
+                "event log thread_id mismatch: expected {}, got {}",
+                expected_thread_id,
+                event.thread_id
+            );
+        }
         if event.seq != expected_next {
             anyhow::bail!(
                 "event log seq is not contiguous: expected {}, got {}",
@@ -123,7 +131,10 @@ fn lock_path_for(log_path: &Path) -> PathBuf {
     lock_path
 }
 
-async fn sanitize_and_get_last_seq(log_path: &Path) -> anyhow::Result<EventSeq> {
+async fn sanitize_and_get_last_seq(
+    expected_thread_id: ThreadId,
+    log_path: &Path,
+) -> anyhow::Result<EventSeq> {
     let bytes = match tokio::fs::read(log_path).await {
         Ok(bytes) => bytes,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(EventSeq::ZERO),
@@ -140,6 +151,14 @@ async fn sanitize_and_get_last_seq(log_path: &Path) -> anyhow::Result<EventSeq> 
         }
         match serde_json::from_slice::<ThreadEvent>(line) {
             Ok(event) => {
+                if event.thread_id != expected_thread_id {
+                    anyhow::bail!(
+                        "event log thread_id mismatch at line {}: expected {}, got {}",
+                        idx + 1,
+                        expected_thread_id,
+                        event.thread_id
+                    );
+                }
                 if event.seq != expected_next {
                     anyhow::bail!(
                         "event log seq is not contiguous at line {}: expected {}, got {}",
@@ -175,6 +194,69 @@ async fn sanitize_and_get_last_seq(log_path: &Path) -> anyhow::Result<EventSeq> 
     Ok(last_seq)
 }
 
+#[derive(Debug, Clone)]
+pub struct ThreadState {
+    pub thread_id: ThreadId,
+    pub last_seq: EventSeq,
+    pub active_turn_id: Option<TurnId>,
+    pub active_turn_interrupt_requested: bool,
+}
+
+impl ThreadState {
+    pub fn new(thread_id: ThreadId) -> Self {
+        Self {
+            thread_id,
+            last_seq: EventSeq::ZERO,
+            active_turn_id: None,
+            active_turn_interrupt_requested: false,
+        }
+    }
+
+    pub fn apply(&mut self, event: &ThreadEvent) -> anyhow::Result<()> {
+        if event.thread_id != self.thread_id {
+            anyhow::bail!(
+                "thread_id mismatch: expected {}, got {}",
+                self.thread_id,
+                event.thread_id
+            );
+        }
+        if event.seq.0 != self.last_seq.0 + 1 {
+            anyhow::bail!(
+                "non-contiguous seq: expected {}, got {}",
+                self.last_seq.0 + 1,
+                event.seq.0
+            );
+        }
+
+        match &event.kind {
+            ThreadEventKind::ThreadCreated { .. } => {}
+            ThreadEventKind::TurnStarted { turn_id, .. } => {
+                if self.active_turn_id.is_some() {
+                    anyhow::bail!("turn started while another turn is active");
+                }
+                self.active_turn_id = Some(*turn_id);
+                self.active_turn_interrupt_requested = false;
+            }
+            ThreadEventKind::TurnInterruptRequested { turn_id, .. } => {
+                if self.active_turn_id != Some(*turn_id) {
+                    anyhow::bail!("interrupt requested for non-active turn");
+                }
+                self.active_turn_interrupt_requested = true;
+            }
+            ThreadEventKind::TurnCompleted { turn_id, .. } => {
+                if self.active_turn_id != Some(*turn_id) {
+                    anyhow::bail!("turn completed for non-active turn");
+                }
+                self.active_turn_id = None;
+                self.active_turn_interrupt_requested = false;
+            }
+        }
+
+        self.last_seq = event.seq;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -203,7 +285,7 @@ mod tests {
         assert_eq!(e1.seq.0, 1);
         assert_eq!(e2.seq.0, 2);
 
-        let events = read_events_since(&log_path, EventSeq::ZERO).await?;
+        let events = read_events_since(thread_id, &log_path, EventSeq::ZERO).await?;
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].seq.0, 1);
         assert_eq!(events[1].seq.0, 2);
@@ -239,11 +321,11 @@ mod tests {
         let log_path = dir.path().join("events.jsonl");
         let thread_id = ThreadId::new();
 
-        tokio::fs::write(
-            &log_path,
-            b"{\"seq\":1,\"timestamp\":\"2026-01-20T00:00:00Z\",\"thread_id\":\"00000000-0000-0000-0000-000000000001\",\"type\":\"thread_created\",\"cwd\":\"/tmp\"}\n{\"seq\":2",
-        )
-        .await?;
+        let contents = format!(
+            "{{\"seq\":1,\"timestamp\":\"2026-01-20T00:00:00Z\",\"thread_id\":\"{}\",\"type\":\"thread_created\",\"cwd\":\"/tmp\"}}\n{{\"seq\":2",
+            thread_id
+        );
+        tokio::fs::write(&log_path, contents).await?;
 
         let mut w = EventLogWriter::open(thread_id, log_path.clone()).await?;
         let e = w
