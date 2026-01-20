@@ -38,6 +38,16 @@ Git 不再是核心域模型，而是一个可插拔 adapter：
 - 核心域只关心：`workspace` 里发生了哪些变更（files/patch）、checks 结果、产物路径。
 - 是否 commit/push/merge（以及是否 GitHub PR）属于交付通道，放在后续里程碑。
 
+### 1.3 RTS 风格交互（高 APM，但必须可控）
+
+RTS 不是“开更多并发”。它要求控制面具备下面这些硬能力（不然就是失控的 token 烧钱机）：
+
+1. **事件流是一等 API**：终端输出/文件编辑/工具调用/审批/产物（artifacts）全部事件化，客户端只消费事件流（参考 `docs/research/codex.md` 的 `Thread/Turn/Item`）。
+2. **注意力队列（Attention / Inbox）**：把“需要人介入”的点变成可枚举状态：`NeedApproval` / `PlanReady` / `DiffReady` / `TestFailed` / `Stuck` / `Done`。
+3. **可暂停/可打断/可步进**：至少要能 `pause/resume/interrupt/cancel`；更进一步要支持 turn 级 step（默认 plan → approve → act）。
+4. **workspace 生命周期脚本化**：`setup/run/archive(or teardown)` 必须是约定俗成的 hook（参考 `docs/research/onecode.md`、`docs/research/superset.md`）。
+5. **artifacts/preview 一等化**：生成物必须可索引、可预览、可追溯版本（参考 `docs/research/aion-ui.md` 的 preview history 思路）。
+
 ---
 
 ## 2. 开发里程碑（按“可验证”切片）
@@ -50,6 +60,7 @@ Git 不再是核心域模型，而是一个可插拔 adapter：
 
 - 定义强类型：`Thread/Turn/Item`（或等价结构），并把 “shell/file edit/approval request/tool result” 全部 item 化。
 - Storage：文件落盘即可，但必须支持 `list/show/export`，并能稳定反序列化（避免未来迁移地狱）。
+- 至少实现一个 “Attention view”：从事件流派生出 `NeedApproval/TestFailed/...` 的可查询状态（别让 UI/用户自己 grep 日志）。
 
 验收：跑一次最小 turn，能在本地落盘并完整重放事件序列。
 
@@ -72,6 +83,7 @@ Git 不再是核心域模型，而是一个可插拔 adapter：
 
 - 并发：worker pool + per-task workspace（`/tmp` 隔离是结果，不是目的）。
 - 事件总线：把 session/task 的状态流式推给 CLI/app-server client。
+- workspace hooks：支持 `setup/run/archive` 的脚本化生命周期（最小可用就是“跑一串命令 + 落盘 stdout/stderr”）。
 
 验收：并发执行 N 个 task，事件流不丢、不乱序到不可消费。
 
@@ -110,4 +122,3 @@ cargo test --workspace
 
 - 任何新能力都要更新 `CHANGELOG.md` 的 `[Unreleased]`。
 - “怎么跑”必须给出可复制执行的命令（不要写空话）。
-

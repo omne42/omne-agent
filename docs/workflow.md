@@ -1,8 +1,8 @@
-# CodePM 端到端流程（Runbook）
+# CodePM v0.1.1 端到端流程（Runbook / Legacy）
 
-> 本文描述 **当前已实现** 的 CodePM（Rust）端到端使用流程：repo 注入 → session/task 并发执行 → 本地 PR 分支生成 → 顺序合并 → hook 回调 → 查询与回溯。
+> 本文描述 **已存档版本 `v0.1.1`** 的 CodePM（Rust）端到端使用流程：repo 注入 → session/task 并发执行 → 本地 PR 分支生成 → 顺序合并 → hook 回调 → 查询与回溯。
 >
-> 现状提醒：`Coder/Merger` 目前是 **脚本化 Git 流水线**（可选 `git apply` + Rust `cargo fmt/check` + commit/push/merge），并非“真正的 AI 写码/审阅/合并”。AI 角色落地见 `docs/implementation_plan.md`。
+> 现状提醒：`Coder/Merger` 目前是 **脚本化 Git 流水线**（可选 `git apply` + Rust `cargo fmt/check` + commit/push/merge），并非“真正的 AI 写码/审阅/合并”。`vNext` 重新设计方向见 `docs/development_process.md` 与 `docs/implementation_plan.md`。
 
 ---
 

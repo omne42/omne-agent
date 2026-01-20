@@ -1,7 +1,9 @@
 # 项目启动（CodePM / Rust）
 
-> 想直接跑通端到端流程（含 serve/API、hooks、session 查询）看：`docs/workflow.md`。
+> 想直接跑通端到端流程（`v0.1.1` legacy，含 serve/API、hooks、session 查询）看：`docs/workflow.md`。
+> 想看 vNext 目标态“RTS 风格使用流程”看：`docs/rts_workflow.md`。
 > 想进入“重新设计/重新开发”（Agent-first）看：`docs/development_process.md`。
+> vNext 实现计划与里程碑看：`docs/implementation_plan.md`。
 
 ## 需求草案（早期记录）
 
@@ -27,6 +29,8 @@ feature，仅占位即可。
 ---
 
 ## 当前进度（Phase 1：单进程骨架）
+
+> 注意：以下进度描述的是已存档版本 `v0.1.1`（legacy）。`vNext` 会重新设计并重写（见 `docs/development_process.md`）。
 
 已落地最小 Rust workspace 与 CLI（`code-pm`），用于验证端到端链路：
 
