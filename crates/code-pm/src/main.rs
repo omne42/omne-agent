@@ -622,7 +622,16 @@ async fn parse_tasks_override(args: &RunArgs) -> anyhow::Result<Option<Vec<pm_co
     let mut specs = Vec::with_capacity(tasks.len());
     for (index, task) in tasks.into_iter().enumerate() {
         let fallback = format!("t{}", index + 1);
-        let id_raw = task.id.unwrap_or(fallback);
+        let id_raw = match task.id {
+            Some(id) => {
+                let trimmed = id.trim();
+                if trimmed.is_empty() {
+                    anyhow::bail!("task id must not be empty (task index: {})", index + 1);
+                }
+                trimmed.to_string()
+            }
+            None => fallback,
+        };
         let id = pm_core::TaskId::sanitize(&id_raw);
 
         if !seen.insert(id.clone()) {
@@ -658,7 +667,13 @@ fn task_input_from_arg(raw: &str, index: usize) -> anyhow::Result<TaskInput> {
     }
 
     let (id, title) = match raw.split_once(':') {
-        Some((id, title)) => (Some(id.trim().to_string()), title.trim().to_string()),
+        Some((id, title)) => {
+            let id = id.trim();
+            if id.is_empty() {
+                anyhow::bail!("--task id must not be empty");
+            }
+            (Some(id.to_string()), title.trim().to_string())
+        }
         None => (Some(format!("t{}", index + 1)), raw.to_string()),
     };
 
@@ -1050,6 +1065,66 @@ mod tests {
             resolve_pm_root(&repo_root, None, Some(env.as_os_str())),
             (repo_root.join("state"), PmRootSource::Override)
         );
+    }
+
+    #[tokio::test]
+    async fn parse_tasks_override_rejects_empty_id_in_tasks_file() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let path = tmp.path().join("tasks.json");
+        tokio::fs::write(&path, r#"[{"id":"","title":"x"}]"#).await?;
+
+        let args = RunArgs {
+            repo: None,
+            repo_src: None,
+            pr_name: "demo".to_string(),
+            prompt: None,
+            prompt_file: None,
+            base: "main".to_string(),
+            apply_patch: None,
+            max_concurrency: 1,
+            stream_events: false,
+            stream_events_json: false,
+            strict: false,
+            json: false,
+            auto_tasks: false,
+            tasks_file: Some(path),
+            task: Vec::new(),
+            hook_cmd: None,
+            hook_arg: Vec::new(),
+            hook_url: None,
+        };
+
+        let err = parse_tasks_override(&args).await.unwrap_err();
+        assert!(err.to_string().contains("task id must not be empty"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn parse_tasks_override_rejects_empty_id_in_task_arg() -> anyhow::Result<()> {
+        let args = RunArgs {
+            repo: None,
+            repo_src: None,
+            pr_name: "demo".to_string(),
+            prompt: None,
+            prompt_file: None,
+            base: "main".to_string(),
+            apply_patch: None,
+            max_concurrency: 1,
+            stream_events: false,
+            stream_events_json: false,
+            strict: false,
+            json: false,
+            auto_tasks: false,
+            tasks_file: None,
+            task: vec![":x".to_string()],
+            hook_cmd: None,
+            hook_arg: Vec::new(),
+            hook_url: None,
+        };
+
+        let err = parse_tasks_override(&args).await.unwrap_err();
+        assert!(err.to_string().contains("--task id must not be empty"));
+        Ok(())
     }
 
     #[test]
