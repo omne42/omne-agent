@@ -407,164 +407,163 @@ impl Orchestrator {
 
         let mut prs: Vec<Option<PullRequest>> = vec![None; tasks.len()];
 
-        if request.max_concurrency <= 1 || tasks.len() <= 1 {
-            for (index, task) in tasks.iter().enumerate() {
-                self.events.emit(RunEvent::TaskStarted {
-                    task: TaskSummary {
-                        id: task.id.clone(),
-                        title: task.title.clone(),
-                    },
-                });
-                let task_id = task.id.clone();
-                let coder = Arc::clone(&self.coder);
-                let repo_for_task = Arc::clone(&repo);
-                let session_for_task = Arc::clone(&session);
-                let session_paths_for_task = Arc::clone(&session_paths);
-                let request_for_task = Arc::clone(&request);
-                let task_owned = task.clone();
+        struct TaskExecContext {
+            coder: Arc<dyn Coder>,
+            events: EventBus,
+            repo: Arc<Repository>,
+            session: Arc<Session>,
+            session_paths: Arc<SessionPaths>,
+            request: Arc<RunRequest>,
+        }
 
-                let joined = tokio::spawn(async move {
-                    coder
-                        .execute(
-                            repo_for_task.as_ref(),
-                            session_for_task.as_ref(),
-                            session_paths_for_task.as_ref(),
-                            request_for_task.as_ref(),
-                            &task_owned,
-                        )
-                        .await
-                })
-                .await;
+        fn spawn_task_job(
+            join_set: &mut JoinSet<(usize, TaskSpec, anyhow::Result<PullRequest>)>,
+            join_meta: &mut std::collections::HashMap<tokio::task::Id, (usize, TaskId)>,
+            index: usize,
+            task: TaskSpec,
+            ctx: &TaskExecContext,
+        ) {
+            let coder = Arc::clone(&ctx.coder);
+            let events = ctx.events.clone();
+            let repo = Arc::clone(&ctx.repo);
+            let session = Arc::clone(&ctx.session);
+            let session_paths = Arc::clone(&ctx.session_paths);
+            let request = Arc::clone(&ctx.request);
 
-                let pr = match joined {
-                    Ok(Ok(pr)) => pr,
-                    Ok(Err(err)) => {
-                        warn!(task_id = %task_id, error = %err, "task failed");
-                        let checks = self
-                            .task_failure_checks(session_paths.as_ref(), &task_id, &err)
-                            .await;
-                        failed_pr(&task_id, checks)
-                    }
-                    Err(join_err) => {
-                        let join_err_text = join_err.to_string();
-                        warn!(
-                            task_id = %task_id,
-                            error = %join_err_text,
-                            "task panicked or was cancelled"
-                        );
-                        let err = anyhow::anyhow!("task join error: {join_err_text}");
-                        let checks = self
-                            .task_failure_checks(session_paths.as_ref(), &task_id, &err)
-                            .await;
-                        failed_pr(&task_id, checks)
-                    }
-                };
-                self.events.emit(RunEvent::TaskFinished {
-                    pr: PullRequestSummary {
-                        id: pr.id.clone(),
-                        status: pr.status.clone(),
-                        head_branch: pr.head_branch.clone(),
-                        head_commit: pr.head_commit.clone(),
-                    },
-                });
-                prs[index] = Some(pr);
-            }
-        } else {
-            let max = request.max_concurrency.max(1);
-            let semaphore = Arc::new(tokio::sync::Semaphore::new(max));
-            let mut join_set: JoinSet<(usize, TaskSpec, anyhow::Result<PullRequest>)> =
-                JoinSet::new();
-            let mut join_meta: std::collections::HashMap<tokio::task::Id, (usize, TaskId)> =
-                std::collections::HashMap::new();
+            let task_summary = TaskSummary {
+                id: task.id.clone(),
+                title: task.title.clone(),
+            };
+            let task_id = task.id.clone();
 
-            for (index, task) in tasks.iter().cloned().enumerate() {
-                let coder = Arc::clone(&self.coder);
-                let repo = Arc::clone(&repo);
-                let session = Arc::clone(&session);
-                let session_paths = Arc::clone(&session_paths);
-                let request = Arc::clone(&request);
-                let events = self.events.clone();
-                let semaphore = Arc::clone(&semaphore);
-                let task_summary = TaskSummary {
-                    id: task.id.clone(),
-                    title: task.title.clone(),
-                };
-                let task_id = task.id.clone();
-
-                let handle = join_set.spawn(async move {
-                    let result: anyhow::Result<PullRequest> = async {
-                        let _permit = semaphore.acquire_owned().await.map_err(|err| {
-                            anyhow::anyhow!("task semaphore closed unexpectedly: {err}")
-                        })?;
-                        events.emit(RunEvent::TaskStarted { task: task_summary });
-                        coder
-                            .execute(
-                                repo.as_ref(),
-                                session.as_ref(),
-                                session_paths.as_ref(),
-                                request.as_ref(),
-                                &task,
-                            )
-                            .await
-                    }
+            let handle = join_set.spawn(async move {
+                events.emit(RunEvent::TaskStarted { task: task_summary });
+                let result = coder
+                    .execute(
+                        repo.as_ref(),
+                        session.as_ref(),
+                        session_paths.as_ref(),
+                        request.as_ref(),
+                        &task,
+                    )
                     .await;
-                    (index, task, result)
-                });
-                join_meta.insert(handle.id(), (index, task_id));
-            }
+                (index, task, result)
+            });
+            join_meta.insert(handle.id(), (index, task_id));
+        }
 
-            while let Some(joined) = join_set.join_next_with_id().await {
-                let (index, task, result) = match joined {
-                    Ok((id, value)) => {
-                        join_meta.remove(&id);
-                        value
-                    }
-                    Err(join_err) => {
-                        let Some((index, task_id)) = join_meta.remove(&join_err.id()) else {
-                            return Err(join_err.into());
-                        };
-                        let join_err_text = join_err.to_string();
-                        warn!(
-                            task_id = %task_id,
-                            error = %join_err_text,
-                            "task panicked or was cancelled"
+        let ctx = TaskExecContext {
+            coder: Arc::clone(&self.coder),
+            events: self.events.clone(),
+            repo: Arc::clone(&repo),
+            session: Arc::clone(&session),
+            session_paths: Arc::clone(&session_paths),
+            request: Arc::clone(&request),
+        };
+
+        let max = request.max_concurrency.max(1);
+        let mut join_set: JoinSet<(usize, TaskSpec, anyhow::Result<PullRequest>)> = JoinSet::new();
+        let mut join_meta: std::collections::HashMap<tokio::task::Id, (usize, TaskId)> =
+            std::collections::HashMap::new();
+
+        let mut next_index = 0usize;
+        let mut in_flight = 0usize;
+
+        while next_index < tasks.len() && in_flight < max {
+            spawn_task_job(
+                &mut join_set,
+                &mut join_meta,
+                next_index,
+                tasks[next_index].clone(),
+                &ctx,
+            );
+            next_index += 1;
+            in_flight += 1;
+        }
+
+        while in_flight > 0 {
+            let joined = join_set
+                .join_next_with_id()
+                .await
+                .ok_or_else(|| anyhow::anyhow!("task join set ended unexpectedly"))?;
+            in_flight -= 1;
+
+            let (index, task, result) = match joined {
+                Ok((id, value)) => {
+                    join_meta.remove(&id);
+                    value
+                }
+                Err(join_err) => {
+                    let Some((index, task_id)) = join_meta.remove(&join_err.id()) else {
+                        return Err(join_err.into());
+                    };
+                    let join_err_text = join_err.to_string();
+                    warn!(
+                        task_id = %task_id,
+                        error = %join_err_text,
+                        "task panicked or was cancelled"
+                    );
+                    let err = anyhow::anyhow!("task join error: {join_err_text}");
+                    let checks = self
+                        .task_failure_checks(session_paths.as_ref(), &task_id, &err)
+                        .await;
+                    let pr = failed_pr(&task_id, checks);
+                    self.events.emit(RunEvent::TaskFinished {
+                        pr: PullRequestSummary {
+                            id: pr.id.clone(),
+                            status: pr.status.clone(),
+                            head_branch: pr.head_branch.clone(),
+                            head_commit: pr.head_commit.clone(),
+                        },
+                    });
+                    prs[index] = Some(pr);
+
+                    while next_index < tasks.len() && in_flight < max {
+                        spawn_task_job(
+                            &mut join_set,
+                            &mut join_meta,
+                            next_index,
+                            tasks[next_index].clone(),
+                            &ctx,
                         );
-                        let err = anyhow::anyhow!("task join error: {join_err_text}");
-                        let checks = self
-                            .task_failure_checks(session_paths.as_ref(), &task_id, &err)
-                            .await;
-                        let pr = failed_pr(&task_id, checks);
-                        self.events.emit(RunEvent::TaskFinished {
-                            pr: PullRequestSummary {
-                                id: pr.id.clone(),
-                                status: pr.status.clone(),
-                                head_branch: pr.head_branch.clone(),
-                                head_commit: pr.head_commit.clone(),
-                            },
-                        });
-                        prs[index] = Some(pr);
-                        continue;
+                        next_index += 1;
+                        in_flight += 1;
                     }
-                };
-                let pr = match result {
-                    Ok(pr) => pr,
-                    Err(err) => {
-                        warn!(task_id = %task.id, error = %err, "task failed");
-                        let checks = self
-                            .task_failure_checks(session_paths.as_ref(), &task.id, &err)
-                            .await;
-                        failed_pr(&task.id, checks)
-                    }
-                };
-                self.events.emit(RunEvent::TaskFinished {
-                    pr: PullRequestSummary {
-                        id: pr.id.clone(),
-                        status: pr.status.clone(),
-                        head_branch: pr.head_branch.clone(),
-                        head_commit: pr.head_commit.clone(),
-                    },
-                });
-                prs[index] = Some(pr);
+
+                    continue;
+                }
+            };
+
+            let pr = match result {
+                Ok(pr) => pr,
+                Err(err) => {
+                    warn!(task_id = %task.id, error = %err, "task failed");
+                    let checks = self
+                        .task_failure_checks(session_paths.as_ref(), &task.id, &err)
+                        .await;
+                    failed_pr(&task.id, checks)
+                }
+            };
+            self.events.emit(RunEvent::TaskFinished {
+                pr: PullRequestSummary {
+                    id: pr.id.clone(),
+                    status: pr.status.clone(),
+                    head_branch: pr.head_branch.clone(),
+                    head_commit: pr.head_commit.clone(),
+                },
+            });
+            prs[index] = Some(pr);
+
+            while next_index < tasks.len() && in_flight < max {
+                spawn_task_job(
+                    &mut join_set,
+                    &mut join_meta,
+                    next_index,
+                    tasks[next_index].clone(),
+                    &ctx,
+                );
+                next_index += 1;
+                in_flight += 1;
             }
         }
 
