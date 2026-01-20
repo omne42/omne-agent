@@ -1553,10 +1553,6 @@ async fn handle_thread_fork(server: &Server, params: ThreadForkParams) -> anyhow
         )
     };
 
-    if let Some(turn_id) = active_turn_id {
-        anyhow::bail!("cannot fork thread with active turn: {}", turn_id);
-    }
-
     let events = server
         .thread_store
         .read_events_since(params.thread_id, EventSeq::ZERO)
@@ -1573,8 +1569,24 @@ async fn handle_thread_fork(server: &Server, params: ThreadForkParams) -> anyhow
         let kind = event.kind;
         match kind {
             pm_protocol::ThreadEventKind::ThreadCreated { .. } => {}
-            kind @ pm_protocol::ThreadEventKind::ThreadConfigUpdated { .. }
-            | kind @ pm_protocol::ThreadEventKind::TurnStarted { .. }
+            kind @ pm_protocol::ThreadEventKind::ThreadConfigUpdated { .. } => {
+                forked.append(kind).await?;
+            }
+            pm_protocol::ThreadEventKind::TurnStarted { turn_id, .. }
+                if active_turn_id == Some(turn_id) => {}
+            pm_protocol::ThreadEventKind::TurnInterruptRequested { turn_id, .. }
+                if active_turn_id == Some(turn_id) => {}
+            pm_protocol::ThreadEventKind::TurnCompleted { turn_id, .. }
+                if active_turn_id == Some(turn_id) => {}
+            pm_protocol::ThreadEventKind::ApprovalRequested {
+                turn_id: Some(turn_id),
+                ..
+            } if active_turn_id == Some(turn_id) => {}
+            pm_protocol::ThreadEventKind::AssistantMessage {
+                turn_id: Some(turn_id),
+                ..
+            } if active_turn_id == Some(turn_id) => {}
+            kind @ pm_protocol::ThreadEventKind::TurnStarted { .. }
             | kind @ pm_protocol::ThreadEventKind::TurnInterruptRequested { .. }
             | kind @ pm_protocol::ThreadEventKind::TurnCompleted { .. }
             | kind @ pm_protocol::ThreadEventKind::ApprovalRequested { .. }
