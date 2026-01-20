@@ -212,6 +212,32 @@ async fn repo_inject_updates_origin_when_repo_exists() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn repo_inject_populates_heads_for_preexisting_bare_repo() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let source_repo = tmp.path().join("source");
+    init_source_repo(&source_repo)?;
+
+    let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
+    let repo_manager = RepoManager::new(pm_paths.clone());
+    repo_manager.ensure_layout().await?;
+
+    let repo_name = RepositoryName::sanitize("source");
+    let bare_repo = pm_paths.repo_bare_path(&repo_name);
+    run_git(
+        tmp.path(),
+        &["init", "--bare", bare_repo.to_string_lossy().as_ref()],
+    )?;
+
+    repo_manager
+        .inject(&repo_name, source_repo.to_string_lossy().as_ref())
+        .await?;
+
+    run_git(&bare_repo, &["show-ref", "--verify", "refs/heads/main"])?;
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn inject_run_merge_updates_base_branch() -> anyhow::Result<()> {
     let tmp = tempfile::tempdir()?;
     let source_repo = tmp.path().join("source");

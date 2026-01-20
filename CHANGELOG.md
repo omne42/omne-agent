@@ -32,6 +32,7 @@
 - `CODE_PM_TMP_ROOT` 为空（例如 `export CODE_PM_TMP_ROOT=`）时将被忽略，避免 session artifacts 意外落到当前工作目录。
 - `code-pm repo inject` 与 `code-pm run --repo-src` 现在支持使用相对路径引用本地仓库（不会再相对 `.code_pm/repos` 解析导致 clone 失败）。
 - `code-pm repo inject` 复用已存在的注入仓库时会更新 `origin` 到本次传入的 source，避免同名重新注入仍从旧源 fetch。
+- `code-pm repo inject` 复用已存在的 bare repo 时会以 mirror refspec 拉取到 `refs/*`（而不是只更新 `refs/remotes/origin/*`），避免后续 clone 看不到 `refs/heads/*`。
 - storage 读取损坏 JSON 时增加错误上下文（包含具体文件路径），便于定位问题数据。
 - storage 写入 JSON 失败时会尽力清理临时文件（`*.json.tmp.*`），避免脏文件堆积。
 - hook 执行失败的错误现在会包含 session id，便于定位失败运行与对应 artifacts。

@@ -97,7 +97,12 @@ impl RepoManager {
                 }
             }
 
-            let fetch_args = vec![os_arg("fetch"), os_arg("--all"), os_arg("--prune")];
+            let fetch_args = vec![
+                os_arg("fetch"),
+                os_arg("--prune"),
+                os_arg("origin"),
+                os_arg("+refs/*:refs/*"),
+            ];
             let output = self.git.run(&bare_path, &fetch_args, None).await?;
             if !output.ok {
                 anyhow::bail!(
