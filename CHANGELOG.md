@@ -20,6 +20,7 @@
 - `code-pm session list --verbose [--limit N] [--json]`：按 `created_at`（RFC3339）倒序输出 session 元信息（不含 prompt）；`--json` 输出 JSON 数组。
 - `code-pm run --json`：以 pretty JSON 输出 `RunResult`（便于脚本/集成）。
 - `code-pm run --strict`：当存在 task 失败或 merge error 时返回非零退出码。
+- `code-pm run --no-merge`：跳过合并步骤，只生成/推送 PR 分支并写入 session 数据（不会修改 base）。
 - `code-pm run --cargo-test`：对 Rust repo 在提交前额外执行 `cargo test --workspace --all-targets`（输出写入 task artifacts）。
 - `code-pm run --stream-events-json`：以 JSON Lines（NDJSON）格式输出 `RunEvent` 到 stderr（每行包含 `type` 字段），便于实时消费事件流。
 - `code-pm run --hook-url <url>`：完成后向 webhook `POST` JSON（`session_id/repo/pr_name/base_branch/pm_root/session_dir/tmp_dir/result_json/merged/merge_error`）。

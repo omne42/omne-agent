@@ -129,6 +129,7 @@ cargo run -p code-pm -- run \
 注意：`--prompt` / `--prompt-file` 的内容不得为空（包括仅空白字符）。
 注意：`--auto-tasks` 不能与 `--task` / `--tasks-file` 同时使用。
 注意：`--cargo-test` 会在 Rust repo 上额外执行 `cargo test`（执行前仍会先跑 `cargo fmt`/`cargo check`）。
+注意：`--no-merge` 会跳过合并步骤（不会修改 base 分支）。
 
 从 prompt 自动拆分 tasks（Phase 1：规则化；识别 checklist/编号/无序列表）：
 

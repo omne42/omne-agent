@@ -168,6 +168,16 @@ cargo run -p code-pm -- run \
   --cargo-test
 ```
 
+如果你希望先生成 PR 分支、但不希望修改 base（跳过合并），使用 `--no-merge`：
+
+```bash
+cargo run -p code-pm -- run \
+  --repo <repo_name> \
+  --pr-name <pr_name> \
+  --prompt "..." \
+  --no-merge
+```
+
 ### 4.1 task 拆分方式（3 选 1）
 
 1. 默认：模板 `TemplateArchitect`（永远 1 个 task：`main`）。

@@ -265,26 +265,38 @@ impl Orchestrator {
             .collect();
         self.events.emit(RunEvent::MergeStarted { ready_prs });
 
-        let merge = match self
-            .merger
-            .merge(
-                repo.as_ref(),
-                session.as_ref(),
-                session_paths.as_ref(),
-                &prs,
-            )
-            .await
-        {
-            Ok(merge) => {
-                if let Some(error) = merge.error.as_deref() {
-                    warn!(session_id = %session.id, error = %error, "merge failed");
+        let merge = if request.auto_merge {
+            match self
+                .merger
+                .merge(
+                    repo.as_ref(),
+                    session.as_ref(),
+                    session_paths.as_ref(),
+                    &prs,
+                )
+                .await
+            {
+                Ok(merge) => {
+                    if let Some(error) = merge.error.as_deref() {
+                        warn!(session_id = %session.id, error = %error, "merge failed");
+                    }
+                    merge
                 }
-                merge
+                Err(err) => {
+                    warn!(session_id = %session.id, error = %err, "merge failed");
+                    self.merge_failure_result(session_paths.as_ref(), session.as_ref(), &err)
+                        .await
+                }
             }
-            Err(err) => {
-                warn!(session_id = %session.id, error = %err, "merge failed");
-                self.merge_failure_result(session_paths.as_ref(), session.as_ref(), &err)
-                    .await
+        } else {
+            MergeResult {
+                merged: false,
+                base_branch: session.base_branch.clone(),
+                merge_commit: None,
+                merged_prs: Vec::new(),
+                checks: CheckSummary::default(),
+                error: None,
+                error_log_path: None,
             }
         };
 
@@ -741,6 +753,21 @@ mod tests {
         }
     }
 
+    struct PanicMerger;
+
+    #[async_trait]
+    impl Merger for PanicMerger {
+        async fn merge(
+            &self,
+            _repo: &Repository,
+            _session: &Session,
+            _session_paths: &SessionPaths,
+            _prs: &[PullRequest],
+        ) -> anyhow::Result<MergeResult> {
+            panic!("merger should not be called")
+        }
+    }
+
     #[tokio::test]
     async fn rule_based_architect_parses_checklist_tasks() -> anyhow::Result<()> {
         let architect = RuleBasedArchitect::new(8);
@@ -841,6 +868,7 @@ Some intro.
                     hook: None,
                     max_concurrency: 8,
                     cargo_test: false,
+                    auto_merge: true,
                 },
             )
             .await?;
@@ -906,6 +934,7 @@ Some intro.
             hook: None,
             max_concurrency: 8,
             cargo_test: false,
+            auto_merge: true,
         };
         let run =
             tokio::spawn(async move { orchestrator.run(&pm_paths_run, repo_run, request).await });
@@ -987,6 +1016,76 @@ Some intro.
     }
 
     #[tokio::test]
+    async fn run_skips_merge_when_auto_merge_disabled() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let pm_paths = PmPaths::new(dir.path().join(".code_pm"));
+        let storage = FsStorage::new(pm_paths.data_dir());
+
+        let events = EventBus::default();
+
+        let repo = Repository {
+            name: crate::domain::RepositoryName::sanitize("repo"),
+            bare_path: PathBuf::from("/nonexistent/bare.git"),
+            lock_path: dir.path().join("repo.lock"),
+        };
+
+        let orchestrator = Orchestrator {
+            storage: Arc::new(storage),
+            hook_runner: Arc::new(NoopHookRunner),
+            events: events.clone(),
+            architect: Arc::new(PanicArchitect),
+            coder: Arc::new(DelayedCoder),
+            merger: Arc::new(PanicMerger),
+        };
+
+        let tasks = vec![
+            TaskSpec {
+                id: crate::domain::TaskId::sanitize("a"),
+                title: "A".to_string(),
+                description: None,
+            },
+            TaskSpec {
+                id: crate::domain::TaskId::sanitize("b"),
+                title: "B".to_string(),
+                description: None,
+            },
+        ];
+
+        let result = orchestrator
+            .run(
+                &pm_paths,
+                repo.clone(),
+                RunRequest {
+                    pr_name: crate::domain::PrName::sanitize("test"),
+                    prompt: "x".to_string(),
+                    base_branch: "main".to_string(),
+                    tasks: Some(tasks),
+                    apply_patch: None,
+                    hook: None,
+                    max_concurrency: 2,
+                    cargo_test: false,
+                    auto_merge: false,
+                },
+            )
+            .await?;
+
+        assert_eq!(result.prs.len(), 2);
+        assert!(
+            result
+                .prs
+                .iter()
+                .all(|pr| pr.status == PullRequestStatus::Ready)
+        );
+        assert!(!result.merge.merged);
+        assert!(result.merge.error.is_none());
+
+        let session_paths = SessionPaths::new(&repo.name, result.session.id);
+        let _ = tokio::fs::remove_dir_all(session_paths.root()).await;
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn concurrent_tasks_convert_panics_to_failed_prs() -> anyhow::Result<()> {
         let dir = tempfile::tempdir()?;
         let pm_paths = PmPaths::new(dir.path().join(".code_pm"));
@@ -1038,6 +1137,7 @@ Some intro.
                     hook: None,
                     max_concurrency: 8,
                     cargo_test: false,
+                    auto_merge: true,
                 },
             )
             .await?;

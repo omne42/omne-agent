@@ -356,6 +356,7 @@ pub struct RunRequest {
     pub hook: Option<HookSpec>,
     pub max_concurrency: usize,
     pub cargo_test: bool,
+    pub auto_merge: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

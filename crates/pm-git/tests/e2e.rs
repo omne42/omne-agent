@@ -276,6 +276,7 @@ async fn inject_run_merge_updates_base_branch() -> anyhow::Result<()> {
                 hook: None,
                 max_concurrency: 1,
                 cargo_test: false,
+                auto_merge: true,
             },
         )
         .await?;
@@ -346,6 +347,7 @@ async fn inject_run_merge_uses_concurrent_path() -> anyhow::Result<()> {
                 hook: None,
                 max_concurrency: 2,
                 cargo_test: false,
+                auto_merge: true,
             },
         )
         .await?;
@@ -415,6 +417,7 @@ index 1111111..2222222 100644
                 hook: None,
                 max_concurrency: 1,
                 cargo_test: false,
+                auto_merge: true,
             },
         )
         .await?;
@@ -582,6 +585,7 @@ async fn run_with_missing_bare_repo_records_clone_failure() -> anyhow::Result<()
                 hook: None,
                 max_concurrency: 1,
                 cargo_test: false,
+                auto_merge: true,
             },
         )
         .await?;
@@ -655,6 +659,7 @@ async fn rust_repo_does_not_pollute_task_repo_with_target_dir() -> anyhow::Resul
                 hook: None,
                 max_concurrency: 1,
                 cargo_test: false,
+                auto_merge: true,
             },
         )
         .await?;
@@ -719,6 +724,7 @@ async fn rust_repo_without_lockfile_does_not_create_noise_pr() -> anyhow::Result
                 hook: None,
                 max_concurrency: 1,
                 cargo_test: false,
+                auto_merge: true,
             },
         )
         .await?;
@@ -782,6 +788,7 @@ async fn rust_repo_without_lockfile_does_not_create_noise_pr_with_cargo_test() -
                 hook: None,
                 max_concurrency: 1,
                 cargo_test: true,
+                auto_merge: true,
             },
         )
         .await?;

@@ -126,6 +126,9 @@ struct RunArgs {
     /// For Rust repos, also run `cargo test` before committing.
     #[arg(long, default_value_t = false)]
     cargo_test: bool,
+    /// Skip merging PR branches into the base branch.
+    #[arg(long, default_value_t = false)]
+    no_merge: bool,
     #[arg(
         long,
         default_value_t = false,
@@ -518,6 +521,7 @@ async fn run_session(
             max_concurrency: args.max_concurrency as usize,
             tasks,
             cargo_test: args.cargo_test,
+            auto_merge: !args.no_merge,
         };
 
         orchestrator.run(repo_manager.paths(), repo, request).await
@@ -1064,6 +1068,7 @@ mod tests {
             strict: false,
             json: false,
             cargo_test: false,
+            no_merge: false,
             auto_tasks: false,
             tasks_file: None,
             task: Vec::new(),
@@ -1098,6 +1103,7 @@ mod tests {
             strict: false,
             json: false,
             cargo_test: false,
+            no_merge: false,
             auto_tasks: false,
             tasks_file: None,
             task: Vec::new(),
@@ -1144,6 +1150,7 @@ mod tests {
             strict: false,
             json: false,
             cargo_test: false,
+            no_merge: false,
             auto_tasks: false,
             tasks_file: None,
             task: Vec::new(),
@@ -1348,6 +1355,7 @@ mod tests {
             strict: false,
             json: false,
             cargo_test: false,
+            no_merge: false,
             auto_tasks: false,
             tasks_file: None,
             task: Vec::new(),
@@ -1380,6 +1388,7 @@ mod tests {
             strict: false,
             json: false,
             cargo_test: false,
+            no_merge: false,
             auto_tasks: false,
             tasks_file: None,
             task: Vec::new(),
@@ -1642,6 +1651,7 @@ mod tests {
             strict: false,
             json: false,
             cargo_test: false,
+            no_merge: false,
             auto_tasks: false,
             tasks_file: Some(path),
             task: Vec::new(),
@@ -1671,6 +1681,7 @@ mod tests {
             strict: false,
             json: false,
             cargo_test: false,
+            no_merge: false,
             auto_tasks: false,
             tasks_file: None,
             task: vec![":x".to_string()],
