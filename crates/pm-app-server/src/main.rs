@@ -294,6 +294,8 @@ struct ProcessStartParams {
     thread_id: ThreadId,
     #[serde(default)]
     turn_id: Option<TurnId>,
+    #[serde(default)]
+    approval_id: Option<pm_protocol::ApprovalId>,
     argv: Vec<String>,
     #[serde(default)]
     cwd: Option<String>,
@@ -352,6 +354,8 @@ struct FileWriteParams {
     thread_id: ThreadId,
     #[serde(default)]
     turn_id: Option<TurnId>,
+    #[serde(default)]
+    approval_id: Option<pm_protocol::ApprovalId>,
     path: String,
     text: String,
     #[serde(default)]
@@ -911,6 +915,66 @@ async fn handle_approval_list(
     Ok(serde_json::json!({ "approvals": approvals }))
 }
 
+async fn ensure_approval(
+    server: &Server,
+    thread_id: ThreadId,
+    approval_id: pm_protocol::ApprovalId,
+    expected_action: &str,
+    expected_params: &serde_json::Value,
+) -> anyhow::Result<()> {
+    let events = server
+        .thread_store
+        .read_events_since(thread_id, EventSeq::ZERO)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("thread not found: {}", thread_id))?;
+
+    let mut found_request: Option<(String, serde_json::Value)> = None;
+    let mut found_decision: Option<pm_protocol::ApprovalDecision> = None;
+
+    for event in events {
+        match event.kind {
+            pm_protocol::ThreadEventKind::ApprovalRequested {
+                approval_id: got,
+                action,
+                params,
+                ..
+            } if got == approval_id => {
+                found_request = Some((action, params));
+            }
+            pm_protocol::ThreadEventKind::ApprovalDecided {
+                approval_id: got,
+                decision,
+                ..
+            } if got == approval_id => {
+                found_decision = Some(decision);
+            }
+            _ => {}
+        }
+    }
+
+    let Some((action, params)) = found_request else {
+        anyhow::bail!("approval not requested: {}", approval_id);
+    };
+    if action != expected_action {
+        anyhow::bail!(
+            "approval action mismatch: expected {}, got {}",
+            expected_action,
+            action
+        );
+    }
+    if &params != expected_params {
+        anyhow::bail!("approval params mismatch for {}", approval_id);
+    }
+
+    match found_decision {
+        Some(pm_protocol::ApprovalDecision::Approved) => Ok(()),
+        Some(pm_protocol::ApprovalDecision::Denied) => {
+            anyhow::bail!("approval denied: {}", approval_id)
+        }
+        None => anyhow::bail!("approval not decided: {}", approval_id),
+    }
+}
+
 async fn load_thread_root(
     server: &Server,
     thread_id: ThreadId,
@@ -1011,19 +1075,54 @@ async fn handle_file_write(server: &Server, params: FileWriteParams) -> anyhow::
     let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
 
     let create_parent_dirs = params.create_parent_dirs.unwrap_or(true);
+    let approval_policy = {
+        let handle = thread_rt.handle.lock().await;
+        handle.state().approval_policy
+    };
     let tool_id = pm_protocol::ToolId::new();
     let bytes = params.text.as_bytes().len();
+
+    let approval_params = serde_json::json!({
+        "path": params.path.clone(),
+        "bytes": bytes,
+        "create_parent_dirs": create_parent_dirs,
+    });
+    if approval_policy == pm_protocol::ApprovalPolicy::Manual {
+        match params.approval_id {
+            Some(approval_id) => {
+                ensure_approval(
+                    server,
+                    params.thread_id,
+                    approval_id,
+                    "file/write",
+                    &approval_params,
+                )
+                .await?;
+            }
+            None => {
+                let approval_id = pm_protocol::ApprovalId::new();
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ApprovalRequested {
+                        approval_id,
+                        turn_id: params.turn_id,
+                        action: "file/write".to_string(),
+                        params: approval_params,
+                    })
+                    .await?;
+                return Ok(serde_json::json!({
+                    "needs_approval": true,
+                    "approval_id": approval_id,
+                }));
+            }
+        }
+    }
 
     thread_rt
         .append_event(pm_protocol::ThreadEventKind::ToolStarted {
             tool_id,
             turn_id: params.turn_id,
             tool: "file/write".to_string(),
-            params: Some(serde_json::json!({
-                "path": params.path.clone(),
-                "bytes": bytes,
-                "create_parent_dirs": create_parent_dirs,
-            })),
+            params: Some(approval_params),
         })
         .await?;
 
@@ -1223,6 +1322,51 @@ async fn handle_process_start(
     }
 
     let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
+    let approval_policy = {
+        let handle = thread_rt.handle.lock().await;
+        handle.state().approval_policy
+    };
+
+    let cwd_path = if let Some(cwd) = params.cwd.as_deref() {
+        pm_core::resolve_dir(&thread_root, Path::new(cwd)).await?
+    } else {
+        thread_root.clone()
+    };
+    let cwd_str = cwd_path.display().to_string();
+
+    let approval_params = serde_json::json!({
+        "argv": params.argv.clone(),
+        "cwd": cwd_str.clone(),
+    });
+    if approval_policy == pm_protocol::ApprovalPolicy::Manual {
+        match params.approval_id {
+            Some(approval_id) => {
+                ensure_approval(
+                    server,
+                    params.thread_id,
+                    approval_id,
+                    "process/start",
+                    &approval_params,
+                )
+                .await?;
+            }
+            None => {
+                let approval_id = pm_protocol::ApprovalId::new();
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ApprovalRequested {
+                        approval_id,
+                        turn_id: params.turn_id,
+                        action: "process/start".to_string(),
+                        params: approval_params,
+                    })
+                    .await?;
+                return Ok(serde_json::json!({
+                    "needs_approval": true,
+                    "approval_id": approval_id,
+                }));
+            }
+        }
+    }
 
     let process_id = ProcessId::new();
     let thread_dir = server.thread_store.thread_dir(params.thread_id);
@@ -1236,13 +1380,6 @@ async fn handle_process_start(
 
     let stdout_path = process_dir.join("stdout.log");
     let stderr_path = process_dir.join("stderr.log");
-
-    let cwd_path = if let Some(cwd) = params.cwd.as_deref() {
-        pm_core::resolve_dir(&thread_root, Path::new(cwd)).await?
-    } else {
-        thread_root.clone()
-    };
-    let cwd_str = cwd_path.display().to_string();
 
     let mut cmd = Command::new(&params.argv[0]);
     cmd.args(params.argv.iter().skip(1));
