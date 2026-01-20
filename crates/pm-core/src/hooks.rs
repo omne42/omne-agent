@@ -44,7 +44,12 @@ impl HookRunner for CommandHookRunner {
         session_paths: &SessionPaths,
         result: &RunResult,
     ) -> anyhow::Result<()> {
-        let HookSpec::Command { program, args } = hook;
+        let (program, args) = match hook {
+            HookSpec::Command { program, args } => (program, args),
+            HookSpec::Webhook { .. } => {
+                anyhow::bail!("unsupported hook spec: webhook (expected command hook)")
+            }
+        };
 
         let session = &result.session;
         let pm_session_dir = pm_paths.session_dir(session.id);

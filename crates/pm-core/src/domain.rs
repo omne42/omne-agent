@@ -320,6 +320,7 @@ pub struct MergeResult {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum HookSpec {
     Command { program: PathBuf, args: Vec<String> },
+    Webhook { url: String },
 }
 
 #[derive(Clone, Debug)]

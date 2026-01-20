@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 use pm_core::{
@@ -105,6 +106,8 @@ struct RunArgs {
     hook_cmd: Option<PathBuf>,
     #[arg(long)]
     hook_arg: Vec<String>,
+    #[arg(long)]
+    hook_url: Option<String>,
 }
 
 #[tokio::main]
@@ -224,7 +227,7 @@ async fn show_session_json(
 async fn run_session(
     repo_manager: RepoManager,
     storage: FsStorage,
-    args: RunArgs,
+    mut args: RunArgs,
 ) -> anyhow::Result<()> {
     let prompt = match (&args.prompt, &args.prompt_file) {
         (Some(text), None) => text.clone(),
@@ -253,11 +256,29 @@ async fn run_session(
         (None, None) => anyhow::bail!("missing --repo or --repo-src"),
     };
 
-    let hook = args.hook_cmd.map(|program| HookSpec::Command {
-        program,
-        args: args.hook_arg,
-    });
-    let hook_runner: Arc<dyn HookRunner> = Arc::new(CommandHookRunner);
+    if args.hook_cmd.is_none() && !args.hook_arg.is_empty() {
+        anyhow::bail!("--hook-arg requires --hook-cmd");
+    }
+    if args.hook_cmd.is_some() && args.hook_url.is_some() {
+        anyhow::bail!("use only one of --hook-cmd or --hook-url");
+    }
+
+    let hook = match (args.hook_cmd.take(), args.hook_url.take()) {
+        (None, None) => None,
+        (Some(program), None) => Some(HookSpec::Command {
+            program,
+            args: std::mem::take(&mut args.hook_arg),
+        }),
+        (None, Some(url)) => {
+            let url = url.trim().to_string();
+            if url.is_empty() {
+                anyhow::bail!("--hook-url must not be empty");
+            }
+            Some(HookSpec::Webhook { url })
+        }
+        (Some(_), Some(_)) => unreachable!("validated above"),
+    };
+    let hook_runner: Arc<dyn HookRunner> = Arc::new(CliHookRunner::new()?);
 
     let architect: Arc<dyn Architect> = if args.auto_tasks {
         Arc::new(RuleBasedArchitect::default())
@@ -326,6 +347,103 @@ async fn run_session(
     }
 
     Ok(())
+}
+
+#[derive(Clone)]
+struct CliHookRunner {
+    command: CommandHookRunner,
+    webhook: WebhookHookRunner,
+}
+
+impl CliHookRunner {
+    fn new() -> anyhow::Result<Self> {
+        Ok(Self {
+            command: CommandHookRunner,
+            webhook: WebhookHookRunner::new()?,
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl HookRunner for CliHookRunner {
+    async fn run(
+        &self,
+        hook: &HookSpec,
+        pm_paths: &PmPaths,
+        session_paths: &pm_core::SessionPaths,
+        result: &pm_core::RunResult,
+    ) -> anyhow::Result<()> {
+        match hook {
+            HookSpec::Command { .. } => {
+                self.command
+                    .run(hook, pm_paths, session_paths, result)
+                    .await
+            }
+            HookSpec::Webhook { .. } => {
+                self.webhook
+                    .run(hook, pm_paths, session_paths, result)
+                    .await
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
+struct WebhookHookRunner {
+    client: reqwest::Client,
+}
+
+impl WebhookHookRunner {
+    fn new() -> anyhow::Result<Self> {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()?;
+        Ok(Self { client })
+    }
+}
+
+#[async_trait::async_trait]
+impl HookRunner for WebhookHookRunner {
+    async fn run(
+        &self,
+        hook: &HookSpec,
+        pm_paths: &PmPaths,
+        session_paths: &pm_core::SessionPaths,
+        result: &pm_core::RunResult,
+    ) -> anyhow::Result<()> {
+        let url = match hook {
+            HookSpec::Webhook { url } => url.as_str(),
+            HookSpec::Command { .. } => {
+                anyhow::bail!("unsupported hook spec: command (expected webhook hook)")
+            }
+        };
+
+        let session = &result.session;
+        let pm_session_dir = pm_paths.session_dir(session.id);
+        let tmp_session_dir = session_paths.root();
+        let result_json = tmp_session_dir.join("result.json");
+
+        let payload = serde_json::json!({
+            "session_id": session.id.to_string(),
+            "repo": session.repo.as_str(),
+            "pr_name": session.pr_name.as_str(),
+            "base_branch": session.base_branch.as_str(),
+            "pm_root": pm_paths.root().display().to_string(),
+            "session_dir": pm_session_dir.display().to_string(),
+            "tmp_dir": tmp_session_dir.display().to_string(),
+            "result_json": result_json.display().to_string(),
+            "merged": result.merge.merged,
+            "merge_error": result.merge.error.as_deref(),
+        });
+
+        let response = self.client.post(url).json(&payload).send().await?;
+        let status = response.status();
+        if !status.is_success() {
+            let text = response.text().await.unwrap_or_default();
+            anyhow::bail!("webhook responded with status {status}: {text}");
+        }
+        Ok(())
+    }
 }
 
 fn validate_strict_run_result(result: &pm_core::RunResult) -> anyhow::Result<()> {
@@ -460,8 +578,15 @@ impl Architect for TemplateArchitect {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::Json;
+    use axum::Router;
+    use axum::extract::State;
+    use axum::http::StatusCode;
+    use axum::routing::post;
     use pm_core::Storage;
+    use serde_json::Value;
     use time::OffsetDateTime;
+    use tokio::sync::Mutex;
 
     #[tokio::test]
     async fn list_sessions_returns_sorted_unique_ids() -> anyhow::Result<()> {
@@ -587,6 +712,104 @@ mod tests {
             },
         );
         assert!(validate_strict_run_result(&result).is_err());
+    }
+
+    #[tokio::test]
+    async fn webhook_hook_runner_posts_expected_payload() -> anyhow::Result<()> {
+        #[derive(Clone)]
+        struct Capture {
+            payload: Arc<Mutex<Option<Value>>>,
+        }
+
+        async fn handler(State(state): State<Capture>, Json(payload): Json<Value>) -> StatusCode {
+            *state.payload.lock().await = Some(payload);
+            StatusCode::NO_CONTENT
+        }
+
+        let captured = Arc::new(Mutex::new(None));
+        let state = Capture {
+            payload: Arc::clone(&captured),
+        };
+
+        let app = Router::new()
+            .route("/hook", post(handler))
+            .with_state(state);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let addr = listener.local_addr()?;
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let tmp = tempfile::tempdir()?;
+        let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
+
+        let result = make_run_result(
+            vec![pm_core::PullRequest {
+                id: pm_core::TaskId::sanitize("t1"),
+                head_branch: "ai/demo/123/t1".to_string(),
+                base_branch: "main".to_string(),
+                status: pm_core::PullRequestStatus::Ready,
+                checks: pm_core::CheckSummary::default(),
+                head_commit: None,
+            }],
+            pm_core::MergeResult {
+                merged: true,
+                base_branch: "main".to_string(),
+                merge_commit: Some("deadbeef".to_string()),
+                merged_prs: vec![pm_core::TaskId::sanitize("t1")],
+                checks: pm_core::CheckSummary::default(),
+                error: None,
+                error_log_path: None,
+            },
+        );
+        let repo = pm_core::RepositoryName::sanitize("repo");
+        let session_paths =
+            pm_core::SessionPaths::new_in(tmp.path().join("tmp"), &repo, result.session.id);
+
+        let hook = HookSpec::Webhook {
+            url: format!("http://{addr}/hook"),
+        };
+        let runner = WebhookHookRunner::new()?;
+        runner
+            .run(&hook, &pm_paths, &session_paths, &result)
+            .await?;
+
+        let payload = captured
+            .lock()
+            .await
+            .take()
+            .expect("webhook handler must capture payload");
+
+        assert_eq!(payload["session_id"], result.session.id.to_string());
+        assert_eq!(payload["repo"], result.session.repo.as_str());
+        assert_eq!(payload["pr_name"], result.session.pr_name.as_str());
+        assert_eq!(payload["base_branch"], result.session.base_branch.as_str());
+        assert_eq!(payload["merged"], result.merge.merged);
+        assert_eq!(payload["merge_error"], Value::Null);
+
+        assert_eq!(payload["pm_root"], pm_paths.root().display().to_string());
+        assert_eq!(
+            payload["session_dir"],
+            pm_paths
+                .session_dir(result.session.id)
+                .display()
+                .to_string()
+        );
+        assert_eq!(
+            payload["tmp_dir"],
+            session_paths.root().display().to_string()
+        );
+        assert_eq!(
+            payload["result_json"],
+            session_paths
+                .root()
+                .join("result.json")
+                .display()
+                .to_string()
+        );
+
+        server.abort();
+        Ok(())
     }
 
     #[tokio::test]
