@@ -512,12 +512,30 @@ async fn main() -> anyhow::Result<()> {
             "turn/interrupt" => match serde_json::from_value::<TurnInterruptParams>(request.params)
             {
                 Ok(params) => match server.get_or_load_thread(params.thread_id).await {
-                    Ok(rt) => match rt.interrupt_turn(params.turn_id, params.reason).await {
-                        Ok(()) => JsonRpcResponse::ok(id, serde_json::json!({ "ok": true })),
-                        Err(err) => {
-                            JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None)
+                    Ok(rt) => {
+                        let kill_reason = params
+                            .reason
+                            .clone()
+                            .or_else(|| Some("turn interrupted".to_string()));
+                        match rt.interrupt_turn(params.turn_id, params.reason).await {
+                            Ok(()) => {
+                                kill_processes_for_turn(
+                                    &server,
+                                    params.thread_id,
+                                    params.turn_id,
+                                    kill_reason,
+                                )
+                                .await;
+                                JsonRpcResponse::ok(id, serde_json::json!({ "ok": true }))
+                            }
+                            Err(err) => JsonRpcResponse::err(
+                                id,
+                                JSONRPC_INTERNAL_ERROR,
+                                err.to_string(),
+                                None,
+                            ),
                         }
-                    },
+                    }
                     Err(err) => {
                         JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None)
                     }
@@ -721,6 +739,35 @@ async fn handle_process_list(
             .then_with(|| a.process_id.cmp(&b.process_id))
     });
     Ok(out)
+}
+
+async fn kill_processes_for_turn(
+    server: &Server,
+    thread_id: ThreadId,
+    turn_id: TurnId,
+    reason: Option<String>,
+) {
+    let entries = {
+        let entries = server.processes.lock().await;
+        entries.values().cloned().collect::<Vec<_>>()
+    };
+
+    for entry in entries {
+        let should_kill = {
+            let info = entry.info.lock().await;
+            info.thread_id == thread_id
+                && info.turn_id == Some(turn_id)
+                && matches!(info.status, ProcessStatus::Running)
+        };
+        if should_kill {
+            let _ = entry
+                .cmd_tx
+                .send(ProcessCommand::Kill {
+                    reason: reason.clone(),
+                })
+                .await;
+        }
+    }
 }
 
 async fn handle_process_start(
