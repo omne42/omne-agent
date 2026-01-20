@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
@@ -7,6 +8,20 @@ use tracing::info;
 use crate::checks::os_arg;
 use crate::git::GitCli;
 use crate::lock::lock_exclusive;
+
+async fn normalize_git_source_arg(source: &str) -> anyhow::Result<OsString> {
+    let path = Path::new(source);
+    if tokio::fs::try_exists(path).await? {
+        let abs_path = match tokio::fs::canonicalize(path).await {
+            Ok(path) => path,
+            Err(_) if path.is_absolute() => path.to_path_buf(),
+            Err(_) => std::env::current_dir()?.join(path),
+        };
+        Ok(abs_path.into_os_string())
+    } else {
+        Ok(OsString::from(source))
+    }
+}
 
 #[derive(Clone)]
 pub struct RepoManager {
@@ -59,10 +74,11 @@ impl RepoManager {
             info!(repo = %name, "injecting repo via mirror clone");
             let parent = bare_path.parent().context("bare path has no parent")?;
             tokio::fs::create_dir_all(parent).await?;
+            let source_arg = normalize_git_source_arg(source).await?;
             let clone_args = vec![
                 os_arg("clone"),
                 os_arg("--mirror"),
-                os_arg(source),
+                source_arg,
                 os_arg(bare_path.as_path()),
             ];
             let output = self.git.run(parent, &clone_args, None).await?;

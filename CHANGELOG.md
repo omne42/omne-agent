@@ -30,6 +30,7 @@
 ### Fixed
 - `pm-http` 的 session API（`/api/v0/sessions/:id/*`）现在只接受 UUID 格式的 session id，避免非法路径段触发 storage key 校验错误导致 500。
 - `CODE_PM_TMP_ROOT` 为空（例如 `export CODE_PM_TMP_ROOT=`）时将被忽略，避免 session artifacts 意外落到当前工作目录。
+- `code-pm repo inject` 与 `code-pm run --repo-src` 现在支持使用相对路径引用本地仓库（不会再相对 `.code_pm/repos` 解析导致 clone 失败）。
 - storage 读取损坏 JSON 时增加错误上下文（包含具体文件路径），便于定位问题数据。
 - storage 写入 JSON 失败时会尽力清理临时文件（`*.json.tmp.*`），避免脏文件堆积。
 - hook 执行失败的错误现在会包含 session id，便于定位失败运行与对应 artifacts。

@@ -160,6 +160,27 @@ impl pm_core::Architect for SingleTaskArchitect {
 }
 
 #[tokio::test]
+async fn repo_inject_accepts_relative_source_paths() -> anyhow::Result<()> {
+    let cwd = std::env::current_dir()?;
+    let tmp = tempfile::tempdir_in(&cwd)?;
+    let source_repo = tmp.path().join("source");
+    init_source_repo(&source_repo)?;
+
+    let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
+    let repo_manager = RepoManager::new(pm_paths.clone());
+    let repo_name = RepositoryName::sanitize("source");
+
+    let source_repo_rel = source_repo
+        .strip_prefix(&cwd)
+        .map_err(|_| anyhow::anyhow!("tempdir not under current dir"))?
+        .to_string_lossy()
+        .to_string();
+    let repo = repo_manager.inject(&repo_name, &source_repo_rel).await?;
+    assert!(repo.bare_path.exists());
+    Ok(())
+}
+
+#[tokio::test]
 async fn inject_run_merge_updates_base_branch() -> anyhow::Result<()> {
     let tmp = tempfile::tempdir()?;
     let source_repo = tmp.path().join("source");
