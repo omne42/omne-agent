@@ -148,6 +148,57 @@ async fn get_session_bundle_all_includes_all_present_keys() -> anyhow::Result<()
 }
 
 #[tokio::test]
+async fn get_session_meta_returns_404_when_missing() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
+    let app = pm_http::router(pm_paths)?;
+
+    let id = SessionId::new();
+    let request = Request::builder()
+        .uri(format!("/api/v0/sessions/{id}/meta"))
+        .body(Body::empty())?;
+    let response = app.oneshot(request).await.unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_session_meta_returns_json_when_present() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
+
+    let id = SessionId::new();
+    let storage = FsStorage::new(pm_paths.data_dir());
+    storage
+        .put_json(
+            &format!("sessions/{id}/session"),
+            &serde_json::json!({
+                "id": id,
+                "repo": "repo",
+                "pr_name": "pr",
+                "prompt": "big prompt",
+                "base_branch": "main",
+                "created_at": "2026-01-20T00:00:00Z",
+            }),
+        )
+        .await?;
+
+    let app = pm_http::router(pm_paths)?;
+    let request = Request::builder()
+        .uri(format!("/api/v0/sessions/{id}/meta"))
+        .body(Body::empty())?;
+    let response = app.oneshot(request).await.unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = response.into_body().collect().await?.to_bytes();
+    let value: serde_json::Value = serde_json::from_slice(&bytes)?;
+    assert_eq!(value["id"], serde_json::json!(id));
+    assert!(value.get("prompt").is_none());
+    Ok(())
+}
+
+#[tokio::test]
 async fn get_session_bundle_all_flag_without_value_includes_all_present_keys() -> anyhow::Result<()>
 {
     let tmp = tempfile::tempdir()?;

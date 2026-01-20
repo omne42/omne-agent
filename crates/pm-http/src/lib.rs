@@ -38,6 +38,7 @@ pub fn router(pm_paths: PmPaths) -> anyhow::Result<Router> {
         .route("/api/v0/repos", get(api_list_repos))
         .route("/api/v0/sessions", get(api_list_sessions))
         .route("/api/v0/sessions/:id", get(api_get_session_bundle))
+        .route("/api/v0/sessions/:id/meta", get(api_get_session_meta))
         .route("/api/v0/sessions/:id/session", get(api_get_session))
         .route("/api/v0/sessions/:id/tasks", get(api_get_tasks))
         .route("/api/v0/sessions/:id/prs", get(api_get_prs))
@@ -111,6 +112,17 @@ async fn api_get_session_bundle(
     let value = state.storage.get_session_bundle(session_id, all).await?;
     match value {
         Some(value) => Ok(json_response(serde_json::to_vec(&value)?)),
+        None => Err(ApiError::not_found("session not found")),
+    }
+}
+
+async fn api_get_session_meta(
+    State(state): State<Arc<AppState>>,
+    AxumPath(session_id): AxumPath<SessionId>,
+) -> Result<Response<Body>, ApiError> {
+    let meta = state.storage.get_session_meta(session_id).await?;
+    match meta {
+        Some(meta) => Ok(json_response(serde_json::to_vec(&meta)?)),
         None => Err(ApiError::not_found("session not found")),
     }
 }
