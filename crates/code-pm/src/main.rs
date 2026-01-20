@@ -46,12 +46,20 @@ enum RepoCommand {
 
 #[derive(Subcommand)]
 enum SessionCommand {
-    List,
+    List(SessionListArgs),
     Show {
         id: SessionId,
         #[arg(long, default_value_t = false)]
         all: bool,
     },
+}
+
+#[derive(Parser, Clone)]
+struct SessionListArgs {
+    #[arg(long, default_value_t = false)]
+    verbose: bool,
+    #[arg(long)]
+    limit: Option<usize>,
 }
 
 #[derive(Parser, Clone)]
@@ -130,10 +138,32 @@ async fn main() -> anyhow::Result<()> {
             }
         },
         Command::Session { command } => match command {
-            SessionCommand::List => {
-                let sessions = list_sessions(&storage).await?;
-                for id in sessions {
-                    println!("{id}");
+            SessionCommand::List(args) => {
+                if args.verbose {
+                    let sessions = storage.list_session_meta().await?;
+                    let sessions = match args.limit {
+                        Some(limit) => sessions.into_iter().take(limit).collect::<Vec<_>>(),
+                        None => sessions,
+                    };
+                    for session in sessions {
+                        println!(
+                            "{} repo={} pr={} base={} created_at={}",
+                            session.id,
+                            session.repo.as_str(),
+                            session.pr_name.as_str(),
+                            session.base_branch,
+                            session.created_at
+                        );
+                    }
+                } else {
+                    let sessions = list_sessions(&storage).await?;
+                    let sessions = match args.limit {
+                        Some(limit) => sessions.into_iter().take(limit).collect::<Vec<_>>(),
+                        None => sessions,
+                    };
+                    for id in sessions {
+                        println!("{id}");
+                    }
                 }
             }
             SessionCommand::Show { id, all } => {

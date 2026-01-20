@@ -145,6 +145,15 @@ pub struct Session {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SessionMeta {
+    pub id: SessionId,
+    pub repo: RepositoryName,
+    pub pr_name: PrName,
+    pub base_branch: String,
+    pub created_at: OffsetDateTime,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TaskSpec {
     pub id: TaskId,
     pub title: String,

@@ -2,10 +2,11 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use async_trait::async_trait;
+use serde::de::DeserializeOwned;
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::domain::SessionId;
+use crate::domain::{SessionId, SessionMeta};
 
 #[async_trait]
 pub trait Storage: Send + Sync {
@@ -86,6 +87,41 @@ impl FsStorage {
             return Ok(None);
         }
         Ok(Some(Value::Object(out)))
+    }
+
+    pub async fn get_session_meta(&self, id: SessionId) -> anyhow::Result<Option<SessionMeta>> {
+        self.get_typed_json(&format!("sessions/{id}/session")).await
+    }
+
+    pub async fn list_session_meta(&self) -> anyhow::Result<Vec<SessionMeta>> {
+        let mut sessions = Vec::new();
+        for id in self.list_session_ids().await? {
+            if let Some(meta) = self.get_session_meta(id).await? {
+                sessions.push(meta);
+            }
+        }
+
+        sessions.sort_by(|a, b| {
+            b.created_at
+                .unix_timestamp()
+                .cmp(&a.created_at.unix_timestamp())
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        Ok(sessions)
+    }
+
+    pub async fn get_typed_json<T: DeserializeOwned>(
+        &self,
+        key: &str,
+    ) -> anyhow::Result<Option<T>> {
+        let path = self.key_to_path(key)?;
+        let bytes = match tokio::fs::read(&path).await {
+            Ok(bytes) => bytes,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(err) => return Err(err).context(format!("read json from {}", path.display())),
+        };
+        let value = serde_json::from_slice(&bytes)?;
+        Ok(Some(value))
     }
 
     fn key_to_path(&self, key: &str) -> anyhow::Result<PathBuf> {
@@ -227,7 +263,8 @@ impl Storage for FsStorage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::SessionId;
+    use crate::domain::{PrName, RepositoryName, Session, SessionId};
+    use time::OffsetDateTime;
 
     #[tokio::test]
     async fn roundtrip_put_get_list() -> anyhow::Result<()> {
@@ -385,6 +422,72 @@ mod tests {
         for key in ["session", "tasks", "prs", "merge", "result"] {
             assert!(bundle.get(key).is_some(), "missing key {key}");
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn get_session_meta_ignores_prompt() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let storage = FsStorage::new(dir.path().to_path_buf());
+
+        let id: SessionId = "00000000-0000-0000-0000-000000000111".parse()?;
+        let session = Session {
+            id,
+            repo: RepositoryName::sanitize("repo"),
+            pr_name: PrName::sanitize("pr"),
+            prompt: "big prompt".repeat(10),
+            base_branch: "main".to_string(),
+            created_at: OffsetDateTime::from_unix_timestamp(1_700_000_000)?,
+        };
+        storage
+            .put_json(
+                &format!("sessions/{id}/session"),
+                &serde_json::to_value(session)?,
+            )
+            .await?;
+
+        let meta = storage.get_session_meta(id).await?.unwrap();
+        assert_eq!(meta.id, id);
+        assert_eq!(meta.repo.as_str(), "repo");
+        assert_eq!(meta.pr_name.as_str(), "pr");
+        assert_eq!(meta.base_branch, "main");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_session_meta_sorts_by_created_at_desc() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let storage = FsStorage::new(dir.path().to_path_buf());
+
+        let id1: SessionId = "00000000-0000-0000-0000-000000000001".parse()?;
+        let id2: SessionId = "00000000-0000-0000-0000-000000000002".parse()?;
+
+        let make_session = |id, ts| Session {
+            id,
+            repo: RepositoryName::sanitize("repo"),
+            pr_name: PrName::sanitize("pr"),
+            prompt: "x".to_string(),
+            base_branch: "main".to_string(),
+            created_at: OffsetDateTime::from_unix_timestamp(ts).unwrap(),
+        };
+
+        storage
+            .put_json(
+                &format!("sessions/{id1}/session"),
+                &serde_json::to_value(make_session(id1, 10))?,
+            )
+            .await?;
+        storage
+            .put_json(
+                &format!("sessions/{id2}/session"),
+                &serde_json::to_value(make_session(id2, 20))?,
+            )
+            .await?;
+
+        let sessions = storage.list_session_meta().await?;
+        assert_eq!(sessions.len(), 2);
+        assert_eq!(sessions[0].id, id2);
+        assert_eq!(sessions[1].id, id1);
         Ok(())
     }
 }

@@ -10,6 +10,7 @@
 ### Added
 - Hook 执行现在会把 stdout/stderr 写入 session artifacts：`/tmp/<repo>_<session_id>/logs/hook.{stdout,stderr}.log`，便于排查失败原因。
 - `code-pm session list/show`：从本地 `.code_pm/data/` 查询 session（默认优先输出 `result`；`--all` 输出 session/tasks/prs/merge/result）。
+- `code-pm session list --verbose [--limit N]`：按 `created_at` 倒序输出 session 元信息（不含 prompt）。
 - `pm-http GET /api/v0/sessions/:id`：默认返回 `result`；`?all=true` 返回 session/tasks/prs/merge/result bundle。
 
 ### Changed
