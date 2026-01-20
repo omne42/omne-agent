@@ -38,6 +38,7 @@ pub struct MergeSummary {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum RunEvent {
     SessionCreated { session: SessionSummary },
     TasksPlanned { tasks: Vec<TaskSummary> },
@@ -118,5 +119,25 @@ impl EventBus {
 impl Default for EventBus {
     fn default() -> Self {
         Self::new(1024)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn run_event_serializes_with_type_tag() -> anyhow::Result<()> {
+        let event = RunEvent::HookStarted;
+        let value = serde_json::to_value(&event)?;
+        assert_eq!(value["type"], "hook_started");
+        Ok(())
+    }
+
+    #[test]
+    fn run_event_deserializes_from_type_tag() -> anyhow::Result<()> {
+        let event: RunEvent = serde_json::from_str(r#"{"type":"hook_finished","ok":true}"#)?;
+        assert!(matches!(event, RunEvent::HookFinished { ok: true }));
+        Ok(())
     }
 }

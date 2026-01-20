@@ -87,6 +87,17 @@ cargo run -p code-pm -- run \
   --stream-events
 ```
 
+可选：以 JSON Lines（NDJSON）输出事件流（stderr，每行包含 `type` 字段）：
+
+```bash
+cargo run -p code-pm -- run \
+  --repo <repo_name> \
+  --pr-name <pr_name> \
+  --prompt "..." \
+  --apply-patch /tmp/change.patch \
+  --stream-events-json
+```
+
 多任务并发（CLI 显式提供 task 列表，绕过 Phase 1 的模板 Architect）：
 
 ```bash
