@@ -251,6 +251,16 @@ pub enum ThreadEventKind {
         cwd: String,
     },
 
+    ThreadArchived {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+
+    ThreadUnarchived {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+
     TurnStarted {
         turn_id: TurnId,
         input: String,

@@ -311,6 +311,22 @@ struct ThreadForkParams {
 }
 
 #[derive(Debug, Deserialize)]
+struct ThreadArchiveParams {
+    thread_id: ThreadId,
+    #[serde(default)]
+    force: bool,
+    #[serde(default)]
+    reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ThreadUnarchiveParams {
+    thread_id: ThreadId,
+    #[serde(default)]
+    reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct ThreadDeleteParams {
     thread_id: ThreadId,
     #[serde(default)]
@@ -771,6 +787,36 @@ async fn main() -> anyhow::Result<()> {
                     Some(serde_json::json!({ "error": err.to_string() })),
                 ),
             },
+            "thread/archive" => match serde_json::from_value::<ThreadArchiveParams>(request.params) {
+                Ok(params) => match handle_thread_archive(&server, params).await {
+                    Ok(result) => JsonRpcResponse::ok(id, result),
+                    Err(err) => {
+                        JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None)
+                    }
+                },
+                Err(err) => JsonRpcResponse::err(
+                    id,
+                    JSONRPC_INVALID_PARAMS,
+                    "invalid params",
+                    Some(serde_json::json!({ "error": err.to_string() })),
+                ),
+            },
+            "thread/unarchive" => {
+                match serde_json::from_value::<ThreadUnarchiveParams>(request.params) {
+                    Ok(params) => match handle_thread_unarchive(&server, params).await {
+                        Ok(result) => JsonRpcResponse::ok(id, result),
+                        Err(err) => {
+                            JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None)
+                        }
+                    },
+                    Err(err) => JsonRpcResponse::err(
+                        id,
+                        JSONRPC_INVALID_PARAMS,
+                        "invalid params",
+                        Some(serde_json::json!({ "error": err.to_string() })),
+                    ),
+                }
+            }
             "thread/delete" => match serde_json::from_value::<ThreadDeleteParams>(request.params) {
                 Ok(params) => match handle_thread_delete(&server, params).await {
                     Ok(result) => JsonRpcResponse::ok(id, result),
@@ -895,11 +941,17 @@ async fn main() -> anyhow::Result<()> {
                     Ok(rt) => {
                         let handle = rt.handle.lock().await;
                         let state = handle.state();
+                        let archived_at = state
+                            .archived_at
+                            .and_then(|ts| ts.format(&Rfc3339).ok());
                         JsonRpcResponse::ok(
                             id,
                             serde_json::json!({
                                 "thread_id": handle.thread_id(),
                                 "cwd": state.cwd,
+                                "archived": state.archived,
+                                "archived_at": archived_at,
+                                "archived_reason": state.archived_reason,
                                 "approval_policy": state.approval_policy,
                                 "sandbox_policy": state.sandbox_policy,
                                 "model": state.model,
@@ -1404,6 +1456,9 @@ async fn handle_thread_attention(
         last_turn_id,
         last_turn_status,
         last_turn_reason,
+        archived,
+        archived_at,
+        archived_reason,
         approval_policy,
         sandbox_policy,
         model,
@@ -1419,6 +1474,9 @@ async fn handle_thread_attention(
             state.last_turn_id,
             state.last_turn_status,
             state.last_turn_reason.clone(),
+            state.archived,
+            state.archived_at.and_then(|ts| ts.format(&Rfc3339).ok()),
+            state.archived_reason.clone(),
             state.approval_policy,
             state.sandbox_policy,
             state.model.clone(),
@@ -1487,6 +1545,8 @@ async fn handle_thread_attention(
         "need_approval"
     } else if active_turn_id.is_some() || !running_processes.is_empty() {
         "running"
+    } else if archived {
+        "archived"
     } else {
         match last_turn_status {
             Some(pm_protocol::TurnStatus::Completed) => "done",
@@ -1500,6 +1560,9 @@ async fn handle_thread_attention(
     Ok(serde_json::json!({
         "thread_id": params.thread_id,
         "cwd": cwd,
+        "archived": archived,
+        "archived_at": archived_at,
+        "archived_reason": archived_reason,
         "approval_policy": approval_policy,
         "sandbox_policy": sandbox_policy,
         "model": model,
@@ -1921,6 +1984,8 @@ async fn handle_thread_fork(server: &Server, params: ThreadForkParams) -> anyhow
         let kind = event.kind;
         match kind {
             pm_protocol::ThreadEventKind::ThreadCreated { .. } => {}
+            pm_protocol::ThreadEventKind::ThreadArchived { .. }
+            | pm_protocol::ThreadEventKind::ThreadUnarchived { .. } => {}
             kind @ pm_protocol::ThreadEventKind::ThreadConfigUpdated { .. } => {
                 forked.append(kind).await?;
             }
@@ -1964,6 +2029,148 @@ async fn handle_thread_fork(server: &Server, params: ThreadForkParams) -> anyhow
         "thread_id": forked_id,
         "log_path": log_path,
         "last_seq": last_seq,
+    }))
+}
+
+async fn handle_thread_archive(
+    server: &Server,
+    params: ThreadArchiveParams,
+) -> anyhow::Result<Value> {
+    let thread_rt = server.get_or_load_thread(params.thread_id).await?;
+
+    let (already_archived, active_turn_id) = {
+        let handle = thread_rt.handle.lock().await;
+        let state = handle.state();
+        (state.archived, state.active_turn_id)
+    };
+
+    if already_archived {
+        return Ok(serde_json::json!({
+            "thread_id": params.thread_id,
+            "archived": true,
+            "already_archived": true,
+        }));
+    }
+
+    let reason = params
+        .reason
+        .clone()
+        .or_else(|| Some("thread archived".to_string()));
+
+    if let Some(turn_id) = active_turn_id {
+        if !params.force {
+            anyhow::bail!(
+                "refusing to archive thread with active turn (use force=true): turn_id={}",
+                turn_id
+            );
+        }
+
+        let _ = thread_rt
+            .interrupt_turn(turn_id, reason.clone())
+            .await
+            .context("interrupt active turn");
+        kill_processes_for_turn(server, params.thread_id, turn_id, reason.clone()).await;
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let done = {
+                let handle = thread_rt.handle.lock().await;
+                handle.state().active_turn_id.is_none()
+            };
+            if done {
+                break;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+    }
+
+    let mut running = Vec::<ProcessId>::new();
+    let mut to_kill = Vec::<ProcessEntry>::new();
+    {
+        let entries = {
+            let entries = server.processes.lock().await;
+            entries
+                .iter()
+                .map(|(process_id, entry)| (*process_id, entry.clone()))
+                .collect::<Vec<_>>()
+        };
+        for (process_id, entry) in entries {
+            let info = entry.info.lock().await;
+            if info.thread_id != params.thread_id {
+                continue;
+            }
+            if matches!(info.status, ProcessStatus::Running) {
+                running.push(process_id);
+                to_kill.push(entry.clone());
+            }
+        }
+    }
+
+    if !running.is_empty() && !params.force {
+        anyhow::bail!(
+            "refusing to archive thread with running processes (use force=true): {:?}",
+            running
+        );
+    }
+
+    if params.force {
+        for entry in to_kill {
+            let _ = entry
+                .cmd_tx
+                .send(ProcessCommand::Kill {
+                    reason: reason.clone(),
+                })
+                .await;
+        }
+    }
+
+    thread_rt
+        .append_event(pm_protocol::ThreadEventKind::ThreadArchived {
+            reason: reason.clone(),
+        })
+        .await?;
+
+    Ok(serde_json::json!({
+        "thread_id": params.thread_id,
+        "archived": true,
+        "already_archived": false,
+        "force": params.force,
+        "killed_processes": running,
+    }))
+}
+
+async fn handle_thread_unarchive(
+    server: &Server,
+    params: ThreadUnarchiveParams,
+) -> anyhow::Result<Value> {
+    let thread_rt = server.get_or_load_thread(params.thread_id).await?;
+
+    let already_unarchived = {
+        let handle = thread_rt.handle.lock().await;
+        !handle.state().archived
+    };
+
+    if already_unarchived {
+        return Ok(serde_json::json!({
+            "thread_id": params.thread_id,
+            "archived": false,
+            "already_unarchived": true,
+        }));
+    }
+
+    thread_rt
+        .append_event(pm_protocol::ThreadEventKind::ThreadUnarchived {
+            reason: params.reason,
+        })
+        .await?;
+
+    Ok(serde_json::json!({
+        "thread_id": params.thread_id,
+        "archived": false,
+        "already_unarchived": false,
     }))
 }
 

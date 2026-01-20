@@ -5,6 +5,7 @@ use anyhow::Context;
 use pm_protocol::{ApprovalDecision, ApprovalId, EventSeq, ThreadEventKind, TurnId};
 use serde::Deserialize;
 use serde_json::Value;
+use time::format_description::well_known::Rfc3339;
 use tokio_util::sync::CancellationToken;
 
 use super::ProcessCommand;
@@ -958,9 +959,13 @@ async fn run_tool_call_once(
             let rt = server.get_or_load_thread(thread_id).await?;
             let handle = rt.handle.lock().await;
             let state = handle.state();
+            let archived_at = state.archived_at.and_then(|ts| ts.format(&Rfc3339).ok());
             Ok(serde_json::json!({
                 "thread_id": handle.thread_id(),
                 "cwd": state.cwd,
+                "archived": state.archived,
+                "archived_at": archived_at,
+                "archived_reason": state.archived_reason,
                 "approval_policy": state.approval_policy,
                 "sandbox_policy": state.sandbox_policy,
                 "model": state.model,

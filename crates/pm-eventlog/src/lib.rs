@@ -208,6 +208,9 @@ async fn sanitize_and_get_last_seq(
 pub struct ThreadState {
     pub thread_id: ThreadId,
     pub cwd: Option<String>,
+    pub archived: bool,
+    pub archived_at: Option<OffsetDateTime>,
+    pub archived_reason: Option<String>,
     pub approval_policy: ApprovalPolicy,
     pub sandbox_policy: SandboxPolicy,
     pub model: Option<String>,
@@ -225,6 +228,9 @@ impl ThreadState {
         Self {
             thread_id,
             cwd: None,
+            archived: false,
+            archived_at: None,
+            archived_reason: None,
             approval_policy: ApprovalPolicy::AutoApprove,
             sandbox_policy: SandboxPolicy::WorkspaceWrite,
             model: None,
@@ -257,6 +263,16 @@ impl ThreadState {
         match &event.kind {
             ThreadEventKind::ThreadCreated { cwd } => {
                 self.cwd = Some(cwd.clone());
+            }
+            ThreadEventKind::ThreadArchived { reason } => {
+                self.archived = true;
+                self.archived_at = Some(event.timestamp);
+                self.archived_reason = reason.clone();
+            }
+            ThreadEventKind::ThreadUnarchived { reason: _ } => {
+                self.archived = false;
+                self.archived_at = None;
+                self.archived_reason = None;
             }
             ThreadEventKind::ThreadConfigUpdated {
                 approval_policy,

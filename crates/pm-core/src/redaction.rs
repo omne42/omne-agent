@@ -144,6 +144,12 @@ pub(crate) fn redact_thread_event_kind(kind: &mut ThreadEventKind) {
         ThreadEventKind::ThreadCreated { cwd } => {
             *cwd = redact_text(cwd);
         }
+        ThreadEventKind::ThreadArchived { reason }
+        | ThreadEventKind::ThreadUnarchived { reason } => {
+            if let Some(reason) = reason {
+                *reason = redact_text(reason);
+            }
+        }
         ThreadEventKind::TurnStarted { input, .. } => {
             *input = redact_text(input);
         }

@@ -22,6 +22,7 @@
 - 新增 `pm-core::sandbox`：rooted path 解析与边界校验（拒绝 `..` 穿越与 symlink 逃逸）。
 - `pm-app-server` 新增 `thread/state`：返回 thread 派生状态（active turn、`last_seq`、interrupt 标记）。
 - `pm-app-server` 新增 `thread/fork`：复制 thread 的对话/审批/配置事件到新 thread（跳过 tool/process 事件与 thread 专属 artifact 路径，并自动跳过进行中的 active turn），用于多子 agent 并行。
+- `pm-app-server` 新增 `thread/archive`/`thread/unarchive`：归档 thread（默认拒绝含 active turn/running process；`force=true` 可中断 turn 并终止进程）。
 - `pm-app-server thread/events`：支持 `max_events` 分页，并返回 `has_more`/`thread_last_seq` 便于订阅端处理 lag 与续读。
 - `pm-app-server thread/subscribe`：长轮询读取 thread events（`wait_ms` 超时），用于实现“不断线不丢”的订阅式消费（`since_seq` + `seq` 去重）。
 - `pm-app-server` 新增 thread 清理 API：`thread/delete(force?)` 与 `thread/clear_artifacts(force?)`，用于一键清除 history 与中间态产物。
@@ -49,7 +50,7 @@
 - `pm-eventlog ThreadState`：增加 `approval_policy`（默认 auto-approve）；`pm-app-server thread/state` 返回当前策略。
 - `pm-eventlog ThreadState`：增加 `sandbox_policy`（默认 `workspace_write`）；`pm-app-server thread/state`/`thread/attention` 返回当前策略。
 - `pm-eventlog ThreadState`：增加 `model`/`openai_base_url`（默认跟随 env/default）；`pm-app-server thread/state`/`thread/attention`/`thread/config/explain` 返回当前值。
-- `pm-eventlog ThreadState`：增加 `last_turn_id/last_turn_status/last_turn_reason`；`pm-app-server thread/state`/`thread/attention` 返回 last turn 信息与 `attention_state`。
+- `pm-eventlog ThreadState`：增加 `archived/archived_at/archived_reason` 与 `last_turn_id/last_turn_status/last_turn_reason`；`pm-app-server thread/state`/`thread/attention` 返回归档与 last turn 信息，并派生 `attention_state`（含 `archived`）。
 - `pm-app-server thread/configure`：`approval_policy` 现在可选（省略时沿用当前），并支持设置 `model`/`openai_base_url`（thread override）。
 - `pm-app-server`：当 `approval_policy=manual` 时，`file/write`/`file/delete`/`fs/mkdir`/`process/start` 会返回 `needs_approval` 并写入 `ApprovalRequested`；提供 `approval_id` 且已 `approval/decide` 后才会执行。
 - `pm-app-server`：当 `sandbox_policy=read_only` 时，`file/write`/`file/patch`/`file/edit`/`file/delete`/`fs/mkdir`/`process/start` 会直接拒绝（ToolStatus=Denied）。
