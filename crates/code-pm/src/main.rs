@@ -127,7 +127,11 @@ async fn main() -> anyhow::Result<()> {
     let repo_root = find_repo_root(&cwd)?;
 
     let env_pm_root = std::env::var_os("CODE_PM_ROOT");
-    let pm_root = resolve_pm_root(&repo_root, cli.pm_root.as_deref(), env_pm_root.as_deref());
+    let (pm_root, pm_root_source) =
+        resolve_pm_root(&repo_root, cli.pm_root.as_deref(), env_pm_root.as_deref());
+    if let Some(note) = legacy_pm_root_warning(&repo_root, &pm_root, pm_root_source) {
+        eprintln!("{note}");
+    }
     let pm_paths = PmPaths::new(pm_root.clone());
     let storage = FsStorage::new(pm_paths.data_dir());
 
@@ -219,18 +223,46 @@ fn resolve_pm_root(
     repo_root: &std::path::Path,
     cli_root: Option<&std::path::Path>,
     env_root: Option<&OsStr>,
-) -> PathBuf {
+) -> (PathBuf, PmRootSource) {
     let override_root = cli_root.map(std::path::Path::as_os_str).or(env_root);
     match override_root {
         Some(value) if !value.is_empty() => {
             let path = PathBuf::from(value);
-            if path.is_absolute() {
+            let root = if path.is_absolute() {
                 path
             } else {
                 repo_root.join(path)
-            }
+            };
+            (root, PmRootSource::Override)
         }
-        _ => repo_root.join(".code_pm"),
+        _ => (repo_root.join(".code_pm"), PmRootSource::Default),
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PmRootSource {
+    Default,
+    Override,
+}
+
+fn legacy_pm_root_warning(
+    repo_root: &std::path::Path,
+    pm_root: &std::path::Path,
+    source: PmRootSource,
+) -> Option<String> {
+    if source != PmRootSource::Default {
+        return None;
+    }
+
+    let legacy = repo_root.join(".codex_pm");
+    if legacy.is_dir() && !pm_root.is_dir() {
+        Some(format!(
+            "warning: found legacy pm root `{}` but current default is `{}`; to reuse old data: `code-pm --pm-root .codex_pm ...` or `mv .codex_pm .code_pm`",
+            legacy.display(),
+            pm_root.display()
+        ))
+    } else {
+        None
     }
 }
 
@@ -995,7 +1027,7 @@ mod tests {
         let repo_root = PathBuf::from("/repo");
         assert_eq!(
             resolve_pm_root(&repo_root, None, None),
-            repo_root.join(".code_pm")
+            (repo_root.join(".code_pm"), PmRootSource::Default)
         );
     }
 
@@ -1006,7 +1038,7 @@ mod tests {
         let env = std::ffi::OsString::from("env-root");
         assert_eq!(
             resolve_pm_root(&repo_root, Some(&cli), Some(env.as_os_str())),
-            repo_root.join("cli-root")
+            (repo_root.join("cli-root"), PmRootSource::Override)
         );
     }
 
@@ -1016,7 +1048,42 @@ mod tests {
         let env = std::ffi::OsString::from("state");
         assert_eq!(
             resolve_pm_root(&repo_root, None, Some(env.as_os_str())),
-            repo_root.join("state")
+            (repo_root.join("state"), PmRootSource::Override)
         );
+    }
+
+    #[test]
+    fn legacy_pm_root_warning_emits_notice_for_default_root_when_legacy_dir_exists() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo_root = tmp.path();
+        std::fs::create_dir_all(repo_root.join(".codex_pm")).expect("create legacy dir");
+
+        let (pm_root, source) = resolve_pm_root(repo_root, None, None);
+        assert_eq!(source, PmRootSource::Default);
+        assert!(legacy_pm_root_warning(repo_root, &pm_root, source).is_some());
+    }
+
+    #[test]
+    fn legacy_pm_root_warning_skips_when_new_dir_exists() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo_root = tmp.path();
+        std::fs::create_dir_all(repo_root.join(".codex_pm")).expect("create legacy dir");
+        std::fs::create_dir_all(repo_root.join(".code_pm")).expect("create new dir");
+
+        let (pm_root, source) = resolve_pm_root(repo_root, None, None);
+        assert_eq!(source, PmRootSource::Default);
+        assert!(legacy_pm_root_warning(repo_root, &pm_root, source).is_none());
+    }
+
+    #[test]
+    fn legacy_pm_root_warning_skips_when_override_root_used() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo_root = tmp.path();
+        std::fs::create_dir_all(repo_root.join(".codex_pm")).expect("create legacy dir");
+
+        let override_root = repo_root.join("custom-root");
+        let (pm_root, source) = resolve_pm_root(repo_root, Some(&override_root), None);
+        assert_eq!(source, PmRootSource::Override);
+        assert!(legacy_pm_root_warning(repo_root, &pm_root, source).is_none());
     }
 }

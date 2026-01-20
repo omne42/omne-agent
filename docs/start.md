@@ -157,6 +157,8 @@ cargo run -p code-pm -- run \
 - 默认：`<repo_root>/.code_pm`（`repo_root` 为当前目录的 git root；若不在 git repo 中则为当前目录）
 - 覆盖：`--pm-root /path/to/.code_pm` 或 `CODE_PM_ROOT=/path/to/.code_pm`（相对路径会按 `repo_root` 解析）
 
+> 兼容提示：若你之前使用的是旧目录名 `.codex_pm`，当前默认目录已改为 `.code_pm`，不会自动迁移历史数据。你可以手动 `mv .codex_pm .code_pm`，或临时使用 `--pm-root .codex_pm` / `CODE_PM_ROOT=.codex_pm` 继续复用旧数据。
+
 可选：完成后执行 hook 命令（将通过环境变量拿到 session 上下文）：
 
 ```bash
