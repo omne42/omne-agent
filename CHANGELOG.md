@@ -11,12 +11,14 @@
 - 新增 Agent-first 重新开发流程文档：`docs/development_process.md`。
 - 新增 vNext 目标态“RTS 风格使用流程”文档：`docs/rts_workflow.md`。
 - 新增 Agent GUI 爆发期产品调研：`docs/research/onecode.md`、`docs/research/superset.md`、`docs/research/aion-ui.md`。
+- 新增 `v0.2.0` 功能对齐与 TODO 汇总：`docs/v0.2.0_parity.md`。
 
 ### Changed
 - 重写 `docs/implementation_plan.md`：以 Agent CLI（tool/sandbox/approvals + 事件流）为核心基建，Git 降级为交付适配层，并明确 RTS 控制面最小能力集。
 - 更新 `docs/development_process.md`：补齐 RTS 风格交互要求（attention/inbox、pause/interrupt/step），并把 workspace hooks（setup/run/archive）与 artifacts/preview 明确进里程碑。
 - `docs/workflow.md` 标注为 `v0.1.1` legacy，`docs/start.md` 增加 vNext 文档导航。
 - 更新 `docs/research/README.md`：补齐新增调研条目并调整落地方向表述。
+- v0.2.0 方向明确：不使用 Docker；实现文档中移除/替换相关表述，并把 `docker` 纳入默认禁止的命令面。
 
 ### Fixed
 

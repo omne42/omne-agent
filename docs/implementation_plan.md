@@ -1,6 +1,8 @@
 # CodePM vNext（Rust）实现计划：Agent CLI + RTS 风格控制面
 
 > 现状：旧实现已存档为 `v0.1.1`（git tag）。`vNext` 重新设计的第一优先级是：**能写代码且能与环境交互的 Agent CLI**；Git/PR 只是可插拔交付适配层。
+>
+> `v0.2.0` 阶段目标：先完成 “Codex 功能对齐 + 跨项目精华 TODO”（见 `docs/v0.2.0_parity.md`），再叠加 CodePM 的并发编排与交付适配。
 
 ---
 
@@ -23,7 +25,7 @@
 1. **Responses-only**：第一阶段只支持 OpenAI `POST /v1/responses`。
 2. **可控执行层**：shell/file/network 都走统一 tool runtime，具备 `Run/Deny/Escalate` 的审批语义。
 3. **事件化与回放**：所有 side effects 进入事件流并落盘，能 `list/show/export/replay`。
-4. **并发与隔离**：多 task 并发时，每个 task 有独立 workspace（先 `/tmp`，后续可扩展 worktree/容器）。
+4. **并发与隔离**：多 task 并发时，每个 task 有独立 workspace（先 `/tmp`，后续可扩展为 worktree 等目录级隔离方案）。
 5. **workspace 生命周期脚本化**：至少支持 `setup/run/archive(或 teardown)` 三段，并落盘 stdout/stderr。
 6. **RTS 控制面最小集**：`pause/resume/interrupt/cancel` + “Attention/Inbox”视图（列出需要人介入的点）。
 7. **交付通道（先不绑定 git）**：默认 `patch-only`（产出可应用 patch + artifacts），git 分支交付放后面。
@@ -59,7 +61,7 @@
 来自：`docs/research/onecode.md`、`docs/research/superset.md`
 
 - 用 repo 内配置文件声明 “worktree/workspace 创建后要跑什么”。
-- 把外部资源（端口/DB/容器）也 workspace 化，setup/teardown 自动化。
+- 把外部资源（端口/DB/缓存/本地进程）也 workspace 化，setup/teardown 自动化（**v0.2.0 不依赖 Docker**）。
 
 ### 2.4 Artifacts/Preview：AionUi
 
@@ -143,7 +145,7 @@ Attention/Inbox（派生视图）至少包含：
 
 - `setup`：创建 workspace 后运行（复制 `.env`、装依赖、起外部资源、端口映射）。
 - `run`：用户/调度层触发的一键运行（dev server / tests / lint）。
-- `archive/teardown`：回收外部资源（容器/DB branch/端口占用），并清理 workspace。
+- `archive/teardown`：回收外部资源（本地进程/DB branch/端口占用），并清理 workspace。
 
 脚本执行要求：
 
@@ -154,7 +156,7 @@ Attention/Inbox（派生视图）至少包含：
 参考实现方向：
 
 - 1Code：`.1code/worktree.json` 的 `setup-worktree*` + `ROOT_WORKTREE_PATH` 注入。
-- Superset：`.superset/config.json` + `setup.sh/teardown.sh`（外部资源隔离的标准答案）。
+- Superset：`.superset/config.json` + `setup.sh/teardown.sh`（外部资源隔离的标准答案；我们只学“生命周期脚本化 + 资源命名/隔离”，不引入 Docker 依赖）。
 
 ---
 
@@ -229,4 +231,3 @@ cargo test --workspace
 
 - 任何新能力都要更新 `CHANGELOG.md` 的 `[Unreleased]`。
 - 新增/变更协议或落盘格式时，必须给出迁移策略（哪怕是 “v0 不保证兼容” 也要写清楚）。
-

@@ -15,7 +15,7 @@
 | Kilo Code | `e4ced0062c` | VSCode Agent 平台的“模式/权限/工作流/技能”设计、fork 合并策略（markers） | `docs/research/kilocode.md` |
 | OpenCode | `3fd0043d1` | Project/Session/Storage/Bus/Worktree 的工程化实现、client/server、provider-agnostic | `docs/research/opencode.md` |
 | 1Code | `e23a469` | worktree 隔离、plan gate、worktree setup config（可复用为脚本化生命周期） | `docs/research/onecode.md` |
-| Superset | `8d17373` | 多 agent 并行调度台、`.superset/config.json` + setup/teardown、外部资源隔离（端口/DB/容器） | `docs/research/superset.md` |
+| Superset | `8d17373` | 多 agent 并行调度台、`.superset/config.json` + setup/teardown、外部资源隔离（端口/DB/生命周期脚本） | `docs/research/superset.md` |
 | AionUi | `5abe63b` | CLI agent cowork、CLI/MCP 检测、预览面板与 preview 历史、WebUI 远程 | `docs/research/aion-ui.md` |
 
 ## 我们的落地方向（先写在这里，便于对齐）
