@@ -272,6 +272,11 @@ struct ThreadStateParams {
 }
 
 #[derive(Debug, Deserialize)]
+struct ThreadAttentionParams {
+    thread_id: ThreadId,
+}
+
+#[derive(Debug, Deserialize)]
 struct ThreadConfigureParams {
     thread_id: ThreadId,
     approval_policy: pm_protocol::ApprovalPolicy,
@@ -664,6 +669,22 @@ async fn main() -> anyhow::Result<()> {
                     Some(serde_json::json!({ "error": err.to_string() })),
                 ),
             },
+            "thread/attention" => {
+                match serde_json::from_value::<ThreadAttentionParams>(request.params) {
+                    Ok(params) => match handle_thread_attention(&server, params).await {
+                        Ok(result) => JsonRpcResponse::ok(id, result),
+                        Err(err) => {
+                            JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None)
+                        }
+                    },
+                    Err(err) => JsonRpcResponse::err(
+                        id,
+                        JSONRPC_INVALID_PARAMS,
+                        "invalid params",
+                        Some(serde_json::json!({ "error": err.to_string() })),
+                    ),
+                }
+            }
             "thread/configure" => {
                 match serde_json::from_value::<ThreadConfigureParams>(request.params) {
                     Ok(params) => match handle_thread_configure(&server, params).await {
@@ -974,6 +995,92 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+async fn handle_thread_attention(
+    server: &Server,
+    params: ThreadAttentionParams,
+) -> anyhow::Result<Value> {
+    let rt = server.get_or_load_thread(params.thread_id).await?;
+
+    let (last_seq, active_turn_id, active_turn_interrupt_requested, approval_policy, cwd) = {
+        let handle = rt.handle.lock().await;
+        let state = handle.state();
+        (
+            handle.last_seq().0,
+            state.active_turn_id,
+            state.active_turn_interrupt_requested,
+            state.approval_policy,
+            state.cwd.clone(),
+        )
+    };
+
+    let events = server
+        .thread_store
+        .read_events_since(params.thread_id, EventSeq::ZERO)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("thread not found: {}", params.thread_id))?;
+
+    let mut requested = BTreeMap::<pm_protocol::ApprovalId, serde_json::Value>::new();
+    let mut decided = HashSet::<pm_protocol::ApprovalId>::new();
+
+    for event in &events {
+        let ts = event.timestamp.format(&Rfc3339)?;
+        match &event.kind {
+            pm_protocol::ThreadEventKind::ApprovalRequested {
+                approval_id,
+                turn_id,
+                action,
+                params,
+            } => {
+                requested.insert(
+                    *approval_id,
+                    serde_json::json!({
+                        "approval_id": approval_id,
+                        "turn_id": turn_id,
+                        "action": action,
+                        "params": params,
+                        "requested_at": ts,
+                    }),
+                );
+            }
+            pm_protocol::ThreadEventKind::ApprovalDecided { approval_id, .. } => {
+                decided.insert(*approval_id);
+            }
+            _ => {}
+        }
+    }
+
+    let pending_approvals = requested
+        .into_iter()
+        .filter(|(id, _)| !decided.contains(id))
+        .map(|(_, v)| v)
+        .collect::<Vec<_>>();
+
+    let processes = handle_process_list(
+        server,
+        ProcessListParams {
+            thread_id: Some(params.thread_id),
+        },
+    )
+    .await?;
+
+    let running_processes = processes
+        .into_iter()
+        .filter(|p| matches!(p.status, ProcessStatus::Running))
+        .map(|p| serde_json::to_value(p))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(serde_json::json!({
+        "thread_id": params.thread_id,
+        "cwd": cwd,
+        "approval_policy": approval_policy,
+        "last_seq": last_seq,
+        "active_turn_id": active_turn_id,
+        "active_turn_interrupt_requested": active_turn_interrupt_requested,
+        "pending_approvals": pending_approvals,
+        "running_processes": running_processes,
+    }))
 }
 
 async fn handle_thread_configure(
