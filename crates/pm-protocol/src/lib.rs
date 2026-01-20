@@ -309,6 +309,18 @@ pub enum ThreadEventKind {
         result: Option<serde_json::Value>,
     },
 
+    AssistantMessage {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        turn_id: Option<TurnId>,
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        response_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        token_usage: Option<serde_json::Value>,
+    },
+
     ProcessStarted {
         process_id: ProcessId,
         #[serde(default, skip_serializing_if = "Option::is_none")]

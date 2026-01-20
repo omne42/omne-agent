@@ -179,6 +179,9 @@ pub(crate) fn redact_thread_event_kind(kind: &mut ThreadEventKind) {
                 redact_json_value(result);
             }
         }
+        ThreadEventKind::AssistantMessage { text, .. } => {
+            *text = redact_text(text);
+        }
         ThreadEventKind::ProcessStarted { argv, cwd, .. } => {
             redact_argv(argv);
             *cwd = redact_text(cwd);

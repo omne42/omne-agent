@@ -51,6 +51,7 @@
 - `pm-protocol`：新增 `ProcessId` 与 `ProcessStarted/ProcessKillRequested/ProcessExited` 事件，作为 process registry 的可回放真相来源。
 - `pm-protocol`：新增 `ToolId` 与 `ToolStarted/ToolCompleted` 事件，作为 tool runtime 的可审计边界。
 - `pm-protocol`：新增 `ApprovalId`、`ApprovalRequested/ApprovalDecided` 与 `ThreadConfigUpdated(approval_policy)`，为 approvals 做事件化与回放打底。
+- `pm-protocol`：新增 `AssistantMessage` 事件，用于把模型输出落盘并支撑 resume 拼合对话上下文。
 - workspace `tokio` 特性启用 `io-std`（支持 app-server 的 stdio 读写）。
 
 ### Fixed
