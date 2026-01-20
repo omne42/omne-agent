@@ -5,7 +5,7 @@ use std::sync::Arc;
 use clap::{Parser, Subcommand};
 use pm_core::{
     Architect, CommandHookRunner, EventBus, FsStorage, HookRunner, HookSpec, Orchestrator, PmPaths,
-    PrName, RuleBasedArchitect,
+    PrName, RuleBasedArchitect, SessionId, Storage,
 };
 use pm_git::{RepoManager, find_repo_root};
 use pm_http::serve as serve_http;
@@ -26,6 +26,10 @@ enum Command {
         #[command(subcommand)]
         command: RepoCommand,
     },
+    Session {
+        #[command(subcommand)]
+        command: SessionCommand,
+    },
     Serve(ServeArgs),
     Run(Box<RunArgs>),
 }
@@ -38,6 +42,16 @@ enum RepoCommand {
         name: Option<String>,
     },
     List,
+}
+
+#[derive(Subcommand)]
+enum SessionCommand {
+    List,
+    Show {
+        id: SessionId,
+        #[arg(long, default_value_t = false)]
+        all: bool,
+    },
 }
 
 #[derive(Parser, Clone)]
@@ -115,6 +129,18 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         },
+        Command::Session { command } => match command {
+            SessionCommand::List => {
+                let sessions = list_sessions(&storage).await?;
+                for id in sessions {
+                    println!("{id}");
+                }
+            }
+            SessionCommand::Show { id, all } => {
+                let json = show_session_json(&storage, id, all).await?;
+                println!("{json}");
+            }
+        },
         Command::Serve(args) => {
             if !args.addr.ip().is_loopback() {
                 anyhow::bail!("serve is loopback-only; use --addr 127.0.0.1:<port>");
@@ -128,6 +154,56 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+async fn list_sessions(storage: &FsStorage) -> anyhow::Result<Vec<SessionId>> {
+    let keys = storage.list_prefix("sessions/").await?;
+    let mut sessions = std::collections::BTreeSet::new();
+    for key in keys {
+        let mut parts = key.split('/');
+        let Some(prefix) = parts.next() else { continue };
+        if prefix != "sessions" {
+            continue;
+        }
+        let Some(id) = parts.next() else { continue };
+        if let Ok(id) = id.parse::<SessionId>() {
+            sessions.insert(id);
+        }
+    }
+    Ok(sessions.into_iter().collect())
+}
+
+async fn show_session_json(
+    storage: &FsStorage,
+    id: SessionId,
+    all: bool,
+) -> anyhow::Result<String> {
+    let mut out = serde_json::Map::new();
+    let result_key = format!("sessions/{id}/result");
+    if !all {
+        if let Some(value) = storage.get_json(&result_key).await? {
+            out.insert("result".to_string(), value);
+            return Ok(serde_json::to_string_pretty(&out)?);
+        }
+    }
+
+    for (name, key) in [
+        ("session", format!("sessions/{id}/session")),
+        ("tasks", format!("sessions/{id}/tasks")),
+        ("prs", format!("sessions/{id}/prs")),
+        ("merge", format!("sessions/{id}/merge")),
+        ("result", result_key),
+    ] {
+        if let Some(value) = storage.get_json(&key).await? {
+            out.insert(name.to_string(), value);
+        }
+    }
+
+    if out.is_empty() {
+        anyhow::bail!("session not found: {id}");
+    }
+
+    Ok(serde_json::to_string_pretty(&out)?)
 }
 
 async fn run_session(
@@ -335,5 +411,140 @@ impl Architect for TemplateArchitect {
             title: format!("Implement {}", session.pr_name.as_str()),
             description: Some("Phase 1: template single-task split".to_string()),
         }])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn list_sessions_returns_sorted_unique_ids() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
+        let storage = FsStorage::new(pm_paths.data_dir());
+
+        let id1: SessionId = "00000000-0000-0000-0000-000000000001".parse()?;
+        let id2: SessionId = "00000000-0000-0000-0000-000000000002".parse()?;
+
+        storage
+            .put_json(
+                &format!("sessions/{id2}/tasks"),
+                &serde_json::json!([{"id":"t1","title":"x"}]),
+            )
+            .await?;
+        storage
+            .put_json(
+                &format!("sessions/{id1}/session"),
+                &serde_json::json!({"ok": true}),
+            )
+            .await?;
+        storage
+            .put_json(
+                &format!("sessions/{id1}/merge"),
+                &serde_json::json!({"merged": false}),
+            )
+            .await?;
+
+        assert_eq!(list_sessions(&storage).await?, vec![id1, id2]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn show_session_prefers_result_by_default() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
+        let storage = FsStorage::new(pm_paths.data_dir());
+
+        let id: SessionId = "00000000-0000-0000-0000-000000000123".parse()?;
+        storage
+            .put_json(
+                &format!("sessions/{id}/session"),
+                &serde_json::json!({"id": id, "stage": "session"}),
+            )
+            .await?;
+        storage
+            .put_json(
+                &format!("sessions/{id}/result"),
+                &serde_json::json!({"id": id, "stage": "result"}),
+            )
+            .await?;
+
+        let json = show_session_json(&storage, id, false).await?;
+        let value: serde_json::Value = serde_json::from_str(&json)?;
+        assert_eq!(value["result"]["stage"], "result");
+        assert!(value.get("session").is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn show_session_falls_back_when_result_missing() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
+        let storage = FsStorage::new(pm_paths.data_dir());
+
+        let id: SessionId = "00000000-0000-0000-0000-000000000456".parse()?;
+        storage
+            .put_json(
+                &format!("sessions/{id}/session"),
+                &serde_json::json!({"id": id, "stage": "session"}),
+            )
+            .await?;
+        storage
+            .put_json(
+                &format!("sessions/{id}/tasks"),
+                &serde_json::json!([{"id":"t1","title":"x"}]),
+            )
+            .await?;
+
+        let json = show_session_json(&storage, id, false).await?;
+        let value: serde_json::Value = serde_json::from_str(&json)?;
+        assert_eq!(value["session"]["stage"], "session");
+        assert_eq!(value["tasks"][0]["id"], "t1");
+        assert!(value.get("result").is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn show_session_all_includes_all_keys() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
+        let storage = FsStorage::new(pm_paths.data_dir());
+
+        let id: SessionId = "00000000-0000-0000-0000-000000000789".parse()?;
+        storage
+            .put_json(
+                &format!("sessions/{id}/session"),
+                &serde_json::json!({"id": id}),
+            )
+            .await?;
+        storage
+            .put_json(
+                &format!("sessions/{id}/tasks"),
+                &serde_json::json!([{"id":"t1"}]),
+            )
+            .await?;
+        storage
+            .put_json(&format!("sessions/{id}/prs"), &serde_json::json!([]))
+            .await?;
+        storage
+            .put_json(
+                &format!("sessions/{id}/merge"),
+                &serde_json::json!({"merged": true}),
+            )
+            .await?;
+        storage
+            .put_json(
+                &format!("sessions/{id}/result"),
+                &serde_json::json!({"id": id}),
+            )
+            .await?;
+
+        let json = show_session_json(&storage, id, true).await?;
+        let value: serde_json::Value = serde_json::from_str(&json)?;
+        for key in ["session", "tasks", "prs", "merge", "result"] {
+            assert!(value.get(key).is_some(), "missing key {key}");
+        }
+        Ok(())
     }
 }
