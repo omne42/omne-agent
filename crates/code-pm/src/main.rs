@@ -9,7 +9,7 @@ use pm_core::{
     Architect, CommandHookRunner, EventBus, FsStorage, HookRunner, HookSpec, Orchestrator, PmPaths,
     PrName, RuleBasedArchitect, SessionId,
 };
-use pm_git::{RepoManager, find_repo_root};
+use pm_git::{RepoManager, RepoRoot, find_repo_root};
 use pm_http::serve as serve_http;
 use time::format_description::well_known::Rfc3339;
 use tracing_subscriber::EnvFilter;
@@ -155,9 +155,12 @@ async fn main() -> anyhow::Result<()> {
     let repo_root = find_repo_root(&cwd)?;
 
     let env_pm_root = std::env::var_os("CODE_PM_ROOT");
-    let (pm_root, pm_root_source) =
-        resolve_pm_root(&repo_root, cli.pm_root.as_deref(), env_pm_root.as_deref());
-    if let Some(note) = legacy_pm_root_warning(&repo_root, &pm_root, pm_root_source) {
+    let (pm_root, pm_root_source) = resolve_pm_root(
+        &repo_root.root,
+        cli.pm_root.as_deref(),
+        env_pm_root.as_deref(),
+    );
+    if let Some(note) = legacy_pm_root_warning(&repo_root.root, &pm_root, pm_root_source) {
         eprintln!("{note}");
     }
     let pm_paths = PmPaths::new(pm_root.clone());
@@ -396,7 +399,7 @@ async fn read_prompt(args: &RunArgs) -> anyhow::Result<String> {
 }
 
 async fn run_session(
-    repo_root: &std::path::Path,
+    repo_root: &RepoRoot,
     repo_manager: RepoManager,
     storage: FsStorage,
     mut args: RunArgs,
@@ -573,10 +576,7 @@ enum ResolvedRunRepo {
     },
 }
 
-fn resolve_run_repo(
-    repo_root: &std::path::Path,
-    args: &RunArgs,
-) -> anyhow::Result<ResolvedRunRepo> {
+fn resolve_run_repo(repo_root: &RepoRoot, args: &RunArgs) -> anyhow::Result<ResolvedRunRepo> {
     match (&args.repo, &args.repo_src) {
         (Some(name), None) => Ok(ResolvedRunRepo::Load(sanitize_repo_name_input(name))),
         (maybe_name, Some(source)) => {
@@ -590,15 +590,16 @@ fn resolve_run_repo(
             })
         }
         (None, None) => {
-            if !repo_root.join(".git").exists() {
+            if !repo_root.is_git_repo {
                 anyhow::bail!("missing --repo or --repo-src");
             }
             let repo_name = repo_root
+                .root
                 .file_name()
                 .and_then(|name| name.to_str())
                 .map(sanitize_repo_name_input)
                 .unwrap_or_else(|| pm_core::RepositoryName::sanitize("repo"));
-            let source = repo_root.to_string_lossy().to_string();
+            let source = repo_root.root.to_string_lossy().to_string();
             Ok(ResolvedRunRepo::Inject { repo_name, source })
         }
     }
@@ -1044,7 +1045,10 @@ mod tests {
     #[test]
     fn resolve_run_repo_errors_when_missing_flags_outside_git_repo() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let repo_root = tmp.path();
+        let repo_root = RepoRoot {
+            root: tmp.path().to_path_buf(),
+            is_git_repo: false,
+        };
 
         let args = RunArgs {
             repo: None,
@@ -1068,58 +1072,17 @@ mod tests {
             hook_url: None,
         };
 
-        let err = resolve_run_repo(repo_root, &args).unwrap_err();
+        let err = resolve_run_repo(&repo_root, &args).unwrap_err();
         assert!(err.to_string().contains("missing --repo or --repo-src"));
     }
 
     #[test]
     fn resolve_run_repo_defaults_to_repo_root_inside_git_repo() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let repo_root = tmp.path();
-        std::fs::create_dir_all(repo_root.join(".git")).expect("create .git dir");
-
-        let args = RunArgs {
-            repo: None,
-            repo_src: None,
-            pr_name: "demo".to_string(),
-            prompt: Some("x".to_string()),
-            prompt_file: None,
-            base: "main".to_string(),
-            apply_patch: None,
-            max_concurrency: 1,
-            stream_events: false,
-            stream_events_json: false,
-            strict: false,
-            json: false,
-            cargo_test: false,
-            auto_tasks: false,
-            tasks_file: None,
-            task: Vec::new(),
-            hook_cmd: None,
-            hook_arg: Vec::new(),
-            hook_url: None,
+        let repo_root = RepoRoot {
+            root: tmp.path().to_path_buf(),
+            is_git_repo: true,
         };
-
-        let ResolvedRunRepo::Inject { repo_name, source } =
-            resolve_run_repo(repo_root, &args).expect("resolve")
-        else {
-            panic!("expected inject");
-        };
-        assert_eq!(source, repo_root.to_string_lossy());
-        let expected = sanitize_repo_name_input(
-            repo_root
-                .file_name()
-                .and_then(|name| name.to_str())
-                .expect("tmp dir has file name"),
-        );
-        assert_eq!(repo_name, expected);
-    }
-
-    #[test]
-    fn resolve_run_repo_strips_dot_git_suffix_from_repo_root_dir_name() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let repo_root = tmp.path().join("demo.git");
-        std::fs::create_dir_all(repo_root.join(".git")).expect("create .git dir");
 
         let args = RunArgs {
             repo: None,
@@ -1148,7 +1111,53 @@ mod tests {
         else {
             panic!("expected inject");
         };
-        assert_eq!(source, repo_root.to_string_lossy());
+        assert_eq!(source, repo_root.root.to_string_lossy());
+        let expected = sanitize_repo_name_input(
+            repo_root
+                .root
+                .file_name()
+                .and_then(|name| name.to_str())
+                .expect("tmp dir has file name"),
+        );
+        assert_eq!(repo_name, expected);
+    }
+
+    #[test]
+    fn resolve_run_repo_strips_dot_git_suffix_from_repo_root_dir_name() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo_root = RepoRoot {
+            root: tmp.path().join("demo.git"),
+            is_git_repo: true,
+        };
+
+        let args = RunArgs {
+            repo: None,
+            repo_src: None,
+            pr_name: "demo".to_string(),
+            prompt: Some("x".to_string()),
+            prompt_file: None,
+            base: "main".to_string(),
+            apply_patch: None,
+            max_concurrency: 1,
+            stream_events: false,
+            stream_events_json: false,
+            strict: false,
+            json: false,
+            cargo_test: false,
+            auto_tasks: false,
+            tasks_file: None,
+            task: Vec::new(),
+            hook_cmd: None,
+            hook_arg: Vec::new(),
+            hook_url: None,
+        };
+
+        let ResolvedRunRepo::Inject { repo_name, source } =
+            resolve_run_repo(&repo_root, &args).expect("resolve")
+        else {
+            panic!("expected inject");
+        };
+        assert_eq!(source, repo_root.root.to_string_lossy());
         assert_eq!(repo_name.as_str(), "demo");
     }
 

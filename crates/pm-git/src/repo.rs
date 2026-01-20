@@ -283,7 +283,13 @@ pub fn is_rust_repo(path: &Path) -> bool {
     path.join("Cargo.toml").is_file()
 }
 
-pub fn find_repo_root(cwd: &Path) -> anyhow::Result<PathBuf> {
+#[derive(Clone, Debug)]
+pub struct RepoRoot {
+    pub root: PathBuf,
+    pub is_git_repo: bool,
+}
+
+pub fn find_repo_root(cwd: &Path) -> anyhow::Result<RepoRoot> {
     let output = std::process::Command::new("git")
         .args(["rev-parse", "--show-toplevel"])
         .current_dir(cwd)
@@ -292,9 +298,15 @@ pub fn find_repo_root(cwd: &Path) -> anyhow::Result<PathBuf> {
     match output {
         Ok(output) if output.status.success() => {
             let text = String::from_utf8_lossy(&output.stdout);
-            Ok(PathBuf::from(text.trim()))
+            Ok(RepoRoot {
+                root: PathBuf::from(text.trim()),
+                is_git_repo: true,
+            })
         }
-        _ => Ok(cwd.to_path_buf()),
+        _ => Ok(RepoRoot {
+            root: cwd.to_path_buf(),
+            is_git_repo: false,
+        }),
     }
 }
 

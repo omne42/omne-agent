@@ -10,4 +10,4 @@ pub use crate::coder::GitCoder;
 pub use crate::git::GitCli;
 pub use crate::lock::{lock_exclusive, lock_shared};
 pub use crate::merger::GitMerger;
-pub use crate::repo::{RepoManager, find_repo_root};
+pub use crate::repo::{RepoManager, RepoRoot, find_repo_root};

@@ -22,6 +22,7 @@
 - `code-pm run --strict`：当存在 task 失败或 merge error 时返回非零退出码。
 - `code-pm run --max-concurrency`：现在会校验为 `>= 1`（拒绝 `0`，避免静默回退到 `1`）。
 - `code-pm run`：在 git repo 内运行且未显式提供 `--repo/--repo-src` 时，默认以当前 `repo_root` 作为 `--repo-src` 注入并运行（repo 名默认为目录名（去掉可选 `.git` 后缀后）sanitize）。
+- `code-pm run`：隐式 `--repo-src` 模式现在会严格要求处于真实 git worktree（基于 `git rev-parse` 判断），避免仅凭 `.git` 路径误判导致后续 clone 失败。
 - `code-pm run --cargo-test`：对 Rust repo 在提交前额外执行 `cargo test --workspace --all-targets`（输出写入 task artifacts）。
 - `code-pm` CLI：`--repo/--repo-src/--pr-name/--base` 以及 `repo inject` 的 `source/--name` 现在会拒绝空值（包括仅空白字符），避免静默回退到默认 sanitize 值。
 - `code-pm run`：现在会拒绝空/纯空白的 prompt（`--prompt` 或 `--prompt-file`），避免生成无意义 session。
