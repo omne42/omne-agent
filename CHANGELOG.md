@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 新增 Agent-first 重新开发流程文档：`docs/development_process.md`。
 
 ### Changed
 

@@ -1,6 +1,7 @@
 # 项目启动（CodePM / Rust）
 
 > 想直接跑通端到端流程（含 serve/API、hooks、session 查询）看：`docs/workflow.md`。
+> 想进入“重新设计/重新开发”（Agent-first）看：`docs/development_process.md`。
 
 ## 需求草案（早期记录）
 
