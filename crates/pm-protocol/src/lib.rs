@@ -103,6 +103,30 @@ impl FromStr for ToolId {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
 #[serde(transparent)]
+pub struct ApprovalId(pub Uuid);
+
+impl ApprovalId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+}
+
+impl fmt::Display for ApprovalId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl FromStr for ApprovalId {
+    type Err = uuid::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self(Uuid::parse_str(s)?))
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct EventSeq(pub u64);
 
 impl EventSeq {
@@ -131,6 +155,20 @@ pub enum ToolStatus {
     Failed,
     Denied,
     Cancelled,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApprovalPolicy {
+    AutoApprove,
+    Manual,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApprovalDecision {
+    Approved,
+    Denied,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -163,6 +201,25 @@ pub enum ThreadEventKind {
     TurnCompleted {
         turn_id: TurnId,
         status: TurnStatus,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+
+    ThreadConfigUpdated {
+        approval_policy: ApprovalPolicy,
+    },
+
+    ApprovalRequested {
+        approval_id: ApprovalId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        turn_id: Option<TurnId>,
+        action: String,
+        params: serde_json::Value,
+    },
+
+    ApprovalDecided {
+        approval_id: ApprovalId,
+        decision: ApprovalDecision,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
     },
