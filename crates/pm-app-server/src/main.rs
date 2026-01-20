@@ -661,6 +661,13 @@ async fn main() -> anyhow::Result<()> {
                     )
                 }
             }
+            "initialized" => {
+                if initialized {
+                    JsonRpcResponse::ok(id, serde_json::json!({ "ok": true }))
+                } else {
+                    JsonRpcResponse::err(id, CODE_PM_NOT_INITIALIZED, "not initialized", None)
+                }
+            }
             _ if !initialized => {
                 JsonRpcResponse::err(id, CODE_PM_NOT_INITIALIZED, "not initialized", None)
             }
@@ -776,6 +783,22 @@ async fn main() -> anyhow::Result<()> {
                 ),
                 Err(err) => JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None),
             },
+            "thread/loaded" => {
+                let mut threads = server
+                    .threads
+                    .lock()
+                    .await
+                    .keys()
+                    .copied()
+                    .collect::<Vec<_>>();
+                threads.sort_unstable();
+                JsonRpcResponse::ok(
+                    id,
+                    serde_json::json!({
+                        "threads": threads,
+                    }),
+                )
+            }
             "thread/events" => match serde_json::from_value::<ThreadEventsParams>(request.params) {
                 Ok(params) => {
                     let since = EventSeq(params.since_seq);
