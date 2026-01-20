@@ -197,13 +197,7 @@ impl pm_core::Coder for GitCoder {
                 return Self::failed_pr(&fail_ctx, checks, err, head_commit).await;
             }
         };
-        let identity_ok = identity_steps.iter().all(|step| {
-            if step.name.starts_with("git_config_set_") {
-                step.ok
-            } else {
-                true
-            }
-        });
+        let identity_ok = identity_steps.iter().all(|step| step.ok);
         checks.steps.extend(identity_steps);
         if !identity_ok {
             return Self::failed_pr(
