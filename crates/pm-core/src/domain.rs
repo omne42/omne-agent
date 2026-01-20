@@ -111,7 +111,11 @@ pub enum NameError {
     ForbiddenSegment(String),
     #[error("name contains invalid character: {0:?}")]
     InvalidChar(char),
+    #[error("name too long ({len} > {max})")]
+    TooLong { len: usize, max: usize },
 }
+
+const MAX_NAME_LEN: usize = 64;
 
 fn is_allowed_char(ch: char) -> bool {
     ch.is_ascii_alphanumeric() || ch == '.' || ch == '_' || ch == '-'
@@ -124,6 +128,12 @@ fn is_allowed_ref_char(ch: char) -> bool {
 fn validate_name_with(value: &str, allowed: fn(char) -> bool) -> Result<(), NameError> {
     if value.is_empty() {
         return Err(NameError::Empty);
+    }
+    if value.len() > MAX_NAME_LEN {
+        return Err(NameError::TooLong {
+            len: value.len(),
+            max: MAX_NAME_LEN,
+        });
     }
     if value == "." || value == ".." {
         return Err(NameError::ForbiddenSegment(value.to_string()));
@@ -161,6 +171,15 @@ fn sanitize_name_with(input: &str, fallback: &str, allowed: fn(char) -> bool) ->
     let sanitized = out.trim_matches('-').to_string();
     if sanitized.is_empty() || sanitized == "." || sanitized == ".." {
         fallback.to_string()
+    } else if sanitized.len() > MAX_NAME_LEN {
+        let mut truncated = sanitized;
+        truncated.truncate(MAX_NAME_LEN);
+        let truncated = truncated.trim_matches('-').to_string();
+        if truncated.is_empty() || truncated == "." || truncated == ".." {
+            fallback.to_string()
+        } else {
+            truncated
+        }
     } else {
         sanitized
     }
@@ -363,6 +382,11 @@ mod tests {
         assert_eq!(TaskId::sanitize("").as_str(), "task");
         assert_eq!(TaskId::sanitize(".t1").as_str(), "t1");
         assert_eq!(TaskId::sanitize("a..b").as_str(), "a-b");
+
+        let long = "a".repeat(256);
+        assert_eq!(RepositoryName::sanitize(&long).as_str().len(), 64);
+        assert_eq!(PrName::sanitize(&long).as_str().len(), 64);
+        assert_eq!(TaskId::sanitize(&long).as_str().len(), 64);
     }
 
     #[test]
@@ -372,6 +396,15 @@ mod tests {
             panic!("unexpected error: {err:?}");
         };
         assert_eq!(ch, ' ');
+    }
+
+    #[test]
+    fn validate_rejects_too_long_names() {
+        let long = "a".repeat(65);
+        assert!(matches!(
+            RepositoryName::new(long).unwrap_err(),
+            NameError::TooLong { .. }
+        ));
     }
 
     #[derive(Debug, Serialize, Deserialize)]
