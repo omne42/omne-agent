@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use fs2::FileExt;
-use pm_protocol::{EventSeq, ThreadEvent, ThreadEventKind, ThreadId, TurnId};
+use pm_protocol::{ApprovalPolicy, EventSeq, ThreadEvent, ThreadEventKind, ThreadId, TurnId};
 use time::OffsetDateTime;
 use tokio::io::AsyncWriteExt;
 
@@ -205,6 +205,7 @@ async fn sanitize_and_get_last_seq(
 pub struct ThreadState {
     pub thread_id: ThreadId,
     pub cwd: Option<String>,
+    pub approval_policy: ApprovalPolicy,
     pub last_seq: EventSeq,
     pub active_turn_id: Option<TurnId>,
     pub active_turn_interrupt_requested: bool,
@@ -215,6 +216,7 @@ impl ThreadState {
         Self {
             thread_id,
             cwd: None,
+            approval_policy: ApprovalPolicy::AutoApprove,
             last_seq: EventSeq::ZERO,
             active_turn_id: None,
             active_turn_interrupt_requested: false,
@@ -240,6 +242,9 @@ impl ThreadState {
         match &event.kind {
             ThreadEventKind::ThreadCreated { cwd } => {
                 self.cwd = Some(cwd.clone());
+            }
+            ThreadEventKind::ThreadConfigUpdated { approval_policy } => {
+                self.approval_policy = *approval_policy;
             }
             ThreadEventKind::TurnStarted { turn_id, .. } => {
                 if self.active_turn_id.is_some() {
