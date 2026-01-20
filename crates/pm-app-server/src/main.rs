@@ -27,6 +27,8 @@ use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
 use walkdir::WalkDir;
 
+mod agent;
+
 #[derive(Parser)]
 #[command(name = "pm-app-server")]
 #[command(about = "CodePM v0.2.0 app-server (JSON-RPC over stdio)", long_about = None)]
@@ -170,15 +172,23 @@ impl ThreadRuntime {
         }
     }
 
-    async fn start_turn(self: Arc<Self>, input: String) -> anyhow::Result<TurnId> {
+    async fn start_turn(
+        self: Arc<Self>,
+        server: Arc<Server>,
+        input: String,
+    ) -> anyhow::Result<TurnId> {
         let mut handle = self.handle.lock().await;
         if handle.state().active_turn_id.is_some() {
             anyhow::bail!("turn already active");
         }
 
         let turn_id = TurnId::new();
+        let input_for_event = input.clone();
         handle
-            .append(pm_protocol::ThreadEventKind::TurnStarted { turn_id, input })
+            .append(pm_protocol::ThreadEventKind::TurnStarted {
+                turn_id,
+                input: input_for_event,
+            })
             .await?;
         drop(handle);
 
@@ -193,7 +203,7 @@ impl ThreadRuntime {
         }
 
         tokio::spawn(async move {
-            self.run_turn(turn_id, cancel).await;
+            self.run_turn(server, turn_id, cancel, input).await;
         });
 
         Ok(turn_id)
@@ -236,7 +246,15 @@ impl ThreadRuntime {
         Ok(())
     }
 
-    async fn run_turn(self: Arc<Self>, turn_id: TurnId, cancel: CancellationToken) {
+    async fn run_turn(
+        self: Arc<Self>,
+        server: Arc<Server>,
+        turn_id: TurnId,
+        cancel: CancellationToken,
+        input: String,
+    ) {
+        let agent_fut = agent::run_agent_turn(server, self.clone(), turn_id, input, cancel.clone());
+
         let (status, reason) = tokio::select! {
             _ = cancel.cancelled() => {
                 let reason = {
@@ -245,7 +263,12 @@ impl ThreadRuntime {
                 };
                 (TurnStatus::Interrupted, reason.or_else(|| Some("turn interrupted".to_string())))
             },
-            _ = tokio::time::sleep(Duration::from_secs(1)) => (TurnStatus::Completed, None),
+            result = agent_fut => {
+                match result {
+                    Ok(_completion) => (TurnStatus::Completed, None),
+                    Err(err) => (TurnStatus::Failed, Some(err.to_string())),
+                }
+            },
         };
 
         let mut handle = self.handle.lock().await;
@@ -576,13 +599,13 @@ async fn main() -> anyhow::Result<()> {
         pm_execpolicy::execpolicycheck::load_policies(&args.execpolicy_rules)?
     };
 
-    let server = Server {
+    let server = Arc::new(Server {
         cwd,
         thread_store: ThreadStore::new(PmPaths::new(pm_root)),
         threads: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         processes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         exec_policy,
-    };
+    });
 
     let stdin = tokio::io::stdin();
     let mut lines = tokio::io::BufReader::new(stdin).lines();
@@ -842,7 +865,7 @@ async fn main() -> anyhow::Result<()> {
             }
             "turn/start" => match serde_json::from_value::<TurnStartParams>(request.params) {
                 Ok(params) => match server.get_or_load_thread(params.thread_id).await {
-                    Ok(rt) => match rt.start_turn(params.input).await {
+                    Ok(rt) => match rt.start_turn(server.clone(), params.input).await {
                         Ok(turn_id) => JsonRpcResponse::ok(
                             id,
                             serde_json::json!({

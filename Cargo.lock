@@ -1415,6 +1415,7 @@ dependencies = [
  "globset",
  "pm-core",
  "pm-execpolicy",
+ "pm-openai",
  "pm-protocol",
  "regex",
  "serde",

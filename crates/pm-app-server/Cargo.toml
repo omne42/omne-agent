@@ -11,6 +11,7 @@ diffy.workspace = true
 globset.workspace = true
 pm-core = { path = "../pm-core" }
 pm-execpolicy = { path = "../pm-execpolicy" }
+pm-openai = { path = "../pm-openai" }
 pm-protocol = { path = "../pm-protocol" }
 regex.workspace = true
 serde.workspace = true

@@ -16,6 +16,7 @@
 - 新增 `pm-execpolicy`：对齐 Codex `prefix_rule` 子集的执行策略引擎（Starlark 语法 + `match/not_match` 例子校验），并提供 `pm-execpolicy check --rules ... <cmd...>` 输出匹配结果 JSON。
 - 新增 `pm-openai`：最小 OpenAI Responses API 客户端与类型（用于 v0.2.0 的 Responses-first agent loop）。
 - 新增 `pm-app-server`：最小 JSON-RPC over stdio 控制面（`initialize` + `thread/*` + `turn/*`），用于验证 v0.2.0 的 thread/turn/interrupt 与落盘回放。
+- `pm-app-server` 新增 Responses-first agent loop：`turn/start` 会调用 OpenAI Responses API 执行 tool calling（阻塞等待 approval 决策并复跑同一 tool call），并将 assistant 输出落盘为 `AssistantMessage` 事件以支持 resume。
 - 新增 `pm-core::threads`：`ThreadStore` + `ThreadHandle`，基于 JSONL event log 实现 thread 创建/列举/resume（resume 会修复未完成 turn/进程并落盘）。
 - 新增 `pm-core::sandbox`：rooted path 解析与边界校验（拒绝 `..` 穿越与 symlink 逃逸）。
 - `pm-app-server` 新增 `thread/state`：返回 thread 派生状态（active turn、`last_seq`、interrupt 标记）。
@@ -27,6 +28,7 @@
 - `pm-app-server` 新增 `file/*`：`file/read`、`file/glob`、`file/grep`、`file/write`、`file/patch`、`file/edit`、`file/delete`（带 rooted path 校验，并记录 `ToolStarted/ToolCompleted` 事件）。
 - `pm-app-server` 新增 `fs/*`：`fs/mkdir`（带 rooted path 校验，并记录 `ToolStarted/ToolCompleted` 事件）。
 - `pm-app-server` 新增 `artifact/*`：`artifact/write`（`.md + .metadata.json` 落盘并自动脱敏）、`artifact/list`、`artifact/read`、`artifact/delete`。
+- `pm-app-server` agent loop tool 覆盖：补齐 `file/edit`、`file/delete`、`process/tail`、`process/follow`、`artifact/list`、`artifact/read`、`artifact/delete`。
 
 ### Changed
 - 重写 `docs/implementation_plan.md`：以 Agent CLI（tool/sandbox/approvals + 事件流）为核心基建，Git 降级为交付适配层，并明确 RTS 控制面最小能力集。
