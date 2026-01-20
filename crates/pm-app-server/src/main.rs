@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::io::SeekFrom;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
@@ -836,6 +836,15 @@ async fn handle_process_start(
     }
 
     let thread_rt = server.get_or_load_thread(params.thread_id).await?;
+    let thread_cwd = {
+        let handle = thread_rt.handle.lock().await;
+        handle
+            .state()
+            .cwd
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("thread cwd is missing: {}", params.thread_id))?
+    };
+    let thread_root = pm_core::resolve_dir(Path::new(&thread_cwd), Path::new(".")).await?;
 
     let process_id = ProcessId::new();
     let thread_dir = server.thread_store.thread_dir(params.thread_id);
@@ -850,11 +859,11 @@ async fn handle_process_start(
     let stdout_path = process_dir.join("stdout.log");
     let stderr_path = process_dir.join("stderr.log");
 
-    let cwd_path = params
-        .cwd
-        .as_deref()
-        .map(PathBuf::from)
-        .unwrap_or_else(|| server.cwd.clone());
+    let cwd_path = if let Some(cwd) = params.cwd.as_deref() {
+        pm_core::resolve_dir(&thread_root, Path::new(cwd)).await?
+    } else {
+        thread_root.clone()
+    };
     let cwd_str = cwd_path.display().to_string();
 
     let mut cmd = Command::new(&params.argv[0]);

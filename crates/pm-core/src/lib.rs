@@ -3,6 +3,7 @@ pub mod events;
 pub mod hooks;
 pub mod orchestrator;
 pub mod paths;
+pub mod sandbox;
 pub mod storage;
 pub mod threads;
 
@@ -16,5 +17,6 @@ pub use crate::events::{
 pub use crate::hooks::{CommandHookRunner, HookRunner, NoopHookRunner};
 pub use crate::orchestrator::{Architect, Coder, Merger, Orchestrator, RuleBasedArchitect};
 pub use crate::paths::{PmPaths, SessionPaths, TaskPaths};
+pub use crate::sandbox::{PathAccess, resolve_dir, resolve_file};
 pub use crate::storage::{FsStorage, Storage};
 pub use crate::threads::{ThreadHandle, ThreadStore};
