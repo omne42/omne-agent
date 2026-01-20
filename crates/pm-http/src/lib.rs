@@ -200,11 +200,13 @@ async fn api_get_json(
 }
 
 fn json_response(bytes: Vec<u8>) -> Response<Body> {
-    Response::builder()
-        .status(StatusCode::OK)
-        .header("content-type", "application/json")
-        .body(Body::from(bytes))
-        .unwrap_or_else(|_| Response::new(Body::from("internal error")))
+    let mut response = Response::new(Body::from(bytes));
+    *response.status_mut() = StatusCode::OK;
+    response.headers_mut().insert(
+        axum::http::header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
+    response
 }
 
 async fn git_http_backend(
@@ -541,11 +543,13 @@ impl From<serde_json::Error> for ApiError {
 
 impl From<ApiError> for Response<Body> {
     fn from(val: ApiError) -> Self {
-        Response::builder()
-            .status(val.status)
-            .header("content-type", "text/plain; charset=utf-8")
-            .body(Body::from(val.message))
-            .unwrap_or_else(|_| Response::new(Body::from("internal error")))
+        let mut response = Response::new(Body::from(val.message));
+        *response.status_mut() = val.status;
+        response.headers_mut().insert(
+            axum::http::header::CONTENT_TYPE,
+            HeaderValue::from_static("text/plain; charset=utf-8"),
+        );
+        response
     }
 }
 

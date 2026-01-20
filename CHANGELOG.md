@@ -32,6 +32,7 @@
 - storage 读取损坏 JSON 时增加错误上下文（包含具体文件路径），便于定位问题数据。
 - storage 写入 JSON 失败时会尽力清理临时文件（`*.json.tmp.*`），避免脏文件堆积。
 - hook 执行失败的错误现在会包含 session id，便于定位失败运行与对应 artifacts。
+- `pm-http` 构造 fallback 响应时现在会正确设置 HTTP status（避免极端情况下误返回 200）。
 
 ## [0.1.0] - 2026-01-20
 
