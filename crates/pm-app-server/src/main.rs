@@ -8,6 +8,7 @@ use std::time::Duration;
 use anyhow::Context;
 use clap::Parser;
 use pm_core::{PmPaths, ThreadStore};
+use pm_execpolicy::{Decision as ExecDecision, RuleMatch as ExecRuleMatch};
 use pm_protocol::{EventSeq, ProcessId, ThreadEvent, ThreadId, TurnId, TurnStatus};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -25,6 +26,10 @@ struct Args {
     /// Override `.code_pm` root directory.
     #[arg(long)]
     pm_root: Option<PathBuf>,
+
+    /// Paths to execpolicy rule files to evaluate (repeatable).
+    #[arg(long = "execpolicy-rules", value_name = "PATH")]
+    execpolicy_rules: Vec<PathBuf>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -89,6 +94,7 @@ struct Server {
     thread_store: ThreadStore,
     threads: Arc<tokio::sync::Mutex<HashMap<ThreadId, Arc<ThreadRuntime>>>>,
     processes: Arc<tokio::sync::Mutex<HashMap<ProcessId, ProcessEntry>>>,
+    exec_policy: pm_execpolicy::Policy,
 }
 
 impl Server {
@@ -415,11 +421,18 @@ async fn main() -> anyhow::Result<()> {
         .or_else(|| std::env::var_os("CODE_PM_ROOT").map(PathBuf::from))
         .unwrap_or_else(|| cwd.join(".code_pm"));
 
+    let exec_policy = if args.execpolicy_rules.is_empty() {
+        pm_execpolicy::Policy::empty()
+    } else {
+        pm_execpolicy::execpolicycheck::load_policies(&args.execpolicy_rules)?
+    };
+
     let server = Server {
         cwd,
         thread_store: ThreadStore::new(PmPaths::new(pm_root)),
         threads: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         processes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+        exec_policy,
     };
 
     let stdin = tokio::io::stdin();
@@ -1627,11 +1640,69 @@ async fn handle_process_start(
     };
     let cwd_str = cwd_path.display().to_string();
 
+    let exec_matches = server.exec_policy.matches_for_command(&params.argv, None);
+    let exec_decision = exec_matches.iter().map(ExecRuleMatch::decision).max();
+
+    let effective_decision = match (approval_policy, exec_decision) {
+        (_, Some(ExecDecision::Forbidden)) => ExecDecision::Forbidden,
+        (pm_protocol::ApprovalPolicy::Manual, Some(ExecDecision::Prompt)) => ExecDecision::Prompt,
+        (pm_protocol::ApprovalPolicy::Manual, Some(ExecDecision::Allow)) => ExecDecision::Allow,
+        (pm_protocol::ApprovalPolicy::Manual, None) => ExecDecision::Prompt,
+        (pm_protocol::ApprovalPolicy::AutoApprove, _) => ExecDecision::Allow,
+    };
+
+    if effective_decision == ExecDecision::Forbidden {
+        let tool_id = pm_protocol::ToolId::new();
+        let exec_matches_json = serde_json::to_value(&exec_matches)?;
+
+        let justification = exec_matches.iter().find_map(|m| match m {
+            ExecRuleMatch::PrefixRuleMatch {
+                decision: ExecDecision::Forbidden,
+                justification,
+                ..
+            } => justification.clone(),
+            _ => None,
+        });
+
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                tool_id,
+                turn_id: params.turn_id,
+                tool: "process/start".to_string(),
+                params: Some(serde_json::json!({
+                    "argv": params.argv,
+                    "cwd": cwd_str,
+                })),
+            })
+            .await?;
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                tool_id,
+                status: pm_protocol::ToolStatus::Denied,
+                error: Some("execpolicy forbids this command".to_string()),
+                result: Some(serde_json::json!({
+                    "decision": ExecDecision::Forbidden,
+                    "matched_rules": exec_matches_json,
+                    "justification": justification,
+                })),
+            })
+            .await?;
+
+        return Ok(serde_json::json!({
+            "denied": true,
+            "decision": ExecDecision::Forbidden,
+            "matched_rules": exec_matches_json,
+            "justification": justification,
+        }));
+    }
+
     let approval_params = serde_json::json!({
         "argv": params.argv.clone(),
         "cwd": cwd_str.clone(),
     });
-    if approval_policy == pm_protocol::ApprovalPolicy::Manual {
+    if approval_policy == pm_protocol::ApprovalPolicy::Manual
+        && effective_decision == ExecDecision::Prompt
+    {
         match params.approval_id {
             Some(approval_id) => {
                 ensure_approval(

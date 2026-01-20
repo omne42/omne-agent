@@ -1380,6 +1380,7 @@ dependencies = [
  "anyhow",
  "clap",
  "pm-core",
+ "pm-execpolicy",
  "pm-protocol",
  "serde",
  "serde_json",

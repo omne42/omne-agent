@@ -8,6 +8,7 @@ version.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 pm-core = { path = "../pm-core" }
+pm-execpolicy = { path = "../pm-execpolicy" }
 pm-protocol = { path = "../pm-protocol" }
 serde.workspace = true
 serde_json.workspace = true
