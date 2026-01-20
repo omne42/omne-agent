@@ -20,6 +20,7 @@
 - 更新 `docs/research/README.md`：补齐新增调研条目并调整落地方向表述。
 - v0.2.0 方向明确：不使用 Docker；实现文档中移除/替换相关表述，并把 `docker` 纳入默认禁止的命令面。
 - 明确 v0.2.0 的“运行中可观测性”：中间态 artifacts 必须流式落盘；任意后台进程/多子 agent 进程必须可随时 inspect/attach/kill（文档层先固化要求）。
+- 细化 v0.2.0 “不会丢”的事件流语义：订阅端 `since_seq` 重放、允许重复（at-least-once）+ `seq` 去重；补齐 approval 记忆范围、artifact metadata/分片、通知节流与 process registry 最小字段（见 `docs/v0.2.0_parity.md` / `docs/rts_workflow.md`）。
 
 ### Fixed
 
