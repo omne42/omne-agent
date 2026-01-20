@@ -49,7 +49,8 @@ impl RepoManager {
     pub async fn repo_exists(&self, name: &RepositoryName) -> anyhow::Result<bool> {
         let path = self.paths.repo_bare_path(name);
         match tokio::fs::metadata(&path).await {
-            Ok(meta) => Ok(meta.is_dir()),
+            Ok(meta) if meta.is_dir() => is_valid_bare_repo_dir(&path).await,
+            Ok(_) => Ok(false),
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
             Err(err) => Err(err).with_context(|| format!("stat {}", path.display())),
         }
@@ -69,6 +70,12 @@ impl RepoManager {
                 if !meta.is_dir() {
                     anyhow::bail!(
                         "invalid repo {name} (expected bare repo directory at {})",
+                        bare_path.display()
+                    );
+                }
+                if !is_valid_bare_repo_dir(&bare_path).await? {
+                    anyhow::bail!(
+                        "invalid repo {name} (expected bare git repository at {})",
                         bare_path.display()
                     );
                 }
@@ -180,6 +187,12 @@ impl RepoManager {
                         bare_path.display()
                     );
                 }
+                if !is_valid_bare_repo_dir(&bare_path).await? {
+                    anyhow::bail!(
+                        "invalid repo {name} (expected bare git repository at {})",
+                        bare_path.display()
+                    );
+                }
             }
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
                 anyhow::bail!("unknown repo {name} (missing {})", bare_path.display());
@@ -204,6 +217,9 @@ impl RepoManager {
             }
             let meta = entry.metadata().await?;
             if !meta.is_dir() {
+                continue;
+            }
+            if !is_valid_bare_repo_dir(&path).await? {
                 continue;
             }
             let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
@@ -232,6 +248,37 @@ impl RepoManager {
     }
 }
 
+pub async fn is_valid_bare_repo_dir(path: &Path) -> anyhow::Result<bool> {
+    let head_path = path.join("HEAD");
+    let config_path = path.join("config");
+    let objects_path = path.join("objects");
+
+    let head = match tokio::fs::metadata(&head_path).await {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(err).with_context(|| format!("stat {}", head_path.display())),
+    };
+    if !head.is_file() {
+        return Ok(false);
+    }
+
+    let config = match tokio::fs::metadata(&config_path).await {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(err).with_context(|| format!("stat {}", config_path.display())),
+    };
+    if !config.is_file() {
+        return Ok(false);
+    }
+
+    let objects = match tokio::fs::metadata(&objects_path).await {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(err).with_context(|| format!("stat {}", objects_path.display())),
+    };
+    Ok(objects.is_dir())
+}
+
 pub fn is_rust_repo(path: &Path) -> bool {
     path.join("Cargo.toml").is_file()
 }
@@ -254,6 +301,7 @@ pub fn find_repo_root(cwd: &Path) -> anyhow::Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::process::Command;
 
     #[test]
     fn default_repo_name_handles_urls_and_paths() {
@@ -284,13 +332,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_repos_ignores_non_directories() -> anyhow::Result<()> {
+    async fn list_repos_ignores_invalid_entries() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
         let repo_manager = RepoManager::new(pm_paths.clone());
         repo_manager.ensure_layout().await?;
 
-        tokio::fs::create_dir_all(pm_paths.repos_dir().join("good.git")).await?;
+        let good_repo = pm_paths.repos_dir().join("good.git");
+        let output = Command::new("git")
+            .current_dir(tmp.path())
+            .arg("init")
+            .arg("--bare")
+            .arg(&good_repo)
+            .output()
+            .await?;
+        if !output.status.success() {
+            anyhow::bail!(
+                "git init --bare failed (exit {:?}): {}",
+                output.status.code(),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        tokio::fs::create_dir_all(pm_paths.repos_dir().join("empty.git")).await?;
         tokio::fs::write(pm_paths.repos_dir().join("bad.git"), b"not a repo").await?;
 
         let repos = repo_manager.list_repos().await?;

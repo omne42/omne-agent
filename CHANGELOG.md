@@ -40,6 +40,7 @@
 - `pm-git`：repo lock 文件缺失父目录时会自动创建（避免 `.code_pm/locks` 被手动删除后运行失败）。
 - `pm-git`：默认 repo 名推导更健壮（支持 `git@host:repo`/Windows 路径等输入）。
 - `pm-git`/`pm-http`：repo 列表与访问现在只接受目录形式的 bare repo（忽略同名文件），避免误识别与更早失败。
+- `pm-git`/`pm-http`：repo 列表与访问现在会校验 bare repo 的最小结构（`HEAD`/`config`/`objects/`），避免空目录/垃圾目录被当成仓库。
 - Orchestrator：改进并发调度（以 worker-pool 方式限流，不再一次性 spawn 所有 tasks；不会再因为并发限流导致 `TaskFinished` 事件延迟），并在 `--max-concurrency 1` 场景下也会把 task 的 panic/cancel 转为 `Failed` PR（避免直接崩溃整个 session）。
 - `pm-git`：identity 配置步骤现在会严格校验每一步的 `ok`（避免静默忽略 `git config --get` 的异常失败）。
 - `code-pm run --task/--tasks-file`：显式空 task id 现在会被拒绝（避免意外回退到 `task` 造成重复/混乱）。

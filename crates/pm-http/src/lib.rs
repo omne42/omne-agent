@@ -10,7 +10,7 @@ use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, Request, Response, 
 use axum::routing::{any, get};
 use http_body_util::BodyExt;
 use pm_core::{FsStorage, PmPaths, RepositoryName, SessionId, Storage};
-use pm_git::{RepoManager, lock_exclusive, lock_shared};
+use pm_git::{RepoManager, lock_exclusive, lock_shared, repo::is_valid_bare_repo_dir};
 use serde::Deserialize;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 use tokio_util::io::ReaderStream;
@@ -283,6 +283,9 @@ async fn git_http_backend(
             return Err(ApiError::not_found("unknown repo"));
         }
         Err(err) => return Err(err.into()),
+    }
+    if !is_valid_bare_repo_dir(&repo_path).await? {
+        return Err(ApiError::not_found("unknown repo"));
     }
     let lock_path = state.repo_manager.paths().repo_lock_path(&repo_name);
 
@@ -763,11 +766,27 @@ mod tests {
         use axum::http::Request;
         use axum::http::header::CONTENT_LENGTH;
         use http_body_util::BodyExt;
+        use tokio::process::Command;
         use tower::ServiceExt;
 
         let tmp = tempfile::tempdir()?;
         let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
-        tokio::fs::create_dir_all(pm_paths.repos_dir().join("repo.git")).await?;
+        let repo_path = pm_paths.repos_dir().join("repo.git");
+        tokio::fs::create_dir_all(pm_paths.repos_dir()).await?;
+        let output = Command::new("git")
+            .current_dir(tmp.path())
+            .arg("init")
+            .arg("--bare")
+            .arg(&repo_path)
+            .output()
+            .await?;
+        if !output.status.success() {
+            anyhow::bail!(
+                "git init --bare failed (exit {:?}): {}",
+                output.status.code(),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
 
         let app = router_with_max_body_bytes(pm_paths, 5)?;
 

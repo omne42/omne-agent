@@ -1,15 +1,38 @@
+use std::path::Path;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
 use pm_core::PmPaths;
+use tokio::process::Command;
 use tower::ServiceExt;
+
+async fn init_bare_repo(path: &Path) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    let output = Command::new("git")
+        .arg("init")
+        .arg("--bare")
+        .arg(path)
+        .output()
+        .await?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "git init --bare failed (exit {:?}): {}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(())
+}
 
 #[tokio::test]
 async fn list_repos_returns_repo_names() -> anyhow::Result<()> {
     let tmp = tempfile::tempdir()?;
     let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
 
-    tokio::fs::create_dir_all(pm_paths.repos_dir().join("demo.git")).await?;
+    init_bare_repo(&pm_paths.repos_dir().join("demo.git")).await?;
 
     let app = pm_http::router(pm_paths.clone())?;
     let request = Request::builder()
@@ -29,7 +52,7 @@ async fn list_repos_verbose_returns_repo_metadata() -> anyhow::Result<()> {
     let tmp = tempfile::tempdir()?;
     let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
 
-    tokio::fs::create_dir_all(pm_paths.repos_dir().join("demo.git")).await?;
+    init_bare_repo(&pm_paths.repos_dir().join("demo.git")).await?;
 
     let app = pm_http::router(pm_paths.clone())?;
     let request = Request::builder()
@@ -60,7 +83,7 @@ async fn list_repos_verbose_flag_without_value_is_true() -> anyhow::Result<()> {
     let tmp = tempfile::tempdir()?;
     let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
 
-    tokio::fs::create_dir_all(pm_paths.repos_dir().join("demo.git")).await?;
+    init_bare_repo(&pm_paths.repos_dir().join("demo.git")).await?;
 
     let app = pm_http::router(pm_paths.clone())?;
     let request = Request::builder()
