@@ -194,6 +194,14 @@ pub enum ApprovalPolicy {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum SandboxPolicy {
+    ReadOnly,
+    WorkspaceWrite,
+    DangerFullAccess,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ApprovalDecision {
     Approved,
     Denied,
@@ -262,6 +270,8 @@ pub enum ThreadEventKind {
 
     ThreadConfigUpdated {
         approval_policy: ApprovalPolicy,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sandbox_policy: Option<SandboxPolicy>,
     },
 
     ApprovalRequested {

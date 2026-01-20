@@ -2,7 +2,9 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use fs2::FileExt;
-use pm_protocol::{ApprovalPolicy, EventSeq, ThreadEvent, ThreadEventKind, ThreadId, TurnId};
+use pm_protocol::{
+    ApprovalPolicy, EventSeq, SandboxPolicy, ThreadEvent, ThreadEventKind, ThreadId, TurnId,
+};
 use time::OffsetDateTime;
 use tokio::io::AsyncWriteExt;
 
@@ -206,6 +208,7 @@ pub struct ThreadState {
     pub thread_id: ThreadId,
     pub cwd: Option<String>,
     pub approval_policy: ApprovalPolicy,
+    pub sandbox_policy: SandboxPolicy,
     pub last_seq: EventSeq,
     pub active_turn_id: Option<TurnId>,
     pub active_turn_interrupt_requested: bool,
@@ -217,6 +220,7 @@ impl ThreadState {
             thread_id,
             cwd: None,
             approval_policy: ApprovalPolicy::AutoApprove,
+            sandbox_policy: SandboxPolicy::WorkspaceWrite,
             last_seq: EventSeq::ZERO,
             active_turn_id: None,
             active_turn_interrupt_requested: false,
@@ -243,8 +247,14 @@ impl ThreadState {
             ThreadEventKind::ThreadCreated { cwd } => {
                 self.cwd = Some(cwd.clone());
             }
-            ThreadEventKind::ThreadConfigUpdated { approval_policy } => {
+            ThreadEventKind::ThreadConfigUpdated {
+                approval_policy,
+                sandbox_policy,
+            } => {
                 self.approval_policy = *approval_policy;
+                if let Some(policy) = sandbox_policy {
+                    self.sandbox_policy = *policy;
+                }
             }
             ThreadEventKind::TurnStarted { turn_id, .. } => {
                 if self.active_turn_id.is_some() {

@@ -310,6 +310,8 @@ struct ThreadAttentionParams {
 struct ThreadConfigureParams {
     thread_id: ThreadId,
     approval_policy: pm_protocol::ApprovalPolicy,
+    #[serde(default)]
+    sandbox_policy: Option<pm_protocol::SandboxPolicy>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -772,6 +774,7 @@ async fn main() -> anyhow::Result<()> {
                                 "thread_id": handle.thread_id(),
                                 "cwd": state.cwd,
                                 "approval_policy": state.approval_policy,
+                                "sandbox_policy": state.sandbox_policy,
                                 "last_seq": handle.last_seq().0,
                                 "active_turn_id": state.active_turn_id,
                                 "active_turn_interrupt_requested": state.active_turn_interrupt_requested,
@@ -1228,7 +1231,14 @@ async fn handle_thread_attention(
 ) -> anyhow::Result<Value> {
     let rt = server.get_or_load_thread(params.thread_id).await?;
 
-    let (last_seq, active_turn_id, active_turn_interrupt_requested, approval_policy, cwd) = {
+    let (
+        last_seq,
+        active_turn_id,
+        active_turn_interrupt_requested,
+        approval_policy,
+        sandbox_policy,
+        cwd,
+    ) = {
         let handle = rt.handle.lock().await;
         let state = handle.state();
         (
@@ -1236,6 +1246,7 @@ async fn handle_thread_attention(
             state.active_turn_id,
             state.active_turn_interrupt_requested,
             state.approval_policy,
+            state.sandbox_policy,
             state.cwd.clone(),
         )
     };
@@ -1300,6 +1311,7 @@ async fn handle_thread_attention(
         "thread_id": params.thread_id,
         "cwd": cwd,
         "approval_policy": approval_policy,
+        "sandbox_policy": sandbox_policy,
         "last_seq": last_seq,
         "active_turn_id": active_turn_id,
         "active_turn_interrupt_requested": active_turn_interrupt_requested,
@@ -1315,6 +1327,7 @@ async fn handle_thread_configure(
     let rt = server.get_or_load_thread(params.thread_id).await?;
     rt.append_event(pm_protocol::ThreadEventKind::ThreadConfigUpdated {
         approval_policy: params.approval_policy,
+        sandbox_policy: params.sandbox_policy,
     })
     .await?;
     Ok(serde_json::json!({ "ok": true }))
@@ -1331,20 +1344,30 @@ async fn handle_thread_config_explain(
         .ok_or_else(|| anyhow::anyhow!("thread not found: {}", params.thread_id))?;
 
     let mut effective_approval_policy = pm_protocol::ApprovalPolicy::AutoApprove;
+    let mut effective_sandbox_policy = pm_protocol::SandboxPolicy::WorkspaceWrite;
     let mut layers = vec![serde_json::json!({
         "source": "default",
         "approval_policy": effective_approval_policy,
+        "sandbox_policy": effective_sandbox_policy,
     })];
 
     for event in events {
-        if let pm_protocol::ThreadEventKind::ThreadConfigUpdated { approval_policy } = event.kind {
+        if let pm_protocol::ThreadEventKind::ThreadConfigUpdated {
+            approval_policy,
+            sandbox_policy,
+        } = event.kind
+        {
             let ts = event.timestamp.format(&Rfc3339)?;
             effective_approval_policy = approval_policy;
+            if let Some(policy) = sandbox_policy {
+                effective_sandbox_policy = policy;
+            }
             layers.push(serde_json::json!({
                 "source": "thread",
                 "seq": event.seq.0,
                 "timestamp": ts,
                 "approval_policy": approval_policy,
+                "sandbox_policy": effective_sandbox_policy,
             }));
         }
     }
@@ -1353,6 +1376,7 @@ async fn handle_thread_config_explain(
         "thread_id": params.thread_id,
         "effective": {
             "approval_policy": effective_approval_policy,
+            "sandbox_policy": effective_sandbox_policy,
         },
         "layers": layers,
     }))
@@ -2151,9 +2175,12 @@ async fn handle_file_write(server: &Server, params: FileWriteParams) -> anyhow::
     let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
 
     let create_parent_dirs = params.create_parent_dirs.unwrap_or(true);
-    let approval_policy = {
+    let (approval_policy, sandbox_policy) = {
         let handle = thread_rt.handle.lock().await;
-        handle.state().approval_policy
+        (
+            handle.state().approval_policy,
+            handle.state().sandbox_policy,
+        )
     };
     let tool_id = pm_protocol::ToolId::new();
     let bytes = params.text.as_bytes().len();
@@ -2163,6 +2190,31 @@ async fn handle_file_write(server: &Server, params: FileWriteParams) -> anyhow::
         "bytes": bytes,
         "create_parent_dirs": create_parent_dirs,
     });
+    if sandbox_policy == pm_protocol::SandboxPolicy::ReadOnly {
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                tool_id,
+                turn_id: params.turn_id,
+                tool: "file/write".to_string(),
+                params: Some(approval_params),
+            })
+            .await?;
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                tool_id,
+                status: pm_protocol::ToolStatus::Denied,
+                error: Some("sandbox_policy=read_only forbids file/write".to_string()),
+                result: Some(serde_json::json!({
+                    "sandbox_policy": sandbox_policy,
+                })),
+            })
+            .await?;
+        return Ok(serde_json::json!({
+            "tool_id": tool_id,
+            "denied": true,
+            "sandbox_policy": sandbox_policy,
+        }));
+    }
     if approval_policy == pm_protocol::ApprovalPolicy::Manual {
         match params.approval_id {
             Some(approval_id) => {
@@ -2281,9 +2333,12 @@ async fn handle_file_patch(server: &Server, params: FilePatchParams) -> anyhow::
         .min(16 * 1024 * 1024);
     let patch_bytes = params.patch.as_bytes().len();
 
-    let approval_policy = {
+    let (approval_policy, sandbox_policy) = {
         let handle = thread_rt.handle.lock().await;
-        handle.state().approval_policy
+        (
+            handle.state().approval_policy,
+            handle.state().sandbox_policy,
+        )
     };
     let tool_id = pm_protocol::ToolId::new();
 
@@ -2292,6 +2347,31 @@ async fn handle_file_patch(server: &Server, params: FilePatchParams) -> anyhow::
         "patch_bytes": patch_bytes,
         "max_bytes": max_bytes,
     });
+    if sandbox_policy == pm_protocol::SandboxPolicy::ReadOnly {
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                tool_id,
+                turn_id: params.turn_id,
+                tool: "file/patch".to_string(),
+                params: Some(approval_params),
+            })
+            .await?;
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                tool_id,
+                status: pm_protocol::ToolStatus::Denied,
+                error: Some("sandbox_policy=read_only forbids file/patch".to_string()),
+                result: Some(serde_json::json!({
+                    "sandbox_policy": sandbox_policy,
+                })),
+            })
+            .await?;
+        return Ok(serde_json::json!({
+            "tool_id": tool_id,
+            "denied": true,
+            "sandbox_policy": sandbox_policy,
+        }));
+    }
     if approval_policy == pm_protocol::ApprovalPolicy::Manual {
         match params.approval_id {
             Some(approval_id) => {
@@ -2463,9 +2543,12 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
         .unwrap_or(4 * 1024 * 1024)
         .min(16 * 1024 * 1024);
 
-    let approval_policy = {
+    let (approval_policy, sandbox_policy) = {
         let handle = thread_rt.handle.lock().await;
-        handle.state().approval_policy
+        (
+            handle.state().approval_policy,
+            handle.state().sandbox_policy,
+        )
     };
     let tool_id = pm_protocol::ToolId::new();
 
@@ -2474,6 +2557,31 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
         "edits": params.edits.len(),
         "max_bytes": max_bytes,
     });
+    if sandbox_policy == pm_protocol::SandboxPolicy::ReadOnly {
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                tool_id,
+                turn_id: params.turn_id,
+                tool: "file/edit".to_string(),
+                params: Some(approval_params),
+            })
+            .await?;
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                tool_id,
+                status: pm_protocol::ToolStatus::Denied,
+                error: Some("sandbox_policy=read_only forbids file/edit".to_string()),
+                result: Some(serde_json::json!({
+                    "sandbox_policy": sandbox_policy,
+                })),
+            })
+            .await?;
+        return Ok(serde_json::json!({
+            "tool_id": tool_id,
+            "denied": true,
+            "sandbox_policy": sandbox_policy,
+        }));
+    }
     if approval_policy == pm_protocol::ApprovalPolicy::Manual {
         match params.approval_id {
             Some(approval_id) => {
@@ -2627,9 +2735,12 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
 async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow::Result<Value> {
     let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
 
-    let approval_policy = {
+    let (approval_policy, sandbox_policy) = {
         let handle = thread_rt.handle.lock().await;
-        handle.state().approval_policy
+        (
+            handle.state().approval_policy,
+            handle.state().sandbox_policy,
+        )
     };
     let tool_id = pm_protocol::ToolId::new();
 
@@ -2637,6 +2748,31 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
         "path": params.path.clone(),
         "recursive": params.recursive,
     });
+    if sandbox_policy == pm_protocol::SandboxPolicy::ReadOnly {
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                tool_id,
+                turn_id: params.turn_id,
+                tool: "file/delete".to_string(),
+                params: Some(approval_params),
+            })
+            .await?;
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                tool_id,
+                status: pm_protocol::ToolStatus::Denied,
+                error: Some("sandbox_policy=read_only forbids file/delete".to_string()),
+                result: Some(serde_json::json!({
+                    "sandbox_policy": sandbox_policy,
+                })),
+            })
+            .await?;
+        return Ok(serde_json::json!({
+            "tool_id": tool_id,
+            "denied": true,
+            "sandbox_policy": sandbox_policy,
+        }));
+    }
     if approval_policy == pm_protocol::ApprovalPolicy::Manual {
         match params.approval_id {
             Some(approval_id) => {
@@ -2767,9 +2903,12 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
 async fn handle_fs_mkdir(server: &Server, params: FsMkdirParams) -> anyhow::Result<Value> {
     let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
 
-    let approval_policy = {
+    let (approval_policy, sandbox_policy) = {
         let handle = thread_rt.handle.lock().await;
-        handle.state().approval_policy
+        (
+            handle.state().approval_policy,
+            handle.state().sandbox_policy,
+        )
     };
     let tool_id = pm_protocol::ToolId::new();
 
@@ -2777,6 +2916,31 @@ async fn handle_fs_mkdir(server: &Server, params: FsMkdirParams) -> anyhow::Resu
         "path": params.path.clone(),
         "recursive": params.recursive,
     });
+    if sandbox_policy == pm_protocol::SandboxPolicy::ReadOnly {
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                tool_id,
+                turn_id: params.turn_id,
+                tool: "fs/mkdir".to_string(),
+                params: Some(approval_params),
+            })
+            .await?;
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                tool_id,
+                status: pm_protocol::ToolStatus::Denied,
+                error: Some("sandbox_policy=read_only forbids fs/mkdir".to_string()),
+                result: Some(serde_json::json!({
+                    "sandbox_policy": sandbox_policy,
+                })),
+            })
+            .await?;
+        return Ok(serde_json::json!({
+            "tool_id": tool_id,
+            "denied": true,
+            "sandbox_policy": sandbox_policy,
+        }));
+    }
     if approval_policy == pm_protocol::ApprovalPolicy::Manual {
         match params.approval_id {
             Some(approval_id) => {
@@ -3336,9 +3500,12 @@ async fn handle_process_start(
     }
 
     let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
-    let approval_policy = {
+    let (approval_policy, sandbox_policy) = {
         let handle = thread_rt.handle.lock().await;
-        handle.state().approval_policy
+        (
+            handle.state().approval_policy,
+            handle.state().sandbox_policy,
+        )
     };
 
     let cwd_path = if let Some(cwd) = params.cwd.as_deref() {
@@ -3347,6 +3514,35 @@ async fn handle_process_start(
         thread_root.clone()
     };
     let cwd_str = cwd_path.display().to_string();
+
+    if sandbox_policy == pm_protocol::SandboxPolicy::ReadOnly {
+        let tool_id = pm_protocol::ToolId::new();
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                tool_id,
+                turn_id: params.turn_id,
+                tool: "process/start".to_string(),
+                params: Some(serde_json::json!({
+                    "argv": params.argv.clone(),
+                    "cwd": cwd_str,
+                })),
+            })
+            .await?;
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                tool_id,
+                status: pm_protocol::ToolStatus::Denied,
+                error: Some("sandbox_policy=read_only forbids process/start".to_string()),
+                result: Some(serde_json::json!({
+                    "sandbox_policy": sandbox_policy,
+                })),
+            })
+            .await?;
+        return Ok(serde_json::json!({
+            "denied": true,
+            "sandbox_policy": sandbox_policy,
+        }));
+    }
 
     let exec_matches = server.exec_policy.matches_for_command(&params.argv, None);
     let exec_decision = exec_matches.iter().map(ExecRuleMatch::decision).max();
