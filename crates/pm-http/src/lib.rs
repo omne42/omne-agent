@@ -9,7 +9,7 @@ use axum::extract::{Path as AxumPath, State};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Request, Response, StatusCode};
 use axum::routing::{any, get};
 use http_body_util::BodyExt;
-use pm_core::{FsStorage, PmPaths, RepositoryName, Storage};
+use pm_core::{FsStorage, PmPaths, RepositoryName, SessionId, Storage};
 use pm_git::{RepoManager, lock_exclusive, lock_shared};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 use tokio_util::io::ReaderStream;
@@ -79,7 +79,7 @@ async fn api_list_sessions(State(state): State<Arc<AppState>>) -> Result<Respons
 
 async fn api_get_session(
     State(state): State<Arc<AppState>>,
-    AxumPath(session_id): AxumPath<String>,
+    AxumPath(session_id): AxumPath<SessionId>,
 ) -> Result<Response<Body>, ApiError> {
     api_get_json(
         &state.storage,
@@ -91,7 +91,7 @@ async fn api_get_session(
 
 async fn api_get_tasks(
     State(state): State<Arc<AppState>>,
-    AxumPath(session_id): AxumPath<String>,
+    AxumPath(session_id): AxumPath<SessionId>,
 ) -> Result<Response<Body>, ApiError> {
     api_get_json(
         &state.storage,
@@ -103,7 +103,7 @@ async fn api_get_tasks(
 
 async fn api_get_prs(
     State(state): State<Arc<AppState>>,
-    AxumPath(session_id): AxumPath<String>,
+    AxumPath(session_id): AxumPath<SessionId>,
 ) -> Result<Response<Body>, ApiError> {
     api_get_json(
         &state.storage,
@@ -115,7 +115,7 @@ async fn api_get_prs(
 
 async fn api_get_merge(
     State(state): State<Arc<AppState>>,
-    AxumPath(session_id): AxumPath<String>,
+    AxumPath(session_id): AxumPath<SessionId>,
 ) -> Result<Response<Body>, ApiError> {
     api_get_json(
         &state.storage,
@@ -127,7 +127,7 @@ async fn api_get_merge(
 
 async fn api_get_result(
     State(state): State<Arc<AppState>>,
-    AxumPath(session_id): AxumPath<String>,
+    AxumPath(session_id): AxumPath<SessionId>,
 ) -> Result<Response<Body>, ApiError> {
     api_get_json(
         &state.storage,

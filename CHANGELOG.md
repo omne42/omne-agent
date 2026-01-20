@@ -7,6 +7,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- `pm-http` 的 session API（`/api/v0/sessions/:id/*`）现在只接受 UUID 格式的 session id，避免非法路径段触发 storage key 校验错误导致 500。
+
 ## [0.1.0] - 2026-01-20
 
 ### Added
