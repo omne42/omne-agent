@@ -2467,6 +2467,7 @@ async fn handle_process_tail(server: &Server, params: ProcessTailParams) -> anyh
 
     let max_lines = params.max_lines.unwrap_or(200).min(2000);
     let text = tail_file_lines(PathBuf::from(path), max_lines).await?;
+    let text = pm_core::redact_text(&text);
     Ok(serde_json::json!({ "text": text }))
 }
 
@@ -2516,6 +2517,7 @@ async fn handle_process_follow(
     let max_bytes = params.max_bytes.unwrap_or(64 * 1024).min(1024 * 1024);
     let (text, next_offset, eof) =
         read_file_chunk(PathBuf::from(path), params.since_offset, max_bytes).await?;
+    let text = pm_core::redact_text(&text);
 
     Ok(serde_json::json!({
         "text": text,

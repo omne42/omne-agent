@@ -189,6 +189,9 @@ impl ThreadHandle {
     }
 
     pub async fn append(&mut self, kind: ThreadEventKind) -> anyhow::Result<ThreadEvent> {
+        let mut kind = kind;
+        crate::redaction::redact_thread_event_kind(&mut kind);
+
         let event = self.writer.append(kind).await?;
         self.state.apply(&event)?;
         Ok(event)
@@ -202,6 +205,39 @@ impl ThreadHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn append_redacts_sensitive_tokens() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let store = ThreadStore::new(PmPaths::new(dir.path().join(".code_pm")));
+
+        let mut thread = store.create_thread(PathBuf::from("/tmp")).await?;
+        let thread_id = thread.thread_id();
+        let turn_id = pm_protocol::TurnId::new();
+        thread
+            .append(ThreadEventKind::TurnStarted {
+                turn_id,
+                input: "token=sk-1234567890abcdefghijklmnop".to_string(),
+            })
+            .await?;
+        drop(thread);
+
+        let resumed = store
+            .resume_thread(thread_id)
+            .await?
+            .expect("thread exists");
+        let events = resumed.events_since(EventSeq::ZERO).await?;
+        let started = events
+            .iter()
+            .find(|e| matches!(e.kind, ThreadEventKind::TurnStarted { .. }))
+            .expect("turn started");
+        let ThreadEventKind::TurnStarted { input, .. } = &started.kind else {
+            unreachable!();
+        };
+        assert!(!input.contains("sk-1234567890abcdefghijklmnop"));
+        assert!(input.contains("sk-<REDACTED>"));
+        Ok(())
+    }
 
     #[tokio::test]
     async fn resume_repairs_incomplete_turn() -> anyhow::Result<()> {

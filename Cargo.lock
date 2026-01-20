@@ -1425,6 +1425,7 @@ dependencies = [
  "async-trait",
  "pm-eventlog",
  "pm-protocol",
+ "regex",
  "serde",
  "serde_json",
  "tempfile",
