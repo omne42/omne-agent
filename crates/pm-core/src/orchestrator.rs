@@ -415,24 +415,48 @@ impl Orchestrator {
                         title: task.title.clone(),
                     },
                 });
-                let pr = match self
-                    .coder
-                    .execute(
-                        repo.as_ref(),
-                        session.as_ref(),
-                        session_paths.as_ref(),
-                        request.as_ref(),
-                        task,
-                    )
-                    .await
-                {
-                    Ok(pr) => pr,
-                    Err(err) => {
-                        warn!(task_id = %task.id, error = %err, "task failed");
+                let task_id = task.id.clone();
+                let coder = Arc::clone(&self.coder);
+                let repo_for_task = Arc::clone(&repo);
+                let session_for_task = Arc::clone(&session);
+                let session_paths_for_task = Arc::clone(&session_paths);
+                let request_for_task = Arc::clone(&request);
+                let task_owned = task.clone();
+
+                let joined = tokio::spawn(async move {
+                    coder
+                        .execute(
+                            repo_for_task.as_ref(),
+                            session_for_task.as_ref(),
+                            session_paths_for_task.as_ref(),
+                            request_for_task.as_ref(),
+                            &task_owned,
+                        )
+                        .await
+                })
+                .await;
+
+                let pr = match joined {
+                    Ok(Ok(pr)) => pr,
+                    Ok(Err(err)) => {
+                        warn!(task_id = %task_id, error = %err, "task failed");
                         let checks = self
-                            .task_failure_checks(session_paths.as_ref(), &task.id, &err)
+                            .task_failure_checks(session_paths.as_ref(), &task_id, &err)
                             .await;
-                        failed_pr(&task.id, checks)
+                        failed_pr(&task_id, checks)
+                    }
+                    Err(join_err) => {
+                        let join_err_text = join_err.to_string();
+                        warn!(
+                            task_id = %task_id,
+                            error = %join_err_text,
+                            "task panicked or was cancelled"
+                        );
+                        let err = anyhow::anyhow!("task join error: {join_err_text}");
+                        let checks = self
+                            .task_failure_checks(session_paths.as_ref(), &task_id, &err)
+                            .await;
+                        failed_pr(&task_id, checks)
                     }
                 };
                 self.events.emit(RunEvent::TaskFinished {
@@ -454,13 +478,13 @@ impl Orchestrator {
                 std::collections::HashMap::new();
 
             for (index, task) in tasks.iter().cloned().enumerate() {
-                let permit = semaphore.clone().acquire_owned().await?;
                 let coder = Arc::clone(&self.coder);
                 let repo = Arc::clone(&repo);
                 let session = Arc::clone(&session);
                 let session_paths = Arc::clone(&session_paths);
                 let request = Arc::clone(&request);
                 let events = self.events.clone();
+                let semaphore = Arc::clone(&semaphore);
                 let task_summary = TaskSummary {
                     id: task.id.clone(),
                     title: task.title.clone(),
@@ -468,17 +492,22 @@ impl Orchestrator {
                 let task_id = task.id.clone();
 
                 let handle = join_set.spawn(async move {
-                    let _permit = permit;
-                    events.emit(RunEvent::TaskStarted { task: task_summary });
-                    let result = coder
-                        .execute(
-                            repo.as_ref(),
-                            session.as_ref(),
-                            session_paths.as_ref(),
-                            request.as_ref(),
-                            &task,
-                        )
-                        .await;
+                    let result: anyhow::Result<PullRequest> = async {
+                        let _permit = semaphore.acquire_owned().await.map_err(|err| {
+                            anyhow::anyhow!("task semaphore closed unexpectedly: {err}")
+                        })?;
+                        events.emit(RunEvent::TaskStarted { task: task_summary });
+                        coder
+                            .execute(
+                                repo.as_ref(),
+                                session.as_ref(),
+                                session_paths.as_ref(),
+                                request.as_ref(),
+                                &task,
+                            )
+                            .await
+                    }
+                    .await;
                     (index, task, result)
                 });
                 join_meta.insert(handle.id(), (index, task_id));
