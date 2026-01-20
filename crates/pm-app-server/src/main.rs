@@ -188,6 +188,7 @@ impl ThreadRuntime {
             *active = Some(ActiveTurn {
                 turn_id,
                 cancel: cancel.clone(),
+                interrupt_reason: None,
             });
         }
 
@@ -208,12 +209,15 @@ impl ThreadRuntime {
 
     async fn interrupt_turn(&self, turn_id: TurnId, reason: Option<String>) -> anyhow::Result<()> {
         let cancel = {
-            let active = self.active_turn.lock().await;
-            let Some(active) = active.as_ref() else {
+            let mut active = self.active_turn.lock().await;
+            let Some(active) = active.as_mut() else {
                 anyhow::bail!("no active turn");
             };
             if active.turn_id != turn_id {
                 anyhow::bail!("turn is not active");
+            }
+            if active.interrupt_reason.is_none() {
+                active.interrupt_reason = reason.clone();
             }
             active.cancel.clone()
         };
@@ -233,9 +237,15 @@ impl ThreadRuntime {
     }
 
     async fn run_turn(self: Arc<Self>, turn_id: TurnId, cancel: CancellationToken) {
-        let status = tokio::select! {
-            _ = cancel.cancelled() => TurnStatus::Interrupted,
-            _ = tokio::time::sleep(Duration::from_secs(1)) => TurnStatus::Completed,
+        let (status, reason) = tokio::select! {
+            _ = cancel.cancelled() => {
+                let reason = {
+                    let active = self.active_turn.lock().await;
+                    active.as_ref().and_then(|a| a.interrupt_reason.clone())
+                };
+                (TurnStatus::Interrupted, reason.or_else(|| Some("turn interrupted".to_string())))
+            },
+            _ = tokio::time::sleep(Duration::from_secs(1)) => (TurnStatus::Completed, None),
         };
 
         let mut handle = self.handle.lock().await;
@@ -243,7 +253,7 @@ impl ThreadRuntime {
             .append(pm_protocol::ThreadEventKind::TurnCompleted {
                 turn_id,
                 status,
-                reason: None,
+                reason,
             })
             .await;
         drop(handle);
@@ -258,6 +268,7 @@ impl ThreadRuntime {
 struct ActiveTurn {
     turn_id: TurnId,
     cancel: CancellationToken,
+    interrupt_reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -793,7 +804,7 @@ async fn main() -> anyhow::Result<()> {
                             .reason
                             .clone()
                             .or_else(|| Some("turn interrupted".to_string()));
-                        match rt.interrupt_turn(params.turn_id, params.reason).await {
+                        match rt.interrupt_turn(params.turn_id, kill_reason.clone()).await {
                             Ok(()) => {
                                 kill_processes_for_turn(
                                     &server,
