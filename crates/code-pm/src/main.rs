@@ -93,6 +93,8 @@ struct RunArgs {
     #[arg(long, default_value_t = false)]
     stream_events: bool,
     #[arg(long, default_value_t = false)]
+    stream_events_json: bool,
+    #[arg(long, default_value_t = false)]
     strict: bool,
     #[arg(long, default_value_t = false)]
     json: bool,
@@ -289,12 +291,20 @@ async fn run_session(
     let merger: Arc<dyn pm_core::Merger> = Arc::new(pm_git::GitMerger::default());
 
     let events = EventBus::default();
-    let printer = if args.stream_events {
+    let stream_events_mode =
+        resolve_stream_events_mode(args.stream_events, args.stream_events_json)?;
+    let printer = if let Some(stream_events_mode) = stream_events_mode {
         let mut rx = events.subscribe();
         Some(tokio::spawn(async move {
             loop {
                 match rx.recv().await {
-                    Ok(event) => eprintln!("[event] {event}"),
+                    Ok(event) => match stream_events_mode {
+                        StreamEventsMode::Text => eprintln!("[event] {event}"),
+                        StreamEventsMode::Json => match serde_json::to_string(&event) {
+                            Ok(json) => eprintln!("{json}"),
+                            Err(err) => eprintln!("[event] json serialize error: {err}"),
+                        },
+                    },
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                 }
@@ -347,6 +357,24 @@ async fn run_session(
     }
 
     Ok(())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StreamEventsMode {
+    Text,
+    Json,
+}
+
+fn resolve_stream_events_mode(
+    stream_events: bool,
+    stream_events_json: bool,
+) -> anyhow::Result<Option<StreamEventsMode>> {
+    match (stream_events, stream_events_json) {
+        (false, false) => Ok(None),
+        (true, false) => Ok(Some(StreamEventsMode::Text)),
+        (false, true) => Ok(Some(StreamEventsMode::Json)),
+        (true, true) => anyhow::bail!("use only one of --stream-events or --stream-events-json"),
+    }
 }
 
 #[derive(Clone)]
@@ -712,6 +740,11 @@ mod tests {
             },
         );
         assert!(validate_strict_run_result(&result).is_err());
+    }
+
+    #[test]
+    fn resolve_stream_events_mode_rejects_conflicts() {
+        assert!(resolve_stream_events_mode(true, true).is_err());
     }
 
     #[tokio::test]
