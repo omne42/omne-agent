@@ -20,38 +20,35 @@
 - `code-pm session list --verbose [--limit N] [--json]`：按 `created_at`（RFC3339）倒序输出 session 元信息（不含 prompt）；`--json` 输出 JSON 数组。
 - `code-pm run --json`：以 pretty JSON 输出 `RunResult`（便于脚本/集成）。
 - `code-pm run --strict`：当存在 task 失败或 merge error 时返回非零退出码。
-- `code-pm run --max-concurrency`：现在会校验为 `>= 1`（拒绝 `0`，避免静默回退到 `1`）。
-- `code-pm run`：在 git repo 内运行且未显式提供 `--repo/--repo-src` 时，默认以当前 `repo_root` 作为 `--repo-src` 注入并运行（repo 名默认为目录名（去掉可选 `.git` 后缀后）sanitize）。
-- `code-pm run`：隐式 `--repo-src` 模式现在会严格要求处于真实 git worktree（基于 `git rev-parse` 判断），避免仅凭 `.git` 路径误判导致后续 clone 失败。
 - `code-pm run --cargo-test`：对 Rust repo 在提交前额外执行 `cargo test --workspace --all-targets`（输出写入 task artifacts）。
-- `code-pm` CLI：`--repo/--repo-src/--pr-name/--base` 以及 `repo inject` 的 `source/--name` 现在会拒绝空值（包括仅空白字符），避免静默回退到默认 sanitize 值。
-- `code-pm run`：现在会拒绝空/纯空白的 prompt（`--prompt` 或 `--prompt-file`），避免生成无意义 session。
-- `code-pm run --auto-tasks`：现在会拒绝与 `--task/--tasks-file` 同时使用（避免 task 来源冲突）。
-- `PrName/TaskId` 的 sanitize 规则收紧为 git-ref 安全：不再保留 `.`（例如 `.hidden` → `hidden`、`a..b` → `a-b`），避免生成无效分支名导致运行失败。
-- `RepositoryName/PrName/TaskId` 增加长度上限（`64`），避免生成超长目录名/branch ref 导致运行失败。
 - `code-pm run --stream-events-json`：以 JSON Lines（NDJSON）格式输出 `RunEvent` 到 stderr（每行包含 `type` 字段），便于实时消费事件流。
 - `code-pm run --hook-url <url>`：完成后向 webhook `POST` JSON（`session_id/repo/pr_name/base_branch/pm_root/session_dir/tmp_dir/result_json/merged/merge_error`）。
 - `pm-http GET /api/v0/sessions`：新增 `?verbose=true`（返回 `SessionMeta[]`）与 `?limit=N`（截断结果）；默认仍返回 `SessionId[]`。
 - `pm-http GET /api/v0/repos`：新增 `?verbose=true`（返回 `[{name,bare_path,lock_path}]`）；默认仍返回 `RepositoryName[]`。
+- `pm-http GET /api/v0/sessions/:id/meta`：返回 `SessionMeta`（不含 prompt）。
+
+### Changed
+- `code-pm run`：在 git repo 内运行且未显式提供 `--repo/--repo-src` 时，默认以当前 `repo_root` 作为 `--repo-src` 注入并运行（repo 名默认为目录名（去掉可选 `.git` 后缀后）sanitize）。
 - `pm-http`：query flag 支持无值形式（`?verbose` / `?all` 等价于 `=true`）。
 - `pm-http GET /api/v0/sessions/:id`：默认返回 `result`；`?all=true` 返回 session/tasks/prs/merge/result bundle。
-- `pm-http GET /api/v0/sessions/:id/meta`：返回 `SessionMeta`（不含 prompt）。
-- `pm-http`：支持 `CODE_PM_HTTP_MAX_BODY_BYTES`（默认 1GiB）限制 git smart-http 请求体大小；超限返回 413。
-- `pm-http git`：`CODE_PM_HTTP_MAX_BODY_BYTES` 现在会对实际请求体字节数强制生效（不再仅信任 `Content-Length` header），避免超大 body 绕过限制。
-- `pm-http serve`：强制 loopback-only（拒绝绑定非 `127.0.0.1`/`::1` 地址），避免无鉴权服务被意外暴露到公网。
-- `pm-http git`：拒绝除 GET/POST 之外的 HTTP method（返回 405），减少非预期攻击面。
-- `pm-http git`：405 响应包含 `Allow: GET, POST`，便于客户端/调试工具正确处理。
-- `pm-git`：repo lock 文件缺失父目录时会自动创建（避免 `.code_pm/locks` 被手动删除后运行失败）。
-- `pm-git`：默认 repo 名推导更健壮（支持 `git@host:repo`/Windows 路径等输入）。
-- `pm-git`/`pm-http`：repo 列表与访问现在只接受目录形式的 bare repo（忽略同名文件），避免误识别与更早失败。
-- `pm-git`/`pm-http`：repo 列表与访问现在会校验 bare repo 的最小结构（`HEAD`/`config`/`objects/`），避免空目录/垃圾目录被当成仓库。
+- `PrName/TaskId` 的 sanitize 规则收紧为 git-ref 安全：不再保留 `.`（例如 `.hidden` → `hidden`、`a..b` → `a-b`），避免生成无效分支名导致运行失败。
+- `RepositoryName/PrName/TaskId` 增加长度上限（`64`），避免生成超长目录名/branch ref 导致运行失败。
 - Orchestrator：改进并发调度（以 worker-pool 方式限流，不再一次性 spawn 所有 tasks；不会再因为并发限流导致 `TaskFinished` 事件延迟），并在 `--max-concurrency 1` 场景下也会把 task 的 panic/cancel 转为 `Failed` PR（避免直接崩溃整个 session）。
-- `pm-git`：identity 配置步骤现在会严格校验每一步的 `ok`（避免静默忽略 `git config --get` 的异常失败）。
-- `code-pm run --task/--tasks-file`：显式空 task id 现在会被拒绝（避免意外回退到 `task` 造成重复/混乱）。
 - session 列表查询改为直接枚举 `.code_pm/data/sessions/` 目录（更快，且只返回合法 UUID）。
 - `Session/SessionMeta.created_at` 的 JSON 表达改为 RFC3339 字符串（读仍兼容旧 tuple/unix timestamp）。
 - session 元信息新增独立存储 `sessions/<id>/meta.json`（`list_session_meta` 优先读取，避免为列表读入大 prompt）。
-- `pm-http` 的 session API（`/api/v0/sessions/:id/*`）现在只接受 UUID 格式的 session id，避免非法路径段触发 storage key 校验错误导致 500。
+
+### Fixed
+- `code-pm run --max-concurrency`：现在会校验为 `>= 1`（拒绝 `0`，避免静默回退到 `1`）。
+- `code-pm run`：隐式 `--repo-src` 模式现在会严格要求处于真实 git worktree（基于 `git rev-parse` 判断），避免仅凭 `.git` 路径误判导致后续 clone 失败。
+- `code-pm` CLI：`--repo/--repo-src/--pr-name/--base` 以及 `repo inject` 的 `source/--name` 现在会拒绝空值（包括仅空白字符），避免静默回退到默认 sanitize 值。
+- `code-pm run`：现在会拒绝空/纯空白的 prompt（`--prompt` 或 `--prompt-file`），避免生成无意义 session。
+- `code-pm run --auto-tasks`：现在会拒绝与 `--task/--tasks-file` 同时使用（避免 task 来源冲突）。
+- `pm-http git`：405 响应包含 `Allow: GET, POST`，便于客户端/调试工具正确处理。
+- `pm-git`：repo lock 文件缺失父目录时会自动创建（避免 `.code_pm/locks` 被手动删除后运行失败）。
+- `pm-git`：默认 repo 名推导更健壮（支持 `git@host:repo`/Windows 路径等输入）。
+- `pm-git`：identity 配置步骤现在会严格校验每一步的 `ok`（避免静默忽略 `git config --get` 的异常失败）。
+- `code-pm run --task/--tasks-file`：显式空 task id 现在会被拒绝（避免意外回退到 `task` 造成重复/混乱）。
 - `CODE_PM_TMP_ROOT` 为空（例如 `export CODE_PM_TMP_ROOT=`）时将被忽略，避免 session artifacts 意外落到当前工作目录。
 - `code-pm repo inject` 与 `code-pm run --repo-src` 现在支持使用相对路径引用本地仓库（不会再相对 `.code_pm/repos` 解析导致 clone 失败）。
 - `code-pm repo inject` 复用已存在的注入仓库时会更新 `origin` 到本次传入的 source，避免同名重新注入仍从旧源 fetch。
@@ -62,6 +59,15 @@
 - `pm-http` 构造 fallback 响应时现在会正确设置 HTTP status（避免极端情况下误返回 200）。
 - `code-pm run --stream-events-json` 在序列化异常时也会输出 JSON 行，避免污染 NDJSON 流。
 - `code-pm run --stream-events-json` 在 consumer 落后导致事件被丢弃时会输出 error JSON 行（`event_lagged`），避免静默丢事件。
+
+### Security
+- `pm-http`：支持 `CODE_PM_HTTP_MAX_BODY_BYTES`（默认 1GiB）限制 git smart-http 请求体大小；超限返回 413。
+- `pm-http git`：`CODE_PM_HTTP_MAX_BODY_BYTES` 现在会对实际请求体字节数强制生效（不再仅信任 `Content-Length` header），避免超大 body 绕过限制。
+- `pm-http serve`：强制 loopback-only（拒绝绑定非 `127.0.0.1`/`::1` 地址），避免无鉴权服务被意外暴露到公网。
+- `pm-http git`：拒绝除 GET/POST 之外的 HTTP method（返回 405），减少非预期攻击面。
+- `pm-git`/`pm-http`：repo 列表与访问现在只接受目录形式的 bare repo（忽略同名文件），避免误识别与更早失败。
+- `pm-git`/`pm-http`：repo 列表与访问现在会校验 bare repo 的最小结构（`HEAD`/`config`/`objects/`），避免空目录/垃圾目录被当成仓库。
+- `pm-http` 的 session API（`/api/v0/sessions/:id/*`）现在只接受 UUID 格式的 session id，避免非法路径段触发 storage key 校验错误导致 500。
 
 ## [0.1.0] - 2026-01-20
 
