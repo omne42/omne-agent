@@ -357,6 +357,8 @@ struct ThreadEventsParams {
     thread_id: ThreadId,
     #[serde(default)]
     since_seq: u64,
+    #[serde(default)]
+    max_events: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -782,13 +784,25 @@ async fn main() -> anyhow::Result<()> {
                         .read_events_since(params.thread_id, since)
                         .await
                     {
-                        Ok(Some(events)) => {
+                        Ok(Some(mut events)) => {
+                            let thread_last_seq = events.last().map(|e| e.seq.0).unwrap_or(since.0);
+                            let mut has_more = false;
+                            if let Some(max_events) = params.max_events {
+                                let max_events = max_events.clamp(1, 50_000);
+                                if events.len() > max_events {
+                                    events.truncate(max_events);
+                                    has_more = true;
+                                }
+                            }
+
                             let last_seq = events.last().map(|e| e.seq.0).unwrap_or(since.0);
                             JsonRpcResponse::ok(
                                 id,
                                 serde_json::json!({
                                     "events": events,
                                     "last_seq": last_seq,
+                                    "thread_last_seq": thread_last_seq,
+                                    "has_more": has_more,
                                 }),
                             )
                         }
