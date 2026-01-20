@@ -755,11 +755,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
 
 [[package]]
+name = "pm-app-server"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "clap",
+ "pm-core",
+ "pm-protocol",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "pm-core"
 version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
+ "pm-eventlog",
+ "pm-protocol",
  "serde",
  "serde_json",
  "tempfile",

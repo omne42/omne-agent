@@ -1,0 +1,216 @@
+use std::path::{Path, PathBuf};
+
+use anyhow::Context;
+use pm_eventlog::{EventLogWriter, ThreadState, read_events_since as read_events_since_jsonl};
+use pm_protocol::{EventSeq, ThreadEvent, ThreadEventKind, ThreadId, TurnStatus};
+
+use crate::PmPaths;
+
+const EVENTS_LOG_FILE_NAME: &str = "events.jsonl";
+
+#[derive(Clone, Debug)]
+pub struct ThreadStore {
+    paths: PmPaths,
+}
+
+impl ThreadStore {
+    pub fn new(paths: PmPaths) -> Self {
+        Self { paths }
+    }
+
+    pub fn thread_dir(&self, thread_id: ThreadId) -> PathBuf {
+        self.paths.thread_dir(thread_id)
+    }
+
+    pub fn events_log_path(&self, thread_id: ThreadId) -> PathBuf {
+        self.thread_dir(thread_id).join(EVENTS_LOG_FILE_NAME)
+    }
+
+    pub async fn list_threads(&self) -> anyhow::Result<Vec<ThreadId>> {
+        let dir = self.paths.threads_dir();
+        let mut read_dir = match tokio::fs::read_dir(&dir).await {
+            Ok(read_dir) => read_dir,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(err) => return Err(err).with_context(|| format!("read {}", dir.display())),
+        };
+
+        let mut ids = Vec::new();
+        while let Some(entry) = read_dir.next_entry().await? {
+            let ty = entry.file_type().await?;
+            if !ty.is_dir() {
+                continue;
+            }
+            let file_name = entry.file_name();
+            let Some(name) = file_name.to_str() else {
+                continue;
+            };
+            let Ok(id) = name.parse::<ThreadId>() else {
+                continue;
+            };
+            ids.push(id);
+        }
+        ids.sort_unstable();
+        Ok(ids)
+    }
+
+    pub async fn create_thread(&self, cwd: PathBuf) -> anyhow::Result<ThreadHandle> {
+        let thread_id = ThreadId::new();
+        let log_path = self.events_log_path(thread_id);
+
+        let mut handle = ThreadHandle::open_new(thread_id, log_path).await?;
+        handle
+            .append(ThreadEventKind::ThreadCreated {
+                cwd: cwd.display().to_string(),
+            })
+            .await?;
+        Ok(handle)
+    }
+
+    pub async fn resume_thread(&self, thread_id: ThreadId) -> anyhow::Result<Option<ThreadHandle>> {
+        let dir = self.thread_dir(thread_id);
+        match tokio::fs::metadata(&dir).await {
+            Ok(meta) if meta.is_dir() => {}
+            Ok(_) => anyhow::bail!("thread dir is not a directory: {}", dir.display()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(err) => return Err(err).with_context(|| format!("stat {}", dir.display())),
+        }
+
+        let log_path = self.events_log_path(thread_id);
+        let mut handle = ThreadHandle::open_existing(thread_id, log_path).await?;
+
+        if let Some(turn_id) = handle.state.active_turn_id {
+            let status = if handle.state.active_turn_interrupt_requested {
+                TurnStatus::Interrupted
+            } else {
+                TurnStatus::Failed
+            };
+            handle
+                .append(ThreadEventKind::TurnCompleted {
+                    turn_id,
+                    status,
+                    reason: Some("recovered incomplete turn on resume".to_string()),
+                })
+                .await?;
+        }
+
+        Ok(Some(handle))
+    }
+
+    pub async fn read_events_since(
+        &self,
+        thread_id: ThreadId,
+        since_seq: EventSeq,
+    ) -> anyhow::Result<Option<Vec<ThreadEvent>>> {
+        let dir = self.thread_dir(thread_id);
+        match tokio::fs::metadata(&dir).await {
+            Ok(meta) if meta.is_dir() => {}
+            Ok(_) => anyhow::bail!("thread dir is not a directory: {}", dir.display()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(err) => return Err(err).with_context(|| format!("stat {}", dir.display())),
+        }
+
+        let log_path = self.events_log_path(thread_id);
+        Ok(Some(
+            read_events_since_jsonl(thread_id, &log_path, since_seq).await?,
+        ))
+    }
+}
+
+pub struct ThreadHandle {
+    thread_id: ThreadId,
+    writer: EventLogWriter,
+    state: ThreadState,
+}
+
+impl ThreadHandle {
+    async fn open_new(thread_id: ThreadId, log_path: PathBuf) -> anyhow::Result<Self> {
+        let writer = EventLogWriter::open(thread_id, log_path).await?;
+        Ok(Self {
+            thread_id,
+            writer,
+            state: ThreadState::new(thread_id),
+        })
+    }
+
+    async fn open_existing(thread_id: ThreadId, log_path: PathBuf) -> anyhow::Result<Self> {
+        let writer = EventLogWriter::open(thread_id, log_path).await?;
+        let events = read_events_since_jsonl(thread_id, writer.log_path(), EventSeq::ZERO).await?;
+
+        let mut state = ThreadState::new(thread_id);
+        for event in &events {
+            state.apply(event)?;
+        }
+
+        Ok(Self {
+            thread_id,
+            writer,
+            state,
+        })
+    }
+
+    pub fn thread_id(&self) -> ThreadId {
+        self.thread_id
+    }
+
+    pub fn log_path(&self) -> &Path {
+        self.writer.log_path()
+    }
+
+    pub fn state(&self) -> &ThreadState {
+        &self.state
+    }
+
+    pub fn last_seq(&self) -> EventSeq {
+        self.state.last_seq
+    }
+
+    pub async fn append(&mut self, kind: ThreadEventKind) -> anyhow::Result<ThreadEvent> {
+        let event = self.writer.append(kind).await?;
+        self.state.apply(&event)?;
+        Ok(event)
+    }
+
+    pub async fn events_since(&self, since_seq: EventSeq) -> anyhow::Result<Vec<ThreadEvent>> {
+        read_events_since_jsonl(self.thread_id, self.log_path(), since_seq).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn resume_repairs_incomplete_turn() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let store = ThreadStore::new(PmPaths::new(dir.path().join(".code_pm")));
+
+        let mut thread = store.create_thread(PathBuf::from("/tmp")).await?;
+        let thread_id = thread.thread_id();
+        let turn_id = pm_protocol::TurnId::new();
+        thread
+            .append(ThreadEventKind::TurnStarted {
+                turn_id,
+                input: "x".to_string(),
+            })
+            .await?;
+        drop(thread);
+
+        let resumed = store
+            .resume_thread(thread_id)
+            .await?
+            .expect("thread exists");
+        assert!(resumed.state().active_turn_id.is_none());
+
+        let events = resumed.events_since(EventSeq::ZERO).await?;
+        let last = events.last().expect("events");
+        assert!(matches!(
+            &last.kind,
+            ThreadEventKind::TurnCompleted {
+                turn_id: got,
+                status: TurnStatus::Failed,
+                reason: Some(_),
+            } if *got == turn_id
+        ));
+        Ok(())
+    }
+}

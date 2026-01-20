@@ -97,8 +97,15 @@ pub async fn read_events_since(
         if line.is_empty() {
             continue;
         }
-        let event: ThreadEvent =
-            serde_json::from_slice(line).context("parse event line from jsonl")?;
+        let event: ThreadEvent = match serde_json::from_slice(line) {
+            Ok(event) => event,
+            Err(err) => {
+                if bytes.last() != Some(&b'\n') {
+                    break;
+                }
+                return Err(err).context("parse event line from jsonl");
+            }
+        };
         if event.thread_id != expected_thread_id {
             anyhow::bail!(
                 "event log thread_id mismatch: expected {}, got {}",
@@ -278,6 +285,7 @@ mod tests {
             .append(ThreadEventKind::TurnCompleted {
                 turn_id: pm_protocol::TurnId::new(),
                 status: pm_protocol::TurnStatus::Completed,
+                reason: None,
             })
             .await?;
         drop(w);

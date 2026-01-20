@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::domain::{RepositoryName, SessionId, TaskId};
+use pm_protocol::ThreadId;
 
 #[derive(Clone, Debug)]
 pub struct PmPaths {
@@ -26,6 +27,14 @@ impl PmPaths {
 
     pub fn locks_dir(&self) -> PathBuf {
         self.root.join("locks")
+    }
+
+    pub fn threads_dir(&self) -> PathBuf {
+        self.root.join("threads")
+    }
+
+    pub fn thread_dir(&self, thread_id: ThreadId) -> PathBuf {
+        self.threads_dir().join(thread_id.to_string())
     }
 
     pub fn repo_bare_path(&self, name: &RepositoryName) -> PathBuf {

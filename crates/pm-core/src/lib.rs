@@ -4,6 +4,7 @@ pub mod hooks;
 pub mod orchestrator;
 pub mod paths;
 pub mod storage;
+pub mod threads;
 
 pub use crate::domain::{
     CheckSummary, HookSpec, MergeResult, PrName, PullRequest, PullRequestStatus, Repository,
@@ -16,3 +17,4 @@ pub use crate::hooks::{CommandHookRunner, HookRunner, NoopHookRunner};
 pub use crate::orchestrator::{Architect, Coder, Merger, Orchestrator, RuleBasedArchitect};
 pub use crate::paths::{PmPaths, SessionPaths, TaskPaths};
 pub use crate::storage::{FsStorage, Storage};
+pub use crate::threads::{ThreadHandle, ThreadStore};

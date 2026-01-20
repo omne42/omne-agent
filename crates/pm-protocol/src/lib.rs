@@ -106,5 +106,7 @@ pub enum ThreadEventKind {
     TurnCompleted {
         turn_id: TurnId,
         status: TurnStatus,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
     },
 }

@@ -1,21 +1,18 @@
 [package]
-name = "pm-core"
+name = "pm-app-server"
 edition.workspace = true
 rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-async-trait.workspace = true
-pm-eventlog = { path = "../pm-eventlog" }
+clap.workspace = true
+pm-core = { path = "../pm-core" }
 pm-protocol = { path = "../pm-protocol" }
 serde.workspace = true
 serde_json.workspace = true
-thiserror.workspace = true
-time.workspace = true
 tokio.workspace = true
+tokio-util.workspace = true
 tracing.workspace = true
-uuid.workspace = true
+tracing-subscriber.workspace = true
 
-[dev-dependencies]
-tempfile.workspace = true
