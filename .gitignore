@@ -1,1 +1,4 @@
 /example/
+/target/
+/.code_pm/
+/.github-agent-data/
