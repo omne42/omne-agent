@@ -122,7 +122,8 @@ impl FsStorage {
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(err) => return Err(err).context(format!("read json from {}", path.display())),
         };
-        let value = serde_json::from_slice(&bytes)?;
+        let value = serde_json::from_slice(&bytes)
+            .with_context(|| format!("parse json from {}", path.display()))?;
         Ok(Some(value))
     }
 
@@ -227,7 +228,8 @@ impl Storage for FsStorage {
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(err) => return Err(err).context(format!("read json from {}", path.display())),
         };
-        let value = serde_json::from_slice(&bytes)?;
+        let value = serde_json::from_slice(&bytes)
+            .with_context(|| format!("parse json from {}", path.display()))?;
         Ok(Some(value))
     }
 
