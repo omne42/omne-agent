@@ -36,6 +36,7 @@
 - hook 执行失败的错误现在会包含 session id，便于定位失败运行与对应 artifacts。
 - `pm-http` 构造 fallback 响应时现在会正确设置 HTTP status（避免极端情况下误返回 200）。
 - `code-pm run --stream-events-json` 在序列化异常时也会输出 JSON 行，避免污染 NDJSON 流。
+- `code-pm run --stream-events-json` 在 consumer 落后导致事件被丢弃时会输出 error JSON 行（`event_lagged`），避免静默丢事件。
 
 ## [0.1.0] - 2026-01-20
 

@@ -313,7 +313,23 @@ async fn run_session(
                         },
                     },
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(dropped)) => {
+                        match stream_events_mode {
+                            StreamEventsMode::Text => {
+                                eprintln!("[event] dropped {dropped} events (lagged)")
+                            }
+                            StreamEventsMode::Json => {
+                                let line = serde_json::json!({
+                                    "type": "error",
+                                    "error": "event_lagged",
+                                    "dropped": dropped,
+                                    "message": format!("dropped {dropped} events due to lag"),
+                                });
+                                eprintln!("{line}");
+                            }
+                        }
+                        continue;
+                    }
                 }
             }
         }))
