@@ -27,7 +27,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    Init,
+    Init(InitArgs),
     Repo {
         #[command(subcommand)]
         command: RepoCommand,
@@ -40,6 +40,12 @@ enum Command {
     Run(Box<RunArgs>),
 }
 
+#[derive(Parser, Clone)]
+struct InitArgs {
+    #[arg(long, default_value_t = false)]
+    json: bool,
+}
+
 #[derive(Subcommand)]
 enum RepoCommand {
     Inject {
@@ -47,6 +53,8 @@ enum RepoCommand {
         source: String,
         #[arg(long, value_parser = parse_non_empty_trimmed)]
         name: Option<String>,
+        #[arg(long, default_value_t = false)]
+        json: bool,
     },
     List(RepoListArgs),
 }
@@ -155,19 +163,38 @@ async fn main() -> anyhow::Result<()> {
     let repo_manager = RepoManager::new(pm_paths.clone());
 
     match cli.command {
-        Command::Init => {
+        Command::Init(args) => {
             repo_manager.ensure_layout().await?;
-            println!("{}", pm_paths.root().display());
+            if args.json {
+                let output = serde_json::json!({
+                    "pm_root": pm_paths.root().display().to_string(),
+                    "repos_dir": pm_paths.repos_dir().display().to_string(),
+                    "data_dir": pm_paths.data_dir().display().to_string(),
+                    "locks_dir": pm_paths.locks_dir().display().to_string(),
+                });
+                println!("{}", serde_json::to_string_pretty(&output)?);
+            } else {
+                println!("{}", pm_paths.root().display());
+            }
         }
         Command::Repo { command } => match command {
-            RepoCommand::Inject { source, name } => {
+            RepoCommand::Inject { source, name, json } => {
                 let repo_name = name
                     .as_deref()
                     .map(pm_core::RepositoryName::sanitize)
                     .unwrap_or_else(|| RepoManager::default_repo_name_from_source(&source));
                 let repo = repo_manager.inject(&repo_name, &source).await?;
-                println!("repo: {}", repo.name.as_str());
-                println!("bare: {}", repo.bare_path.display());
+                if json {
+                    let output = serde_json::json!({
+                        "name": repo.name.as_str(),
+                        "bare_path": repo.bare_path.display().to_string(),
+                        "lock_path": repo.lock_path.display().to_string(),
+                    });
+                    println!("{}", serde_json::to_string_pretty(&output)?);
+                } else {
+                    println!("repo: {}", repo.name.as_str());
+                    println!("bare: {}", repo.bare_path.display());
+                }
             }
             RepoCommand::List(args) => {
                 let repos = repo_manager.list_repos().await?;
@@ -1085,6 +1112,29 @@ mod tests {
         };
         assert!(args.json);
         assert!(args.verbose);
+    }
+
+    #[test]
+    fn cli_init_parses_json_flag() {
+        let cli = Cli::try_parse_from(["code-pm", "init", "--json"]).unwrap();
+
+        let Command::Init(args) = cli.command else {
+            panic!("expected init subcommand");
+        };
+        assert!(args.json);
+    }
+
+    #[test]
+    fn cli_repo_inject_parses_json_flag() {
+        let cli = Cli::try_parse_from(["code-pm", "repo", "inject", "src", "--json"]).unwrap();
+
+        let Command::Repo { command } = cli.command else {
+            panic!("expected repo subcommand");
+        };
+        let RepoCommand::Inject { json, .. } = command else {
+            panic!("expected repo inject");
+        };
+        assert!(json);
     }
 
     #[tokio::test]
