@@ -47,7 +47,12 @@ impl RepoManager {
     }
 
     pub async fn repo_exists(&self, name: &RepositoryName) -> anyhow::Result<bool> {
-        Ok(tokio::fs::try_exists(self.paths.repo_bare_path(name)).await?)
+        let path = self.paths.repo_bare_path(name);
+        match tokio::fs::metadata(&path).await {
+            Ok(meta) => Ok(meta.is_dir()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(err) => Err(err).with_context(|| format!("stat {}", path.display())),
+        }
     }
 
     pub async fn inject(&self, name: &RepositoryName, source: &str) -> anyhow::Result<Repository> {
@@ -59,7 +64,21 @@ impl RepoManager {
             .context("lock repo injection")?;
 
         let bare_path = self.paths.repo_bare_path(name);
-        if tokio::fs::try_exists(&bare_path).await? {
+        let bare_exists = match tokio::fs::metadata(&bare_path).await {
+            Ok(meta) => {
+                if !meta.is_dir() {
+                    anyhow::bail!(
+                        "invalid repo {name} (expected bare repo directory at {})",
+                        bare_path.display()
+                    );
+                }
+                true
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => false,
+            Err(err) => return Err(err).with_context(|| format!("stat {}", bare_path.display())),
+        };
+
+        if bare_exists {
             info!(repo = %name, "updating injected repo");
             let source_arg = normalize_git_source_arg(source).await?;
 
@@ -153,8 +172,19 @@ impl RepoManager {
 
     pub async fn load(&self, name: &RepositoryName) -> anyhow::Result<Repository> {
         let bare_path = self.paths.repo_bare_path(name);
-        if !tokio::fs::try_exists(&bare_path).await? {
-            anyhow::bail!("unknown repo {name} (missing {})", bare_path.display());
+        match tokio::fs::metadata(&bare_path).await {
+            Ok(meta) => {
+                if !meta.is_dir() {
+                    anyhow::bail!(
+                        "invalid repo {name} (expected bare repo directory at {})",
+                        bare_path.display()
+                    );
+                }
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                anyhow::bail!("unknown repo {name} (missing {})", bare_path.display());
+            }
+            Err(err) => return Err(err).with_context(|| format!("stat {}", bare_path.display())),
         }
         Ok(Repository {
             name: name.clone(),
@@ -170,6 +200,10 @@ impl RepoManager {
         while let Some(entry) = read_dir.next_entry().await? {
             let path = entry.path();
             if path.extension().and_then(|s| s.to_str()) != Some("git") {
+                continue;
+            }
+            let meta = entry.metadata().await?;
+            if !meta.is_dir() {
                 continue;
             }
             let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
@@ -247,5 +281,23 @@ mod tests {
             RepoManager::default_repo_name_from_source(" ").as_str(),
             "repo"
         );
+    }
+
+    #[tokio::test]
+    async fn list_repos_ignores_non_directories() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
+        let repo_manager = RepoManager::new(pm_paths.clone());
+        repo_manager.ensure_layout().await?;
+
+        tokio::fs::create_dir_all(pm_paths.repos_dir().join("good.git")).await?;
+        tokio::fs::write(pm_paths.repos_dir().join("bad.git"), b"not a repo").await?;
+
+        let repos = repo_manager.list_repos().await?;
+        assert_eq!(
+            repos.iter().map(|repo| repo.as_str()).collect::<Vec<_>>(),
+            vec!["good"]
+        );
+        Ok(())
     }
 }

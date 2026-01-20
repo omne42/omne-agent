@@ -276,8 +276,13 @@ async fn git_http_backend(
     let repo_name = RepositoryName::new(repo_dir.trim_end_matches(".git").to_string())
         .map_err(|_| ApiError::not_found("unknown repo"))?;
     let repo_path = state.repos_root.join(format!("{}.git", repo_name.as_str()));
-    if !tokio::fs::try_exists(&repo_path).await? {
-        return Err(ApiError::not_found("unknown repo"));
+    match tokio::fs::metadata(&repo_path).await {
+        Ok(meta) if meta.is_dir() => {}
+        Ok(_) => return Err(ApiError::not_found("unknown repo")),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Err(ApiError::not_found("unknown repo"));
+        }
+        Err(err) => return Err(err.into()),
     }
     let lock_path = state.repo_manager.paths().repo_lock_path(&repo_name);
 
