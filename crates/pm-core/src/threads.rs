@@ -96,6 +96,7 @@ impl ThreadStore {
 
         let events = handle.events_since(EventSeq::ZERO).await?;
         let mut active_processes = HashSet::<ProcessId>::new();
+        let mut active_tools = HashSet::<pm_protocol::ToolId>::new();
         for event in events {
             match event.kind {
                 ThreadEventKind::ProcessStarted { process_id, .. } => {
@@ -103,6 +104,12 @@ impl ThreadStore {
                 }
                 ThreadEventKind::ProcessExited { process_id, .. } => {
                     active_processes.remove(&process_id);
+                }
+                ThreadEventKind::ToolStarted { tool_id, .. } => {
+                    active_tools.insert(tool_id);
+                }
+                ThreadEventKind::ToolCompleted { tool_id, .. } => {
+                    active_tools.remove(&tool_id);
                 }
                 _ => {}
             }
@@ -113,6 +120,16 @@ impl ThreadStore {
                     process_id,
                     exit_code: None,
                     reason: Some("recovered incomplete process on resume".to_string()),
+                })
+                .await?;
+        }
+        for tool_id in active_tools {
+            handle
+                .append(ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: pm_protocol::ToolStatus::Cancelled,
+                    error: Some("recovered incomplete tool on resume".to_string()),
+                    result: None,
                 })
                 .await?;
         }
