@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use anyhow::Context;
 use async_trait::async_trait;
 use time::OffsetDateTime;
 use tokio::task::JoinSet;
@@ -349,7 +350,8 @@ impl Orchestrator {
                 }
                 Err(err) => {
                     self.events.emit(RunEvent::HookFinished { ok: false });
-                    return Err(err);
+                    return Err(err)
+                        .with_context(|| format!("hook failed for session {}", result.session.id));
                 }
             }
         }
