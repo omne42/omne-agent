@@ -615,6 +615,12 @@ impl From<ApiError> for Response<Body> {
             axum::http::header::CONTENT_TYPE,
             HeaderValue::from_static("text/plain; charset=utf-8"),
         );
+        if val.status == StatusCode::METHOD_NOT_ALLOWED {
+            response.headers_mut().insert(
+                axum::http::header::ALLOW,
+                HeaderValue::from_static("GET, POST"),
+            );
+        }
         response
     }
 }
@@ -688,6 +694,10 @@ mod tests {
             .body(Body::empty())?;
         let response = app.oneshot(request).await?;
         assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(
+            response.headers().get(axum::http::header::ALLOW),
+            Some(&HeaderValue::from_static("GET, POST"))
+        );
 
         let body = response.into_body().collect().await?.to_bytes();
         assert_eq!(body.as_ref(), b"method not allowed");
