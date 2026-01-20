@@ -258,6 +258,11 @@ struct ThreadResumeParams {
 }
 
 #[derive(Debug, Deserialize)]
+struct ThreadStateParams {
+    thread_id: ThreadId,
+}
+
+#[derive(Debug, Deserialize)]
 struct ThreadEventsParams {
     thread_id: ThreadId,
     #[serde(default)]
@@ -478,6 +483,32 @@ async fn main() -> anyhow::Result<()> {
                         }
                     }
                 }
+                Err(err) => JsonRpcResponse::err(
+                    id,
+                    JSONRPC_INVALID_PARAMS,
+                    "invalid params",
+                    Some(serde_json::json!({ "error": err.to_string() })),
+                ),
+            },
+            "thread/state" => match serde_json::from_value::<ThreadStateParams>(request.params) {
+                Ok(params) => match server.get_or_load_thread(params.thread_id).await {
+                    Ok(rt) => {
+                        let handle = rt.handle.lock().await;
+                        let state = handle.state();
+                        JsonRpcResponse::ok(
+                            id,
+                            serde_json::json!({
+                                "thread_id": handle.thread_id(),
+                                "last_seq": handle.last_seq().0,
+                                "active_turn_id": state.active_turn_id,
+                                "active_turn_interrupt_requested": state.active_turn_interrupt_requested,
+                            }),
+                        )
+                    }
+                    Err(err) => {
+                        JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None)
+                    }
+                },
                 Err(err) => JsonRpcResponse::err(
                     id,
                     JSONRPC_INVALID_PARAMS,
