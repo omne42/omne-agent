@@ -779,46 +779,65 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
         })
         .await?;
 
-    let path = pm_core::resolve_file(
-        &thread_root,
-        Path::new(&params.path),
-        pm_core::PathAccess::Read,
-        false,
-    )
-    .await?;
-
-    let limit = max_bytes + 1;
-    let file = tokio::fs::File::open(&path)
-        .await
-        .with_context(|| format!("open {}", path.display()))?;
-    let mut buf = Vec::new();
-    file.take(limit).read_to_end(&mut buf).await?;
-
-    let truncated = buf.len() > max_bytes as usize;
-    if truncated {
-        buf.truncate(max_bytes as usize);
-    }
-    let bytes = buf.len();
-    let text = String::from_utf8(buf).context("file is not valid utf-8")?;
-
-    thread_rt
-        .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
-            tool_id,
-            status: pm_protocol::ToolStatus::Completed,
-            error: None,
-            result: Some(serde_json::json!({
-                "bytes": bytes,
-                "truncated": truncated,
-            })),
-        })
+    let outcome: anyhow::Result<(PathBuf, String, bool, usize)> = async {
+        let path = pm_core::resolve_file(
+            &thread_root,
+            Path::new(&params.path),
+            pm_core::PathAccess::Read,
+            false,
+        )
         .await?;
 
-    Ok(serde_json::json!({
-        "tool_id": tool_id,
-        "resolved_path": path.display().to_string(),
-        "text": text,
-        "truncated": truncated,
-    }))
+        let limit = max_bytes + 1;
+        let file = tokio::fs::File::open(&path)
+            .await
+            .with_context(|| format!("open {}", path.display()))?;
+        let mut buf = Vec::new();
+        file.take(limit).read_to_end(&mut buf).await?;
+
+        let truncated = buf.len() > max_bytes as usize;
+        if truncated {
+            buf.truncate(max_bytes as usize);
+        }
+        let bytes = buf.len();
+        let text = String::from_utf8(buf).context("file is not valid utf-8")?;
+        Ok((path, text, truncated, bytes))
+    }
+    .await;
+
+    match outcome {
+        Ok((path, text, truncated, bytes)) => {
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: pm_protocol::ToolStatus::Completed,
+                    error: None,
+                    result: Some(serde_json::json!({
+                        "bytes": bytes,
+                        "truncated": truncated,
+                    })),
+                })
+                .await?;
+
+            Ok(serde_json::json!({
+                "tool_id": tool_id,
+                "resolved_path": path.display().to_string(),
+                "text": text,
+                "truncated": truncated,
+            }))
+        }
+        Err(err) => {
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: pm_protocol::ToolStatus::Failed,
+                    error: Some(err.to_string()),
+                    result: None,
+                })
+                .await?;
+            Err(err)
+        }
+    }
 }
 
 async fn handle_file_write(server: &Server, params: FileWriteParams) -> anyhow::Result<Value> {
@@ -841,39 +860,59 @@ async fn handle_file_write(server: &Server, params: FileWriteParams) -> anyhow::
         })
         .await?;
 
-    let path = pm_core::resolve_file(
-        &thread_root,
-        Path::new(&params.path),
-        pm_core::PathAccess::Write,
-        create_parent_dirs,
-    )
-    .await?;
-
-    tokio::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(&path)
-        .await
-        .with_context(|| format!("open {}", path.display()))?
-        .write_all(params.text.as_bytes())
-        .await
-        .with_context(|| format!("write {}", path.display()))?;
-
-    thread_rt
-        .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
-            tool_id,
-            status: pm_protocol::ToolStatus::Completed,
-            error: None,
-            result: Some(serde_json::json!({ "bytes": bytes })),
-        })
+    let outcome: anyhow::Result<PathBuf> = async {
+        let path = pm_core::resolve_file(
+            &thread_root,
+            Path::new(&params.path),
+            pm_core::PathAccess::Write,
+            create_parent_dirs,
+        )
         .await?;
 
-    Ok(serde_json::json!({
-        "tool_id": tool_id,
-        "resolved_path": path.display().to_string(),
-        "bytes_written": bytes,
-    }))
+        tokio::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&path)
+            .await
+            .with_context(|| format!("open {}", path.display()))?
+            .write_all(params.text.as_bytes())
+            .await
+            .with_context(|| format!("write {}", path.display()))?;
+
+        Ok(path)
+    }
+    .await;
+
+    match outcome {
+        Ok(path) => {
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: pm_protocol::ToolStatus::Completed,
+                    error: None,
+                    result: Some(serde_json::json!({ "bytes": bytes })),
+                })
+                .await?;
+
+            Ok(serde_json::json!({
+                "tool_id": tool_id,
+                "resolved_path": path.display().to_string(),
+                "bytes_written": bytes,
+            }))
+        }
+        Err(err) => {
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: pm_protocol::ToolStatus::Failed,
+                    error: Some(err.to_string()),
+                    result: None,
+                })
+                .await?;
+            Err(err)
+        }
+    }
 }
 
 async fn handle_process_list(
