@@ -62,12 +62,6 @@ async fn api_list_repos(State(state): State<Arc<AppState>>) -> Result<Response<B
     Ok(json_response(json))
 }
 
-async fn api_list_sessions(State(state): State<Arc<AppState>>) -> Result<Response<Body>, ApiError> {
-    let sessions = state.storage.list_session_ids().await?;
-    let json = serde_json::to_vec(&sessions)?;
-    Ok(json_response(json))
-}
-
 #[derive(Debug, Deserialize)]
 struct SessionBundleQuery {
     all: Option<String>,
@@ -79,6 +73,32 @@ fn parse_bool_flag(value: &str) -> bool {
         || value.eq_ignore_ascii_case("true")
         || value.eq_ignore_ascii_case("yes")
         || value.eq_ignore_ascii_case("on")
+}
+
+#[derive(Debug, Deserialize)]
+struct SessionsQuery {
+    verbose: Option<String>,
+    limit: Option<usize>,
+}
+
+async fn api_list_sessions(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<SessionsQuery>,
+) -> Result<Response<Body>, ApiError> {
+    let verbose = query.verbose.as_deref().is_some_and(parse_bool_flag);
+    if verbose {
+        let mut sessions = state.storage.list_session_meta().await?;
+        if let Some(limit) = query.limit {
+            sessions.truncate(limit);
+        }
+        Ok(json_response(serde_json::to_vec(&sessions)?))
+    } else {
+        let mut sessions = state.storage.list_session_ids().await?;
+        if let Some(limit) = query.limit {
+            sessions.truncate(limit);
+        }
+        Ok(json_response(serde_json::to_vec(&sessions)?))
+    }
 }
 
 async fn api_get_session_bundle(

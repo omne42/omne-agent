@@ -1,6 +1,7 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
+use pm_core::domain::SessionMeta;
 use pm_core::{FsStorage, PmPaths, SessionId, Storage};
 use tower::ServiceExt;
 
@@ -143,5 +144,172 @@ async fn get_session_bundle_all_includes_all_present_keys() -> anyhow::Result<()
     for key in ["session", "tasks", "prs", "merge", "result"] {
         assert!(value.get(key).is_some(), "missing key {key}");
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_sessions_returns_session_ids() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
+
+    let id1: SessionId = "00000000-0000-0000-0000-000000000001".parse()?;
+    let id2: SessionId = "00000000-0000-0000-0000-000000000002".parse()?;
+
+    let storage = FsStorage::new(pm_paths.data_dir());
+    storage
+        .put_json(&format!("sessions/{id2}/tasks"), &serde_json::json!([]))
+        .await?;
+    storage
+        .put_json(
+            &format!("sessions/{id1}/session"),
+            &serde_json::json!({"id": id1}),
+        )
+        .await?;
+
+    let app = pm_http::router(pm_paths)?;
+    let request = Request::builder()
+        .uri("/api/v0/sessions")
+        .body(Body::empty())?;
+    let response = app.oneshot(request).await.unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = response.into_body().collect().await?.to_bytes();
+    let ids: Vec<SessionId> = serde_json::from_slice(&bytes)?;
+    assert_eq!(ids, vec![id1, id2]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_sessions_limit_truncates() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
+
+    let id1: SessionId = "00000000-0000-0000-0000-000000000001".parse()?;
+    let id2: SessionId = "00000000-0000-0000-0000-000000000002".parse()?;
+
+    let storage = FsStorage::new(pm_paths.data_dir());
+    storage
+        .put_json(&format!("sessions/{id2}/tasks"), &serde_json::json!([]))
+        .await?;
+    storage
+        .put_json(
+            &format!("sessions/{id1}/session"),
+            &serde_json::json!({"id": id1}),
+        )
+        .await?;
+
+    let app = pm_http::router(pm_paths)?;
+    let request = Request::builder()
+        .uri("/api/v0/sessions?limit=1")
+        .body(Body::empty())?;
+    let response = app.oneshot(request).await.unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = response.into_body().collect().await?.to_bytes();
+    let ids: Vec<SessionId> = serde_json::from_slice(&bytes)?;
+    assert_eq!(ids, vec![id1]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_sessions_verbose_returns_session_meta_sorted() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
+
+    let id1: SessionId = "00000000-0000-0000-0000-000000000001".parse()?;
+    let id2: SessionId = "00000000-0000-0000-0000-000000000002".parse()?;
+
+    let storage = FsStorage::new(pm_paths.data_dir());
+    storage
+        .put_json(
+            &format!("sessions/{id1}/session"),
+            &serde_json::json!({
+                "id": id1,
+                "repo": "repo",
+                "pr_name": "pr",
+                "prompt": "old",
+                "base_branch": "main",
+                "created_at": [2026, 20, 0, 0, 10, 0, 0, 0, 0],
+            }),
+        )
+        .await?;
+    storage
+        .put_json(
+            &format!("sessions/{id2}/session"),
+            &serde_json::json!({
+                "id": id2,
+                "repo": "repo",
+                "pr_name": "pr",
+                "prompt": "new",
+                "base_branch": "main",
+                "created_at": [2026, 20, 0, 0, 20, 0, 0, 0, 0],
+            }),
+        )
+        .await?;
+
+    let app = pm_http::router(pm_paths)?;
+    let request = Request::builder()
+        .uri("/api/v0/sessions?verbose=true")
+        .body(Body::empty())?;
+    let response = app.oneshot(request).await.unwrap();
+
+    let status = response.status();
+    let bytes = response.into_body().collect().await?.to_bytes();
+    assert_eq!(status, StatusCode::OK, "{}", std::str::from_utf8(&bytes)?);
+    let sessions: Vec<SessionMeta> = serde_json::from_slice(&bytes)?;
+    assert_eq!(sessions.len(), 2);
+    assert_eq!(sessions[0].id, id2);
+    assert_eq!(sessions[1].id, id1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_sessions_verbose_limit_truncates() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
+
+    let id1: SessionId = "00000000-0000-0000-0000-000000000001".parse()?;
+    let id2: SessionId = "00000000-0000-0000-0000-000000000002".parse()?;
+
+    let storage = FsStorage::new(pm_paths.data_dir());
+    storage
+        .put_json(
+            &format!("sessions/{id1}/session"),
+            &serde_json::json!({
+                "id": id1,
+                "repo": "repo",
+                "pr_name": "pr",
+                "prompt": "old",
+                "base_branch": "main",
+                "created_at": [2026, 20, 0, 0, 10, 0, 0, 0, 0],
+            }),
+        )
+        .await?;
+    storage
+        .put_json(
+            &format!("sessions/{id2}/session"),
+            &serde_json::json!({
+                "id": id2,
+                "repo": "repo",
+                "pr_name": "pr",
+                "prompt": "new",
+                "base_branch": "main",
+                "created_at": [2026, 20, 0, 0, 20, 0, 0, 0, 0],
+            }),
+        )
+        .await?;
+
+    let app = pm_http::router(pm_paths)?;
+    let request = Request::builder()
+        .uri("/api/v0/sessions?verbose=true&limit=1")
+        .body(Body::empty())?;
+    let response = app.oneshot(request).await.unwrap();
+
+    let status = response.status();
+    let bytes = response.into_body().collect().await?.to_bytes();
+    assert_eq!(status, StatusCode::OK, "{}", std::str::from_utf8(&bytes)?);
+    let sessions: Vec<SessionMeta> = serde_json::from_slice(&bytes)?;
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].id, id2);
     Ok(())
 }
