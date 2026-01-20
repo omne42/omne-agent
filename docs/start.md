@@ -35,6 +35,8 @@ feature，仅占位即可。
 - merge：顺序合并多个分支回 `base`（默认 `main`）
 - artifacts：`/tmp/.../session.json` + `result.json` + `tasks/<id>/task.json`，并保留每一步的 `checks.steps` 日志（`tasks/<id>/artifacts/*.log`、`merge/artifacts/*.log`、失败时的 `error.log`/`merge-error.log`），以及 `.code_pm/data/sessions/<id>/`
 
+更完整的端到端 Runbook 见 `docs/workflow.md`。
+
 ## 开发/试跑
 
 初始化本地数据目录：
