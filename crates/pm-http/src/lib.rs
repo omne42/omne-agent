@@ -51,6 +51,9 @@ pub fn router(pm_paths: PmPaths) -> anyhow::Result<Router> {
 }
 
 pub async fn serve(pm_paths: PmPaths, addr: SocketAddr) -> anyhow::Result<()> {
+    if !addr.ip().is_loopback() {
+        anyhow::bail!("pm-http is loopback-only; bind to 127.0.0.1:<port>");
+    }
     let app = router(pm_paths)?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
     let local_addr = listener.local_addr()?;
@@ -645,6 +648,15 @@ mod tests {
         let body = Body::from(vec![0u8; 6]);
         let err = spool_body_to_tempfile(body, 5).await.unwrap_err();
         assert_eq!(err.status, StatusCode::PAYLOAD_TOO_LARGE);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn serve_rejects_non_loopback_addr() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
+        let err = serve(pm_paths, "0.0.0.0:0".parse()?).await.unwrap_err();
+        assert!(err.to_string().contains("loopback-only"));
         Ok(())
     }
 }
