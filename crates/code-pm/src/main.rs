@@ -9,6 +9,7 @@ use pm_core::{
 };
 use pm_git::{RepoManager, find_repo_root};
 use pm_http::serve as serve_http;
+use time::format_description::well_known::Rfc3339;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
@@ -146,13 +147,17 @@ async fn main() -> anyhow::Result<()> {
                         None => sessions,
                     };
                     for session in sessions {
+                        let created_at = session
+                            .created_at
+                            .format(&Rfc3339)
+                            .unwrap_or_else(|_| session.created_at.to_string());
                         println!(
                             "{} repo={} pr={} base={} created_at={}",
                             session.id,
                             session.repo.as_str(),
                             session.pr_name.as_str(),
                             session.base_branch,
-                            session.created_at
+                            created_at
                         );
                     }
                 } else {
