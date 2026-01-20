@@ -1,8 +1,9 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use pm_eventlog::{EventLogWriter, ThreadState, read_events_since as read_events_since_jsonl};
-use pm_protocol::{EventSeq, ThreadEvent, ThreadEventKind, ThreadId, TurnStatus};
+use pm_protocol::{EventSeq, ProcessId, ThreadEvent, ThreadEventKind, ThreadId, TurnStatus};
 
 use crate::PmPaths;
 
@@ -89,6 +90,29 @@ impl ThreadStore {
                     turn_id,
                     status,
                     reason: Some("recovered incomplete turn on resume".to_string()),
+                })
+                .await?;
+        }
+
+        let events = handle.events_since(EventSeq::ZERO).await?;
+        let mut active_processes = HashSet::<ProcessId>::new();
+        for event in events {
+            match event.kind {
+                ThreadEventKind::ProcessStarted { process_id, .. } => {
+                    active_processes.insert(process_id);
+                }
+                ThreadEventKind::ProcessExited { process_id, .. } => {
+                    active_processes.remove(&process_id);
+                }
+                _ => {}
+            }
+        }
+        for process_id in active_processes {
+            handle
+                .append(ThreadEventKind::ProcessExited {
+                    process_id,
+                    exit_code: None,
+                    reason: Some("recovered incomplete process on resume".to_string()),
                 })
                 .await?;
         }
