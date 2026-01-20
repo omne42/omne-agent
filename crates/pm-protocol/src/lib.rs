@@ -5,6 +5,10 @@ use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ThreadId(pub Uuid);
@@ -220,6 +224,8 @@ pub enum ThreadEventKind {
     ApprovalDecided {
         approval_id: ApprovalId,
         decision: ApprovalDecision,
+        #[serde(default, skip_serializing_if = "is_false")]
+        remember: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
     },

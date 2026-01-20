@@ -34,6 +34,7 @@
 - `pm-eventlog ThreadState`：记录 thread 的 `cwd`；`pm-app-server thread/state` 返回 `cwd` 便于后续 sandbox/root 约束。
 - `pm-eventlog ThreadState`：增加 `approval_policy`（默认 auto-approve）；`pm-app-server thread/state` 返回当前策略。
 - `pm-app-server`：当 `approval_policy=manual` 时，`file/write`/`file/delete`/`fs/mkdir`/`process/start` 会返回 `needs_approval` 并写入 `ApprovalRequested`；提供 `approval_id` 且已 `approval/decide` 后才会执行。
+- `pm-app-server approvals`：`approval/decide` 支持 `remember=true`（session 内记忆 approve/deny），同类操作无需重复弹审批；拒绝也会被记住并直接拦截。
 - `pm-app-server process/start`：引入 `pm-execpolicy` gate（`prefix_rule`）：`forbidden` 直接拒绝并写入 `ToolStatus::Denied`；`manual` 策略下仅当 `prompt`/未匹配时才要求 approval（用 allowlist 降低骚扰）。
 - `pm-app-server turn/interrupt`：会尝试终止同一 turn 下仍在运行的后台进程（best-effort）。
 - `pm-app-server process/start`：默认 cwd 改为 thread 的 `cwd`，并对 `cwd` 做 root + symlink 边界校验（见 `pm-core::sandbox`）。

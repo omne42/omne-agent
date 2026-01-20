@@ -469,6 +469,8 @@ struct ApprovalDecideParams {
     approval_id: pm_protocol::ApprovalId,
     decision: pm_protocol::ApprovalDecision,
     #[serde(default)]
+    remember: bool,
+    #[serde(default)]
     reason: Option<String>,
 }
 
@@ -1131,6 +1133,7 @@ async fn handle_approval_decide(
     rt.append_event(pm_protocol::ThreadEventKind::ApprovalDecided {
         approval_id: params.approval_id,
         decision: params.decision,
+        remember: params.remember,
         reason: params.reason,
     })
     .await?;
@@ -1173,6 +1176,7 @@ async fn handle_approval_list(
             pm_protocol::ThreadEventKind::ApprovalDecided {
                 approval_id,
                 decision,
+                remember,
                 reason,
             } => {
                 decided.insert(
@@ -1180,6 +1184,7 @@ async fn handle_approval_list(
                     serde_json::json!({
                         "approval_id": approval_id,
                         "decision": decision,
+                        "remember": remember,
                         "reason": reason,
                         "decided_at": ts,
                     }),
@@ -1267,6 +1272,117 @@ async fn ensure_approval(
         }
         None => anyhow::bail!("approval not decided: {}", approval_id),
     }
+}
+
+fn approval_rule_key(action: &str, params: &serde_json::Value) -> anyhow::Result<String> {
+    let obj = params.as_object();
+    match action {
+        "file/write" => {
+            let path = obj
+                .and_then(|o| o.get("path"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let create_parent_dirs = obj
+                .and_then(|o| o.get("create_parent_dirs"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            Ok(format!(
+                "file/write|path={path}|create_parent_dirs={create_parent_dirs}"
+            ))
+        }
+        "file/delete" => {
+            let path = obj
+                .and_then(|o| o.get("path"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let recursive = obj
+                .and_then(|o| o.get("recursive"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            Ok(format!("file/delete|path={path}|recursive={recursive}"))
+        }
+        "fs/mkdir" => {
+            let path = obj
+                .and_then(|o| o.get("path"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let recursive = obj
+                .and_then(|o| o.get("recursive"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            Ok(format!("fs/mkdir|path={path}|recursive={recursive}"))
+        }
+        "file/edit" => {
+            let path = obj
+                .and_then(|o| o.get("path"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            Ok(format!("file/edit|path={path}"))
+        }
+        "file/patch" => {
+            let path = obj
+                .and_then(|o| o.get("path"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            Ok(format!("file/patch|path={path}"))
+        }
+        "process/start" => {
+            let serialized = serde_json::to_string(params).context("serialize approval params")?;
+            Ok(format!("process/start|{serialized}"))
+        }
+        other => {
+            let serialized = serde_json::to_string(params).context("serialize approval params")?;
+            Ok(format!("{other}|{serialized}"))
+        }
+    }
+}
+
+async fn remembered_approval_decision(
+    server: &Server,
+    thread_id: ThreadId,
+    expected_action: &str,
+    expected_params: &serde_json::Value,
+) -> anyhow::Result<Option<pm_protocol::ApprovalDecision>> {
+    let expected_key = approval_rule_key(expected_action, expected_params)?;
+    let events = server
+        .thread_store
+        .read_events_since(thread_id, EventSeq::ZERO)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("thread not found: {}", thread_id))?;
+
+    let mut requested = HashMap::<pm_protocol::ApprovalId, (String, serde_json::Value)>::new();
+    let mut remembered = HashMap::<String, pm_protocol::ApprovalDecision>::new();
+
+    for event in events {
+        match event.kind {
+            pm_protocol::ThreadEventKind::ApprovalRequested {
+                approval_id,
+                action,
+                params,
+                ..
+            } => {
+                requested.insert(approval_id, (action, params));
+            }
+            pm_protocol::ThreadEventKind::ApprovalDecided {
+                approval_id,
+                decision,
+                remember,
+                ..
+            } => {
+                if !remember {
+                    continue;
+                }
+                let Some((action, params)) = requested.get(&approval_id) else {
+                    continue;
+                };
+                let key = approval_rule_key(action, params)?;
+                remembered.insert(key, decision);
+            }
+            _ => {}
+        }
+    }
+
+    Ok(remembered.get(&expected_key).copied())
 }
 
 async fn load_thread_root(
@@ -1671,19 +1787,34 @@ async fn handle_file_write(server: &Server, params: FileWriteParams) -> anyhow::
                 .await?;
             }
             None => {
-                let approval_id = pm_protocol::ApprovalId::new();
-                thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ApprovalRequested {
-                        approval_id,
-                        turn_id: params.turn_id,
-                        action: "file/write".to_string(),
-                        params: approval_params,
-                    })
-                    .await?;
-                return Ok(serde_json::json!({
-                    "needs_approval": true,
-                    "approval_id": approval_id,
-                }));
+                let remembered = remembered_approval_decision(
+                    server,
+                    params.thread_id,
+                    "file/write",
+                    &approval_params,
+                )
+                .await?;
+                match remembered {
+                    Some(pm_protocol::ApprovalDecision::Approved) => {}
+                    Some(pm_protocol::ApprovalDecision::Denied) => {
+                        anyhow::bail!("approval denied (remembered): file/write {}", params.path);
+                    }
+                    None => {
+                        let approval_id = pm_protocol::ApprovalId::new();
+                        thread_rt
+                            .append_event(pm_protocol::ThreadEventKind::ApprovalRequested {
+                                approval_id,
+                                turn_id: params.turn_id,
+                                action: "file/write".to_string(),
+                                params: approval_params,
+                            })
+                            .await?;
+                        return Ok(serde_json::json!({
+                            "needs_approval": true,
+                            "approval_id": approval_id,
+                        }));
+                    }
+                }
             }
         }
     }
@@ -1785,19 +1916,34 @@ async fn handle_file_patch(server: &Server, params: FilePatchParams) -> anyhow::
                 .await?;
             }
             None => {
-                let approval_id = pm_protocol::ApprovalId::new();
-                thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ApprovalRequested {
-                        approval_id,
-                        turn_id: params.turn_id,
-                        action: "file/patch".to_string(),
-                        params: approval_params,
-                    })
-                    .await?;
-                return Ok(serde_json::json!({
-                    "needs_approval": true,
-                    "approval_id": approval_id,
-                }));
+                let remembered = remembered_approval_decision(
+                    server,
+                    params.thread_id,
+                    "file/patch",
+                    &approval_params,
+                )
+                .await?;
+                match remembered {
+                    Some(pm_protocol::ApprovalDecision::Approved) => {}
+                    Some(pm_protocol::ApprovalDecision::Denied) => {
+                        anyhow::bail!("approval denied (remembered): file/patch {}", params.path);
+                    }
+                    None => {
+                        let approval_id = pm_protocol::ApprovalId::new();
+                        thread_rt
+                            .append_event(pm_protocol::ThreadEventKind::ApprovalRequested {
+                                approval_id,
+                                turn_id: params.turn_id,
+                                action: "file/patch".to_string(),
+                                params: approval_params,
+                            })
+                            .await?;
+                        return Ok(serde_json::json!({
+                            "needs_approval": true,
+                            "approval_id": approval_id,
+                        }));
+                    }
+                }
             }
         }
     }
@@ -1952,19 +2098,34 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
                 .await?;
             }
             None => {
-                let approval_id = pm_protocol::ApprovalId::new();
-                thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ApprovalRequested {
-                        approval_id,
-                        turn_id: params.turn_id,
-                        action: "file/edit".to_string(),
-                        params: approval_params,
-                    })
-                    .await?;
-                return Ok(serde_json::json!({
-                    "needs_approval": true,
-                    "approval_id": approval_id,
-                }));
+                let remembered = remembered_approval_decision(
+                    server,
+                    params.thread_id,
+                    "file/edit",
+                    &approval_params,
+                )
+                .await?;
+                match remembered {
+                    Some(pm_protocol::ApprovalDecision::Approved) => {}
+                    Some(pm_protocol::ApprovalDecision::Denied) => {
+                        anyhow::bail!("approval denied (remembered): file/edit {}", params.path);
+                    }
+                    None => {
+                        let approval_id = pm_protocol::ApprovalId::new();
+                        thread_rt
+                            .append_event(pm_protocol::ThreadEventKind::ApprovalRequested {
+                                approval_id,
+                                turn_id: params.turn_id,
+                                action: "file/edit".to_string(),
+                                params: approval_params,
+                            })
+                            .await?;
+                        return Ok(serde_json::json!({
+                            "needs_approval": true,
+                            "approval_id": approval_id,
+                        }));
+                    }
+                }
             }
         }
     }
@@ -2100,19 +2261,34 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
                 .await?;
             }
             None => {
-                let approval_id = pm_protocol::ApprovalId::new();
-                thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ApprovalRequested {
-                        approval_id,
-                        turn_id: params.turn_id,
-                        action: "file/delete".to_string(),
-                        params: approval_params,
-                    })
-                    .await?;
-                return Ok(serde_json::json!({
-                    "needs_approval": true,
-                    "approval_id": approval_id,
-                }));
+                let remembered = remembered_approval_decision(
+                    server,
+                    params.thread_id,
+                    "file/delete",
+                    &approval_params,
+                )
+                .await?;
+                match remembered {
+                    Some(pm_protocol::ApprovalDecision::Approved) => {}
+                    Some(pm_protocol::ApprovalDecision::Denied) => {
+                        anyhow::bail!("approval denied (remembered): file/delete {}", params.path);
+                    }
+                    None => {
+                        let approval_id = pm_protocol::ApprovalId::new();
+                        thread_rt
+                            .append_event(pm_protocol::ThreadEventKind::ApprovalRequested {
+                                approval_id,
+                                turn_id: params.turn_id,
+                                action: "file/delete".to_string(),
+                                params: approval_params,
+                            })
+                            .await?;
+                        return Ok(serde_json::json!({
+                            "needs_approval": true,
+                            "approval_id": approval_id,
+                        }));
+                    }
+                }
             }
         }
     }
@@ -2225,19 +2401,34 @@ async fn handle_fs_mkdir(server: &Server, params: FsMkdirParams) -> anyhow::Resu
                 .await?;
             }
             None => {
-                let approval_id = pm_protocol::ApprovalId::new();
-                thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ApprovalRequested {
-                        approval_id,
-                        turn_id: params.turn_id,
-                        action: "fs/mkdir".to_string(),
-                        params: approval_params,
-                    })
-                    .await?;
-                return Ok(serde_json::json!({
-                    "needs_approval": true,
-                    "approval_id": approval_id,
-                }));
+                let remembered = remembered_approval_decision(
+                    server,
+                    params.thread_id,
+                    "fs/mkdir",
+                    &approval_params,
+                )
+                .await?;
+                match remembered {
+                    Some(pm_protocol::ApprovalDecision::Approved) => {}
+                    Some(pm_protocol::ApprovalDecision::Denied) => {
+                        anyhow::bail!("approval denied (remembered): fs/mkdir {}", params.path);
+                    }
+                    None => {
+                        let approval_id = pm_protocol::ApprovalId::new();
+                        thread_rt
+                            .append_event(pm_protocol::ThreadEventKind::ApprovalRequested {
+                                approval_id,
+                                turn_id: params.turn_id,
+                                action: "fs/mkdir".to_string(),
+                                params: approval_params,
+                            })
+                            .await?;
+                        return Ok(serde_json::json!({
+                            "needs_approval": true,
+                            "approval_id": approval_id,
+                        }));
+                    }
+                }
             }
         }
     }
@@ -2543,19 +2734,34 @@ async fn handle_process_start(
                 .await?;
             }
             None => {
-                let approval_id = pm_protocol::ApprovalId::new();
-                thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ApprovalRequested {
-                        approval_id,
-                        turn_id: params.turn_id,
-                        action: "process/start".to_string(),
-                        params: approval_params,
-                    })
-                    .await?;
-                return Ok(serde_json::json!({
-                    "needs_approval": true,
-                    "approval_id": approval_id,
-                }));
+                let remembered = remembered_approval_decision(
+                    server,
+                    params.thread_id,
+                    "process/start",
+                    &approval_params,
+                )
+                .await?;
+                match remembered {
+                    Some(pm_protocol::ApprovalDecision::Approved) => {}
+                    Some(pm_protocol::ApprovalDecision::Denied) => {
+                        anyhow::bail!("approval denied (remembered): process/start");
+                    }
+                    None => {
+                        let approval_id = pm_protocol::ApprovalId::new();
+                        thread_rt
+                            .append_event(pm_protocol::ThreadEventKind::ApprovalRequested {
+                                approval_id,
+                                turn_id: params.turn_id,
+                                action: "process/start".to_string(),
+                                params: approval_params,
+                            })
+                            .await?;
+                        return Ok(serde_json::json!({
+                            "needs_approval": true,
+                            "approval_id": approval_id,
+                        }));
+                    }
+                }
             }
         }
     }
