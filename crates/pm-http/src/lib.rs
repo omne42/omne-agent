@@ -61,19 +61,8 @@ async fn api_list_repos(State(state): State<Arc<AppState>>) -> Result<Response<B
 }
 
 async fn api_list_sessions(State(state): State<Arc<AppState>>) -> Result<Response<Body>, ApiError> {
-    let keys = state.storage.list_prefix("sessions/").await?;
-    let mut sessions = std::collections::BTreeSet::new();
-    for key in keys {
-        let mut parts = key.split('/');
-        let Some(prefix) = parts.next() else { continue };
-        if prefix != "sessions" {
-            continue;
-        }
-        if let Some(id) = parts.next() {
-            sessions.insert(id.to_string());
-        }
-    }
-    let json = serde_json::to_vec(&sessions.into_iter().collect::<Vec<_>>())?;
+    let sessions = state.storage.list_session_ids().await?;
+    let json = serde_json::to_vec(&sessions)?;
     Ok(json_response(json))
 }
 

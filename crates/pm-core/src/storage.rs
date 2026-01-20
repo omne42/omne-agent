@@ -5,6 +5,8 @@ use async_trait::async_trait;
 use serde_json::Value;
 use uuid::Uuid;
 
+use crate::domain::SessionId;
+
 #[async_trait]
 pub trait Storage: Send + Sync {
     async fn put_json(&self, key: &str, value: &Value) -> anyhow::Result<()>;
@@ -20,6 +22,34 @@ pub struct FsStorage {
 impl FsStorage {
     pub fn new(root: PathBuf) -> Self {
         Self { root }
+    }
+
+    pub async fn list_session_ids(&self) -> anyhow::Result<Vec<SessionId>> {
+        let dir = self.root.join("sessions");
+        let mut read_dir = match tokio::fs::read_dir(&dir).await {
+            Ok(read_dir) => read_dir,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(err) => return Err(err).with_context(|| format!("read {}", dir.display())),
+        };
+
+        let mut ids = Vec::new();
+        while let Some(entry) = read_dir.next_entry().await? {
+            let file_type = entry.file_type().await?;
+            if !file_type.is_dir() {
+                continue;
+            }
+            let file_name = entry.file_name();
+            let Some(name) = file_name.to_str() else {
+                continue;
+            };
+            let Ok(id) = name.parse::<SessionId>() else {
+                continue;
+            };
+            ids.push(id);
+        }
+        ids.sort();
+        ids.dedup();
+        Ok(ids)
     }
 
     fn key_to_path(&self, key: &str) -> anyhow::Result<PathBuf> {
@@ -161,6 +191,7 @@ impl Storage for FsStorage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::SessionId;
 
     #[tokio::test]
     async fn roundtrip_put_get_list() -> anyhow::Result<()> {
@@ -204,6 +235,28 @@ mod tests {
         let value = storage.get_json("weird/key.json").await?;
         assert_eq!(value, Some(serde_json::json!({"ok": true})));
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_session_ids_reads_directories() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let storage = FsStorage::new(dir.path().to_path_buf());
+
+        let id1: SessionId = "00000000-0000-0000-0000-000000000001".parse()?;
+        let id2: SessionId = "00000000-0000-0000-0000-000000000002".parse()?;
+
+        storage
+            .put_json(&format!("sessions/{id2}/tasks"), &serde_json::json!([]))
+            .await?;
+        storage
+            .put_json(&format!("sessions/{id1}/session"), &serde_json::json!({}))
+            .await?;
+        storage
+            .put_json("sessions/not-a-uuid/session", &serde_json::json!({}))
+            .await?;
+
+        assert_eq!(storage.list_session_ids().await?, vec![id1, id2]);
         Ok(())
     }
 }

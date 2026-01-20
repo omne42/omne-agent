@@ -157,20 +157,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn list_sessions(storage: &FsStorage) -> anyhow::Result<Vec<SessionId>> {
-    let keys = storage.list_prefix("sessions/").await?;
-    let mut sessions = std::collections::BTreeSet::new();
-    for key in keys {
-        let mut parts = key.split('/');
-        let Some(prefix) = parts.next() else { continue };
-        if prefix != "sessions" {
-            continue;
-        }
-        let Some(id) = parts.next() else { continue };
-        if let Ok(id) = id.parse::<SessionId>() {
-            sessions.insert(id);
-        }
-    }
-    Ok(sessions.into_iter().collect())
+    storage.list_session_ids().await
 }
 
 async fn show_session_json(
