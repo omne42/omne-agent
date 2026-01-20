@@ -24,6 +24,7 @@
 - `pm-http GET /api/v0/sessions/:id/meta`：返回 `SessionMeta`（不含 prompt）。
 - `pm-http`：支持 `CODE_PM_HTTP_MAX_BODY_BYTES`（默认 1GiB）限制 git smart-http 请求体大小；超限返回 413。
 - `pm-http serve`：强制 loopback-only（拒绝绑定非 `127.0.0.1`/`::1` 地址），避免无鉴权服务被意外暴露到公网。
+- `pm-http git`：拒绝除 GET/POST 之外的 HTTP method（返回 405），减少非预期攻击面。
 - session 列表查询改为直接枚举 `.code_pm/data/sessions/` 目录（更快，且只返回合法 UUID）。
 - `Session/SessionMeta.created_at` 的 JSON 表达改为 RFC3339 字符串（读仍兼容旧 tuple/unix timestamp）。
 - session 元信息新增独立存储 `sessions/<id>/meta.json`（`list_session_meta` 优先读取，避免为列表读入大 prompt）。

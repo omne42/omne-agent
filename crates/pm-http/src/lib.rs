@@ -6,7 +6,7 @@ use std::sync::Arc;
 use axum::Router;
 use axum::body::Body;
 use axum::extract::{Path as AxumPath, Query, State};
-use axum::http::{HeaderMap, HeaderName, HeaderValue, Request, Response, StatusCode};
+use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, Request, Response, StatusCode};
 use axum::routing::{any, get};
 use http_body_util::BodyExt;
 use pm_core::{FsStorage, PmPaths, RepositoryName, SessionId, Storage};
@@ -220,6 +220,9 @@ async fn git_http_backend(
     req: Request<Body>,
 ) -> Result<Response<Body>, ApiError> {
     let (req_parts, req_body) = req.into_parts();
+    if req_parts.method != Method::GET && req_parts.method != Method::POST {
+        return Err(ApiError::method_not_allowed("method not allowed"));
+    }
     let (repo_dir, tail) = split_repo_path(&path)?;
     validate_repo_dir(repo_dir)?;
     validate_git_path(tail)?;
@@ -561,6 +564,13 @@ impl ApiError {
         }
     }
 
+    fn method_not_allowed(message: &'static str) -> Self {
+        Self {
+            status: StatusCode::METHOD_NOT_ALLOWED,
+            message,
+        }
+    }
+
     fn payload_too_large(message: &'static str) -> Self {
         Self {
             status: StatusCode::PAYLOAD_TOO_LARGE,
@@ -657,6 +667,31 @@ mod tests {
         let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
         let err = serve(pm_paths, "0.0.0.0:0".parse()?).await.unwrap_err();
         assert!(err.to_string().contains("loopback-only"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn git_http_backend_rejects_unsupported_methods() -> anyhow::Result<()> {
+        use axum::http::Request;
+        use axum::http::header::CONTENT_TYPE;
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+
+        let tmp = tempfile::tempdir()?;
+        let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
+        let app = router(pm_paths)?;
+
+        let request = Request::builder()
+            .method("PUT")
+            .uri("/git/repo.git/info/refs")
+            .header(CONTENT_TYPE, "application/octet-stream")
+            .body(Body::empty())?;
+        let response = app.oneshot(request).await?;
+        assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+
+        let body = response.into_body().collect().await?.to_bytes();
+        assert_eq!(body.as_ref(), b"method not allowed");
+
         Ok(())
     }
 }
