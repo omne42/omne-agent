@@ -1,14 +1,20 @@
 use std::collections::HashMap;
+use std::io::SeekFrom;
 use std::path::PathBuf;
+use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
+use anyhow::Context;
 use clap::Parser;
 use pm_core::{PmPaths, ThreadStore};
-use pm_protocol::{EventSeq, ThreadId, TurnId, TurnStatus};
+use pm_protocol::{EventSeq, ProcessId, ThreadEvent, ThreadId, TurnId, TurnStatus};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::io::AsyncBufReadExt;
+use time::format_description::well_known::Rfc3339;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt};
+use tokio::process::Command;
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
 
@@ -82,6 +88,7 @@ struct Server {
     cwd: PathBuf,
     thread_store: ThreadStore,
     threads: Arc<tokio::sync::Mutex<HashMap<ThreadId, Arc<ThreadRuntime>>>>,
+    processes: Arc<tokio::sync::Mutex<HashMap<ProcessId, ProcessEntry>>>,
 }
 
 impl Server {
@@ -101,6 +108,38 @@ impl Server {
         threads.insert(thread_id, rt.clone());
         Ok(rt)
     }
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum ProcessStatus {
+    Running,
+    Exited,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct ProcessInfo {
+    process_id: ProcessId,
+    thread_id: ThreadId,
+    turn_id: Option<TurnId>,
+    argv: Vec<String>,
+    cwd: String,
+    started_at: String,
+    status: ProcessStatus,
+    exit_code: Option<i32>,
+    stdout_path: String,
+    stderr_path: String,
+    last_update_at: String,
+}
+
+#[derive(Clone)]
+struct ProcessEntry {
+    info: Arc<tokio::sync::Mutex<ProcessInfo>>,
+    cmd_tx: mpsc::Sender<ProcessCommand>,
+}
+
+enum ProcessCommand {
+    Kill { reason: Option<String> },
 }
 
 struct ThreadRuntime {
@@ -142,6 +181,14 @@ impl ThreadRuntime {
         });
 
         Ok(turn_id)
+    }
+
+    async fn append_event(
+        &self,
+        kind: pm_protocol::ThreadEventKind,
+    ) -> anyhow::Result<ThreadEvent> {
+        let mut handle = self.handle.lock().await;
+        handle.append(kind).await
     }
 
     async fn interrupt_turn(&self, turn_id: TurnId, reason: Option<String>) -> anyhow::Result<()> {
@@ -230,6 +277,44 @@ struct TurnInterruptParams {
     reason: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct ProcessStartParams {
+    thread_id: ThreadId,
+    #[serde(default)]
+    turn_id: Option<TurnId>,
+    argv: Vec<String>,
+    #[serde(default)]
+    cwd: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProcessListParams {
+    #[serde(default)]
+    thread_id: Option<ThreadId>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProcessKillParams {
+    process_id: ProcessId,
+    #[serde(default)]
+    reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+enum ProcessStream {
+    Stdout,
+    Stderr,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProcessTailParams {
+    process_id: ProcessId,
+    stream: ProcessStream,
+    #[serde(default)]
+    max_lines: Option<usize>,
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -247,6 +332,7 @@ async fn main() -> anyhow::Result<()> {
         cwd,
         thread_store: ThreadStore::new(PmPaths::new(pm_root)),
         threads: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+        processes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
     };
 
     let stdin = tokio::io::stdin();
@@ -442,6 +528,84 @@ async fn main() -> anyhow::Result<()> {
                     Some(serde_json::json!({ "error": err.to_string() })),
                 ),
             },
+            "process/start" => match serde_json::from_value::<ProcessStartParams>(request.params) {
+                Ok(params) => match handle_process_start(&server, params).await {
+                    Ok(result) => JsonRpcResponse::ok(id, result),
+                    Err(err) => {
+                        JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None)
+                    }
+                },
+                Err(err) => JsonRpcResponse::err(
+                    id,
+                    JSONRPC_INVALID_PARAMS,
+                    "invalid params",
+                    Some(serde_json::json!({ "error": err.to_string() })),
+                ),
+            },
+            "process/list" => match serde_json::from_value::<ProcessListParams>(request.params) {
+                Ok(params) => {
+                    let entries = server.processes.lock().await;
+                    let mut out = Vec::new();
+                    for entry in entries.values() {
+                        let info = entry.info.lock().await;
+                        if params.thread_id.is_some_and(|id| id != info.thread_id) {
+                            continue;
+                        }
+                        out.push(info.clone());
+                    }
+                    JsonRpcResponse::ok(id, serde_json::json!({ "processes": out }))
+                }
+                Err(err) => JsonRpcResponse::err(
+                    id,
+                    JSONRPC_INVALID_PARAMS,
+                    "invalid params",
+                    Some(serde_json::json!({ "error": err.to_string() })),
+                ),
+            },
+            "process/kill" => match serde_json::from_value::<ProcessKillParams>(request.params) {
+                Ok(params) => {
+                    let entry = {
+                        let entries = server.processes.lock().await;
+                        entries.get(&params.process_id).cloned()
+                    };
+                    if let Some(entry) = entry {
+                        let _ = entry
+                            .cmd_tx
+                            .send(ProcessCommand::Kill {
+                                reason: params.reason,
+                            })
+                            .await;
+                        JsonRpcResponse::ok(id, serde_json::json!({ "ok": true }))
+                    } else {
+                        JsonRpcResponse::err(
+                            id,
+                            JSONRPC_INTERNAL_ERROR,
+                            format!("process not found: {}", params.process_id),
+                            None,
+                        )
+                    }
+                }
+                Err(err) => JsonRpcResponse::err(
+                    id,
+                    JSONRPC_INVALID_PARAMS,
+                    "invalid params",
+                    Some(serde_json::json!({ "error": err.to_string() })),
+                ),
+            },
+            "process/tail" => match serde_json::from_value::<ProcessTailParams>(request.params) {
+                Ok(params) => match handle_process_tail(&server, params).await {
+                    Ok(result) => JsonRpcResponse::ok(id, result),
+                    Err(err) => {
+                        JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None)
+                    }
+                },
+                Err(err) => JsonRpcResponse::err(
+                    id,
+                    JSONRPC_INVALID_PARAMS,
+                    "invalid params",
+                    Some(serde_json::json!({ "error": err.to_string() })),
+                ),
+            },
             _ => JsonRpcResponse::err(
                 id,
                 JSONRPC_METHOD_NOT_FOUND,
@@ -454,4 +618,252 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+async fn handle_process_start(
+    server: &Server,
+    params: ProcessStartParams,
+) -> anyhow::Result<Value> {
+    if params.argv.is_empty() {
+        anyhow::bail!("argv must not be empty");
+    }
+
+    let thread_rt = server.get_or_load_thread(params.thread_id).await?;
+
+    let process_id = ProcessId::new();
+    let thread_dir = server.thread_store.thread_dir(params.thread_id);
+    let process_dir = thread_dir
+        .join("artifacts")
+        .join("processes")
+        .join(process_id.to_string());
+    tokio::fs::create_dir_all(&process_dir)
+        .await
+        .with_context(|| format!("create dir {}", process_dir.display()))?;
+
+    let stdout_path = process_dir.join("stdout.log");
+    let stderr_path = process_dir.join("stderr.log");
+
+    let cwd_path = params
+        .cwd
+        .as_deref()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| server.cwd.clone());
+    let cwd_str = cwd_path.display().to_string();
+
+    let mut cmd = Command::new(&params.argv[0]);
+    cmd.args(params.argv.iter().skip(1));
+    cmd.current_dir(&cwd_path);
+    cmd.stdin(Stdio::null());
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+    let mut child = cmd
+        .spawn()
+        .with_context(|| format!("spawn {:?}", params.argv))?;
+
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+
+    let stdout_task = if let Some(mut stdout) = stdout {
+        let stdout_path = stdout_path.clone();
+        Some(tokio::spawn(async move {
+            let mut file = tokio::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&stdout_path)
+                .await?;
+            tokio::io::copy(&mut stdout, &mut file).await?;
+            anyhow::Ok(())
+        }))
+    } else {
+        None
+    };
+
+    let stderr_task = if let Some(mut stderr) = stderr {
+        let stderr_path = stderr_path.clone();
+        Some(tokio::spawn(async move {
+            let mut file = tokio::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&stderr_path)
+                .await?;
+            tokio::io::copy(&mut stderr, &mut file).await?;
+            anyhow::Ok(())
+        }))
+    } else {
+        None
+    };
+
+    let started = thread_rt
+        .append_event(pm_protocol::ThreadEventKind::ProcessStarted {
+            process_id,
+            turn_id: params.turn_id,
+            argv: params.argv.clone(),
+            cwd: cwd_str.clone(),
+            stdout_path: stdout_path.display().to_string(),
+            stderr_path: stderr_path.display().to_string(),
+        })
+        .await?;
+    let started_at = started.timestamp.format(&Rfc3339)?;
+
+    let info = ProcessInfo {
+        process_id,
+        thread_id: params.thread_id,
+        turn_id: params.turn_id,
+        argv: params.argv.clone(),
+        cwd: cwd_str,
+        started_at: started_at.clone(),
+        status: ProcessStatus::Running,
+        exit_code: None,
+        stdout_path: stdout_path.display().to_string(),
+        stderr_path: stderr_path.display().to_string(),
+        last_update_at: started_at,
+    };
+
+    let (cmd_tx, cmd_rx) = mpsc::channel(8);
+    let entry = ProcessEntry {
+        info: Arc::new(tokio::sync::Mutex::new(info)),
+        cmd_tx,
+    };
+    server
+        .processes
+        .lock()
+        .await
+        .insert(process_id, entry.clone());
+
+    tokio::spawn(run_process_actor(
+        thread_rt,
+        process_id,
+        child,
+        cmd_rx,
+        stdout_task,
+        stderr_task,
+        entry.info.clone(),
+    ));
+
+    Ok(serde_json::json!({
+        "process_id": process_id,
+        "stdout_path": stdout_path.display().to_string(),
+        "stderr_path": stderr_path.display().to_string(),
+    }))
+}
+
+async fn run_process_actor(
+    thread_rt: Arc<ThreadRuntime>,
+    process_id: ProcessId,
+    mut child: tokio::process::Child,
+    mut cmd_rx: mpsc::Receiver<ProcessCommand>,
+    stdout_task: Option<tokio::task::JoinHandle<anyhow::Result<()>>>,
+    stderr_task: Option<tokio::task::JoinHandle<anyhow::Result<()>>>,
+    info: Arc<tokio::sync::Mutex<ProcessInfo>>,
+) {
+    let mut kill_reason: Option<String> = None;
+    let mut kill_logged = false;
+
+    loop {
+        tokio::select! {
+            cmd = cmd_rx.recv() => {
+                let Some(cmd) = cmd else { /* sender dropped */ return; };
+                match cmd {
+                    ProcessCommand::Kill { reason } => {
+                        if kill_reason.is_none() {
+                            kill_reason = reason;
+                        }
+                        if !kill_logged {
+                            let _ = thread_rt.append_event(pm_protocol::ThreadEventKind::ProcessKillRequested {
+                                process_id,
+                                reason: kill_reason.clone(),
+                            }).await;
+                            kill_logged = true;
+                        }
+                        let _ = child.start_kill();
+                    }
+                }
+            }
+            _ = tokio::time::sleep(Duration::from_millis(200)) => {}
+        }
+
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if let Some(task) = stdout_task {
+                    let _ = task.await;
+                }
+                if let Some(task) = stderr_task {
+                    let _ = task.await;
+                }
+
+                let exit_code = status.code();
+                let exited = thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ProcessExited {
+                        process_id,
+                        exit_code,
+                        reason: kill_reason.clone(),
+                    })
+                    .await;
+
+                if let Ok(event) = exited {
+                    if let Ok(ts) = event.timestamp.format(&Rfc3339) {
+                        let mut info = info.lock().await;
+                        info.status = ProcessStatus::Exited;
+                        info.exit_code = exit_code;
+                        info.last_update_at = ts;
+                    }
+                }
+                return;
+            }
+            Ok(None) => {}
+            Err(_) => return,
+        }
+    }
+}
+
+async fn handle_process_tail(server: &Server, params: ProcessTailParams) -> anyhow::Result<Value> {
+    let entry = {
+        let entries = server.processes.lock().await;
+        entries
+            .get(&params.process_id)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("process not found: {}", params.process_id))?
+    };
+
+    let info = entry.info.lock().await;
+    let path = match params.stream {
+        ProcessStream::Stdout => &info.stdout_path,
+        ProcessStream::Stderr => &info.stderr_path,
+    };
+
+    let max_lines = params.max_lines.unwrap_or(200).min(2000);
+    let text = tail_file_lines(PathBuf::from(path), max_lines).await?;
+    Ok(serde_json::json!({ "text": text }))
+}
+
+async fn tail_file_lines(path: PathBuf, max_lines: usize) -> anyhow::Result<String> {
+    let max_bytes: u64 = 64 * 1024;
+    let mut file = tokio::fs::File::open(&path)
+        .await
+        .with_context(|| format!("open {}", path.display()))?;
+    let len = file
+        .metadata()
+        .await
+        .with_context(|| format!("stat {}", path.display()))?
+        .len();
+    let start = len.saturating_sub(max_bytes);
+    file.seek(SeekFrom::Start(start))
+        .await
+        .with_context(|| format!("seek {}", path.display()))?;
+
+    let mut buf = Vec::new();
+    file.read_to_end(&mut buf)
+        .await
+        .with_context(|| format!("read {}", path.display()))?;
+
+    let mut text = String::from_utf8_lossy(&buf).to_string();
+    if start > 0 {
+        if let Some(pos) = text.find('\n') {
+            text = text[(pos + 1)..].to_string();
+        }
+    }
+
+    let lines = text.lines().collect::<Vec<_>>();
+    let start_line = lines.len().saturating_sub(max_lines);
+    Ok(lines[start_line..].join("\n"))
 }

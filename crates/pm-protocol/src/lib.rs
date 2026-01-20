@@ -55,6 +55,30 @@ impl FromStr for TurnId {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
 #[serde(transparent)]
+pub struct ProcessId(pub Uuid);
+
+impl ProcessId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+}
+
+impl fmt::Display for ProcessId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl FromStr for ProcessId {
+    type Err = uuid::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self(Uuid::parse_str(s)?))
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct EventSeq(pub u64);
 
 impl EventSeq {
@@ -106,6 +130,30 @@ pub enum ThreadEventKind {
     TurnCompleted {
         turn_id: TurnId,
         status: TurnStatus,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+
+    ProcessStarted {
+        process_id: ProcessId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        turn_id: Option<TurnId>,
+        argv: Vec<String>,
+        cwd: String,
+        stdout_path: String,
+        stderr_path: String,
+    },
+
+    ProcessKillRequested {
+        process_id: ProcessId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+
+    ProcessExited {
+        process_id: ProcessId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        exit_code: Option<i32>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
     },

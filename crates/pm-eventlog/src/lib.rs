@@ -257,6 +257,7 @@ impl ThreadState {
                 self.active_turn_id = None;
                 self.active_turn_interrupt_requested = false;
             }
+            _ => {}
         }
 
         self.last_seq = event.seq;
