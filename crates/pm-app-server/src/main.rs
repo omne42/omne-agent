@@ -374,6 +374,18 @@ struct ThreadEventsParams {
 }
 
 #[derive(Debug, Deserialize)]
+struct ThreadSubscribeParams {
+    thread_id: ThreadId,
+    #[serde(default)]
+    since_seq: u64,
+    #[serde(default)]
+    max_events: Option<usize>,
+    /// Long-poll timeout in milliseconds. When set to 0, returns immediately.
+    #[serde(default)]
+    wait_ms: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
 struct TurnStartParams {
     thread_id: ThreadId,
     input: String,
@@ -862,6 +874,22 @@ async fn main() -> anyhow::Result<()> {
                     Some(serde_json::json!({ "error": err.to_string() })),
                 ),
             },
+            "thread/subscribe" => {
+                match serde_json::from_value::<ThreadSubscribeParams>(request.params) {
+                    Ok(params) => match handle_thread_subscribe(&server, params).await {
+                        Ok(result) => JsonRpcResponse::ok(id, result),
+                        Err(err) => {
+                            JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None)
+                        }
+                    },
+                    Err(err) => JsonRpcResponse::err(
+                        id,
+                        JSONRPC_INVALID_PARAMS,
+                        "invalid params",
+                        Some(serde_json::json!({ "error": err.to_string() })),
+                    ),
+                }
+            }
             "thread/state" => match serde_json::from_value::<ThreadStateParams>(request.params) {
                 Ok(params) => match server.get_or_load_thread(params.thread_id).await {
                     Ok(rt) => {
@@ -1486,6 +1514,65 @@ async fn handle_thread_attention(
         "pending_approvals": pending_approvals,
         "running_processes": running_processes,
     }))
+}
+
+async fn handle_thread_subscribe(
+    server: &Server,
+    params: ThreadSubscribeParams,
+) -> anyhow::Result<Value> {
+    let wait_ms = params.wait_ms.unwrap_or(30_000).min(300_000);
+    let poll_interval = Duration::from_millis(200);
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(wait_ms);
+
+    let since = EventSeq(params.since_seq);
+    let mut timed_out = false;
+
+    loop {
+        let mut events = server
+            .thread_store
+            .read_events_since(params.thread_id, since)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("thread not found: {}", params.thread_id))?;
+
+        let thread_last_seq = events.last().map(|e| e.seq.0).unwrap_or(since.0);
+
+        let mut has_more = false;
+        if let Some(max_events) = params.max_events {
+            let max_events = max_events.clamp(1, 50_000);
+            if events.len() > max_events {
+                events.truncate(max_events);
+                has_more = true;
+            }
+        }
+
+        let last_seq = events.last().map(|e| e.seq.0).unwrap_or(since.0);
+
+        if !events.is_empty() || wait_ms == 0 {
+            return Ok(serde_json::json!({
+                "events": events,
+                "last_seq": last_seq,
+                "thread_last_seq": thread_last_seq,
+                "has_more": has_more,
+                "timed_out": false,
+            }));
+        }
+
+        if tokio::time::Instant::now() >= deadline {
+            timed_out = true;
+        }
+
+        if timed_out {
+            return Ok(serde_json::json!({
+                "events": events,
+                "last_seq": last_seq,
+                "thread_last_seq": thread_last_seq,
+                "has_more": has_more,
+                "timed_out": true,
+            }));
+        }
+
+        tokio::time::sleep(poll_interval).await;
+    }
 }
 
 #[derive(Debug)]
