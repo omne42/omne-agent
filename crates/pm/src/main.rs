@@ -43,6 +43,7 @@ enum Command {
     },
     Inbox(InboxArgs),
     Ask(AskArgs),
+    Exec(ExecArgs),
     Watch(WatchArgs),
     Approval {
         #[command(subcommand)]
@@ -319,6 +320,52 @@ struct AskArgs {
 }
 
 #[derive(Parser)]
+struct ExecArgs {
+    /// Resume an existing thread instead of creating a new one.
+    #[arg(long)]
+    thread_id: Option<ThreadId>,
+
+    /// Working directory for a newly created thread.
+    #[arg(long)]
+    cwd: Option<PathBuf>,
+
+    #[arg(long)]
+    approval_policy: Option<CliApprovalPolicy>,
+
+    #[arg(long)]
+    sandbox_policy: Option<CliSandboxPolicy>,
+
+    #[arg(long)]
+    model: Option<String>,
+
+    #[arg(long)]
+    openai_base_url: Option<String>,
+
+    /// Behavior when an approval is requested (exec is non-interactive).
+    #[arg(long, value_enum, default_value_t = CliOnApproval::Fail)]
+    on_approval: CliOnApproval,
+
+    /// Persist approval decisions within this session.
+    #[arg(long, default_value_t = false)]
+    remember: bool,
+
+    /// Output a machine-readable JSON summary.
+    #[arg(long, default_value_t = false)]
+    json: bool,
+
+    /// Message to send as the next turn.
+    #[arg(value_parser = parse_non_empty_trimmed)]
+    input: String,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum CliOnApproval {
+    Fail,
+    Approve,
+    Deny,
+}
+
+#[derive(Parser)]
 struct WatchArgs {
     thread_id: ThreadId,
     #[arg(long, default_value_t = 0)]
@@ -498,6 +545,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::Ask(args) => {
             run_ask(&mut app, args).await?;
+        }
+        Command::Exec(args) => {
+            let code = run_exec(&mut app, args).await?;
+            std::process::exit(code);
         }
         Command::Watch(args) => {
             run_watch(&mut app, args).await?;
@@ -768,6 +819,171 @@ async fn run_ask(app: &mut App, args: AskArgs) -> anyhow::Result<()> {
                     handle.abort();
                 }
                 return Ok(());
+            }
+        }
+
+        if resp.timed_out {
+            continue;
+        }
+        if resp.has_more {
+            continue;
+        }
+    }
+}
+
+async fn run_exec(app: &mut App, args: ExecArgs) -> anyhow::Result<i32> {
+    let thread_result = if let Some(thread_id) = args.thread_id {
+        app.thread_resume(thread_id).await?
+    } else {
+        let cwd = args.cwd.map(|p| p.display().to_string());
+        app.thread_start(cwd).await?
+    };
+
+    let thread_id: ThreadId = serde_json::from_value(thread_result["thread_id"].clone())
+        .context("thread_id missing in result")?;
+    let mut since_seq = thread_result["last_seq"].as_u64().unwrap_or(0);
+
+    if args.approval_policy.is_some()
+        || args.sandbox_policy.is_some()
+        || args.model.is_some()
+        || args.openai_base_url.is_some()
+    {
+        app.thread_configure(ThreadConfigureArgs {
+            thread_id,
+            approval_policy: args.approval_policy,
+            sandbox_policy: args.sandbox_policy,
+            model: args.model,
+            openai_base_url: args.openai_base_url,
+        })
+        .await?;
+    }
+
+    let turn_id = app.turn_start(thread_id, args.input).await?;
+    eprintln!("thread: {thread_id}");
+    eprintln!("turn: {turn_id}");
+
+    let (interrupt_tx, mut interrupt_rx) = tokio::sync::mpsc::channel::<()>(1);
+    tokio::spawn(async move {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            let _ = interrupt_tx.send(()).await;
+        }
+    });
+
+    let mut handled_approvals = std::collections::HashSet::<ApprovalId>::new();
+    let mut assistant_text: Option<String> = None;
+    let mut assistant_model: Option<String> = None;
+    let mut assistant_response_id: Option<String> = None;
+    let mut assistant_token_usage: Option<Value> = None;
+
+    loop {
+        if interrupt_rx.try_recv().is_ok() {
+            app.turn_interrupt(thread_id, turn_id, Some("ctrl-c".to_string()))
+                .await?;
+            eprintln!("interrupt requested: {turn_id}");
+        }
+
+        let resp = app
+            .thread_subscribe(thread_id, since_seq, Some(10_000), Some(1_000))
+            .await?;
+        since_seq = resp.last_seq;
+
+        for event in &resp.events {
+            match &event.kind {
+                pm_protocol::ThreadEventKind::AssistantMessage {
+                    turn_id: Some(id),
+                    text,
+                    model,
+                    response_id,
+                    token_usage,
+                } if *id == turn_id => {
+                    assistant_text = Some(text.clone());
+                    assistant_model = model.clone();
+                    assistant_response_id = response_id.clone();
+                    assistant_token_usage = token_usage.clone();
+                }
+                pm_protocol::ThreadEventKind::ApprovalRequested {
+                    approval_id,
+                    action,
+                    params,
+                    ..
+                } if !handled_approvals.contains(approval_id) => {
+                    handled_approvals.insert(*approval_id);
+                    match args.on_approval {
+                        CliOnApproval::Fail => {
+                            app.turn_interrupt(
+                                thread_id,
+                                turn_id,
+                                Some(format!("approval required: {approval_id}")),
+                            )
+                            .await?;
+                            eprintln!("approval required: {approval_id} action={action}");
+                            eprintln!("{}", serde_json::to_string_pretty(params)?);
+                        }
+                        CliOnApproval::Approve => {
+                            app.approval_decide(
+                                thread_id,
+                                *approval_id,
+                                ApprovalDecision::Approved,
+                                args.remember,
+                                Some("auto-approved by pm exec".to_string()),
+                            )
+                            .await?;
+                        }
+                        CliOnApproval::Deny => {
+                            app.approval_decide(
+                                thread_id,
+                                *approval_id,
+                                ApprovalDecision::Denied,
+                                args.remember,
+                                Some("auto-denied by pm exec".to_string()),
+                            )
+                            .await?;
+                        }
+                    }
+                }
+                pm_protocol::ThreadEventKind::TurnCompleted {
+                    turn_id: id,
+                    status,
+                    reason,
+                } if *id == turn_id => {
+                    if args.json {
+                        let output = serde_json::json!({
+                            "thread_id": thread_id,
+                            "turn_id": turn_id,
+                            "status": status,
+                            "reason": reason,
+                            "assistant": {
+                                "text": assistant_text,
+                                "model": assistant_model,
+                                "response_id": assistant_response_id,
+                                "token_usage": assistant_token_usage,
+                            },
+                            "last_seq": since_seq,
+                        });
+                        println!("{}", serde_json::to_string_pretty(&output)?);
+                    } else if let Some(text) = assistant_text.as_deref() {
+                        print!("{text}");
+                        if !text.ends_with('\n') {
+                            println!();
+                        }
+                    }
+                    return Ok(if *status == TurnStatus::Completed {
+                        0
+                    } else {
+                        1
+                    });
+                }
+                other => {
+                    let ts = event
+                        .timestamp
+                        .format(&time::format_description::well_known::Rfc3339)
+                        .unwrap_or_else(|_| "<time>".to_string());
+                    let mut buffered = Vec::<u8>::new();
+                    render_event_to(&mut buffered, ts, other);
+                    if let Ok(text) = String::from_utf8(buffered) {
+                        eprint!("{text}");
+                    }
+                }
             }
         }
 

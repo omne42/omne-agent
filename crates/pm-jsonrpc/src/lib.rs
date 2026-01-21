@@ -24,12 +24,14 @@ pub enum Error {
     Protocol(String),
 }
 
+type PendingRequests = Arc<tokio::sync::Mutex<HashMap<u64, oneshot::Sender<Result<Value, Error>>>>>;
+
 #[derive(Debug)]
 pub struct Client {
     child: Child,
     stdin: ChildStdin,
     next_id: u64,
-    pending: Arc<tokio::sync::Mutex<HashMap<u64, oneshot::Sender<Result<Value, Error>>>>>,
+    pending: PendingRequests,
     notifications_rx: Option<mpsc::UnboundedReceiver<Notification>>,
     task: tokio::task::JoinHandle<()>,
 }
@@ -56,8 +58,7 @@ impl Client {
             .take()
             .ok_or_else(|| Error::Protocol("child stdout not captured".to_string()))?;
         let (notify_tx, notify_rx) = mpsc::unbounded_channel::<Notification>();
-        let pending: Arc<tokio::sync::Mutex<HashMap<u64, oneshot::Sender<Result<Value, Error>>>>> =
-            Arc::new(tokio::sync::Mutex::new(HashMap::new()));
+        let pending: PendingRequests = Arc::new(tokio::sync::Mutex::new(HashMap::new()));
         let pending_for_task = pending.clone();
         let task = tokio::spawn(async move {
             let mut stdout_lines = tokio::io::BufReader::new(stdout).lines();
@@ -229,10 +230,7 @@ struct JsonRpcError {
     data: Option<Value>,
 }
 
-async fn drain_pending(
-    pending: &Arc<tokio::sync::Mutex<HashMap<u64, oneshot::Sender<Result<Value, Error>>>>>,
-    err: Error,
-) {
+async fn drain_pending(pending: &PendingRequests, err: Error) {
     let pending = {
         let mut pending = pending.lock().await;
         std::mem::take(&mut *pending)

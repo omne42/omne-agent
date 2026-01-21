@@ -173,9 +173,7 @@ impl Client {
             anyhow::bail!("openai responses stream failed ({status}): {text}");
         }
 
-        let byte_stream = response
-            .bytes_stream()
-            .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err));
+        let byte_stream = response.bytes_stream().map_err(std::io::Error::other);
         let reader = StreamReader::new(byte_stream);
         let lines = tokio::io::BufReader::new(reader).lines();
 
