@@ -1638,7 +1638,9 @@ async fn handle_thread_list_meta(
 
         let attention_state = if state.archived {
             "archived"
-        } else if state.active_turn_id.is_some() {
+        } else if !state.pending_approvals.is_empty() {
+            "need_approval"
+        } else if state.active_turn_id.is_some() || !state.running_processes.is_empty() {
             "running"
         } else {
             match state.last_turn_status {

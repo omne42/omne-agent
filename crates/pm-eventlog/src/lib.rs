@@ -1,10 +1,11 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use fs2::FileExt;
 use pm_protocol::{
-    ApprovalPolicy, EventSeq, SandboxPolicy, ThreadEvent, ThreadEventKind, ThreadId, TurnId,
-    TurnStatus,
+    ApprovalId, ApprovalPolicy, EventSeq, ProcessId, SandboxPolicy, ThreadEvent, ThreadEventKind,
+    ThreadId, TurnId, TurnStatus,
 };
 use time::OffsetDateTime;
 use tokio::io::AsyncWriteExt;
@@ -222,6 +223,8 @@ pub struct ThreadState {
     pub last_turn_id: Option<TurnId>,
     pub last_turn_status: Option<TurnStatus>,
     pub last_turn_reason: Option<String>,
+    pub pending_approvals: HashSet<ApprovalId>,
+    pub running_processes: HashSet<ProcessId>,
 }
 
 impl ThreadState {
@@ -242,6 +245,8 @@ impl ThreadState {
             last_turn_id: None,
             last_turn_status: None,
             last_turn_reason: None,
+            pending_approvals: HashSet::new(),
+            running_processes: HashSet::new(),
         }
     }
 
@@ -318,6 +323,18 @@ impl ThreadState {
                 self.last_turn_id = Some(*turn_id);
                 self.last_turn_status = Some(*status);
                 self.last_turn_reason = reason.clone();
+            }
+            ThreadEventKind::ApprovalRequested { approval_id, .. } => {
+                self.pending_approvals.insert(*approval_id);
+            }
+            ThreadEventKind::ApprovalDecided { approval_id, .. } => {
+                self.pending_approvals.remove(approval_id);
+            }
+            ThreadEventKind::ProcessStarted { process_id, .. } => {
+                self.running_processes.insert(*process_id);
+            }
+            ThreadEventKind::ProcessExited { process_id, .. } => {
+                self.running_processes.remove(process_id);
             }
             _ => {}
         }
