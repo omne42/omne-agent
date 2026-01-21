@@ -1553,6 +1553,7 @@ async fn handle_thread_attention(
         paused,
         paused_at,
         paused_reason,
+        failed_processes,
         approval_policy,
         sandbox_policy,
         model,
@@ -1574,6 +1575,7 @@ async fn handle_thread_attention(
             state.paused,
             state.paused_at.and_then(|ts| ts.format(&Rfc3339).ok()),
             state.paused_reason.clone(),
+            state.failed_processes.iter().copied().collect::<Vec<_>>(),
             state.approval_policy,
             state.sandbox_policy,
             state.model.clone(),
@@ -1642,6 +1644,8 @@ async fn handle_thread_attention(
         "need_approval"
     } else if active_turn_id.is_some() || !running_processes.is_empty() {
         "running"
+    } else if !failed_processes.is_empty() {
+        "failed"
     } else if paused {
         "paused"
     } else if archived {
@@ -1666,6 +1670,7 @@ async fn handle_thread_attention(
         "paused": paused,
         "paused_at": paused_at,
         "paused_reason": paused_reason,
+        "failed_processes": failed_processes,
         "approval_policy": approval_policy,
         "sandbox_policy": sandbox_policy,
         "model": model,
@@ -1706,6 +1711,8 @@ async fn handle_thread_list_meta(
             "need_approval"
         } else if state.active_turn_id.is_some() || !state.running_processes.is_empty() {
             "running"
+        } else if !state.failed_processes.is_empty() {
+            "failed"
         } else if state.paused {
             "paused"
         } else {

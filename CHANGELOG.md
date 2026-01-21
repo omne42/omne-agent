@@ -85,6 +85,11 @@
 - `pm-app-server file/*`：失败路径也会写入 `ToolCompleted`（避免工具卡在 “started but never finished”）。
 - `pm-core::redaction`：修正 token 脱敏正则（Bearer/Google key），避免漏打码。
 - `pm-core::sandbox`/`pm-app-server`：`sandbox_policy=danger_full_access` 现在会使用 unrestricted 路径解析（允许绝对路径与系统 symlink，如 macOS `/tmp`），不再误报 “escapes root”。
+- Rust workspace：修复 `cargo clippy -- -D warnings` 下的告警（`pm-jsonrpc` 忽略无 `id` 的 stdout 行、`pm-protocol` 的 id newtype 实现 `Default`、`pm-eventlog` lockfile 显式 `truncate(false)`、以及 `pm-app-server` 若干 clippy cleanups）。
+- `thread/list_meta`：派生 `attention_state` 时现在会考虑 pending approvals 与 running processes（`pm inbox --watch --bell` 能正确提示 `need_approval`）。
+- `thread/list_meta`/`thread/attention`：后台进程以非零 exit code 退出时会派生 `attention_state=failed`（并在 `thread/attention` 返回 `failed_processes` 列表），避免后台失败静默。
+- `pm-app-server approvals`：当同类操作被 `remember=true` 记住为 `deny` 时，`file/write|patch|edit|delete`、`fs/mkdir`、`process/start` 现在会返回结构化 `denied` 结果并写入 `ToolStatus=Denied`（不再走内部 error 路径）。
+- `pm-core threads resume`：现在会修复 “ToolStarted 没有对应 ToolCompleted” 的中间态，自动补写 `ToolStatus=Cancelled`（避免崩溃/中断后留下悬空 tool）。
 
 ### Security
 - `pm-core::threads`：落盘事件前自动脱敏（Turn input/argv/approval params/tool results 等），避免 secrets 进入 event log；`pm-app-server process/tail`/`process/follow` 返回内容也会脱敏展示。
@@ -124,13 +129,7 @@
 - session 元信息新增独立存储 `sessions/<id>/meta.json`（`list_session_meta` 优先读取，避免为列表读入大 prompt）。
 
 ### Fixed
-- Rust workspace：修复 `cargo clippy -- -D warnings` 下的告警（`pm-jsonrpc` 忽略无 `id` 的 stdout 行、`pm-protocol` 的 id newtype 实现 `Default`、`pm-eventlog` lockfile 显式 `truncate(false)`、以及 `pm-app-server` 若干 clippy cleanups）。
-- `thread/list_meta`：派生 `attention_state` 时现在会考虑 pending approvals 与 running processes（`pm inbox --watch --bell` 能正确提示 `need_approval`）。
-- `docs/v0.2.0_parity.md`：更新已完成项的勾选与 v0.2.0 MVP 范围描述，避免 TODO 与实现脱节。
-- `docs/v0.2.0_parity.md`：补齐 `thread/pause`/`thread/unpause` 到控制面清单。
 - `code-pm run --max-concurrency`：现在会校验为 `>= 1`（拒绝 `0`，避免静默回退到 `1`）。
-- `pm-app-server approvals`：当同类操作被 `remember=true` 记住为 `deny` 时，`file/write|patch|edit|delete`、`fs/mkdir`、`process/start` 现在会返回结构化 `denied` 结果并写入 `ToolStatus=Denied`（不再走内部 error 路径）。
-- `pm-core threads resume`：现在会修复 “ToolStarted 没有对应 ToolCompleted” 的中间态，自动补写 `ToolStatus=Cancelled`（避免崩溃/中断后留下悬空 tool）。
 - `code-pm run`：隐式 `--repo-src` 模式现在会严格要求处于真实 git worktree（基于 `git rev-parse` 判断），避免仅凭 `.git` 路径误判导致后续 clone 失败。
 - `code-pm` CLI：`--repo/--repo-src/--pr-name/--base` 以及 `repo inject` 的 `source/--name` 现在会拒绝空值（包括仅空白字符），避免静默回退到默认 sanitize 值。
 - `code-pm run`：现在会拒绝空/纯空白的 prompt（`--prompt` 或 `--prompt-file`），避免生成无意义 session。

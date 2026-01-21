@@ -228,6 +228,7 @@ pub struct ThreadState {
     pub last_turn_reason: Option<String>,
     pub pending_approvals: HashSet<ApprovalId>,
     pub running_processes: HashSet<ProcessId>,
+    pub failed_processes: HashSet<ProcessId>,
 }
 
 impl ThreadState {
@@ -253,6 +254,7 @@ impl ThreadState {
             last_turn_reason: None,
             pending_approvals: HashSet::new(),
             running_processes: HashSet::new(),
+            failed_processes: HashSet::new(),
         }
     }
 
@@ -348,9 +350,22 @@ impl ThreadState {
             }
             ThreadEventKind::ProcessStarted { process_id, .. } => {
                 self.running_processes.insert(*process_id);
+                self.failed_processes.remove(process_id);
             }
-            ThreadEventKind::ProcessExited { process_id, .. } => {
+            ThreadEventKind::ProcessExited {
+                process_id,
+                exit_code,
+                ..
+            } => {
                 self.running_processes.remove(process_id);
+                match exit_code {
+                    Some(code) if *code != 0 => {
+                        self.failed_processes.insert(*process_id);
+                    }
+                    _ => {
+                        self.failed_processes.remove(process_id);
+                    }
+                }
             }
             _ => {}
         }
