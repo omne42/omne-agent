@@ -29,6 +29,20 @@ use walkdir::WalkDir;
 
 mod agent;
 
+const CHILD_PROCESS_ENV_SCRUB_KEYS: &[&str] = &[
+    "OPENAI_API_KEY",
+    "CODE_PM_OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "OPENROUTER_API_KEY",
+    "GEMINI_API_KEY",
+];
+
+fn scrub_child_process_env(cmd: &mut Command) {
+    for key in CHILD_PROCESS_ENV_SCRUB_KEYS {
+        cmd.env_remove(key);
+    }
+}
+
 #[derive(Parser)]
 #[command(name = "pm-app-server")]
 #[command(about = "CodePM v0.2.0 app-server (JSON-RPC over stdio)", long_about = None)]
@@ -193,11 +207,14 @@ impl ThreadRuntime {
         }
     }
 
-    fn emit_notification(&self, method: &'static str, event: &ThreadEvent) {
+    fn emit_notification<T>(&self, method: &'static str, params: &T)
+    where
+        T: Serialize,
+    {
         let payload = serde_json::json!({
             "jsonrpc": "2.0",
             "method": method,
-            "params": event,
+            "params": params,
         });
         if let Ok(line) = serde_json::to_string(&payload) {
             let _ = self.out_tx.send(line);
@@ -5016,6 +5033,7 @@ async fn handle_process_start(
     cmd.stdin(Stdio::null());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
+    scrub_child_process_env(&mut cmd);
     let mut child = cmd
         .spawn()
         .with_context(|| format!("spawn {:?}", params.argv))?;

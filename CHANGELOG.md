@@ -40,6 +40,7 @@
 - `pm-app-server thread/events`：支持 `max_events` 分页，并返回 `has_more`/`thread_last_seq` 便于订阅端处理 lag 与续读。
 - `pm-app-server thread/subscribe`：长轮询读取 thread events（`wait_ms` 超时），用于实现“不断线不丢”的订阅式消费（`since_seq` + `seq` 去重）。
 - `pm-app-server`：追加 `ThreadEvent` 时会同时发送 JSON-RPC notifications（`thread/event`、`turn/*`、`item/*`），用于 UI/客户端实时渲染；掉线可用 `thread/subscribe` 从 `since_seq` 重放补齐。
+- `pm-app-server` agent loop：Responses SSE 流式执行（`response.output_text.delta`）并转发为 `item/delta` JSON-RPC notifications（文本流）；最终仍以 `AssistantMessage` 落盘为准（断线不丢）。
 - `pm-app-server` 新增 thread 清理 API：`thread/delete(force?)` 与 `thread/clear_artifacts(force?)`，用于一键清除 history 与中间态产物。
 - `pm-app-server` 新增 approvals 控制面：`thread/configure(approval_policy,sandbox_policy?)`、`approval/list`、`approval/decide`。
 - `pm-app-server` 新增 `thread/config/explain`：返回最小 config layer stack（当前覆盖 `approval_policy`/`sandbox_policy`/`model`/`openai_base_url`），用于回答“为什么生效的是这个值”。
@@ -154,6 +155,7 @@
 - `code-pm run --stream-events-json` 在 consumer 落后导致事件被丢弃时会输出 error JSON 行（`event_lagged`），避免静默丢事件。
 
 ### Security
+- `pm-app-server`：`process/start` 默认从子进程环境中移除常见 provider key（`OPENAI_API_KEY` 等），降低“任意命令读取/回显密钥”的泄露面。
 - `pm-http`：支持 `CODE_PM_HTTP_MAX_BODY_BYTES`（默认 1GiB）限制 git smart-http 请求体大小；超限返回 413。
 - `pm-http git`：`CODE_PM_HTTP_MAX_BODY_BYTES` 现在会对实际请求体字节数强制生效（不再仅信任 `Content-Length` header），避免超大 body 绕过限制。
 - `pm-http serve`：强制 loopback-only（拒绝绑定非 `127.0.0.1`/`::1` 地址），避免无鉴权服务被意外暴露到公网。

@@ -113,18 +113,86 @@ pub async fn run_agent_turn(
             tool_choice: "auto",
             parallel_tool_calls: false,
             store: false,
-            stream: false,
+            stream: true,
         };
 
-        let resp = match tokio::time::timeout(
-            Duration::from_secs(MAX_OPENAI_REQUEST_SECONDS),
-            openai.create_response(&req),
-        )
-        .await
-        {
-            Ok(result) => result?,
-            Err(_) => return Err(AgentTurnError::OpenAiRequestTimedOut.into()),
-        };
+        let resp =
+            match tokio::time::timeout(Duration::from_secs(MAX_OPENAI_REQUEST_SECONDS), async {
+                let mut stream = openai.create_response_stream(&req).await?;
+                let mut response_id = String::new();
+                let mut usage: Option<Value> = None;
+                let mut output_items = Vec::new();
+                let mut output_text = String::new();
+
+                while let Some(event) = stream.recv().await {
+                    let event = event?;
+                    match event {
+                        pm_openai::ResponseEvent::Created { response_id: id } => {
+                            if response_id.is_empty()
+                                && let Some(id) = id
+                                && !id.trim().is_empty()
+                            {
+                                response_id = id;
+                            }
+                        }
+                        pm_openai::ResponseEvent::OutputTextDelta(delta) => {
+                            output_text.push_str(&delta);
+                            let delta = pm_core::redact_text(&delta);
+                            let response_id_snapshot = response_id.clone();
+                            thread_rt.emit_notification(
+                                "item/delta",
+                                &serde_json::json!({
+                                    "thread_id": thread_id,
+                                    "turn_id": turn_id,
+                                    "response_id": response_id_snapshot,
+                                    "kind": "output_text",
+                                    "delta": delta,
+                                }),
+                            );
+                        }
+                        pm_openai::ResponseEvent::OutputItemDone(item) => output_items.push(item),
+                        pm_openai::ResponseEvent::Completed {
+                            response_id: id,
+                            usage: u,
+                        } => {
+                            if response_id.is_empty() {
+                                response_id = id;
+                            }
+                            usage = u;
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+
+                if response_id.trim().is_empty() {
+                    response_id = "<unknown>".to_string();
+                }
+
+                Ok::<_, anyhow::Error>((
+                    pm_openai::ResponsesApiResponse {
+                        id: response_id,
+                        output: output_items,
+                        usage,
+                    },
+                    output_text,
+                ))
+            })
+            .await
+            {
+                Ok(result) => {
+                    let (mut resp, output_text) = result?;
+                    if extract_assistant_text(&resp.output).is_empty() && !output_text.is_empty() {
+                        let output_text = pm_core::redact_text(&output_text);
+                        resp.output.push(pm_openai::ResponseItem::Message {
+                            role: "assistant".to_string(),
+                            content: vec![pm_openai::ContentItem::OutputText { text: output_text }],
+                        });
+                    }
+                    resp
+                }
+                Err(_) => return Err(AgentTurnError::OpenAiRequestTimedOut.into()),
+            };
         last_response_id = resp.id.clone();
         last_usage = resp.usage.clone();
 
