@@ -239,6 +239,26 @@ pub struct ProcessKillParams {
     pub process_id: pm_protocol::ProcessId,
     #[serde(default)]
     #[ts(optional)]
+    pub turn_id: Option<pm_protocol::TurnId>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub approval_id: Option<pm_protocol::ApprovalId>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
+pub struct ProcessInterruptParams {
+    pub process_id: pm_protocol::ProcessId,
+    #[serde(default)]
+    #[ts(optional)]
+    pub turn_id: Option<pm_protocol::TurnId>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub approval_id: Option<pm_protocol::ApprovalId>,
+    #[serde(default)]
+    #[ts(optional)]
     pub reason: Option<String>,
 }
 
@@ -652,6 +672,12 @@ pub enum ClientRequest {
         #[serde(rename = "id")]
         request_id: RequestId,
         params: ProcessKillParams,
+    },
+    #[serde(rename = "process/interrupt")]
+    ProcessInterrupt {
+        #[serde(rename = "id")]
+        request_id: RequestId,
+        params: ProcessInterruptParams,
     },
     #[serde(rename = "process/tail")]
     ProcessTail {

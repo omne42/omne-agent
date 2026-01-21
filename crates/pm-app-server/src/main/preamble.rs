@@ -611,12 +611,20 @@ struct ProcessListParams {
 struct ProcessKillParams {
     process_id: ProcessId,
     #[serde(default)]
+    turn_id: Option<TurnId>,
+    #[serde(default)]
+    approval_id: Option<pm_protocol::ApprovalId>,
+    #[serde(default)]
     reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct ProcessInterruptParams {
     process_id: ProcessId,
+    #[serde(default)]
+    turn_id: Option<TurnId>,
+    #[serde(default)]
+    approval_id: Option<pm_protocol::ApprovalId>,
     #[serde(default)]
     reason: Option<String>,
 }

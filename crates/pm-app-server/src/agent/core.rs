@@ -10,8 +10,6 @@ use thiserror::Error;
 use time::format_description::well_known::Rfc3339;
 use tokio_util::sync::CancellationToken;
 
-use super::ProcessCommand;
-
 const DEFAULT_MODEL: &str = "gpt-4.1";
 const DEFAULT_MAX_AGENT_STEPS: usize = 24;
 const DEFAULT_MAX_TOOL_CALLS: usize = 128;
@@ -540,4 +538,3 @@ fn extract_assistant_text(items: &[pm_openai::ResponseItem]) -> String {
     }
     out
 }
-

@@ -102,7 +102,9 @@
 - `pm-eventlog`：`read_events_since` 忽略并发写入时可能出现的尾部半行（避免 reader 在 writer 追加期间误报 parse error）。
 - `pm-app-server file/*`：失败路径也会写入 `ToolCompleted`（避免工具卡在 “started but never finished”）。
 - `pm-app-server approvals`：当 mode/execpolicy 判定为 `prompt` 时，现在统一走 approvals gate：必落盘 `ApprovalRequested`；`approval_policy=auto_approve` 会追加 `ApprovalDecided(Approved, reason="auto-approved by policy")` 并继续执行；`approval_policy=manual` 返回 `needs_approval` 等待 `approval/decide` 后复跑同一 tool（覆盖 `file/*`、`fs/mkdir`、`process/start`）。
+- `pm-app-server process/kill|interrupt`：现在也会执行 mode gate（`process.kill` + per-tool override）并在 `prompt` 下走 approvals；`pm` CLI 会在 `needs_approval/denied` 时给出可复制的处理提示。
 - `pm-app-server-protocol`：`file/read`/`file/glob`/`file/grep` 追加可选 `approval_id`，用于 `needs_approval` 后的重试调用。
+- `pm-app-server-protocol`：补齐 `process/interrupt` 方法与参数，并为 `process/kill` 追加可选 `turn_id/approval_id`（与其它 tools 对齐）。
 - `pm-core::redaction`：修正 token 脱敏正则（Bearer/Google key），避免漏打码。
 - `pm-core::sandbox`/`pm-app-server`：`sandbox_policy=danger_full_access` 现在会使用 unrestricted 路径解析（允许绝对路径与系统 symlink，如 macOS `/tmp`），不再误报 “escapes root”。
 - Rust workspace：修复 `cargo clippy -- -D warnings` 下的告警（`pm-jsonrpc` 提取 pending type alias、`pm-openai` 使用 `std::io::Error::other`、`pm-protocol` 的 id newtype 实现 `Default`、`pm-eventlog` lockfile 显式 `truncate(false)`、以及 `pm-app-server` 若干 clippy cleanups）。

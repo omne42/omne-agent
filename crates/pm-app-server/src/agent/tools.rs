@@ -679,22 +679,16 @@ async fn run_tool_call_once(
         }
         "process_kill" => {
             let args: ProcessKillArgs = serde_json::from_value(args)?;
-            let process_id = args.process_id.parse()?;
-            let entry = {
-                let entries = server.processes.lock().await;
-                entries.get(&process_id).cloned()
-            };
-            if let Some(entry) = entry {
-                let _ = entry
-                    .cmd_tx
-                    .send(ProcessCommand::Kill {
-                        reason: args.reason,
-                    })
-                    .await;
-                Ok(serde_json::json!({ "ok": true }))
-            } else {
-                anyhow::bail!("process not found: {process_id}");
-            }
+            super::handle_process_kill(
+                server,
+                super::ProcessKillParams {
+                    process_id: args.process_id.parse()?,
+                    turn_id,
+                    approval_id,
+                    reason: args.reason,
+                },
+            )
+            .await
         }
         "artifact_write" => {
             let args: ArtifactWriteArgs = serde_json::from_value(args)?;

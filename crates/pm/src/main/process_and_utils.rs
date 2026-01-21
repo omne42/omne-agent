@@ -578,7 +578,7 @@ impl App {
         process_id: ProcessId,
         reason: Option<String>,
     ) -> anyhow::Result<()> {
-        let _ = self
+        let v = self
             .rpc(
                 "process/kill",
                 serde_json::json!({
@@ -587,6 +587,7 @@ impl App {
                 }),
             )
             .await?;
+        ensure_approval_and_denial_handled("process/kill", &v)?;
         Ok(())
     }
 
@@ -595,7 +596,7 @@ impl App {
         process_id: ProcessId,
         reason: Option<String>,
     ) -> anyhow::Result<()> {
-        let _ = self
+        let v = self
             .rpc(
                 "process/interrupt",
                 serde_json::json!({
@@ -604,6 +605,7 @@ impl App {
                 }),
             )
             .await?;
+        ensure_approval_and_denial_handled("process/interrupt", &v)?;
         Ok(())
     }
 
@@ -666,4 +668,35 @@ fn app_server_exe_name() -> &'static str {
     } else {
         "pm-app-server"
     }
+}
+
+fn ensure_approval_and_denial_handled(action: &str, value: &Value) -> anyhow::Result<()> {
+    let Some(obj) = value.as_object() else {
+        return Ok(());
+    };
+
+    if obj
+        .get("needs_approval")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        let thread_id = obj
+            .get("thread_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("<missing thread_id>");
+        let approval_id = obj
+            .get("approval_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("<missing approval_id>");
+        anyhow::bail!(
+            "{action} needs approval: pm approval decide --thread-id {thread_id} --approval-id {approval_id} --approve"
+        );
+    }
+
+    if obj.get("denied").and_then(|v| v.as_bool()).unwrap_or(false) {
+        let detail = serde_json::to_string(value).unwrap_or_else(|_| value.to_string());
+        anyhow::bail!("{action} denied: {detail}");
+    }
+
+    Ok(())
 }

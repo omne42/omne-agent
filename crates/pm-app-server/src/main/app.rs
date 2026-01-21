@@ -620,28 +620,12 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
             "process/kill" => match serde_json::from_value::<ProcessKillParams>(request.params) {
-                Ok(params) => {
-                    let entry = {
-                        let entries = server.processes.lock().await;
-                        entries.get(&params.process_id).cloned()
-                    };
-                    if let Some(entry) = entry {
-                        let _ = entry
-                            .cmd_tx
-                            .send(ProcessCommand::Kill {
-                                reason: params.reason,
-                            })
-                            .await;
-                        JsonRpcResponse::ok(id, serde_json::json!({ "ok": true }))
-                    } else {
-                        JsonRpcResponse::err(
-                            id,
-                            JSONRPC_INTERNAL_ERROR,
-                            format!("process not found: {}", params.process_id),
-                            None,
-                        )
+                Ok(params) => match handle_process_kill(&server, params).await {
+                    Ok(result) => JsonRpcResponse::ok(id, result),
+                    Err(err) => {
+                        JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None)
                     }
-                }
+                },
                 Err(err) => JsonRpcResponse::err(
                     id,
                     JSONRPC_INVALID_PARAMS,
@@ -651,28 +635,15 @@ async fn main() -> anyhow::Result<()> {
             },
             "process/interrupt" => {
                 match serde_json::from_value::<ProcessInterruptParams>(request.params) {
-                    Ok(params) => {
-                        let entry = {
-                            let entries = server.processes.lock().await;
-                            entries.get(&params.process_id).cloned()
-                        };
-                        if let Some(entry) = entry {
-                            let _ = entry
-                                .cmd_tx
-                                .send(ProcessCommand::Interrupt {
-                                    reason: params.reason,
-                                })
-                                .await;
-                            JsonRpcResponse::ok(id, serde_json::json!({ "ok": true }))
-                        } else {
-                            JsonRpcResponse::err(
-                                id,
-                                JSONRPC_INTERNAL_ERROR,
-                                format!("process not found: {}", params.process_id),
-                                None,
-                            )
-                        }
-                    }
+                    Ok(params) => match handle_process_interrupt(&server, params).await {
+                        Ok(result) => JsonRpcResponse::ok(id, result),
+                        Err(err) => JsonRpcResponse::err(
+                            id,
+                            JSONRPC_INTERNAL_ERROR,
+                            err.to_string(),
+                            None,
+                        ),
+                    },
                     Err(err) => JsonRpcResponse::err(
                         id,
                         JSONRPC_INVALID_PARAMS,
@@ -928,4 +899,3 @@ async fn main() -> anyhow::Result<()> {
         })
         .await
 }
-
