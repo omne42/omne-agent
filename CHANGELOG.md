@@ -19,6 +19,7 @@
 - 新增 `pm-app-server`：最小 JSON-RPC over stdio 控制面（`initialize` + `thread/*` + `turn/*`），用于验证 v0.2.0 的 thread/turn/interrupt 与落盘回放。
 - 新增 `pm` CLI：作为 `pm-app-server` 的人类可用客户端，支持 `ask/watch --bell`、`thread/*`、`approval/*`、`process/*`（只读查看 + kill），并在 `ask` 中支持 Ctrl-C 触发 `turn/interrupt`。
 - `pm` CLI 新增 `inbox`：跨 thread 的 RTS 收件箱视图（可 `--watch` + `--bell` 去重提醒），用于快速发现 `need_approval/failed/running`。
+- `pm` CLI 补齐更多控制面命令：`pm thread fork/archive/unarchive/delete/clear-artifacts/disk-*` 与 `pm artifact list/read/delete`，便于手动清理与审计。
 - `pm-app-server` 新增 `initialized`（握手确认）与 `thread/loaded`（列出当前已加载 threads）。
 - `pm-app-server` 新增 `thread/list_meta`：批量返回 threads 的派生状态（支持 `include_archived`），减少 UI/CLI 人肉遍历与重复读取 event log。
 - `pm-app-server` 新增 Responses-first agent loop：`turn/start` 会调用 OpenAI Responses API 执行 tool calling（阻塞等待 approval 决策并复跑同一 tool call），并将 assistant 输出落盘为 `AssistantMessage` 事件以支持 resume。

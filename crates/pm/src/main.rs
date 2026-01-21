@@ -50,6 +50,10 @@ enum Command {
         #[command(subcommand)]
         command: ProcessCommand,
     },
+    Artifact {
+        #[command(subcommand)]
+        command: ArtifactCommand,
+    },
 }
 
 #[derive(Subcommand)]
@@ -62,6 +66,58 @@ enum ThreadCommand {
     },
     Resume {
         thread_id: ThreadId,
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    Fork {
+        thread_id: ThreadId,
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    Archive {
+        thread_id: ThreadId,
+        #[arg(long, default_value_t = false)]
+        force: bool,
+        #[arg(long)]
+        reason: Option<String>,
+    },
+    Unarchive {
+        thread_id: ThreadId,
+        #[arg(long)]
+        reason: Option<String>,
+    },
+    Delete {
+        thread_id: ThreadId,
+        #[arg(long, default_value_t = false)]
+        force: bool,
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    ClearArtifacts {
+        thread_id: ThreadId,
+        #[arg(long, default_value_t = false)]
+        force: bool,
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    DiskUsage {
+        thread_id: ThreadId,
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    DiskReport {
+        thread_id: ThreadId,
+        #[arg(long)]
+        top_files: Option<usize>,
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    Events {
+        thread_id: ThreadId,
+        #[arg(long, default_value_t = 0)]
+        since_seq: u64,
+        #[arg(long)]
+        max_events: Option<usize>,
         #[arg(long, default_value_t = false)]
         json: bool,
     },
@@ -181,6 +237,29 @@ enum ProcessCommand {
     },
 }
 
+#[derive(Subcommand)]
+enum ArtifactCommand {
+    List {
+        thread_id: ThreadId,
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    Read {
+        thread_id: ThreadId,
+        artifact_id: pm_protocol::ArtifactId,
+        #[arg(long)]
+        max_bytes: Option<u64>,
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    Delete {
+        thread_id: ThreadId,
+        artifact_id: pm_protocol::ArtifactId,
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+}
+
 #[derive(Parser)]
 struct AskArgs {
     /// Resume an existing thread instead of creating a new one.
@@ -287,6 +366,63 @@ async fn main() -> anyhow::Result<()> {
                 let result = app.thread_resume(thread_id).await?;
                 print_json_or_pretty(json, &result)?;
             }
+            ThreadCommand::Fork { thread_id, json } => {
+                let result = app.thread_fork(thread_id).await?;
+                print_json_or_pretty(json, &result)?;
+            }
+            ThreadCommand::Archive {
+                thread_id,
+                force,
+                reason,
+            } => {
+                let result = app.thread_archive(thread_id, force, reason).await?;
+                print_json_or_pretty(true, &result)?;
+            }
+            ThreadCommand::Unarchive { thread_id, reason } => {
+                let result = app.thread_unarchive(thread_id, reason).await?;
+                print_json_or_pretty(true, &result)?;
+            }
+            ThreadCommand::Delete {
+                thread_id,
+                force,
+                json,
+            } => {
+                let result = app.thread_delete(thread_id, force).await?;
+                print_json_or_pretty(json, &result)?;
+            }
+            ThreadCommand::ClearArtifacts {
+                thread_id,
+                force,
+                json,
+            } => {
+                let result = app.thread_clear_artifacts(thread_id, force).await?;
+                print_json_or_pretty(json, &result)?;
+            }
+            ThreadCommand::DiskUsage { thread_id, json } => {
+                let result = app.thread_disk_usage(thread_id).await?;
+                print_json_or_pretty(json, &result)?;
+            }
+            ThreadCommand::DiskReport {
+                thread_id,
+                top_files,
+                json,
+            } => {
+                let result = app.thread_disk_report(thread_id, top_files).await?;
+                print_json_or_pretty(json, &result)?;
+            }
+            ThreadCommand::Events {
+                thread_id,
+                since_seq,
+                max_events,
+                json,
+            } => {
+                let result = app.thread_events(thread_id, since_seq, max_events).await?;
+                if json {
+                    println!("{}", serde_json::to_string(&result)?);
+                } else {
+                    print_json_or_pretty(false, &result)?;
+                }
+            }
             ThreadCommand::List { json } => {
                 let result = app.thread_list().await?;
                 print_json_or_pretty(json, &result)?;
@@ -386,6 +522,40 @@ async fn main() -> anyhow::Result<()> {
             }
             ProcessCommand::Kill { process_id, reason } => {
                 app.process_kill(process_id, reason).await?;
+            }
+        },
+        Command::Artifact { command } => match command {
+            ArtifactCommand::List { thread_id, json } => {
+                let result = app.artifact_list(thread_id).await?;
+                print_json_or_pretty(json, &result)?;
+            }
+            ArtifactCommand::Read {
+                thread_id,
+                artifact_id,
+                max_bytes,
+                json,
+            } => {
+                let result = app.artifact_read(thread_id, artifact_id, max_bytes).await?;
+                if json {
+                    print_json_or_pretty(true, &result)?;
+                } else {
+                    let text = result["text"].as_str().unwrap_or("");
+                    print!("{text}");
+                    if !text.ends_with('\n') {
+                        println!();
+                    }
+                    if result["truncated"].as_bool().unwrap_or(false) {
+                        eprintln!("[truncated]");
+                    }
+                }
+            }
+            ArtifactCommand::Delete {
+                thread_id,
+                artifact_id,
+                json,
+            } => {
+                let result = app.artifact_delete(thread_id, artifact_id).await?;
+                print_json_or_pretty(json, &result)?;
             }
         },
     }
@@ -1107,6 +1277,100 @@ impl App {
         .await
     }
 
+    async fn thread_fork(&mut self, thread_id: ThreadId) -> anyhow::Result<Value> {
+        self.rpc("thread/fork", serde_json::json!({ "thread_id": thread_id }))
+            .await
+    }
+
+    async fn thread_archive(
+        &mut self,
+        thread_id: ThreadId,
+        force: bool,
+        reason: Option<String>,
+    ) -> anyhow::Result<Value> {
+        self.rpc(
+            "thread/archive",
+            serde_json::json!({
+                "thread_id": thread_id,
+                "force": force,
+                "reason": reason,
+            }),
+        )
+        .await
+    }
+
+    async fn thread_unarchive(
+        &mut self,
+        thread_id: ThreadId,
+        reason: Option<String>,
+    ) -> anyhow::Result<Value> {
+        self.rpc(
+            "thread/unarchive",
+            serde_json::json!({
+                "thread_id": thread_id,
+                "reason": reason,
+            }),
+        )
+        .await
+    }
+
+    async fn thread_delete(&mut self, thread_id: ThreadId, force: bool) -> anyhow::Result<Value> {
+        self.rpc(
+            "thread/delete",
+            serde_json::json!({ "thread_id": thread_id, "force": force }),
+        )
+        .await
+    }
+
+    async fn thread_clear_artifacts(
+        &mut self,
+        thread_id: ThreadId,
+        force: bool,
+    ) -> anyhow::Result<Value> {
+        self.rpc(
+            "thread/clear_artifacts",
+            serde_json::json!({ "thread_id": thread_id, "force": force }),
+        )
+        .await
+    }
+
+    async fn thread_disk_usage(&mut self, thread_id: ThreadId) -> anyhow::Result<Value> {
+        self.rpc(
+            "thread/disk_usage",
+            serde_json::json!({ "thread_id": thread_id }),
+        )
+        .await
+    }
+
+    async fn thread_disk_report(
+        &mut self,
+        thread_id: ThreadId,
+        top_files: Option<usize>,
+    ) -> anyhow::Result<Value> {
+        self.rpc(
+            "thread/disk_report",
+            serde_json::json!({ "thread_id": thread_id, "top_files": top_files }),
+        )
+        .await
+    }
+
+    async fn thread_events(
+        &mut self,
+        thread_id: ThreadId,
+        since_seq: u64,
+        max_events: Option<usize>,
+    ) -> anyhow::Result<Value> {
+        self.rpc(
+            "thread/events",
+            serde_json::json!({
+                "thread_id": thread_id,
+                "since_seq": since_seq,
+                "max_events": max_events,
+            }),
+        )
+        .await
+    }
+
     async fn thread_list(&mut self) -> anyhow::Result<Value> {
         self.rpc("thread/list", serde_json::json!({})).await
     }
@@ -1327,6 +1591,48 @@ impl App {
             )
             .await?;
         Ok(())
+    }
+
+    async fn artifact_list(&mut self, thread_id: ThreadId) -> anyhow::Result<Value> {
+        self.rpc(
+            "artifact/list",
+            serde_json::json!({
+                "thread_id": thread_id,
+            }),
+        )
+        .await
+    }
+
+    async fn artifact_read(
+        &mut self,
+        thread_id: ThreadId,
+        artifact_id: pm_protocol::ArtifactId,
+        max_bytes: Option<u64>,
+    ) -> anyhow::Result<Value> {
+        self.rpc(
+            "artifact/read",
+            serde_json::json!({
+                "thread_id": thread_id,
+                "artifact_id": artifact_id,
+                "max_bytes": max_bytes,
+            }),
+        )
+        .await
+    }
+
+    async fn artifact_delete(
+        &mut self,
+        thread_id: ThreadId,
+        artifact_id: pm_protocol::ArtifactId,
+    ) -> anyhow::Result<Value> {
+        self.rpc(
+            "artifact/delete",
+            serde_json::json!({
+                "thread_id": thread_id,
+                "artifact_id": artifact_id,
+            }),
+        )
+        .await
     }
 }
 
