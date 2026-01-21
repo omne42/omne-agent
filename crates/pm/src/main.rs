@@ -1,6 +1,8 @@
 use std::ffi::OsString;
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
@@ -660,6 +662,46 @@ async fn run_ask(app: &mut App, args: AskArgs) -> anyhow::Result<()> {
     eprintln!("thread: {thread_id}");
     eprintln!("turn: {turn_id}");
 
+    let saw_delta = Arc::new(AtomicBool::new(false));
+    let mut streaming_handle: Option<tokio::task::JoinHandle<()>> = None;
+    if let Some(mut notifications) = app.take_notifications() {
+        let saw_delta = saw_delta.clone();
+        let thread_id_str = thread_id.to_string();
+        let turn_id_str = turn_id.to_string();
+        streaming_handle = Some(tokio::spawn(async move {
+            while let Some(note) = notifications.recv().await {
+                if note.method != "item/delta" {
+                    continue;
+                }
+                let params = match note.params.as_object() {
+                    Some(params) => params,
+                    None => continue,
+                };
+                let Some(thread_id) = params.get("thread_id").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                let Some(turn_id) = params.get("turn_id").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                if thread_id != thread_id_str || turn_id != turn_id_str {
+                    continue;
+                }
+                if params.get("kind").and_then(|v| v.as_str()) != Some("output_text") {
+                    continue;
+                }
+                let Some(delta) = params.get("delta").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                if delta.is_empty() {
+                    continue;
+                }
+                saw_delta.store(true, Ordering::Relaxed);
+                print!("{delta}");
+                std::io::stdout().flush().ok();
+            }
+        }));
+    }
+
     let (interrupt_tx, mut interrupt_rx) = tokio::sync::mpsc::channel::<()>(1);
     tokio::spawn(async move {
         if tokio::signal::ctrl_c().await.is_ok() {
@@ -672,6 +714,9 @@ async fn run_ask(app: &mut App, args: AskArgs) -> anyhow::Result<()> {
             app.turn_interrupt(thread_id, turn_id, Some("ctrl-c".to_string()))
                 .await?;
             eprintln!("interrupt requested: {turn_id}");
+            if let Some(handle) = streaming_handle.take() {
+                handle.abort();
+            }
             return Ok(());
         }
 
@@ -681,7 +726,8 @@ async fn run_ask(app: &mut App, args: AskArgs) -> anyhow::Result<()> {
         since_seq = resp.last_seq;
 
         for event in &resp.events {
-            render_event(event);
+            let did_stream = saw_delta.load(Ordering::Relaxed);
+            render_event_for_ask(event, did_stream);
             if let pm_protocol::ThreadEventKind::ApprovalRequested {
                 approval_id,
                 action,
@@ -689,6 +735,10 @@ async fn run_ask(app: &mut App, args: AskArgs) -> anyhow::Result<()> {
                 ..
             } = &event.kind
             {
+                if did_stream {
+                    println!();
+                    std::io::stdout().flush().ok();
+                }
                 let decision = prompt_approval(approval_id, action, params)?;
                 app.approval_decide(
                     thread_id,
@@ -702,6 +752,13 @@ async fn run_ask(app: &mut App, args: AskArgs) -> anyhow::Result<()> {
             if let pm_protocol::ThreadEventKind::TurnCompleted { turn_id: id, .. } = &event.kind
                 && *id == turn_id
             {
+                if did_stream {
+                    println!();
+                    std::io::stdout().flush().ok();
+                }
+                if let Some(handle) = streaming_handle.take() {
+                    handle.abort();
+                }
                 return Ok(());
             }
         }
@@ -712,6 +769,169 @@ async fn run_ask(app: &mut App, args: AskArgs) -> anyhow::Result<()> {
         if resp.has_more {
             continue;
         }
+    }
+}
+
+fn render_event_for_ask(event: &ThreadEvent, streamed_assistant: bool) {
+    let ts = event
+        .timestamp
+        .format(&time::format_description::well_known::Rfc3339);
+    let ts = ts.unwrap_or_else(|_| "<time>".to_string());
+    match &event.kind {
+        pm_protocol::ThreadEventKind::AssistantMessage { text, model, .. } => {
+            if streamed_assistant {
+                return;
+            }
+            if let Some(model) = model {
+                println!("[{ts}] assistant (model={model}):");
+            } else {
+                println!("[{ts}] assistant:");
+            }
+            println!("{text}");
+        }
+        other => {
+            let mut buffered = Vec::<u8>::new();
+            render_event_to(&mut buffered, ts, other);
+            if let Ok(text) = String::from_utf8(buffered) {
+                eprint!("{text}");
+            }
+        }
+    }
+}
+
+fn render_event_to<W: std::io::Write>(
+    writer: &mut W,
+    ts: String,
+    kind: &pm_protocol::ThreadEventKind,
+) {
+    match kind {
+        pm_protocol::ThreadEventKind::ThreadCreated { cwd } => {
+            let _ = writeln!(writer, "[{ts}] thread created cwd={cwd}");
+        }
+        pm_protocol::ThreadEventKind::ThreadArchived { reason } => {
+            let _ = writeln!(
+                writer,
+                "[{ts}] thread archived reason={}",
+                reason.as_deref().unwrap_or("")
+            );
+        }
+        pm_protocol::ThreadEventKind::ThreadUnarchived { reason } => {
+            let _ = writeln!(
+                writer,
+                "[{ts}] thread unarchived reason={}",
+                reason.as_deref().unwrap_or("")
+            );
+        }
+        pm_protocol::ThreadEventKind::ThreadPaused { reason } => {
+            let _ = writeln!(
+                writer,
+                "[{ts}] thread paused reason={}",
+                reason.as_deref().unwrap_or("")
+            );
+        }
+        pm_protocol::ThreadEventKind::ThreadUnpaused { reason } => {
+            let _ = writeln!(
+                writer,
+                "[{ts}] thread unpaused reason={}",
+                reason.as_deref().unwrap_or("")
+            );
+        }
+        pm_protocol::ThreadEventKind::TurnStarted { turn_id, input } => {
+            let _ = writeln!(writer, "[{ts}] turn started {turn_id}");
+            let _ = writeln!(writer, "user: {input}");
+        }
+        pm_protocol::ThreadEventKind::TurnInterruptRequested { turn_id, reason } => {
+            let _ = writeln!(
+                writer,
+                "[{ts}] turn interrupt requested {turn_id} reason={}",
+                reason.as_deref().unwrap_or("")
+            );
+        }
+        pm_protocol::ThreadEventKind::TurnCompleted {
+            turn_id,
+            status,
+            reason,
+        } => {
+            let _ = writeln!(
+                writer,
+                "[{ts}] turn completed {turn_id} status={status:?} reason={}",
+                reason.as_deref().unwrap_or("")
+            );
+        }
+        pm_protocol::ThreadEventKind::ThreadConfigUpdated {
+            approval_policy,
+            sandbox_policy,
+            model,
+            openai_base_url,
+        } => {
+            let _ = writeln!(
+                writer,
+                "[{ts}] config approval_policy={approval_policy:?} sandbox_policy={sandbox_policy:?} model={} openai_base_url={}",
+                model.as_deref().unwrap_or(""),
+                openai_base_url.as_deref().unwrap_or("")
+            );
+        }
+        pm_protocol::ThreadEventKind::ApprovalRequested {
+            approval_id,
+            action,
+            ..
+        } => {
+            let _ = writeln!(
+                writer,
+                "[{ts}] approval requested {approval_id} action={action}"
+            );
+        }
+        pm_protocol::ThreadEventKind::ApprovalDecided {
+            approval_id,
+            decision,
+            remember,
+            reason,
+        } => {
+            let _ = writeln!(
+                writer,
+                "[{ts}] approval decided {approval_id} decision={decision:?} remember={remember} reason={}",
+                reason.as_deref().unwrap_or("")
+            );
+        }
+        pm_protocol::ThreadEventKind::ToolStarted { tool, .. } => {
+            let _ = writeln!(writer, "[{ts}] tool started {tool}");
+        }
+        pm_protocol::ThreadEventKind::ToolCompleted { status, error, .. } => {
+            let _ = writeln!(
+                writer,
+                "[{ts}] tool completed status={status:?} error={}",
+                error.as_deref().unwrap_or("")
+            );
+        }
+        pm_protocol::ThreadEventKind::ProcessStarted {
+            process_id, argv, ..
+        } => {
+            let _ = writeln!(writer, "[{ts}] process started {process_id} argv={argv:?}");
+        }
+        pm_protocol::ThreadEventKind::ProcessKillRequested {
+            process_id, reason, ..
+        } => {
+            let _ = writeln!(
+                writer,
+                "[{ts}] process kill requested {process_id} reason={}",
+                reason.as_deref().unwrap_or("")
+            );
+        }
+        pm_protocol::ThreadEventKind::ProcessExited {
+            process_id,
+            exit_code,
+            reason,
+        } => {
+            let _ = writeln!(
+                writer,
+                "[{ts}] process exited {process_id} exit_code={} reason={}",
+                exit_code
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "?".to_string()),
+                reason.as_deref().unwrap_or("")
+            );
+        }
+        _ => {}
     }
 }
 
@@ -1288,6 +1508,7 @@ fn render_event(event: &ThreadEvent) {
 
 struct App {
     rpc: pm_jsonrpc::Client,
+    notifications: Option<tokio::sync::mpsc::UnboundedReceiver<pm_jsonrpc::Notification>>,
 }
 
 impl App {
@@ -1314,11 +1535,18 @@ impl App {
         let mut rpc = pm_jsonrpc::Client::spawn(server, argv).await?;
         let _ = rpc.request("initialize", serde_json::json!({})).await?;
         let _ = rpc.request("initialized", serde_json::json!({})).await?;
-        Ok(Self { rpc })
+        let notifications = rpc.take_notifications();
+        Ok(Self { rpc, notifications })
     }
 
     async fn rpc(&mut self, method: &str, params: Value) -> anyhow::Result<Value> {
         Ok(self.rpc.request(method, params).await?)
+    }
+
+    fn take_notifications(
+        &mut self,
+    ) -> Option<tokio::sync::mpsc::UnboundedReceiver<pm_jsonrpc::Notification>> {
+        self.notifications.take()
     }
 
     async fn thread_start(&mut self, cwd: Option<String>) -> anyhow::Result<Value> {
