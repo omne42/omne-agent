@@ -106,6 +106,7 @@
 - `pm-app-server-protocol`：`file/read`/`file/glob`/`file/grep` 追加可选 `approval_id`，用于 `needs_approval` 后的重试调用。
 - `pm-app-server-protocol`：补齐 `process/interrupt` 方法与参数，并为 `process/kill` 追加可选 `turn_id/approval_id`（与其它 tools 对齐）。
 - `pm-app-server process/inspect|tail|follow`：现在会执行 mode gate（`process.inspect` + per-tool override），并在 `prompt` 下走 approvals；`pm-app-server-protocol` 为这些方法追加可选 `turn_id/approval_id`，`pm` CLI 在 `tail/follow` 下会正确提示 `needs_approval/denied`。
+- `pm-app-server process logs`：stdout/stderr rotate 文件命名从 `*.part-0001.log` 改为 `*.segment-0001.log`（仍兼容读取 legacy `*.part-*.log`），避免产生大量 “part” 文件名。
 - `pm-core::redaction`：修正 token 脱敏正则（Bearer/Google key），避免漏打码。
 - `pm-core::sandbox`/`pm-app-server`：`sandbox_policy=danger_full_access` 现在会使用 unrestricted 路径解析（允许绝对路径与系统 symlink，如 macOS `/tmp`），不再误报 “escapes root”。
 - Rust workspace：修复 `cargo clippy -- -D warnings` 下的告警（`pm-jsonrpc` 提取 pending type alias、`pm-openai` 使用 `std::io::Error::other`、`pm-protocol` 的 id newtype 实现 `Default`、`pm-eventlog` lockfile 显式 `truncate(false)`、以及 `pm-app-server` 若干 clippy cleanups）。

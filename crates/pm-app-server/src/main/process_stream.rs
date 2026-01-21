@@ -550,6 +550,27 @@ async fn read_file_chunk(
 }
 
 async fn list_rotating_log_files(base_path: &Path) -> anyhow::Result<Vec<PathBuf>> {
+    let mut parts = scan_rotating_log_parts(base_path).await?;
+    parts.sort_by_key(|(part, _)| *part);
+    let mut files = parts.into_iter().map(|(_, path)| path).collect::<Vec<_>>();
+    if tokio::fs::metadata(base_path).await.is_ok() {
+        files.push(base_path.to_path_buf());
+    }
+    Ok(files)
+}
+
+async fn next_rotating_log_part(base_path: &Path) -> anyhow::Result<u32> {
+    let parts = scan_rotating_log_parts(base_path).await?;
+    let next_part = parts
+        .iter()
+        .map(|(part, _)| *part)
+        .max()
+        .unwrap_or(0)
+        .saturating_add(1);
+    Ok(next_part.max(1))
+}
+
+async fn scan_rotating_log_parts(base_path: &Path) -> anyhow::Result<Vec<(u32, PathBuf)>> {
     let Some(parent) = base_path.parent() else {
         return Ok(Vec::new());
     };
@@ -566,7 +587,10 @@ async fn list_rotating_log_files(base_path: &Path) -> anyhow::Result<Vec<PathBuf
         Err(err) => return Err(err).with_context(|| format!("read {}", parent.display())),
     };
 
-    let prefix = format!("{stem}.part-");
+    let prefixes = [
+        format!("{stem}.segment-"),
+        format!("{stem}.part-"),
+    ];
     while let Some(entry) = read_dir.next_entry().await? {
         let ty = entry.file_type().await?;
         if !ty.is_file() {
@@ -576,7 +600,10 @@ async fn list_rotating_log_files(base_path: &Path) -> anyhow::Result<Vec<PathBuf
         let Some(name) = file_name.to_str() else {
             continue;
         };
-        let Some(rest) = name.strip_prefix(&prefix) else {
+        let Some(rest) = prefixes
+            .iter()
+            .find_map(|prefix| name.strip_prefix(prefix))
+        else {
             continue;
         };
         let Some(part_str) = rest.strip_suffix(".log") else {
@@ -588,12 +615,7 @@ async fn list_rotating_log_files(base_path: &Path) -> anyhow::Result<Vec<PathBuf
         parts.push((part, entry.path()));
     }
 
-    parts.sort_by_key(|(part, _)| *part);
-    let mut files = parts.into_iter().map(|(_, path)| path).collect::<Vec<_>>();
-    if tokio::fs::metadata(base_path).await.is_ok() {
-        files.push(base_path.to_path_buf());
-    }
-    Ok(files)
+    Ok(parts)
 }
 
 async fn capture_rotating_log<R>(
@@ -618,7 +640,7 @@ where
         .await
         .with_context(|| format!("open {}", base_path.display()))?;
     let mut current_len = file.metadata().await.map(|m| m.len()).unwrap_or(0);
-    let mut next_part = 1u32;
+    let mut next_part = next_rotating_log_part(&base_path).await?;
 
     let mut buf = vec![0u8; 8192];
     loop {
@@ -672,7 +694,7 @@ async fn rotate_log_file(base_path: &Path, mut part: u32) -> anyhow::Result<u32>
     };
 
     loop {
-        let rotated = parent.join(format!("{stem}.part-{part:04}.log"));
+        let rotated = parent.join(format!("{stem}.segment-{part:04}.log"));
         match tokio::fs::rename(base_path, &rotated).await {
             Ok(()) => return Ok(part.saturating_add(1)),
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(part),
@@ -875,7 +897,7 @@ mod tests {
     use tokio::io::AsyncWriteExt;
 
     #[tokio::test]
-    async fn process_logs_rotate_and_follow_reads_across_parts() -> anyhow::Result<()> {
+    async fn process_logs_rotate_and_follow_reads_across_segments() -> anyhow::Result<()> {
         let dir = tempfile::tempdir()?;
         let base_path = dir.path().join("stdout.log");
 
@@ -893,8 +915,8 @@ mod tests {
         capture_rotating_log(reader, base_path.clone(), 10).await?;
         write_task.await??;
 
-        let part1 = dir.path().join("stdout.part-0001.log");
-        let part2 = dir.path().join("stdout.part-0002.log");
+        let part1 = dir.path().join("stdout.segment-0001.log");
+        let part2 = dir.path().join("stdout.segment-0002.log");
 
         assert_eq!(tokio::fs::metadata(&part1).await?.len(), 10);
         assert_eq!(tokio::fs::metadata(&part2).await?.len(), 10);
