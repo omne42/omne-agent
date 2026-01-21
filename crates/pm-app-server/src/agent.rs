@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -42,13 +43,14 @@ pub async fn run_agent_turn(
     _input: String,
     cancel: CancellationToken,
 ) -> anyhow::Result<()> {
-    let (thread_id, thread_model, thread_openai_base_url) = {
+    let (thread_id, thread_model, thread_openai_base_url, thread_cwd) = {
         let handle = thread_rt.handle.lock().await;
         let state = handle.state();
         (
             handle.thread_id(),
             state.model.clone(),
             state.openai_base_url.clone(),
+            state.cwd.clone(),
         )
     };
 
@@ -73,6 +75,16 @@ pub async fn run_agent_turn(
     let openai = pm_openai::Client::new_with_base_url(api_key, base_url)?;
     let tools = build_tools();
 
+    let mut instructions = DEFAULT_INSTRUCTIONS.to_string();
+    if let Some(cwd) = thread_cwd {
+        let agents_path = PathBuf::from(cwd).join("AGENTS.md");
+        if let Ok(contents) = tokio::fs::read_to_string(&agents_path).await {
+            let contents = pm_core::redact_text(&contents);
+            instructions.push_str("\n\n# Project instructions (AGENTS.md)\n\n");
+            instructions.push_str(&contents);
+        }
+    }
+
     let mut input_items = build_conversation(&server, thread_id).await?;
 
     let mut last_response_id = String::new();
@@ -95,7 +107,7 @@ pub async fn run_agent_turn(
 
         let req = pm_openai::ResponsesApiRequest {
             model: &model,
-            instructions: DEFAULT_INSTRUCTIONS,
+            instructions: &instructions,
             input: &input_items,
             tools: &tools,
             tool_choice: "auto",
