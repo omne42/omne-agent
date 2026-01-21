@@ -40,6 +40,10 @@ const CHILD_PROCESS_ENV_SCRUB_KEYS: &[&str] = &[
 const DEFAULT_PROCESS_LOG_MAX_BYTES_PER_PART: u64 = 8 * 1024 * 1024;
 const MAX_PROCESS_LOG_MAX_BYTES_PER_PART: u64 = 512 * 1024 * 1024;
 
+const DEFAULT_THREAD_DISK_WARNING_BYTES: u64 = 10 * 1024 * 1024 * 1024;
+const DEFAULT_THREAD_DISK_CHECK_DEBOUNCE_MS: u64 = 30_000;
+const DEFAULT_THREAD_DISK_REPORT_DEBOUNCE_MS: u64 = 30 * 60_000;
+
 fn process_log_max_bytes_per_part() -> u64 {
     std::env::var("CODE_PM_PROCESS_LOG_MAX_BYTES_PER_PART")
         .ok()
@@ -47,6 +51,32 @@ fn process_log_max_bytes_per_part() -> u64 {
         .filter(|value| *value > 0)
         .map(|value| value.min(MAX_PROCESS_LOG_MAX_BYTES_PER_PART))
         .unwrap_or(DEFAULT_PROCESS_LOG_MAX_BYTES_PER_PART)
+}
+
+fn thread_disk_warning_threshold_bytes() -> Option<u64> {
+    let value = std::env::var("CODE_PM_THREAD_DISK_WARNING_BYTES")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or(DEFAULT_THREAD_DISK_WARNING_BYTES);
+    if value == 0 { None } else { Some(value) }
+}
+
+fn thread_disk_check_debounce() -> Duration {
+    Duration::from_millis(
+        std::env::var("CODE_PM_THREAD_DISK_CHECK_DEBOUNCE_MS")
+            .ok()
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .unwrap_or(DEFAULT_THREAD_DISK_CHECK_DEBOUNCE_MS),
+    )
+}
+
+fn thread_disk_report_debounce() -> Duration {
+    Duration::from_millis(
+        std::env::var("CODE_PM_THREAD_DISK_REPORT_DEBOUNCE_MS")
+            .ok()
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .unwrap_or(DEFAULT_THREAD_DISK_REPORT_DEBOUNCE_MS),
+    )
 }
 
 fn scrub_child_process_env(cmd: &mut Command) {
@@ -142,6 +172,11 @@ const JSONRPC_INTERNAL_ERROR: i64 = -32603;
 const CODE_PM_NOT_INITIALIZED: i64 = -32_000;
 const CODE_PM_ALREADY_INITIALIZED: i64 = -32_001;
 
+struct DiskWarningState {
+    last_checked_at: Option<tokio::time::Instant>,
+    last_reported_at: Option<tokio::time::Instant>,
+}
+
 #[derive(Clone)]
 struct Server {
     cwd: PathBuf,
@@ -149,6 +184,7 @@ struct Server {
     thread_store: ThreadStore,
     threads: Arc<tokio::sync::Mutex<HashMap<ThreadId, Arc<ThreadRuntime>>>>,
     processes: Arc<tokio::sync::Mutex<HashMap<ProcessId, ProcessEntry>>>,
+    disk_warning: Arc<tokio::sync::Mutex<HashMap<ThreadId, DiskWarningState>>>,
     exec_policy: pm_execpolicy::Policy,
 }
 
@@ -806,6 +842,7 @@ async fn main() -> anyhow::Result<()> {
         thread_store: ThreadStore::new(PmPaths::new(pm_root)),
         threads: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         processes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+        disk_warning: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         exec_policy,
     });
 
@@ -1874,6 +1911,14 @@ async fn handle_thread_subscribe(
     server: &Server,
     params: ThreadSubscribeParams,
 ) -> anyhow::Result<Value> {
+    if let Err(err) = maybe_emit_thread_disk_warning(server, params.thread_id).await {
+        tracing::debug!(
+            thread_id = %params.thread_id,
+            error = %err,
+            "disk warning check failed"
+        );
+    }
+
     let wait_ms = params.wait_ms.unwrap_or(30_000).min(300_000);
     let poll_interval = Duration::from_millis(200);
     let deadline = tokio::time::Instant::now() + Duration::from_millis(wait_ms);
@@ -2041,6 +2086,45 @@ async fn handle_thread_disk_usage(
     }))
 }
 
+fn build_thread_disk_report_markdown(
+    thread_id: ThreadId,
+    generated_at: &str,
+    warning_threshold_bytes: Option<u64>,
+    thread_dir: &Path,
+    events_log_path: &Path,
+    usage: &ThreadDiskUsage,
+) -> String {
+    let mut report = String::new();
+    report.push_str("# Thread disk usage report\n\n");
+    report.push_str(&format!("- thread_id: {thread_id}\n"));
+    report.push_str(&format!("- generated_at: {generated_at}\n"));
+    if let Some(threshold) = warning_threshold_bytes {
+        report.push_str(&format!("- warning_threshold_bytes: {threshold}\n"));
+    }
+    report.push_str(&format!("- thread_dir: {}\n", thread_dir.display()));
+    report.push_str(&format!(
+        "- events_log_path: {}\n",
+        events_log_path.display()
+    ));
+    report.push_str(&format!("- total_bytes: {}\n", usage.total_bytes));
+    report.push_str(&format!("- artifacts_bytes: {}\n", usage.artifacts_bytes));
+    report.push_str(&format!("- events_log_bytes: {}\n", usage.events_log_bytes));
+    report.push_str(&format!("- file_count: {}\n", usage.file_count));
+
+    if !usage.top_files.is_empty() {
+        report.push_str("\n## Top files\n");
+        for (size, rel) in &usage.top_files {
+            report.push_str(&format!("- {}  {}\n", size, rel));
+        }
+    }
+
+    report.push_str("\n## Cleanup\n");
+    report.push_str("- Use `thread/clear_artifacts` to remove `artifacts/` (requires force=true if processes are running).\n");
+    report.push_str("- Use `thread/delete` to remove the entire thread directory (requires force=true if processes are running).\n");
+
+    report
+}
+
 async fn handle_thread_disk_report(
     server: &Server,
     params: ThreadDiskReportParams,
@@ -2067,31 +2151,14 @@ async fn handle_thread_disk_report(
     .context("join disk report task")??;
 
     let now = OffsetDateTime::now_utc().format(&Rfc3339)?;
-
-    let mut report = String::new();
-    report.push_str("# Thread disk usage report\n\n");
-    report.push_str(&format!("- thread_id: {}\n", params.thread_id));
-    report.push_str(&format!("- generated_at: {}\n", now));
-    report.push_str(&format!("- thread_dir: {}\n", thread_dir.display()));
-    report.push_str(&format!(
-        "- events_log_path: {}\n",
-        events_log_path.display()
-    ));
-    report.push_str(&format!("- total_bytes: {}\n", usage.total_bytes));
-    report.push_str(&format!("- artifacts_bytes: {}\n", usage.artifacts_bytes));
-    report.push_str(&format!("- events_log_bytes: {}\n", usage.events_log_bytes));
-    report.push_str(&format!("- file_count: {}\n", usage.file_count));
-
-    if !usage.top_files.is_empty() {
-        report.push_str("\n## Top files\n");
-        for (size, rel) in &usage.top_files {
-            report.push_str(&format!("- {}  {}\n", size, rel));
-        }
-    }
-
-    report.push_str("\n## Cleanup\n");
-    report.push_str("- Use `thread/clear_artifacts` to remove `artifacts/` (requires force=true if processes are running).\n");
-    report.push_str("- Use `thread/delete` to remove the entire thread directory (requires force=true if processes are running).\n");
+    let report = build_thread_disk_report_markdown(
+        params.thread_id,
+        &now,
+        None,
+        &thread_dir,
+        &events_log_path,
+        &usage,
+    );
 
     let artifact = handle_artifact_write(
         server,
@@ -2116,6 +2183,96 @@ async fn handle_thread_disk_report(
         },
         "artifact": artifact,
     }))
+}
+
+async fn maybe_emit_thread_disk_warning(
+    server: &Server,
+    thread_id: ThreadId,
+) -> anyhow::Result<()> {
+    let Some(threshold_bytes) = thread_disk_warning_threshold_bytes() else {
+        return Ok(());
+    };
+    let check_debounce = thread_disk_check_debounce();
+    let report_debounce = thread_disk_report_debounce();
+    let now = tokio::time::Instant::now();
+
+    {
+        let mut disk_warning = server.disk_warning.lock().await;
+        let state = disk_warning
+            .entry(thread_id)
+            .or_insert_with(|| DiskWarningState {
+                last_checked_at: None,
+                last_reported_at: None,
+            });
+        if let Some(last) = state.last_checked_at
+            && now.duration_since(last) < check_debounce
+        {
+            return Ok(());
+        }
+        state.last_checked_at = Some(now);
+    }
+
+    let thread_dir = server.thread_store.thread_dir(thread_id);
+    let events_log_path = server.thread_store.events_log_path(thread_id);
+
+    match tokio::fs::metadata(&thread_dir).await {
+        Ok(meta) if meta.is_dir() => {}
+        _ => return Ok(()),
+    }
+
+    let thread_dir_for_task = thread_dir.clone();
+    let events_log_path_for_task = events_log_path.clone();
+    let usage = tokio::task::spawn_blocking(move || {
+        scan_thread_disk_usage(&thread_dir_for_task, &events_log_path_for_task, 40)
+    })
+    .await
+    .context("join disk warning scan task")??;
+
+    if usage.total_bytes < threshold_bytes {
+        return Ok(());
+    }
+
+    {
+        let mut disk_warning = server.disk_warning.lock().await;
+        let state = disk_warning
+            .entry(thread_id)
+            .or_insert_with(|| DiskWarningState {
+                last_checked_at: Some(now),
+                last_reported_at: None,
+            });
+
+        if let Some(last) = state.last_reported_at
+            && now.duration_since(last) < report_debounce
+        {
+            return Ok(());
+        }
+        state.last_reported_at = Some(now);
+    }
+
+    let generated_at = OffsetDateTime::now_utc().format(&Rfc3339)?;
+    let report = build_thread_disk_report_markdown(
+        thread_id,
+        &generated_at,
+        Some(threshold_bytes),
+        &thread_dir,
+        &events_log_path,
+        &usage,
+    );
+
+    let _artifact = handle_artifact_write(
+        server,
+        ArtifactWriteParams {
+            thread_id,
+            turn_id: None,
+            artifact_id: None,
+            artifact_type: "disk_report".to_string(),
+            summary: "Thread disk usage report (warning)".to_string(),
+            text: report,
+        },
+    )
+    .await?;
+
+    Ok(())
 }
 
 async fn handle_thread_configure(

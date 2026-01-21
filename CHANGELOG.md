@@ -48,6 +48,7 @@
 - `pm-protocol`/`pm-eventlog` 新增 thread-level 模型配置：`ThreadConfigUpdated.model/openai_base_url` + `ThreadState.model/openai_base_url`。
 - `pm-app-server` 新增 `thread/attention`：派生 RTS “收件箱”视图（pending approvals + running processes），减少 UI/CLI 人肉扫描 event log。
 - `pm-app-server` 新增 `thread/disk_usage` 与 `thread/disk_report`：返回 thread 目录磁盘占用，并可生成 `disk_report` markdown artifact 便于清理。
+- `pm-app-server`：订阅 `thread/subscribe` 时会按阈值检测 thread 磁盘占用并生成 `disk_report` 告警 artifact（默认 10GiB；`CODE_PM_THREAD_DISK_WARNING_BYTES=0` 可关闭；频率可用 `CODE_PM_THREAD_DISK_CHECK_DEBOUNCE_MS`/`CODE_PM_THREAD_DISK_REPORT_DEBOUNCE_MS` 控制）。
 - `pm-app-server` 新增 `process/*`：`process/start`（落盘 stdout/stderr）、`process/list`、`process/inspect`（元信息 + tail）、`process/tail`（只读查看）、`process/follow`（增量查看）、`process/kill`（终止后台进程）。
 - `pm-app-server process logs`：stdout/stderr 自动分片 rotate（默认 `8MiB`，可用 `CODE_PM_PROCESS_LOG_MAX_BYTES_PER_PART` 覆盖），`process/tail`/`process/follow` 会跨分片读取（offset 语义保持连续）。
 - `pm-app-server` 新增 `file/*`：`file/read`、`file/glob`、`file/grep`、`file/write`、`file/patch`、`file/edit`、`file/delete`（带 rooted path 校验，并记录 `ToolStarted/ToolCompleted` 事件）。
