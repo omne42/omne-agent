@@ -249,7 +249,9 @@ pub enum ToolStatus {
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalPolicy {
     AutoApprove,
+    OnRequest,
     Manual,
+    UnlessTrusted,
     AutoDeny,
 }
 

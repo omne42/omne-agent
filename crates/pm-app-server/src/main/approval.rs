@@ -220,16 +220,16 @@ async fn gate_approval(
     }
 
     match approval_policy {
-        pm_protocol::ApprovalPolicy::AutoApprove => {
+        pm_protocol::ApprovalPolicy::AutoApprove | pm_protocol::ApprovalPolicy::OnRequest => {
             let approval_id = pm_protocol::ApprovalId::new();
             thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ApprovalRequested {
-                approval_id,
-                turn_id,
-                action: request.action.to_string(),
-                params: request.params.clone(),
-            })
-            .await?;
+                .append_event(pm_protocol::ThreadEventKind::ApprovalRequested {
+                    approval_id,
+                    turn_id,
+                    action: request.action.to_string(),
+                    params: request.params.clone(),
+                })
+                .await?;
             thread_rt
                 .append_event(pm_protocol::ThreadEventKind::ApprovalDecided {
                     approval_id,
@@ -251,6 +251,69 @@ async fn gate_approval(
                 })
                 .await?;
             Ok(ApprovalGate::NeedsApproval { approval_id })
+        }
+        pm_protocol::ApprovalPolicy::UnlessTrusted => {
+            let trusted = match request.action {
+                "process/start" => {
+                    let argv = request
+                        .params
+                        .as_object()
+                        .and_then(|o| o.get("argv"))
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str())
+                                .map(|s| s.to_string())
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    if argv.is_empty() {
+                        false
+                    } else {
+                        let exec_matches = server.exec_policy.matches_for_command(&argv, None);
+                        let exec_decision = exec_matches.iter().map(ExecRuleMatch::decision).max();
+                        let effective_exec_decision = match exec_decision {
+                            Some(ExecDecision::Forbidden) => ExecDecision::Forbidden,
+                            Some(ExecDecision::Allow) => ExecDecision::Allow,
+                            Some(ExecDecision::Prompt) | None => ExecDecision::Prompt,
+                        };
+                        matches!(effective_exec_decision, ExecDecision::Allow)
+                    }
+                }
+                _ => false,
+            };
+
+            if trusted {
+                let approval_id = pm_protocol::ApprovalId::new();
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ApprovalRequested {
+                        approval_id,
+                        turn_id,
+                        action: request.action.to_string(),
+                        params: request.params.clone(),
+                    })
+                    .await?;
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ApprovalDecided {
+                        approval_id,
+                        decision: pm_protocol::ApprovalDecision::Approved,
+                        remember: false,
+                        reason: Some("auto-approved by policy (unless_trusted)".to_string()),
+                    })
+                    .await?;
+                Ok(ApprovalGate::Approved)
+            } else {
+                let approval_id = pm_protocol::ApprovalId::new();
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ApprovalRequested {
+                        approval_id,
+                        turn_id,
+                        action: request.action.to_string(),
+                        params: request.params.clone(),
+                    })
+                    .await?;
+                Ok(ApprovalGate::NeedsApproval { approval_id })
+            }
         }
         pm_protocol::ApprovalPolicy::AutoDeny => {
             let approval_id = pm_protocol::ApprovalId::new();

@@ -440,7 +440,9 @@ struct WatchArgs {
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum CliApprovalPolicy {
     AutoApprove,
+    OnRequest,
     Manual,
+    UnlessTrusted,
     AutoDeny,
 }
 
@@ -448,7 +450,9 @@ impl From<CliApprovalPolicy> for ApprovalPolicy {
     fn from(value: CliApprovalPolicy) -> Self {
         match value {
             CliApprovalPolicy::AutoApprove => Self::AutoApprove,
+            CliApprovalPolicy::OnRequest => Self::OnRequest,
             CliApprovalPolicy::Manual => Self::Manual,
+            CliApprovalPolicy::UnlessTrusted => Self::UnlessTrusted,
             CliApprovalPolicy::AutoDeny => Self::AutoDeny,
         }
     }
