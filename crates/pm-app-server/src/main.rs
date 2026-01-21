@@ -1475,6 +1475,7 @@ async fn main() -> anyhow::Result<()> {
                 println!("{}", serde_json::to_string(&response)?);
             }
 
+            shutdown_running_processes(&server).await;
             Ok(())
         })
         .await
@@ -4523,6 +4524,30 @@ async fn kill_processes_for_turn(
                 .await;
         }
     }
+}
+
+async fn shutdown_running_processes(server: &Server) {
+    let entries = {
+        let entries = server.processes.lock().await;
+        entries.values().cloned().collect::<Vec<_>>()
+    };
+
+    for entry in entries {
+        let should_kill = {
+            let info = entry.info.lock().await;
+            matches!(info.status, ProcessStatus::Running)
+        };
+        if should_kill {
+            let _ = entry
+                .cmd_tx
+                .send(ProcessCommand::Kill {
+                    reason: Some("app-server shutdown".to_string()),
+                })
+                .await;
+        }
+    }
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
 }
 
 async fn handle_process_start(

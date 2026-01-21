@@ -110,12 +110,6 @@ impl Client {
     }
 }
 
-impl Drop for Client {
-    fn drop(&mut self) {
-        let _ = self.child.start_kill();
-    }
-}
-
 #[derive(Debug, serde::Deserialize)]
 struct JsonRpcResponse {
     id: Value,
