@@ -121,6 +121,10 @@ enum ThreadCommand {
         #[arg(long, default_value_t = false)]
         json: bool,
     },
+    Loaded {
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
     List {
         #[arg(long, default_value_t = false)]
         json: bool,
@@ -132,6 +136,16 @@ enum ThreadCommand {
         json: bool,
     },
     Attention {
+        thread_id: ThreadId,
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    State {
+        thread_id: ThreadId,
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    ConfigExplain {
         thread_id: ThreadId,
         #[arg(long, default_value_t = false)]
         json: bool,
@@ -423,6 +437,10 @@ async fn main() -> anyhow::Result<()> {
                     print_json_or_pretty(false, &result)?;
                 }
             }
+            ThreadCommand::Loaded { json } => {
+                let result = app.thread_loaded().await?;
+                print_json_or_pretty(json, &result)?;
+            }
             ThreadCommand::List { json } => {
                 let result = app.thread_list().await?;
                 print_json_or_pretty(json, &result)?;
@@ -436,6 +454,14 @@ async fn main() -> anyhow::Result<()> {
             }
             ThreadCommand::Attention { thread_id, json } => {
                 let result = app.thread_attention(thread_id).await?;
+                print_json_or_pretty(json, &result)?;
+            }
+            ThreadCommand::State { thread_id, json } => {
+                let result = app.thread_state(thread_id).await?;
+                print_json_or_pretty(json, &result)?;
+            }
+            ThreadCommand::ConfigExplain { thread_id, json } => {
+                let result = app.thread_config_explain(thread_id).await?;
                 print_json_or_pretty(json, &result)?;
             }
             ThreadCommand::Configure(args) => {
@@ -1371,6 +1397,10 @@ impl App {
         .await
     }
 
+    async fn thread_loaded(&mut self) -> anyhow::Result<Value> {
+        self.rpc("thread/loaded", serde_json::json!({})).await
+    }
+
     async fn thread_list(&mut self) -> anyhow::Result<Value> {
         self.rpc("thread/list", serde_json::json!({})).await
     }
@@ -1386,6 +1416,22 @@ impl App {
     async fn thread_attention(&mut self, thread_id: ThreadId) -> anyhow::Result<Value> {
         self.rpc(
             "thread/attention",
+            serde_json::json!({ "thread_id": thread_id }),
+        )
+        .await
+    }
+
+    async fn thread_state(&mut self, thread_id: ThreadId) -> anyhow::Result<Value> {
+        self.rpc(
+            "thread/state",
+            serde_json::json!({ "thread_id": thread_id }),
+        )
+        .await
+    }
+
+    async fn thread_config_explain(&mut self, thread_id: ThreadId) -> anyhow::Result<Value> {
+        self.rpc(
+            "thread/config/explain",
             serde_json::json!({ "thread_id": thread_id }),
         )
         .await
