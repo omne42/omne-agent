@@ -1,16 +1,21 @@
 use std::fmt;
 use std::str::FromStr;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
+use ts_rs::TS;
 use uuid::Uuid;
 
 fn is_false(value: &bool) -> bool {
     !*value
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize, JsonSchema, TS,
+)]
 #[serde(transparent)]
+#[ts(type = "string")]
 pub struct ThreadId(pub Uuid);
 
 impl ThreadId {
@@ -39,8 +44,11 @@ impl FromStr for ThreadId {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize, JsonSchema, TS,
+)]
 #[serde(transparent)]
+#[ts(type = "string")]
 pub struct TurnId(pub Uuid);
 
 impl TurnId {
@@ -69,8 +77,11 @@ impl FromStr for TurnId {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize, JsonSchema, TS,
+)]
 #[serde(transparent)]
+#[ts(type = "string")]
 pub struct ProcessId(pub Uuid);
 
 impl ProcessId {
@@ -99,8 +110,11 @@ impl FromStr for ProcessId {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize, JsonSchema, TS,
+)]
 #[serde(transparent)]
+#[ts(type = "string")]
 pub struct ToolId(pub Uuid);
 
 impl ToolId {
@@ -129,8 +143,11 @@ impl FromStr for ToolId {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize, JsonSchema, TS,
+)]
 #[serde(transparent)]
+#[ts(type = "string")]
 pub struct ApprovalId(pub Uuid);
 
 impl ApprovalId {
@@ -159,8 +176,11 @@ impl FromStr for ApprovalId {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize, JsonSchema, TS,
+)]
 #[serde(transparent)]
+#[ts(type = "string")]
 pub struct ArtifactId(pub Uuid);
 
 impl ArtifactId {
@@ -189,8 +209,11 @@ impl FromStr for ArtifactId {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize, JsonSchema, TS,
+)]
 #[serde(transparent)]
+#[ts(type = "number")]
 pub struct EventSeq(pub u64);
 
 impl EventSeq {
@@ -203,7 +226,7 @@ impl fmt::Display for EventSeq {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum TurnStatus {
     Completed,
@@ -213,7 +236,7 @@ pub enum TurnStatus {
     Stuck,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolStatus {
     Completed,
@@ -222,14 +245,14 @@ pub enum ToolStatus {
     Cancelled,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalPolicy {
     AutoApprove,
     Manual,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum SandboxPolicy {
     ReadOnly,
@@ -237,14 +260,14 @@ pub enum SandboxPolicy {
     DangerFullAccess,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalDecision {
     Approved,
     Denied,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, TS)]
 pub struct ArtifactProvenance {
     pub thread_id: ThreadId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -255,14 +278,18 @@ pub struct ArtifactProvenance {
     pub process_id: Option<ProcessId>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, TS)]
 pub struct ArtifactMetadata {
     pub artifact_id: ArtifactId,
     pub artifact_type: String,
     pub summary: String,
     #[serde(with = "time::serde::rfc3339")]
+    #[schemars(with = "String")]
+    #[ts(type = "string")]
     pub created_at: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
+    #[schemars(with = "String")]
+    #[ts(type = "string")]
     pub updated_at: OffsetDateTime,
     pub version: u32,
     pub content_path: String,
@@ -271,17 +298,19 @@ pub struct ArtifactMetadata {
     pub provenance: Option<ArtifactProvenance>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, TS)]
 pub struct ThreadEvent {
     pub seq: EventSeq,
     #[serde(with = "time::serde::rfc3339")]
+    #[schemars(with = "String")]
+    #[ts(type = "string")]
     pub timestamp: OffsetDateTime,
     pub thread_id: ThreadId,
     #[serde(flatten)]
     pub kind: ThreadEventKind,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ThreadEventKind {
     ThreadCreated {
@@ -340,6 +369,7 @@ pub enum ThreadEventKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         turn_id: Option<TurnId>,
         action: String,
+        #[ts(type = "any")]
         params: serde_json::Value,
     },
 
@@ -358,6 +388,7 @@ pub enum ThreadEventKind {
         turn_id: Option<TurnId>,
         tool: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(type = "any")]
         params: Option<serde_json::Value>,
     },
 
@@ -367,6 +398,7 @@ pub enum ThreadEventKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(type = "any")]
         result: Option<serde_json::Value>,
     },
 
@@ -379,6 +411,7 @@ pub enum ThreadEventKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         response_id: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(type = "any")]
         token_usage: Option<serde_json::Value>,
     },
 

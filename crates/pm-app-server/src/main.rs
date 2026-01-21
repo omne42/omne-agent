@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use diffy::{Patch, apply};
 use globset::Glob;
 use pm_core::{PmPaths, ThreadStore};
@@ -33,6 +33,9 @@ mod agent;
 #[command(name = "pm-app-server")]
 #[command(about = "CodePM v0.2.0 app-server (JSON-RPC over stdio)", long_about = None)]
 struct Args {
+    #[command(subcommand)]
+    command: Option<CliCommand>,
+
     /// Override `.code_pm` root directory.
     #[arg(long)]
     pm_root: Option<PathBuf>,
@@ -40,6 +43,21 @@ struct Args {
     /// Paths to execpolicy rule files to evaluate (repeatable).
     #[arg(long = "execpolicy-rules", value_name = "PATH")]
     execpolicy_rules: Vec<PathBuf>,
+}
+
+#[derive(Subcommand)]
+enum CliCommand {
+    /// Generate TypeScript protocol types to an output directory.
+    GenerateTs(GenerateOutArgs),
+    /// Generate JSON Schema files to an output directory.
+    GenerateJsonSchema(GenerateOutArgs),
+}
+
+#[derive(clap::Args)]
+struct GenerateOutArgs {
+    /// Output directory.
+    #[arg(long = "out", value_name = "DIR")]
+    out_dir: PathBuf,
 }
 
 #[derive(Debug, Deserialize)]
@@ -682,6 +700,16 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let args = Args::parse();
+    if let Some(command) = args.command {
+        match command {
+            CliCommand::GenerateTs(output) => pm_app_server_protocol::generate_ts(&output.out_dir)?,
+            CliCommand::GenerateJsonSchema(output) => {
+                pm_app_server_protocol::generate_json_schema(&output.out_dir)?
+            }
+        }
+        return Ok(());
+    }
+
     let cwd = std::env::current_dir()?;
     let pm_root = args
         .pm_root
