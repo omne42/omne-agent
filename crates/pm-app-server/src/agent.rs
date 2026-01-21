@@ -237,10 +237,163 @@ async fn build_conversation(
                     content: vec![pm_openai::ContentItem::OutputText { text }],
                 });
             }
-            _ => {}
+            other => {
+                if let Some(text) = format_event_for_context(&other) {
+                    input.push(pm_openai::ResponseItem::Message {
+                        role: "assistant".to_string(),
+                        content: vec![pm_openai::ContentItem::OutputText { text }],
+                    });
+                }
+            }
         }
     }
     Ok(input)
+}
+
+fn format_event_for_context(kind: &ThreadEventKind) -> Option<String> {
+    match kind {
+        ThreadEventKind::ThreadArchived { reason } => Some(format!(
+            "[thread/archived] reason={}",
+            reason.as_deref().unwrap_or("")
+        )),
+        ThreadEventKind::ThreadUnarchived { reason } => Some(format!(
+            "[thread/unarchived] reason={}",
+            reason.as_deref().unwrap_or("")
+        )),
+        ThreadEventKind::TurnInterruptRequested { turn_id, reason } => Some(format!(
+            "[turn/interrupt_requested] turn_id={turn_id} reason={}",
+            reason.as_deref().unwrap_or("")
+        )),
+        ThreadEventKind::TurnCompleted {
+            turn_id,
+            status,
+            reason,
+        } if !matches!(status, pm_protocol::TurnStatus::Completed) || reason.is_some() => {
+            Some(format!(
+                "[turn/completed] turn_id={turn_id} status={status:?} reason={}",
+                reason.as_deref().unwrap_or("")
+            ))
+        }
+        ThreadEventKind::ThreadConfigUpdated {
+            approval_policy,
+            sandbox_policy,
+            model,
+            openai_base_url,
+        } => Some(format!(
+            "[thread/config] approval_policy={approval_policy:?} sandbox_policy={} model={} openai_base_url={}",
+            sandbox_policy
+                .as_ref()
+                .map(|v| format!("{v:?}"))
+                .unwrap_or_else(|| "<unchanged>".to_string()),
+            model.as_deref().unwrap_or("<unchanged>"),
+            openai_base_url.as_deref().unwrap_or("<unchanged>"),
+        )),
+        ThreadEventKind::ApprovalRequested {
+            approval_id,
+            turn_id,
+            action,
+            params,
+        } => Some(format!(
+            "[approval/request] approval_id={approval_id} turn_id={} action={action} params={}",
+            turn_id
+                .as_ref()
+                .map(|id| id.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            json_one_line(params, 4000),
+        )),
+        ThreadEventKind::ApprovalDecided {
+            approval_id,
+            decision,
+            remember,
+            reason,
+        } => Some(format!(
+            "[approval/decide] approval_id={approval_id} decision={decision:?} remember={remember} reason={}",
+            reason.as_deref().unwrap_or("")
+        )),
+        ThreadEventKind::ToolStarted {
+            tool_id,
+            turn_id,
+            tool,
+            params,
+        } => Some(format!(
+            "[tool/start] tool_id={tool_id} turn_id={} tool={tool} params={}",
+            turn_id
+                .as_ref()
+                .map(|id| id.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            params
+                .as_ref()
+                .map(|v| json_one_line(v, 4000))
+                .unwrap_or_else(|| "{}".to_string()),
+        )),
+        ThreadEventKind::ToolCompleted {
+            tool_id,
+            status,
+            error,
+            result,
+        } => Some(format!(
+            "[tool/done] tool_id={tool_id} status={status:?} error={} result={}",
+            error.as_deref().unwrap_or(""),
+            result
+                .as_ref()
+                .map(|v| json_one_line(v, 4000))
+                .unwrap_or_else(|| "{}".to_string()),
+        )),
+        ThreadEventKind::ProcessStarted {
+            process_id,
+            turn_id,
+            argv,
+            cwd,
+            stdout_path,
+            stderr_path,
+        } => Some(format!(
+            "[process/start] process_id={process_id} turn_id={} argv={} cwd={cwd} stdout={stdout_path} stderr={stderr_path}",
+            turn_id
+                .as_ref()
+                .map(|id| id.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            json_one_line(&serde_json::json!(argv), 2000),
+        )),
+        ThreadEventKind::ProcessKillRequested { process_id, reason } => Some(format!(
+            "[process/kill_requested] process_id={process_id} reason={}",
+            reason.as_deref().unwrap_or("")
+        )),
+        ThreadEventKind::ProcessExited {
+            process_id,
+            exit_code,
+            reason,
+        } => Some(format!(
+            "[process/exited] process_id={process_id} exit_code={} reason={}",
+            exit_code
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "?".to_string()),
+            reason.as_deref().unwrap_or("")
+        )),
+        _ => None,
+    }
+}
+
+fn json_one_line(value: &Value, max_chars: usize) -> String {
+    match serde_json::to_string(value) {
+        Ok(s) => truncate_chars(&s, max_chars),
+        Err(_) => "<invalid-json>".to_string(),
+    }
+}
+
+fn truncate_chars(input: &str, max_chars: usize) -> String {
+    if input.chars().count() <= max_chars {
+        return input.to_string();
+    }
+
+    let mut out = String::new();
+    for (idx, ch) in input.chars().enumerate() {
+        if idx >= max_chars {
+            out.push('…');
+            break;
+        }
+        out.push(ch);
+    }
+    out
 }
 
 fn extract_assistant_text(items: &[pm_openai::ResponseItem]) -> String {
