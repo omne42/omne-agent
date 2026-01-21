@@ -250,6 +250,7 @@ pub enum ToolStatus {
 pub enum ApprovalPolicy {
     AutoApprove,
     Manual,
+    AutoDeny,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema, TS)]

@@ -437,6 +437,7 @@ struct WatchArgs {
 enum CliApprovalPolicy {
     AutoApprove,
     Manual,
+    AutoDeny,
 }
 
 impl From<CliApprovalPolicy> for ApprovalPolicy {
@@ -444,6 +445,7 @@ impl From<CliApprovalPolicy> for ApprovalPolicy {
         match value {
             CliApprovalPolicy::AutoApprove => Self::AutoApprove,
             CliApprovalPolicy::Manual => Self::Manual,
+            CliApprovalPolicy::AutoDeny => Self::AutoDeny,
         }
     }
 }

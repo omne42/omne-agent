@@ -123,16 +123,16 @@ async fn handle_artifact_write(
                         params: Some(approval_params.clone()),
                     })
                     .await?;
-                thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
-                        tool_id,
-                        status: pm_protocol::ToolStatus::Denied,
-                        error: Some("approval denied (remembered)".to_string()),
-                        result: Some(serde_json::json!({
-                            "approval_policy": approval_policy,
-                        })),
-                    })
-                    .await?;
+                    thread_rt
+                        .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                            tool_id,
+                            status: pm_protocol::ToolStatus::Denied,
+                            error: Some(approval_denied_error(remembered).to_string()),
+                            result: Some(serde_json::json!({
+                                "approval_policy": approval_policy,
+                            })),
+                        })
+                        .await?;
                 return Ok(serde_json::json!({
                     "tool_id": tool_id,
                     "denied": true,
@@ -355,16 +355,16 @@ async fn handle_artifact_list(
                         params: Some(approval_params),
                     })
                     .await?;
-                thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
-                        tool_id,
-                        status: pm_protocol::ToolStatus::Denied,
-                        error: Some("approval denied (remembered)".to_string()),
-                        result: Some(serde_json::json!({
-                            "approval_policy": approval_policy,
-                        })),
-                    })
-                    .await?;
+                    thread_rt
+                        .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                            tool_id,
+                            status: pm_protocol::ToolStatus::Denied,
+                            error: Some(approval_denied_error(remembered).to_string()),
+                            result: Some(serde_json::json!({
+                                "approval_policy": approval_policy,
+                            })),
+                        })
+                        .await?;
                 return Ok(serde_json::json!({
                     "tool_id": tool_id,
                     "denied": true,
@@ -595,16 +595,16 @@ async fn handle_artifact_read(
                         params: Some(approval_params),
                     })
                     .await?;
-                thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
-                        tool_id,
-                        status: pm_protocol::ToolStatus::Denied,
-                        error: Some("approval denied (remembered)".to_string()),
-                        result: Some(serde_json::json!({
-                            "approval_policy": approval_policy,
-                        })),
-                    })
-                    .await?;
+                    thread_rt
+                        .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                            tool_id,
+                            status: pm_protocol::ToolStatus::Denied,
+                            error: Some(approval_denied_error(remembered).to_string()),
+                            result: Some(serde_json::json!({
+                                "approval_policy": approval_policy,
+                            })),
+                        })
+                        .await?;
                 return Ok(serde_json::json!({
                     "tool_id": tool_id,
                     "denied": true,
@@ -808,16 +808,16 @@ async fn handle_artifact_delete(
                         params: Some(approval_params.clone()),
                     })
                     .await?;
-                thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
-                        tool_id,
-                        status: pm_protocol::ToolStatus::Denied,
-                        error: Some("approval denied (remembered)".to_string()),
-                        result: Some(serde_json::json!({
-                            "approval_policy": approval_policy,
-                        })),
-                    })
-                    .await?;
+                    thread_rt
+                        .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                            tool_id,
+                            status: pm_protocol::ToolStatus::Denied,
+                            error: Some(approval_denied_error(remembered).to_string()),
+                            result: Some(serde_json::json!({
+                                "approval_policy": approval_policy,
+                            })),
+                        })
+                        .await?;
                 return Ok(serde_json::json!({
                     "tool_id": tool_id,
                     "denied": true,

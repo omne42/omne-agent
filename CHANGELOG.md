@@ -56,6 +56,7 @@
 - `pm-app-server` agent loop：Responses SSE 流式执行（`response.output_text.delta`）并转发为 `item/delta` JSON-RPC notifications（文本流）；最终仍以 `AssistantMessage` 落盘为准（断线不丢）。
 - `pm-app-server` 新增 thread 清理 API：`thread/delete(force?)` 与 `thread/clear_artifacts(force?)`，用于一键清除 history 与中间态产物。
 - `pm-app-server` 新增 approvals 控制面：`thread/configure(approval_policy,sandbox_policy?)`、`approval/list`、`approval/decide`。
+- `pm-protocol`/`pm-app-server`：新增 `ApprovalPolicy::AutoDeny`（仍会落盘 `ApprovalRequested/ApprovalDecided`，但会自动拒绝并返回 `denied=true`），便于非交互/保守模式下避免卡在 NeedApproval。
 - `pm-app-server` 新增 `thread/config/explain`：返回最小 config layer stack（当前覆盖 `approval_policy`/`sandbox_policy`/`model`/`openai_base_url`），用于回答“为什么生效的是这个值”。
 - `pm-protocol`/`pm-eventlog` 新增 thread-level 模型配置：`ThreadConfigUpdated.model/openai_base_url` + `ThreadState.model/openai_base_url`。
 - `pm-app-server` 新增 `thread/attention`：派生 RTS “收件箱”视图（pending approvals + running processes），减少 UI/CLI 人肉扫描 event log。

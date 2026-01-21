@@ -153,6 +153,14 @@ enum ApprovalGate {
     NeedsApproval { approval_id: pm_protocol::ApprovalId },
 }
 
+fn approval_denied_error(remembered: bool) -> &'static str {
+    if remembered {
+        "approval denied (remembered)"
+    } else {
+        "approval denied"
+    }
+}
+
 struct ApprovalRequest<'a> {
     approval_id: Option<pm_protocol::ApprovalId>,
     action: &'a str,
@@ -243,6 +251,26 @@ async fn gate_approval(
                 })
                 .await?;
             Ok(ApprovalGate::NeedsApproval { approval_id })
+        }
+        pm_protocol::ApprovalPolicy::AutoDeny => {
+            let approval_id = pm_protocol::ApprovalId::new();
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ApprovalRequested {
+                    approval_id,
+                    turn_id,
+                    action: request.action.to_string(),
+                    params: request.params.clone(),
+                })
+                .await?;
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ApprovalDecided {
+                    approval_id,
+                    decision: pm_protocol::ApprovalDecision::Denied,
+                    remember: false,
+                    reason: Some("auto-denied by policy".to_string()),
+                })
+                .await?;
+            Ok(ApprovalGate::Denied { remembered: false })
         }
     }
 }
