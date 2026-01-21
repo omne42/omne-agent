@@ -794,6 +794,8 @@ struct ArtifactWriteParams {
     #[serde(default)]
     turn_id: Option<TurnId>,
     #[serde(default)]
+    approval_id: Option<pm_protocol::ApprovalId>,
+    #[serde(default)]
     artifact_id: Option<ArtifactId>,
     artifact_type: String,
     summary: String,
@@ -803,11 +805,19 @@ struct ArtifactWriteParams {
 #[derive(Debug, Deserialize)]
 struct ArtifactListParams {
     thread_id: ThreadId,
+    #[serde(default)]
+    turn_id: Option<TurnId>,
+    #[serde(default)]
+    approval_id: Option<pm_protocol::ApprovalId>,
 }
 
 #[derive(Debug, Deserialize)]
 struct ArtifactReadParams {
     thread_id: ThreadId,
+    #[serde(default)]
+    turn_id: Option<TurnId>,
+    #[serde(default)]
+    approval_id: Option<pm_protocol::ApprovalId>,
     artifact_id: ArtifactId,
     #[serde(default)]
     max_bytes: Option<u64>,
@@ -818,6 +828,8 @@ struct ArtifactDeleteParams {
     thread_id: ThreadId,
     #[serde(default)]
     turn_id: Option<TurnId>,
+    #[serde(default)]
+    approval_id: Option<pm_protocol::ApprovalId>,
     artifact_id: ArtifactId,
 }
 

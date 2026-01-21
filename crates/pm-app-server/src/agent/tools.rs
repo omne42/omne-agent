@@ -703,6 +703,7 @@ async fn run_tool_call_once(
                 super::ArtifactWriteParams {
                     thread_id,
                     turn_id,
+                    approval_id,
                     artifact_id: None,
                     artifact_type: args.artifact_type,
                     summary: args.summary,
@@ -713,7 +714,15 @@ async fn run_tool_call_once(
         }
         "artifact_list" => {
             let _ = args;
-            super::handle_artifact_list(server, super::ArtifactListParams { thread_id }).await
+            super::handle_artifact_list(
+                server,
+                super::ArtifactListParams {
+                    thread_id,
+                    turn_id,
+                    approval_id,
+                },
+            )
+            .await
         }
         "artifact_read" => {
             let args: ArtifactReadArgs = serde_json::from_value(args)?;
@@ -721,6 +730,8 @@ async fn run_tool_call_once(
                 server,
                 super::ArtifactReadParams {
                     thread_id,
+                    turn_id,
+                    approval_id,
                     artifact_id: args.artifact_id.parse()?,
                     max_bytes: args.max_bytes,
                 },
@@ -734,6 +745,7 @@ async fn run_tool_call_once(
                 super::ArtifactDeleteParams {
                     thread_id,
                     turn_id,
+                    approval_id,
                     artifact_id: args.artifact_id.parse()?,
                 },
             )

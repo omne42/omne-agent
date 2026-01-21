@@ -471,6 +471,7 @@ async fn handle_thread_disk_report(
         ArtifactWriteParams {
             thread_id: params.thread_id,
             turn_id: None,
+            approval_id: None,
             artifact_id: None,
             artifact_type: "disk_report".to_string(),
             summary: "Thread disk usage report".to_string(),
@@ -570,6 +571,7 @@ async fn maybe_emit_thread_disk_warning(
         ArtifactWriteParams {
             thread_id,
             turn_id: None,
+            approval_id: None,
             artifact_id: None,
             artifact_type: "disk_report".to_string(),
             summary: "Thread disk usage report (warning)".to_string(),
@@ -580,4 +582,3 @@ async fn maybe_emit_thread_disk_warning(
 
     Ok(())
 }
-

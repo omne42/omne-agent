@@ -612,13 +612,16 @@ impl App {
     }
 
     async fn artifact_list(&mut self, thread_id: ThreadId) -> anyhow::Result<Value> {
-        self.rpc(
+        let v = self
+            .rpc(
             "artifact/list",
             serde_json::json!({
                 "thread_id": thread_id,
             }),
-        )
-        .await
+            )
+            .await?;
+        ensure_approval_and_denial_handled("artifact/list", &v)?;
+        Ok(v)
     }
 
     async fn artifact_read(
@@ -627,15 +630,18 @@ impl App {
         artifact_id: pm_protocol::ArtifactId,
         max_bytes: Option<u64>,
     ) -> anyhow::Result<Value> {
-        self.rpc(
+        let v = self
+            .rpc(
             "artifact/read",
             serde_json::json!({
                 "thread_id": thread_id,
                 "artifact_id": artifact_id,
                 "max_bytes": max_bytes,
             }),
-        )
-        .await
+            )
+            .await?;
+        ensure_approval_and_denial_handled("artifact/read", &v)?;
+        Ok(v)
     }
 
     async fn artifact_delete(
@@ -643,14 +649,17 @@ impl App {
         thread_id: ThreadId,
         artifact_id: pm_protocol::ArtifactId,
     ) -> anyhow::Result<Value> {
-        self.rpc(
+        let v = self
+            .rpc(
             "artifact/delete",
             serde_json::json!({
                 "thread_id": thread_id,
                 "artifact_id": artifact_id,
             }),
-        )
-        .await
+            )
+            .await?;
+        ensure_approval_and_denial_handled("artifact/delete", &v)?;
+        Ok(v)
     }
 }
 
