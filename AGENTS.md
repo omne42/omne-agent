@@ -2,37 +2,58 @@
 
 ## 项目结构与模块组织
 
+- `crates/`: Rust workspace（当前主要实现）
+  - `crates/pm-app-server/`: Codex 风格控制面（JSON-RPC over stdio）+ agent loop + tools + JSONL 事件落盘/回放
+  - `crates/pm/`: 人类可用 CLI（驱动 `pm-app-server`）：`ask/watch/inbox/exec/thread/process/approval/artifact`
+  - `crates/pm-protocol/`: 事件/ID/协议类型（TypeScript/JSON Schema 由 app-server 生成）
+  - `crates/pm-eventlog/`: append-only JSONL event log + replay/派生 `ThreadState`
+  - `crates/pm-core/`: 存储/脱敏/sandbox/path 边界等通用能力
+  - `crates/pm-openai/`: OpenAI Responses API（含 SSE stream）
+  - `crates/pm-jsonrpc/`: JSON-RPC stdio client（`pm` 使用）
+  - `crates/pm-execpolicy/`: prefix-rule 执行策略引擎（Codex 子集）
+  - `crates/code-pm/`: v0.1.x 遗留的 git pipeline（保留参考；v0.2.x 以 `pm*` 为主）
 - `docs/`: 规划、架构与调研文档
   - `docs/start.md`: 目标、范围与约束
   - `docs/implementation_plan.md`: Rust 优先的实现计划与里程碑
   - `docs/research/`: 上游快照仓库的设计分析（索引见 `docs/research/README.md`）
 - `example/`: 上游仓库的本地快照，仅供参考；已被 `.gitignore` 忽略（不要在 PR 中修改，也不要将其作为 CI 依赖）
+- `githooks/`: 提交前质量门槛（Conventional Commits + changelog 绑定 + Rust gates）
+- `.code_pm/`: 运行时数据目录（本地状态/threads/artifacts；不要提交）
 
 ## 构建、测试与开发命令
 
-仓库当前以文档为主（根目录暂无统一构建入口：没有顶层 `Cargo.toml`/`package.json`）。
+仓库是 Rust workspace（根目录有 `Cargo.toml`）。
 
 - 搜索文档：`rg "<keyword>" docs`
+- 搜索代码：`rg "<keyword>" crates`
 - 查看改动：`git diff` / `git status`
-- 若引入 Rust 代码，请在 PR 描述中附上并确保通过：
+- Rust gates（提交前/PR 需要）：
   - `cargo fmt --all`
-  - `cargo clippy --all-targets --all-features`
-  - `cargo test`
+  - `cargo check --workspace --all-targets`
+  - `cargo test --workspace`
+  - `cargo clippy --workspace --all-targets --all-features -- -D warnings`
+- 运行（示例）：`cargo run -p pm -- --help` / `cargo run -p pm-app-server -- --help`
+- 启用 hooks（如未配置）：`git config core.hooksPath githooks`
 
 ## 编码风格与命名约定
 
 - Markdown：章节短而可执行；路径与命令必须可直接运行。
 - 语言：当前文档以中文为主；术语保持一致，必要时补充英文关键字（crate 名、CLI flags）。
 - 文件名：`docs/research/<project>.md` 用 kebab-case（如 `claude-code.md`）；其他文档沿用现有命名（如 `implementation_plan.md`）。
-- Rust（新增时）：遵循 `rustfmt`；模块/函数用 `snake_case`，类型用 `CamelCase`。
+- Rust：遵循 `rustfmt`；模块/函数用 `snake_case`，类型用 `CamelCase`；默认 `clippy -- -D warnings`。
 
 ## 测试指南
 
-仓库尚无统一测试基建。若新增可执行代码，请补齐必要的单元/集成测试，并在 PR 中说明如何运行。
+仓库已有基础测试基建（workspace 内包含 unit/integration tests）。
+
+- 新增可执行行为时，优先补齐对应测试（unit 优先，其次 integration）。
+- PR/提交说明里给出可复制的验证命令（至少包含 `cargo test --workspace`）。
 
 ## Commit 与 Pull Request 指南
 
-- 现有历史提交信息较短且小写（如 `init`）。建议使用更清晰的祈使句摘要；也欢迎 Conventional Commits（`docs: ...`, `feat: ...`）。
+- **强制 Conventional Commits**（由 `githooks/commit-msg` 校验）。
+- **强制 changelog 绑定**：每次提交必须包含 `CHANGELOG.md`，且禁止 “changelog-only commit”（由 `githooks/pre-commit` 校验）。
+- `CHANGELOG.md` 采用 Keep a Changelog；v0.2.x 开发阶段统一追加到 `[Unreleased]`。
 - PR 需包含：变更的 what/why、影响路径、验证步骤（命令 + 输出）、以及关联的 issue/调研引用。调研文档需在顶部记录对应的快照 commit（参考 `docs/research/README.md`）。
 
 ## 多人协作与并发安全
@@ -49,7 +70,7 @@
 
 ## Agent 专用说明
 
-- 优先使用 `rg` 搜索；除非必要，避免扫描 `example/`（如 `rg -g'!example/**' "<keyword>"`）。
+- 优先使用 `rg` 搜索；除非必要，避免扫描 `example/`/`target/`/`.code_pm/`（如 `rg -g'!example/**' -g'!target/**' -g'!.code_pm/**' "<keyword>"`）。
 - 保持改动聚焦；除非明确要求，不要更新/改写上游快照内容。
 
 ## 角色定义

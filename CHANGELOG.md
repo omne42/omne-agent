@@ -12,6 +12,7 @@
 - 新增 vNext 目标态“RTS 风格使用流程”文档：`docs/rts_workflow.md`。
 - 新增 Agent GUI 爆发期产品调研：`docs/research/onecode.md`、`docs/research/superset.md`、`docs/research/aion-ui.md`。
 - 新增 `v0.2.0` 功能对齐与 TODO 汇总：`docs/v0.2.0_parity.md`。
+- 更新仓库级 `AGENTS.md`：补齐 `crates/*` 结构、Rust gates 与 `pm*` 入口说明。
 - 新增 `pm-jsonrpc`：最小 JSON-RPC over stdio client，用于驱动 `pm-app-server`；并支持接收/转发 JSON-RPC notifications（用于 `item/delta` 等流式事件）。
 - 新增 `pm-app-server-protocol`：导出 app-server 协议的 TypeScript types 与 JSON Schema；`pm-app-server generate-ts --out <dir>` / `pm-app-server generate-json-schema --out <dir>` 可生成对应产物。
 - 新增 `pm-protocol`/`pm-eventlog`：为 v0.2.0 落地 Thread/Turn 事件类型与 append-only JSONL event log（thread_id 一致性校验、`seq` 连续、`since_seq` 断点续读、尾部半行自动截断，并提供 `ThreadState` 纯事件派生）。
@@ -96,7 +97,8 @@
 - `pm-app-server file/*`：失败路径也会写入 `ToolCompleted`（避免工具卡在 “started but never finished”）。
 - `pm-core::redaction`：修正 token 脱敏正则（Bearer/Google key），避免漏打码。
 - `pm-core::sandbox`/`pm-app-server`：`sandbox_policy=danger_full_access` 现在会使用 unrestricted 路径解析（允许绝对路径与系统 symlink，如 macOS `/tmp`），不再误报 “escapes root”。
-- Rust workspace：修复 `cargo clippy -- -D warnings` 下的告警（`pm-jsonrpc` 忽略无 `id` 的 stdout 行、`pm-protocol` 的 id newtype 实现 `Default`、`pm-eventlog` lockfile 显式 `truncate(false)`、以及 `pm-app-server` 若干 clippy cleanups）。
+- Rust workspace：修复 `cargo clippy -- -D warnings` 下的告警（`pm-jsonrpc` 提取 pending type alias、`pm-openai` 使用 `std::io::Error::other`、`pm-protocol` 的 id newtype 实现 `Default`、`pm-eventlog` lockfile 显式 `truncate(false)`、以及 `pm-app-server` 若干 clippy cleanups）。
+- `pm ask`/`pm exec`：只会处理当前 turn 触发的 `ApprovalRequested`（避免误处理历史遗留 approval）。
 - `thread/list_meta`：派生 `attention_state` 时现在会考虑 pending approvals 与 running processes（`pm inbox --watch --bell` 能正确提示 `need_approval`）。
 - `thread/list_meta`/`thread/attention`：后台进程以非零 exit code 退出时会派生 `attention_state=failed`（失败优先于 `running`），并在新 turn 开始时清空历史失败集合（避免一次失败导致 thread 永久处于 `failed`）；`pm watch --bell` 也会在 `ProcessExited` 失败时触发提醒。
 - `pm-app-server approvals`：当同类操作被 `remember=true` 记住为 `deny` 时，`file/write|patch|edit|delete`、`fs/mkdir`、`process/start` 现在会返回结构化 `denied` 结果并写入 `ToolStatus=Denied`（不再走内部 error 路径）。
@@ -104,6 +106,7 @@
 
 ### Security
 - `pm-core::threads`：落盘事件前自动脱敏（Turn input/argv/approval params/tool results 等），避免 secrets 进入 event log；`pm-app-server process/tail`/`process/follow` 返回内容也会脱敏展示。
+- `pm-app-server`：`process/start` 默认从子进程环境中移除常见 provider key（`OPENAI_API_KEY` 等），降低“任意命令读取/回显密钥”的泄露面。
 
 ## [0.1.1] - 2026-01-20
 
@@ -140,8 +143,6 @@
 - session 元信息新增独立存储 `sessions/<id>/meta.json`（`list_session_meta` 优先读取，避免为列表读入大 prompt）。
 
 ### Fixed
-- `pm-jsonrpc`/`pm-openai`：修复 `cargo clippy -- -D warnings` 下的 lint（`type_complexity`/`io_other_error`）。
-- `pm ask`/`pm exec`：只会处理当前 turn 触发的 `ApprovalRequested`（避免误处理历史遗留 approval）。
 - `code-pm run --max-concurrency`：现在会校验为 `>= 1`（拒绝 `0`，避免静默回退到 `1`）。
 - `code-pm run`：隐式 `--repo-src` 模式现在会严格要求处于真实 git worktree（基于 `git rev-parse` 判断），避免仅凭 `.git` 路径误判导致后续 clone 失败。
 - `code-pm` CLI：`--repo/--repo-src/--pr-name/--base` 以及 `repo inject` 的 `source/--name` 现在会拒绝空值（包括仅空白字符），避免静默回退到默认 sanitize 值。
@@ -164,7 +165,6 @@
 - `code-pm run --stream-events-json` 在 consumer 落后导致事件被丢弃时会输出 error JSON 行（`event_lagged`），避免静默丢事件。
 
 ### Security
-- `pm-app-server`：`process/start` 默认从子进程环境中移除常见 provider key（`OPENAI_API_KEY` 等），降低“任意命令读取/回显密钥”的泄露面。
 - `pm-http`：支持 `CODE_PM_HTTP_MAX_BODY_BYTES`（默认 1GiB）限制 git smart-http 请求体大小；超限返回 413。
 - `pm-http git`：`CODE_PM_HTTP_MAX_BODY_BYTES` 现在会对实际请求体字节数强制生效（不再仅信任 `Content-Length` header），避免超大 body 绕过限制。
 - `pm-http serve`：强制 loopback-only（拒绝绑定非 `127.0.0.1`/`::1` 地址），避免无鉴权服务被意外暴露到公网。
