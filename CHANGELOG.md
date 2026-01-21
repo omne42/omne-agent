@@ -30,6 +30,7 @@
 - `pm` CLI 新增 `inbox`：跨 thread 的 RTS 收件箱视图（可 `--watch` + `--bell` 去重提醒），用于快速发现 `need_approval/failed/running`。
 - `pm inbox --details`：现在会显示 `failed_processes` 摘要（数量 + 部分 id），便于快速定位后台失败。
 - `pm` CLI 补齐更多控制面命令：`pm thread fork/archive/unarchive/delete/clear-artifacts/disk-*` 与 `pm artifact list/read/delete`，便于手动清理与审计。
+- `pm-app-server` 新增 `thread/hook_run`：读取 `<thread root>/.codepm/workspace.{yaml,yml}` 并按 `setup/run/archive` 启动对应 hook 命令（复用 `process/start` 的 mode/execpolicy/approvals）；`pm` CLI 增加 `pm thread hook-run <thread_id> <setup|run|archive>` 用于触发。
 - `pm` CLI 新增可解释性与状态查询：`pm thread state`、`pm thread config-explain`、`pm thread loaded`。
 - `pm`/`pm-app-server`：thread 配置新增 `mode`（角色/权限边界）字段；`pm ask/exec/thread configure --mode <name>` 可设置；`thread/state`/`thread/config-explain` 会返回当前生效的 `mode`。
 - 新增 `TurnStatus::Stuck`：当 agent 超预算/超时（turn 时长、tool call、OpenAI 请求超时等）时显式标记为 `stuck`，并在 `thread/attention` 与 `pm * --bell` 中可见。
@@ -107,6 +108,7 @@
 - `pm-app-server-protocol`：补齐 `process/interrupt` 方法与参数，并为 `process/kill` 追加可选 `turn_id/approval_id`（与其它 tools 对齐）。
 - `pm-app-server process/inspect|tail|follow`：现在会执行 mode gate（`process.inspect` + per-tool override），并在 `prompt` 下走 approvals；`pm-app-server-protocol` 为这些方法追加可选 `turn_id/approval_id`，`pm` CLI 在 `tail/follow` 下会正确提示 `needs_approval/denied`。
 - `pm-app-server artifact/write|list|read|delete`：现在也会执行 mode gate（`artifact` + per-tool override），并在 `prompt` 下走 approvals；`pm-app-server-protocol` 为这些方法追加可选 `turn_id/approval_id`，`pm` CLI 在 `artifact list/read/delete` 下会正确提示 `needs_approval/denied`。
+- `pm` CLI：当 `process/*`/`artifact/*` 返回 `needs_approval` 时，现在可以通过 `--approval-id` 复跑同一命令（避免手动审批后陷入无限“再次请求 approval”）。
 - `pm-app-server process logs`：stdout/stderr rotate 文件命名从 `*.part-0001.log` 改为 `*.segment-0001.log`（仍兼容读取 legacy `*.part-*.log`），避免产生大量 “part” 文件名。
 - `pm-core::redaction`：修正 token 脱敏正则（Bearer/Google key），避免漏打码。
 - `pm-core::sandbox`/`pm-app-server`：`sandbox_policy=danger_full_access` 现在会使用 unrestricted 路径解析（允许绝对路径与系统 symlink，如 macOS `/tmp`），不再误报 “escapes root”。

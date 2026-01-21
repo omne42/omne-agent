@@ -5,11 +5,12 @@ async fn run_process_follow(
     mut offset: u64,
     max_bytes: Option<u64>,
     poll_ms: u64,
+    approval_id: Option<ApprovalId>,
 ) -> anyhow::Result<()> {
     let poll_interval = Duration::from_millis(poll_ms.max(50));
     loop {
         let (text, next_offset, eof) = app
-            .process_follow(process_id, stderr, offset, max_bytes)
+            .process_follow(process_id, stderr, offset, max_bytes, approval_id)
             .await?;
         offset = next_offset;
         if !text.is_empty() {
@@ -330,6 +331,31 @@ impl App {
         .await
     }
 
+    async fn thread_hook_run(
+        &mut self,
+        thread_id: ThreadId,
+        hook: CliWorkspaceHookName,
+        approval_id: Option<ApprovalId>,
+    ) -> anyhow::Result<Value> {
+        let hook = match hook {
+            CliWorkspaceHookName::Setup => "setup",
+            CliWorkspaceHookName::Run => "run",
+            CliWorkspaceHookName::Archive => "archive",
+        };
+        let v = self
+            .rpc(
+                "thread/hook_run",
+                serde_json::json!({
+                    "thread_id": thread_id,
+                    "hook": hook,
+                    "approval_id": approval_id,
+                }),
+            )
+            .await?;
+        ensure_approval_and_denial_handled("thread/hook_run", &v)?;
+        Ok(v)
+    }
+
     async fn thread_events(
         &mut self,
         thread_id: ThreadId,
@@ -508,15 +534,20 @@ impl App {
         &mut self,
         process_id: ProcessId,
         max_lines: Option<usize>,
+        approval_id: Option<ApprovalId>,
     ) -> anyhow::Result<Value> {
-        self.rpc(
+        let v = self
+            .rpc(
             "process/inspect",
             serde_json::json!({
                 "process_id": process_id,
                 "max_lines": max_lines,
+                "approval_id": approval_id,
             }),
-        )
-        .await
+            )
+            .await?;
+        ensure_approval_and_denial_handled("process/inspect", &v)?;
+        Ok(v)
     }
 
     async fn process_tail(
@@ -524,6 +555,7 @@ impl App {
         process_id: ProcessId,
         stderr: bool,
         max_lines: Option<usize>,
+        approval_id: Option<ApprovalId>,
     ) -> anyhow::Result<String> {
         let stream = if stderr { "stderr" } else { "stdout" };
         let v = self
@@ -533,6 +565,7 @@ impl App {
                     "process_id": process_id,
                     "stream": stream,
                     "max_lines": max_lines,
+                    "approval_id": approval_id,
                 }),
             )
             .await?;
@@ -546,6 +579,7 @@ impl App {
         stderr: bool,
         since_offset: u64,
         max_bytes: Option<u64>,
+        approval_id: Option<ApprovalId>,
     ) -> anyhow::Result<(String, u64, bool)> {
         let stream = if stderr { "stderr" } else { "stdout" };
         let v = self
@@ -556,6 +590,7 @@ impl App {
                     "stream": stream,
                     "since_offset": since_offset,
                     "max_bytes": max_bytes,
+                    "approval_id": approval_id,
                 }),
             )
             .await?;
@@ -568,7 +603,7 @@ impl App {
     }
 
     async fn process_status(&mut self, process_id: ProcessId) -> anyhow::Result<String> {
-        let v = self.process_inspect(process_id, Some(0)).await?;
+        let v = self.process_inspect(process_id, Some(0), None).await?;
         Ok(v["process"]["status"]
             .as_str()
             .unwrap_or("unknown")
@@ -579,6 +614,7 @@ impl App {
         &mut self,
         process_id: ProcessId,
         reason: Option<String>,
+        approval_id: Option<ApprovalId>,
     ) -> anyhow::Result<()> {
         let v = self
             .rpc(
@@ -586,6 +622,7 @@ impl App {
                 serde_json::json!({
                     "process_id": process_id,
                     "reason": reason,
+                    "approval_id": approval_id,
                 }),
             )
             .await?;
@@ -597,6 +634,7 @@ impl App {
         &mut self,
         process_id: ProcessId,
         reason: Option<String>,
+        approval_id: Option<ApprovalId>,
     ) -> anyhow::Result<()> {
         let v = self
             .rpc(
@@ -604,6 +642,7 @@ impl App {
                 serde_json::json!({
                     "process_id": process_id,
                     "reason": reason,
+                    "approval_id": approval_id,
                 }),
             )
             .await?;
@@ -611,12 +650,17 @@ impl App {
         Ok(())
     }
 
-    async fn artifact_list(&mut self, thread_id: ThreadId) -> anyhow::Result<Value> {
+    async fn artifact_list(
+        &mut self,
+        thread_id: ThreadId,
+        approval_id: Option<ApprovalId>,
+    ) -> anyhow::Result<Value> {
         let v = self
             .rpc(
             "artifact/list",
             serde_json::json!({
                 "thread_id": thread_id,
+                "approval_id": approval_id,
             }),
             )
             .await?;
@@ -629,6 +673,7 @@ impl App {
         thread_id: ThreadId,
         artifact_id: pm_protocol::ArtifactId,
         max_bytes: Option<u64>,
+        approval_id: Option<ApprovalId>,
     ) -> anyhow::Result<Value> {
         let v = self
             .rpc(
@@ -637,6 +682,7 @@ impl App {
                 "thread_id": thread_id,
                 "artifact_id": artifact_id,
                 "max_bytes": max_bytes,
+                "approval_id": approval_id,
             }),
             )
             .await?;
@@ -648,6 +694,7 @@ impl App {
         &mut self,
         thread_id: ThreadId,
         artifact_id: pm_protocol::ArtifactId,
+        approval_id: Option<ApprovalId>,
     ) -> anyhow::Result<Value> {
         let v = self
             .rpc(
@@ -655,6 +702,7 @@ impl App {
             serde_json::json!({
                 "thread_id": thread_id,
                 "artifact_id": artifact_id,
+                "approval_id": approval_id,
             }),
             )
             .await?;
@@ -700,7 +748,7 @@ fn ensure_approval_and_denial_handled(action: &str, value: &Value) -> anyhow::Re
             .and_then(|v| v.as_str())
             .unwrap_or("<missing approval_id>");
         anyhow::bail!(
-            "{action} needs approval: pm approval decide --thread-id {thread_id} --approval-id {approval_id} --approve"
+            "{action} needs approval: pm approval decide --thread-id {thread_id} --approval-id {approval_id} --approve (then re-run with --approval-id {approval_id})"
         );
     }
 

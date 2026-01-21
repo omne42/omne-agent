@@ -125,6 +125,14 @@ enum ThreadCommand {
         #[arg(long, default_value_t = false)]
         json: bool,
     },
+    HookRun {
+        thread_id: ThreadId,
+        hook: CliWorkspaceHookName,
+        #[arg(long)]
+        approval_id: Option<ApprovalId>,
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
     Events {
         thread_id: ThreadId,
         #[arg(long, default_value_t = 0)]
@@ -238,6 +246,8 @@ enum ProcessCommand {
         process_id: ProcessId,
         #[arg(long)]
         max_lines: Option<usize>,
+        #[arg(long)]
+        approval_id: Option<ApprovalId>,
         #[arg(long, default_value_t = false)]
         json: bool,
     },
@@ -247,6 +257,8 @@ enum ProcessCommand {
         stderr: bool,
         #[arg(long)]
         max_lines: Option<usize>,
+        #[arg(long)]
+        approval_id: Option<ApprovalId>,
     },
     Follow {
         process_id: ProcessId,
@@ -258,16 +270,22 @@ enum ProcessCommand {
         max_bytes: Option<u64>,
         #[arg(long, default_value_t = 200)]
         poll_ms: u64,
+        #[arg(long)]
+        approval_id: Option<ApprovalId>,
     },
     Interrupt {
         process_id: ProcessId,
         #[arg(long)]
         reason: Option<String>,
+        #[arg(long)]
+        approval_id: Option<ApprovalId>,
     },
     Kill {
         process_id: ProcessId,
         #[arg(long)]
         reason: Option<String>,
+        #[arg(long)]
+        approval_id: Option<ApprovalId>,
     },
 }
 
@@ -275,6 +293,8 @@ enum ProcessCommand {
 enum ArtifactCommand {
     List {
         thread_id: ThreadId,
+        #[arg(long)]
+        approval_id: Option<ApprovalId>,
         #[arg(long, default_value_t = false)]
         json: bool,
     },
@@ -283,12 +303,16 @@ enum ArtifactCommand {
         artifact_id: pm_protocol::ArtifactId,
         #[arg(long)]
         max_bytes: Option<u64>,
+        #[arg(long)]
+        approval_id: Option<ApprovalId>,
         #[arg(long, default_value_t = false)]
         json: bool,
     },
     Delete {
         thread_id: ThreadId,
         artifact_id: pm_protocol::ArtifactId,
+        #[arg(long)]
+        approval_id: Option<ApprovalId>,
         #[arg(long, default_value_t = false)]
         json: bool,
     },
@@ -373,6 +397,13 @@ enum CliOnApproval {
     Deny,
 }
 
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum CliWorkspaceHookName {
+    Setup,
+    Run,
+    Archive,
+}
+
 #[derive(Parser)]
 struct WatchArgs {
     thread_id: ThreadId,
@@ -431,4 +462,3 @@ struct SubscribeResponse {
     has_more: bool,
     timed_out: bool,
 }
-

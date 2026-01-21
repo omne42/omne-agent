@@ -70,6 +70,15 @@ async fn main() -> anyhow::Result<()> {
                 let result = app.thread_disk_report(thread_id, top_files).await?;
                 print_json_or_pretty(json, &result)?;
             }
+            ThreadCommand::HookRun {
+                thread_id,
+                hook,
+                approval_id,
+                json,
+            } => {
+                let result = app.thread_hook_run(thread_id, hook, approval_id).await?;
+                print_json_or_pretty(json, &result)?;
+            }
             ThreadCommand::Events {
                 thread_id,
                 since_seq,
@@ -163,17 +172,21 @@ async fn main() -> anyhow::Result<()> {
             ProcessCommand::Inspect {
                 process_id,
                 max_lines,
+                approval_id,
                 json,
             } => {
-                let result = app.process_inspect(process_id, max_lines).await?;
+                let result = app.process_inspect(process_id, max_lines, approval_id).await?;
                 print_json_or_pretty(json, &result)?;
             }
             ProcessCommand::Tail {
                 process_id,
                 stderr,
                 max_lines,
+                approval_id,
             } => {
-                let text = app.process_tail(process_id, stderr, max_lines).await?;
+                let text = app
+                    .process_tail(process_id, stderr, max_lines, approval_id)
+                    .await?;
                 print!("{text}");
                 if !text.ends_with('\n') {
                     println!();
@@ -185,6 +198,7 @@ async fn main() -> anyhow::Result<()> {
                 since_offset,
                 max_bytes,
                 poll_ms,
+                approval_id,
             } => {
                 run_process_follow(
                     &mut app,
@@ -193,28 +207,44 @@ async fn main() -> anyhow::Result<()> {
                     since_offset,
                     max_bytes,
                     poll_ms,
+                    approval_id,
                 )
                 .await?;
             }
-            ProcessCommand::Interrupt { process_id, reason } => {
-                app.process_interrupt(process_id, reason).await?;
+            ProcessCommand::Interrupt {
+                process_id,
+                reason,
+                approval_id,
+            } => {
+                app.process_interrupt(process_id, reason, approval_id).await?;
             }
-            ProcessCommand::Kill { process_id, reason } => {
-                app.process_kill(process_id, reason).await?;
+            ProcessCommand::Kill {
+                process_id,
+                reason,
+                approval_id,
+            } => {
+                app.process_kill(process_id, reason, approval_id).await?;
             }
         },
         Command::Artifact { command } => match command {
-            ArtifactCommand::List { thread_id, json } => {
-                let result = app.artifact_list(thread_id).await?;
+            ArtifactCommand::List {
+                thread_id,
+                approval_id,
+                json,
+            } => {
+                let result = app.artifact_list(thread_id, approval_id).await?;
                 print_json_or_pretty(json, &result)?;
             }
             ArtifactCommand::Read {
                 thread_id,
                 artifact_id,
                 max_bytes,
+                approval_id,
                 json,
             } => {
-                let result = app.artifact_read(thread_id, artifact_id, max_bytes).await?;
+                let result = app
+                    .artifact_read(thread_id, artifact_id, max_bytes, approval_id)
+                    .await?;
                 if json {
                     print_json_or_pretty(true, &result)?;
                 } else {
@@ -231,9 +261,10 @@ async fn main() -> anyhow::Result<()> {
             ArtifactCommand::Delete {
                 thread_id,
                 artifact_id,
+                approval_id,
                 json,
             } => {
-                let result = app.artifact_delete(thread_id, artifact_id).await?;
+                let result = app.artifact_delete(thread_id, artifact_id, approval_id).await?;
                 print_json_or_pretty(json, &result)?;
             }
         },
@@ -241,4 +272,3 @@ async fn main() -> anyhow::Result<()> {
 
     Ok(())
 }
-

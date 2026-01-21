@@ -534,6 +534,24 @@ struct ThreadDiskReportParams {
     top_files: Option<usize>,
 }
 
+#[derive(Debug, Deserialize, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+enum WorkspaceHookName {
+    Setup,
+    Run,
+    Archive,
+}
+
+#[derive(Debug, Deserialize)]
+struct ThreadHookRunParams {
+    thread_id: ThreadId,
+    #[serde(default)]
+    turn_id: Option<TurnId>,
+    #[serde(default)]
+    approval_id: Option<pm_protocol::ApprovalId>,
+    hook: WorkspaceHookName,
+}
+
 #[derive(Debug, Deserialize)]
 struct ThreadConfigureParams {
     thread_id: ThreadId,

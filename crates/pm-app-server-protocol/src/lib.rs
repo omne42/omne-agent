@@ -149,6 +149,26 @@ pub struct ThreadDiskReportParams {
     pub top_files: Option<usize>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceHookName {
+    Setup,
+    Run,
+    Archive,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
+pub struct ThreadHookRunParams {
+    pub thread_id: pm_protocol::ThreadId,
+    #[serde(default)]
+    #[ts(optional)]
+    pub turn_id: Option<pm_protocol::TurnId>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub approval_id: Option<pm_protocol::ApprovalId>,
+    pub hook: WorkspaceHookName,
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
 pub struct ThreadConfigureParams {
     pub thread_id: pm_protocol::ThreadId,
@@ -660,6 +680,12 @@ pub enum ClientRequest {
         #[serde(rename = "id")]
         request_id: RequestId,
         params: ThreadDiskReportParams,
+    },
+    #[serde(rename = "thread/hook_run")]
+    ThreadHookRun {
+        #[serde(rename = "id")]
+        request_id: RequestId,
+        params: ThreadHookRunParams,
     },
     #[serde(rename = "thread/configure")]
     ThreadConfigure {

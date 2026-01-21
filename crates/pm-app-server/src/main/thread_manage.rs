@@ -207,6 +207,118 @@ async fn handle_thread_config_explain(
     }))
 }
 
+#[derive(Debug, Deserialize)]
+struct WorkspaceHooksConfig {
+    #[serde(default)]
+    hooks: HashMap<String, Vec<String>>,
+}
+
+fn thread_hook_key(hook: WorkspaceHookName) -> &'static str {
+    match hook {
+        WorkspaceHookName::Setup => "setup",
+        WorkspaceHookName::Run => "run",
+        WorkspaceHookName::Archive => "archive",
+    }
+}
+
+async fn handle_thread_hook_run(server: &Server, params: ThreadHookRunParams) -> anyhow::Result<Value> {
+    let (_thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
+    let config_dir = thread_root.join(".codepm");
+    let yaml_path = config_dir.join("workspace.yaml");
+    let yml_path = config_dir.join("workspace.yml");
+
+    let (config_path, config_contents) = match tokio::fs::read_to_string(&yaml_path).await {
+        Ok(contents) => (yaml_path, contents),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            match tokio::fs::read_to_string(&yml_path).await {
+                Ok(contents) => (yml_path, contents),
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                    return Ok(serde_json::json!({
+                        "ok": true,
+                        "skipped": true,
+                        "hook": thread_hook_key(params.hook),
+                        "reason": "workspace hook config not found",
+                        "searched": [
+                            yaml_path.display().to_string(),
+                            yml_path.display().to_string(),
+                        ],
+                    }));
+                }
+                Err(err) => return Err(err).with_context(|| format!("read {}", yml_path.display())),
+            }
+        }
+        Err(err) => return Err(err).with_context(|| format!("read {}", yaml_path.display())),
+    };
+
+    let config: WorkspaceHooksConfig = serde_yaml::from_str(&config_contents)
+        .with_context(|| format!("parse {}", config_path.display()))?;
+
+    let key = thread_hook_key(params.hook);
+    let argv = config
+        .hooks
+        .get(key)
+        .cloned()
+        .filter(|argv| !argv.is_empty());
+    let Some(argv) = argv else {
+        return Ok(serde_json::json!({
+            "ok": true,
+            "skipped": true,
+            "hook": key,
+            "reason": "workspace hook not configured",
+            "config_path": config_path.display().to_string(),
+        }));
+    };
+
+    let output = handle_process_start(
+        server,
+        ProcessStartParams {
+            thread_id: params.thread_id,
+            turn_id: params.turn_id,
+            approval_id: params.approval_id,
+            argv: argv.clone(),
+            cwd: None,
+        },
+    )
+    .await?;
+
+    let Some(obj) = output.as_object() else {
+        return Ok(output);
+    };
+
+    if obj
+        .get("needs_approval")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        return Ok(serde_json::json!({
+            "needs_approval": true,
+            "thread_id": params.thread_id,
+            "approval_id": obj.get("approval_id"),
+            "hook": key,
+        }));
+    }
+
+    if obj.get("denied").and_then(|v| v.as_bool()).unwrap_or(false) {
+        let mut out = obj.clone();
+        out.insert("hook".to_string(), serde_json::json!(key));
+        out.insert(
+            "config_path".to_string(),
+            serde_json::json!(config_path.display().to_string()),
+        );
+        return Ok(Value::Object(out));
+    }
+
+    Ok(serde_json::json!({
+        "ok": true,
+        "hook": key,
+        "argv": argv,
+        "config_path": config_path.display().to_string(),
+        "process_id": obj.get("process_id"),
+        "stdout_path": obj.get("stdout_path"),
+        "stderr_path": obj.get("stderr_path"),
+    }))
+}
+
 async fn handle_thread_fork(server: &Server, params: ThreadForkParams) -> anyhow::Result<Value> {
     let thread_rt = server.get_or_load_thread(params.thread_id).await?;
     let (cwd, active_turn_id) = {
@@ -685,3 +797,111 @@ async fn handle_thread_clear_artifacts(
     }))
 }
 
+#[cfg(test)]
+mod thread_manage_tests {
+    use super::*;
+
+    fn build_test_server(pm_root: PathBuf) -> Server {
+        let (out_tx, _out_rx) = mpsc::unbounded_channel::<String>();
+        Server {
+            cwd: pm_root.clone(),
+            out_tx,
+            thread_store: ThreadStore::new(PmPaths::new(pm_root)),
+            threads: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            processes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            disk_warning: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            exec_policy: pm_execpolicy::Policy::empty(),
+        }
+    }
+
+    #[tokio::test]
+    async fn thread_hook_run_skips_when_config_missing() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = build_test_server(tmp.path().join(".code_pm"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let result = handle_thread_hook_run(
+            &server,
+            ThreadHookRunParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                hook: WorkspaceHookName::Setup,
+            },
+        )
+        .await?;
+
+        assert!(result["skipped"].as_bool().unwrap_or(false));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn thread_hook_run_starts_process_from_config() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        let config_dir = repo_dir.join(".codepm");
+        tokio::fs::create_dir_all(&config_dir).await?;
+
+        tokio::fs::write(
+            config_dir.join("workspace.yaml"),
+            r#"
+hooks:
+  setup: ["sh", "-c", "exit 0"]
+"#,
+        )
+        .await?;
+
+        let server = build_test_server(tmp.path().join(".code_pm"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let result = handle_thread_hook_run(
+            &server,
+            ThreadHookRunParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                hook: WorkspaceHookName::Setup,
+            },
+        )
+        .await?;
+
+        assert!(result["ok"].as_bool().unwrap_or(false));
+        assert_eq!(result["hook"].as_str().unwrap_or(""), "setup");
+        let process_id: ProcessId = result["process_id"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing process_id"))?
+            .parse()?;
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            let status = {
+                let entry = {
+                    let processes = server.processes.lock().await;
+                    processes
+                        .get(&process_id)
+                        .cloned()
+                        .ok_or_else(|| anyhow::anyhow!("missing process entry"))?
+                };
+                let info = entry.info.lock().await;
+                info.status.clone()
+            };
+
+            if matches!(status, ProcessStatus::Exited) {
+                break;
+            }
+            if tokio::time::Instant::now() > deadline {
+                anyhow::bail!("process did not exit in time");
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+
+        Ok(())
+    }
+}

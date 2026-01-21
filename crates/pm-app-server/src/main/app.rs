@@ -465,6 +465,21 @@ async fn main() -> anyhow::Result<()> {
                     ),
                 }
             }
+            "thread/hook_run" => match serde_json::from_value::<ThreadHookRunParams>(request.params)
+            {
+                Ok(params) => match handle_thread_hook_run(&server, params).await {
+                    Ok(result) => JsonRpcResponse::ok(id, result),
+                    Err(err) => {
+                        JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None)
+                    }
+                },
+                Err(err) => JsonRpcResponse::err(
+                    id,
+                    JSONRPC_INVALID_PARAMS,
+                    "invalid params",
+                    Some(serde_json::json!({ "error": err.to_string() })),
+                ),
+            },
             "thread/configure" => {
                 match serde_json::from_value::<ThreadConfigureParams>(request.params) {
                     Ok(params) => match handle_thread_configure(&server, params).await {
