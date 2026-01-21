@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use anyhow::Context;
 use futures_util::TryStreamExt;
 use serde::{Deserialize, Serialize};
@@ -57,7 +59,76 @@ pub struct ResponsesApiResponse {
     #[serde(default)]
     pub output: Vec<ResponseItem>,
     #[serde(default)]
-    pub usage: Option<Value>,
+    pub usage: Option<TokenUsage>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TokenUsage {
+    #[serde(default)]
+    pub input_tokens: Option<u64>,
+    #[serde(default)]
+    pub output_tokens: Option<u64>,
+    #[serde(default)]
+    pub total_tokens: Option<u64>,
+    #[serde(default)]
+    pub input_tokens_details: Option<Value>,
+    #[serde(default)]
+    pub output_tokens_details: Option<Value>,
+    #[serde(flatten)]
+    pub other: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ApiError {
+    #[serde(rename = "type", default)]
+    pub r#type: Option<String>,
+    #[serde(default)]
+    pub code: Option<String>,
+    #[serde(default)]
+    pub message: Option<String>,
+    #[serde(default)]
+    pub param: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct RateLimitBucket {
+    pub limit: Option<u64>,
+    pub remaining: Option<u64>,
+    pub reset: Option<String>,
+}
+
+impl RateLimitBucket {
+    fn is_empty(&self) -> bool {
+        self.limit.is_none() && self.remaining.is_none() && self.reset.is_none()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RateLimits {
+    pub requests: RateLimitBucket,
+    pub tokens: RateLimitBucket,
+}
+
+impl RateLimits {
+    pub fn from_headers(headers: &reqwest::header::HeaderMap) -> Option<Self> {
+        let requests = RateLimitBucket {
+            limit: header_u64(headers, "x-ratelimit-limit-requests"),
+            remaining: header_u64(headers, "x-ratelimit-remaining-requests"),
+            reset: header_string(headers, "x-ratelimit-reset-requests"),
+        };
+        let tokens = RateLimitBucket {
+            limit: header_u64(headers, "x-ratelimit-limit-tokens"),
+            remaining: header_u64(headers, "x-ratelimit-remaining-tokens"),
+            reset: header_string(headers, "x-ratelimit-reset-tokens"),
+        };
+
+        let out = Self { requests, tokens };
+        if out.requests.is_empty() && out.tokens.is_empty() {
+            None
+        } else {
+            Some(out)
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -65,6 +136,8 @@ pub enum ResponseEvent {
     Created {
         response_id: Option<String>,
     },
+    ModelsEtag(String),
+    RateLimits(RateLimits),
     OutputTextDelta(String),
     OutputItemDone(ResponseItem),
     ReasoningTextDelta {
@@ -75,9 +148,13 @@ pub enum ResponseEvent {
         delta: String,
         summary_index: i64,
     },
+    Failed {
+        response_id: Option<String>,
+        error: ApiError,
+    },
     Completed {
-        response_id: String,
-        usage: Option<Value>,
+        response_id: Option<String>,
+        usage: Option<TokenUsage>,
     },
 }
 
@@ -173,12 +250,13 @@ impl Client {
             anyhow::bail!("openai responses stream failed ({status}): {text}");
         }
 
+        let headers = response.headers().clone();
         let byte_stream = response.bytes_stream().map_err(std::io::Error::other);
         let reader = StreamReader::new(byte_stream);
         let lines = tokio::io::BufReader::new(reader).lines();
 
         let (tx_event, rx_event) = mpsc::channel::<anyhow::Result<ResponseEvent>>(512);
-        let task = tokio::spawn(process_sse(lines, tx_event));
+        let task = tokio::spawn(process_response_stream(lines, headers, tx_event));
 
         Ok(ResponseEventStream { rx_event, task })
     }
@@ -193,6 +271,19 @@ pub fn tool_function(name: &str, description: &str, parameters: Value) -> Value 
             "parameters": parameters,
         }
     })
+}
+
+fn header_string(headers: &reqwest::header::HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get(name)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty())
+        .map(ToString::to_string)
+}
+
+fn header_u64(headers: &reqwest::header::HeaderMap, name: &str) -> Option<u64> {
+    header_string(headers, name).and_then(|v| v.parse::<u64>().ok())
 }
 
 #[derive(Debug, Deserialize)]
@@ -212,20 +303,10 @@ struct ResponsesStreamEvent {
 }
 
 #[derive(Debug, Deserialize)]
-struct StreamError {
-    #[serde(default)]
-    r#type: Option<String>,
-    #[serde(default)]
-    code: Option<String>,
-    #[serde(default)]
-    message: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
 struct ResponseCompleted {
     id: String,
     #[serde(default)]
-    usage: Option<Value>,
+    usage: Option<TokenUsage>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -233,7 +314,7 @@ struct ResponseDone {
     #[serde(default)]
     id: Option<String>,
     #[serde(default)]
-    usage: Option<Value>,
+    usage: Option<TokenUsage>,
 }
 
 fn parse_response_event(event: ResponsesStreamEvent) -> anyhow::Result<Option<ResponseEvent>> {
@@ -275,30 +356,42 @@ fn parse_response_event(event: ResponsesStreamEvent) -> anyhow::Result<Option<Re
             Ok(None)
         }
         "response.failed" => {
-            if let Some(resp) = event.response {
-                if let Some(error) = resp.get("error")
-                    && let Ok(error) = serde_json::from_value::<StreamError>(error.clone())
-                {
-                    let message = error
-                        .message
-                        .unwrap_or_else(|| "response.failed event received".to_string());
-                    anyhow::bail!(
-                        "openai response.failed: type={} code={} message={}",
-                        error.r#type.unwrap_or_default(),
-                        error.code.unwrap_or_default(),
-                        message
-                    );
-                }
-                anyhow::bail!("openai response.failed: {}", resp);
-            }
-            anyhow::bail!("openai response.failed event received");
+            let Some(resp) = event.response else {
+                return Ok(Some(ResponseEvent::Failed {
+                    response_id: None,
+                    error: ApiError {
+                        r#type: None,
+                        code: None,
+                        message: Some("openai response.failed event received".to_string()),
+                        param: None,
+                    },
+                }));
+            };
+
+            let response_id = resp
+                .get("id")
+                .and_then(|v| v.as_str())
+                .map(|v| v.to_string());
+
+            let error = match resp.get("error") {
+                Some(error) => serde_json::from_value::<ApiError>(error.clone())
+                    .context("parse response.failed error payload")?,
+                None => ApiError {
+                    r#type: None,
+                    code: None,
+                    message: Some(resp.to_string()),
+                    param: None,
+                },
+            };
+
+            Ok(Some(ResponseEvent::Failed { response_id, error }))
         }
         "response.completed" => {
             if let Some(resp_val) = event.response {
                 let completed: ResponseCompleted =
                     serde_json::from_value(resp_val).context("parse response.completed payload")?;
                 return Ok(Some(ResponseEvent::Completed {
-                    response_id: completed.id,
+                    response_id: Some(completed.id),
                     usage: completed.usage,
                 }));
             }
@@ -309,17 +402,36 @@ fn parse_response_event(event: ResponsesStreamEvent) -> anyhow::Result<Option<Re
                 let done: ResponseDone =
                     serde_json::from_value(resp_val).context("parse response.done payload")?;
                 return Ok(Some(ResponseEvent::Completed {
-                    response_id: done.id.unwrap_or_default(),
+                    response_id: done.id,
                     usage: done.usage,
                 }));
             }
             Ok(Some(ResponseEvent::Completed {
-                response_id: String::new(),
+                response_id: None,
                 usage: None,
             }))
         }
         _ => Ok(None),
     }
+}
+
+async fn process_response_stream<R>(
+    lines: tokio::io::Lines<R>,
+    headers: reqwest::header::HeaderMap,
+    tx_event: mpsc::Sender<anyhow::Result<ResponseEvent>>,
+) where
+    R: tokio::io::AsyncBufRead + Unpin,
+{
+    if let Some(etag) = header_string(&headers, "x-models-etag") {
+        let _ = tx_event.send(Ok(ResponseEvent::ModelsEtag(etag))).await;
+    }
+    if let Some(rate_limits) = RateLimits::from_headers(&headers) {
+        let _ = tx_event
+            .send(Ok(ResponseEvent::RateLimits(rate_limits)))
+            .await;
+    }
+
+    process_sse(lines, tx_event).await;
 }
 
 async fn process_sse<R>(
@@ -329,7 +441,7 @@ async fn process_sse<R>(
     R: tokio::io::AsyncBufRead + Unpin,
 {
     let mut data = String::new();
-    let mut saw_completed = false;
+    let mut saw_terminal = false;
 
     loop {
         match lines.next_line().await {
@@ -349,11 +461,14 @@ async fn process_sse<R>(
 
                     match parsed {
                         Ok(Some(event)) => {
-                            saw_completed |= matches!(event, ResponseEvent::Completed { .. });
+                            saw_terminal |= matches!(
+                                event,
+                                ResponseEvent::Completed { .. } | ResponseEvent::Failed { .. }
+                            );
                             if tx_event.send(Ok(event)).await.is_err() {
                                 return;
                             }
-                            if saw_completed {
+                            if saw_terminal {
                                 return;
                             }
                         }
@@ -375,7 +490,7 @@ async fn process_sse<R>(
                 }
             }
             Ok(None) => {
-                if !saw_completed {
+                if !saw_terminal {
                     let _ = tx_event
                         .send(Err(anyhow::anyhow!(
                             "stream closed before response.completed"
@@ -397,6 +512,7 @@ mod tests {
     use super::*;
     use bytes::Bytes;
     use futures_util::stream;
+    use reqwest::header::{HeaderMap, HeaderValue};
 
     async fn collect_from_sse(sse: &str) -> Vec<anyhow::Result<ResponseEvent>> {
         let (tx, mut rx) = mpsc::channel::<anyhow::Result<ResponseEvent>>(16);
@@ -443,8 +559,31 @@ mod tests {
 
         match &events[2] {
             Ok(ResponseEvent::Completed { response_id, usage }) => {
-                assert_eq!(response_id, "resp1");
-                assert!(usage.is_some());
+                assert_eq!(response_id.as_deref(), Some("resp1"));
+                assert_eq!(usage.as_ref().and_then(|u| u.total_tokens), Some(123));
+            }
+            other => anyhow::bail!("unexpected event: {other:?}"),
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn parses_failed_event() -> anyhow::Result<()> {
+        let sse = concat!(
+            "event: response.failed\n",
+            "data: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp1\",\"error\":{\"type\":\"rate_limit_error\",\"code\":\"rate_limit_exceeded\",\"message\":\"nope\"}}}\n\n",
+        );
+
+        let events = collect_from_sse(sse).await;
+        assert_eq!(events.len(), 1);
+
+        match &events[0] {
+            Ok(ResponseEvent::Failed { response_id, error }) => {
+                assert_eq!(response_id.as_deref(), Some("resp1"));
+                assert_eq!(error.r#type.as_deref(), Some("rate_limit_error"));
+                assert_eq!(error.code.as_deref(), Some("rate_limit_exceeded"));
+                assert_eq!(error.message.as_deref(), Some("nope"));
             }
             other => anyhow::bail!("unexpected event: {other:?}"),
         }
@@ -463,5 +602,33 @@ mod tests {
         events[0].as_ref().expect("first event ok");
         assert!(events[1].is_err());
         Ok(())
+    }
+
+    #[test]
+    fn parses_rate_limits_from_headers() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-ratelimit-limit-requests",
+            HeaderValue::from_static("100"),
+        );
+        headers.insert(
+            "x-ratelimit-remaining-requests",
+            HeaderValue::from_static("99"),
+        );
+        headers.insert("x-ratelimit-reset-requests", HeaderValue::from_static("1s"));
+        headers.insert("x-ratelimit-limit-tokens", HeaderValue::from_static("1000"));
+        headers.insert(
+            "x-ratelimit-remaining-tokens",
+            HeaderValue::from_static("900"),
+        );
+        headers.insert("x-ratelimit-reset-tokens", HeaderValue::from_static("2s"));
+
+        let limits = RateLimits::from_headers(&headers).expect("limits present");
+        assert_eq!(limits.requests.limit, Some(100));
+        assert_eq!(limits.requests.remaining, Some(99));
+        assert_eq!(limits.requests.reset.as_deref(), Some("1s"));
+        assert_eq!(limits.tokens.limit, Some(1000));
+        assert_eq!(limits.tokens.remaining, Some(900));
+        assert_eq!(limits.tokens.reset.as_deref(), Some("2s"));
     }
 }

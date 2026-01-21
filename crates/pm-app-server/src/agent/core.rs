@@ -164,7 +164,7 @@ pub async fn run_agent_turn(
         let resp = match tokio::time::timeout(max_openai_request_duration, async {
             let mut stream = openai.create_response_stream(&req).await?;
             let mut response_id = String::new();
-            let mut usage: Option<Value> = None;
+            let mut usage: Option<pm_openai::TokenUsage> = None;
             let mut output_items = Vec::new();
             let mut output_text = String::new();
 
@@ -178,6 +178,25 @@ pub async fn run_agent_turn(
                         {
                             response_id = id;
                         }
+                    }
+                    pm_openai::ResponseEvent::Failed { response_id: id, error } => {
+                        let failed_response_id = id
+                            .as_deref()
+                            .filter(|id| !id.trim().is_empty())
+                            .or(if response_id.is_empty() {
+                                None
+                            } else {
+                                Some(response_id.as_str())
+                            })
+                            .unwrap_or("");
+                        anyhow::bail!(
+                            "openai response failed: response_id={} type={} code={} message={} param={}",
+                            failed_response_id,
+                            error.r#type.as_deref().unwrap_or(""),
+                            error.code.as_deref().unwrap_or(""),
+                            error.message.as_deref().unwrap_or(""),
+                            error.param.as_deref().unwrap_or("")
+                        );
                     }
                     pm_openai::ResponseEvent::OutputTextDelta(delta) => {
                         output_text.push_str(&delta);
@@ -200,7 +219,9 @@ pub async fn run_agent_turn(
                         usage: u,
                     } => {
                         if response_id.is_empty() {
-                            response_id = id;
+                            if let Some(id) = id {
+                                response_id = id;
+                            }
                         }
                         usage = u;
                         break;
@@ -238,7 +259,10 @@ pub async fn run_agent_turn(
             Err(_) => return Err(AgentTurnError::OpenAiRequestTimedOut.into()),
         };
         last_response_id = resp.id.clone();
-        last_usage = resp.usage.clone();
+        last_usage = resp
+            .usage
+            .as_ref()
+            .and_then(|usage| serde_json::to_value(usage).ok());
 
         let mut function_calls = Vec::new();
         last_text = extract_assistant_text(&resp.output);
