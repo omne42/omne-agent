@@ -97,6 +97,8 @@
 - workspace `tokio` 特性启用 `io-std`（支持 app-server 的 stdio 读写）。
 
 ### Fixed
+- `pm-app-server`/`pm`/`code-pm`/`pm-core::orchestrator`：拆分超大 Rust 源文件（保持行为不变），避免单文件超过 1000 行，降低 review/IDE 压力。
+- `pm-core::modes`：clippy cleanups（`needless_question_mark`）。
 - `pm-eventlog`：`read_events_since` 忽略并发写入时可能出现的尾部半行（避免 reader 在 writer 追加期间误报 parse error）。
 - `pm-app-server file/*`：失败路径也会写入 `ToolCompleted`（避免工具卡在 “started but never finished”）。
 - `pm-core::redaction`：修正 token 脱敏正则（Bearer/Google key），避免漏打码。

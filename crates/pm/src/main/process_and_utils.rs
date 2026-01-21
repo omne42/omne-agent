@@ -1,0 +1,669 @@
+async fn run_process_follow(
+    app: &mut App,
+    process_id: ProcessId,
+    stderr: bool,
+    mut offset: u64,
+    max_bytes: Option<u64>,
+    poll_ms: u64,
+) -> anyhow::Result<()> {
+    let poll_interval = Duration::from_millis(poll_ms.max(50));
+    loop {
+        let (text, next_offset, eof) = app
+            .process_follow(process_id, stderr, offset, max_bytes)
+            .await?;
+        offset = next_offset;
+        if !text.is_empty() {
+            print!("{text}");
+            std::io::stdout().flush().ok();
+        }
+
+        if eof {
+            let status = app.process_status(process_id).await?;
+            if status != "running" {
+                return Ok(());
+            }
+        }
+
+        tokio::time::sleep(poll_interval).await;
+    }
+}
+
+fn render_event(event: &ThreadEvent) {
+    let ts = event
+        .timestamp
+        .format(&time::format_description::well_known::Rfc3339);
+    let ts = ts.unwrap_or_else(|_| "<time>".to_string());
+    match &event.kind {
+        pm_protocol::ThreadEventKind::ThreadCreated { cwd } => {
+            println!("[{ts}] thread created cwd={cwd}");
+        }
+        pm_protocol::ThreadEventKind::ThreadArchived { reason } => {
+            println!(
+                "[{ts}] thread archived reason={}",
+                reason.as_deref().unwrap_or("")
+            );
+        }
+        pm_protocol::ThreadEventKind::ThreadUnarchived { reason } => {
+            println!(
+                "[{ts}] thread unarchived reason={}",
+                reason.as_deref().unwrap_or("")
+            );
+        }
+        pm_protocol::ThreadEventKind::ThreadPaused { reason } => {
+            println!(
+                "[{ts}] thread paused reason={}",
+                reason.as_deref().unwrap_or("")
+            );
+        }
+        pm_protocol::ThreadEventKind::ThreadUnpaused { reason } => {
+            println!(
+                "[{ts}] thread unpaused reason={}",
+                reason.as_deref().unwrap_or("")
+            );
+        }
+        pm_protocol::ThreadEventKind::TurnStarted { turn_id, input } => {
+            println!("[{ts}] turn started {turn_id}");
+            println!("user: {input}");
+        }
+        pm_protocol::ThreadEventKind::TurnInterruptRequested { turn_id, reason } => {
+            println!(
+                "[{ts}] turn interrupt requested {turn_id} reason={}",
+                reason.as_deref().unwrap_or("")
+            );
+        }
+        pm_protocol::ThreadEventKind::TurnCompleted {
+            turn_id,
+            status,
+            reason,
+        } => {
+            println!(
+                "[{ts}] turn completed {turn_id} status={status:?} reason={}",
+                reason.as_deref().unwrap_or("")
+            );
+        }
+        pm_protocol::ThreadEventKind::ThreadConfigUpdated {
+            approval_policy,
+            sandbox_policy,
+            mode,
+            model,
+            openai_base_url,
+        } => {
+            println!(
+                "[{ts}] config approval_policy={approval_policy:?} sandbox_policy={sandbox_policy:?} mode={} model={} openai_base_url={}",
+                mode.as_deref().unwrap_or(""),
+                model.as_deref().unwrap_or(""),
+                openai_base_url.as_deref().unwrap_or("")
+            );
+        }
+        pm_protocol::ThreadEventKind::ApprovalRequested {
+            approval_id,
+            action,
+            ..
+        } => {
+            println!("[{ts}] approval requested {approval_id} action={action}");
+        }
+        pm_protocol::ThreadEventKind::ApprovalDecided {
+            approval_id,
+            decision,
+            remember,
+            reason,
+        } => {
+            println!(
+                "[{ts}] approval decided {approval_id} decision={decision:?} remember={remember} reason={}",
+                reason.as_deref().unwrap_or("")
+            );
+        }
+        pm_protocol::ThreadEventKind::ToolStarted { tool, .. } => {
+            println!("[{ts}] tool started {tool}");
+        }
+        pm_protocol::ThreadEventKind::ToolCompleted { status, error, .. } => {
+            println!(
+                "[{ts}] tool completed status={status:?} error={}",
+                error.as_deref().unwrap_or("")
+            );
+        }
+        pm_protocol::ThreadEventKind::AssistantMessage { text, model, .. } => {
+            if let Some(model) = model {
+                println!("[{ts}] assistant (model={model}):");
+            } else {
+                println!("[{ts}] assistant:");
+            }
+            println!("{text}");
+        }
+        pm_protocol::ThreadEventKind::ProcessStarted {
+            process_id, argv, ..
+        } => {
+            println!("[{ts}] process started {process_id} argv={argv:?}");
+        }
+        pm_protocol::ThreadEventKind::ProcessInterruptRequested {
+            process_id, reason, ..
+        } => {
+            println!(
+                "[{ts}] process interrupt requested {process_id} reason={}",
+                reason.as_deref().unwrap_or("")
+            );
+        }
+        pm_protocol::ThreadEventKind::ProcessKillRequested {
+            process_id, reason, ..
+        } => {
+            println!(
+                "[{ts}] process kill requested {process_id} reason={}",
+                reason.as_deref().unwrap_or("")
+            );
+        }
+        pm_protocol::ThreadEventKind::ProcessExited {
+            process_id,
+            exit_code,
+            reason,
+        } => {
+            println!(
+                "[{ts}] process exited {process_id} exit_code={} reason={}",
+                exit_code
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "?".to_string()),
+                reason.as_deref().unwrap_or("")
+            );
+        }
+    }
+}
+
+struct App {
+    rpc: pm_jsonrpc::Client,
+    notifications: Option<tokio::sync::mpsc::UnboundedReceiver<pm_jsonrpc::Notification>>,
+}
+
+impl App {
+    async fn connect(cli: &Cli) -> anyhow::Result<Self> {
+        let cwd = std::env::current_dir()?;
+        let pm_root = cli
+            .pm_root
+            .clone()
+            .or_else(|| std::env::var_os("CODE_PM_ROOT").map(PathBuf::from))
+            .unwrap_or_else(|| cwd.join(".code_pm"));
+
+        let server = cli.app_server.clone().unwrap_or_else(|| {
+            default_app_server_path().unwrap_or_else(|| PathBuf::from("pm-app-server"))
+        });
+
+        let mut argv: Vec<OsString> = Vec::new();
+        argv.push("--pm-root".into());
+        argv.push(pm_root.into_os_string());
+        for path in &cli.execpolicy_rules {
+            argv.push("--execpolicy-rules".into());
+            argv.push(path.clone().into_os_string());
+        }
+
+        let mut rpc = pm_jsonrpc::Client::spawn(server, argv).await?;
+        let _ = rpc.request("initialize", serde_json::json!({})).await?;
+        let _ = rpc.request("initialized", serde_json::json!({})).await?;
+        let notifications = rpc.take_notifications();
+        Ok(Self { rpc, notifications })
+    }
+
+    async fn rpc(&mut self, method: &str, params: Value) -> anyhow::Result<Value> {
+        Ok(self.rpc.request(method, params).await?)
+    }
+
+    fn take_notifications(
+        &mut self,
+    ) -> Option<tokio::sync::mpsc::UnboundedReceiver<pm_jsonrpc::Notification>> {
+        self.notifications.take()
+    }
+
+    async fn thread_start(&mut self, cwd: Option<String>) -> anyhow::Result<Value> {
+        self.rpc("thread/start", serde_json::json!({ "cwd": cwd }))
+            .await
+    }
+
+    async fn thread_resume(&mut self, thread_id: ThreadId) -> anyhow::Result<Value> {
+        self.rpc(
+            "thread/resume",
+            serde_json::json!({ "thread_id": thread_id }),
+        )
+        .await
+    }
+
+    async fn thread_fork(&mut self, thread_id: ThreadId) -> anyhow::Result<Value> {
+        self.rpc("thread/fork", serde_json::json!({ "thread_id": thread_id }))
+            .await
+    }
+
+    async fn thread_archive(
+        &mut self,
+        thread_id: ThreadId,
+        force: bool,
+        reason: Option<String>,
+    ) -> anyhow::Result<Value> {
+        self.rpc(
+            "thread/archive",
+            serde_json::json!({
+                "thread_id": thread_id,
+                "force": force,
+                "reason": reason,
+            }),
+        )
+        .await
+    }
+
+    async fn thread_unarchive(
+        &mut self,
+        thread_id: ThreadId,
+        reason: Option<String>,
+    ) -> anyhow::Result<Value> {
+        self.rpc(
+            "thread/unarchive",
+            serde_json::json!({
+                "thread_id": thread_id,
+                "reason": reason,
+            }),
+        )
+        .await
+    }
+
+    async fn thread_pause(
+        &mut self,
+        thread_id: ThreadId,
+        reason: Option<String>,
+    ) -> anyhow::Result<Value> {
+        self.rpc(
+            "thread/pause",
+            serde_json::json!({
+                "thread_id": thread_id,
+                "reason": reason,
+            }),
+        )
+        .await
+    }
+
+    async fn thread_unpause(
+        &mut self,
+        thread_id: ThreadId,
+        reason: Option<String>,
+    ) -> anyhow::Result<Value> {
+        self.rpc(
+            "thread/unpause",
+            serde_json::json!({
+                "thread_id": thread_id,
+                "reason": reason,
+            }),
+        )
+        .await
+    }
+
+    async fn thread_delete(&mut self, thread_id: ThreadId, force: bool) -> anyhow::Result<Value> {
+        self.rpc(
+            "thread/delete",
+            serde_json::json!({ "thread_id": thread_id, "force": force }),
+        )
+        .await
+    }
+
+    async fn thread_clear_artifacts(
+        &mut self,
+        thread_id: ThreadId,
+        force: bool,
+    ) -> anyhow::Result<Value> {
+        self.rpc(
+            "thread/clear_artifacts",
+            serde_json::json!({ "thread_id": thread_id, "force": force }),
+        )
+        .await
+    }
+
+    async fn thread_disk_usage(&mut self, thread_id: ThreadId) -> anyhow::Result<Value> {
+        self.rpc(
+            "thread/disk_usage",
+            serde_json::json!({ "thread_id": thread_id }),
+        )
+        .await
+    }
+
+    async fn thread_disk_report(
+        &mut self,
+        thread_id: ThreadId,
+        top_files: Option<usize>,
+    ) -> anyhow::Result<Value> {
+        self.rpc(
+            "thread/disk_report",
+            serde_json::json!({ "thread_id": thread_id, "top_files": top_files }),
+        )
+        .await
+    }
+
+    async fn thread_events(
+        &mut self,
+        thread_id: ThreadId,
+        since_seq: u64,
+        max_events: Option<usize>,
+    ) -> anyhow::Result<Value> {
+        self.rpc(
+            "thread/events",
+            serde_json::json!({
+                "thread_id": thread_id,
+                "since_seq": since_seq,
+                "max_events": max_events,
+            }),
+        )
+        .await
+    }
+
+    async fn thread_loaded(&mut self) -> anyhow::Result<Value> {
+        self.rpc("thread/loaded", serde_json::json!({})).await
+    }
+
+    async fn thread_list(&mut self) -> anyhow::Result<Value> {
+        self.rpc("thread/list", serde_json::json!({})).await
+    }
+
+    async fn thread_list_meta(&mut self, include_archived: bool) -> anyhow::Result<Value> {
+        self.rpc(
+            "thread/list_meta",
+            serde_json::json!({ "include_archived": include_archived }),
+        )
+        .await
+    }
+
+    async fn thread_attention(&mut self, thread_id: ThreadId) -> anyhow::Result<Value> {
+        self.rpc(
+            "thread/attention",
+            serde_json::json!({ "thread_id": thread_id }),
+        )
+        .await
+    }
+
+    async fn thread_state(&mut self, thread_id: ThreadId) -> anyhow::Result<Value> {
+        self.rpc(
+            "thread/state",
+            serde_json::json!({ "thread_id": thread_id }),
+        )
+        .await
+    }
+
+    async fn thread_config_explain(&mut self, thread_id: ThreadId) -> anyhow::Result<Value> {
+        self.rpc(
+            "thread/config/explain",
+            serde_json::json!({ "thread_id": thread_id }),
+        )
+        .await
+    }
+
+    async fn thread_configure(&mut self, args: ThreadConfigureArgs) -> anyhow::Result<()> {
+        let approval_policy: Option<ApprovalPolicy> = args.approval_policy.map(Into::into);
+        let sandbox_policy: Option<SandboxPolicy> = args.sandbox_policy.map(Into::into);
+        let _ = self
+            .rpc(
+                "thread/configure",
+                serde_json::json!({
+                    "thread_id": args.thread_id,
+                    "approval_policy": approval_policy,
+                    "sandbox_policy": sandbox_policy,
+                    "mode": args.mode,
+                    "model": args.model,
+                    "openai_base_url": args.openai_base_url,
+                }),
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn turn_start(&mut self, thread_id: ThreadId, input: String) -> anyhow::Result<TurnId> {
+        let v = self
+            .rpc(
+                "turn/start",
+                serde_json::json!({ "thread_id": thread_id, "input": input }),
+            )
+            .await?;
+        serde_json::from_value(v["turn_id"].clone()).context("turn_id missing in result")
+    }
+
+    async fn turn_interrupt(
+        &mut self,
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        reason: Option<String>,
+    ) -> anyhow::Result<()> {
+        let _ = self
+            .rpc(
+                "turn/interrupt",
+                serde_json::json!({
+                    "thread_id": thread_id,
+                    "turn_id": turn_id,
+                    "reason": reason,
+                }),
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn thread_subscribe(
+        &mut self,
+        thread_id: ThreadId,
+        since_seq: u64,
+        max_events: Option<usize>,
+        wait_ms: Option<u64>,
+    ) -> anyhow::Result<SubscribeResponse> {
+        let v = self
+            .rpc(
+                "thread/subscribe",
+                serde_json::json!({
+                    "thread_id": thread_id,
+                    "since_seq": since_seq,
+                    "max_events": max_events,
+                    "wait_ms": wait_ms,
+                }),
+            )
+            .await?;
+        Ok(serde_json::from_value(v)?)
+    }
+
+    async fn approval_list(
+        &mut self,
+        thread_id: ThreadId,
+        include_decided: bool,
+    ) -> anyhow::Result<Value> {
+        self.rpc(
+            "approval/list",
+            serde_json::json!({
+                "thread_id": thread_id,
+                "include_decided": include_decided,
+            }),
+        )
+        .await
+    }
+
+    async fn approval_decide(
+        &mut self,
+        thread_id: ThreadId,
+        approval_id: ApprovalId,
+        decision: ApprovalDecision,
+        remember: bool,
+        reason: Option<String>,
+    ) -> anyhow::Result<()> {
+        let _ = self
+            .rpc(
+                "approval/decide",
+                serde_json::json!({
+                    "thread_id": thread_id,
+                    "approval_id": approval_id,
+                    "decision": decision,
+                    "remember": remember,
+                    "reason": reason,
+                }),
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn process_list(&mut self, thread_id: Option<ThreadId>) -> anyhow::Result<Value> {
+        self.rpc(
+            "process/list",
+            serde_json::json!({
+                "thread_id": thread_id,
+            }),
+        )
+        .await
+    }
+
+    async fn process_inspect(
+        &mut self,
+        process_id: ProcessId,
+        max_lines: Option<usize>,
+    ) -> anyhow::Result<Value> {
+        self.rpc(
+            "process/inspect",
+            serde_json::json!({
+                "process_id": process_id,
+                "max_lines": max_lines,
+            }),
+        )
+        .await
+    }
+
+    async fn process_tail(
+        &mut self,
+        process_id: ProcessId,
+        stderr: bool,
+        max_lines: Option<usize>,
+    ) -> anyhow::Result<String> {
+        let stream = if stderr { "stderr" } else { "stdout" };
+        let v = self
+            .rpc(
+                "process/tail",
+                serde_json::json!({
+                    "process_id": process_id,
+                    "stream": stream,
+                    "max_lines": max_lines,
+                }),
+            )
+            .await?;
+        Ok(v["text"].as_str().unwrap_or("").to_string())
+    }
+
+    async fn process_follow(
+        &mut self,
+        process_id: ProcessId,
+        stderr: bool,
+        since_offset: u64,
+        max_bytes: Option<u64>,
+    ) -> anyhow::Result<(String, u64, bool)> {
+        let stream = if stderr { "stderr" } else { "stdout" };
+        let v = self
+            .rpc(
+                "process/follow",
+                serde_json::json!({
+                    "process_id": process_id,
+                    "stream": stream,
+                    "since_offset": since_offset,
+                    "max_bytes": max_bytes,
+                }),
+            )
+            .await?;
+
+        let text = v["text"].as_str().unwrap_or("").to_string();
+        let next_offset = v["next_offset"].as_u64().unwrap_or(since_offset);
+        let eof = v["eof"].as_bool().unwrap_or(true);
+        Ok((text, next_offset, eof))
+    }
+
+    async fn process_status(&mut self, process_id: ProcessId) -> anyhow::Result<String> {
+        let v = self.process_inspect(process_id, Some(0)).await?;
+        Ok(v["process"]["status"]
+            .as_str()
+            .unwrap_or("unknown")
+            .to_string())
+    }
+
+    async fn process_kill(
+        &mut self,
+        process_id: ProcessId,
+        reason: Option<String>,
+    ) -> anyhow::Result<()> {
+        let _ = self
+            .rpc(
+                "process/kill",
+                serde_json::json!({
+                    "process_id": process_id,
+                    "reason": reason,
+                }),
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn process_interrupt(
+        &mut self,
+        process_id: ProcessId,
+        reason: Option<String>,
+    ) -> anyhow::Result<()> {
+        let _ = self
+            .rpc(
+                "process/interrupt",
+                serde_json::json!({
+                    "process_id": process_id,
+                    "reason": reason,
+                }),
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn artifact_list(&mut self, thread_id: ThreadId) -> anyhow::Result<Value> {
+        self.rpc(
+            "artifact/list",
+            serde_json::json!({
+                "thread_id": thread_id,
+            }),
+        )
+        .await
+    }
+
+    async fn artifact_read(
+        &mut self,
+        thread_id: ThreadId,
+        artifact_id: pm_protocol::ArtifactId,
+        max_bytes: Option<u64>,
+    ) -> anyhow::Result<Value> {
+        self.rpc(
+            "artifact/read",
+            serde_json::json!({
+                "thread_id": thread_id,
+                "artifact_id": artifact_id,
+                "max_bytes": max_bytes,
+            }),
+        )
+        .await
+    }
+
+    async fn artifact_delete(
+        &mut self,
+        thread_id: ThreadId,
+        artifact_id: pm_protocol::ArtifactId,
+    ) -> anyhow::Result<Value> {
+        self.rpc(
+            "artifact/delete",
+            serde_json::json!({
+                "thread_id": thread_id,
+                "artifact_id": artifact_id,
+            }),
+        )
+        .await
+    }
+}
+
+fn default_app_server_path() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    let candidate = dir.join(app_server_exe_name());
+    if candidate.is_file() {
+        return Some(candidate);
+    }
+    None
+}
+
+fn app_server_exe_name() -> &'static str {
+    if cfg!(windows) {
+        "pm-app-server.exe"
+    } else {
+        "pm-app-server"
+    }
+}

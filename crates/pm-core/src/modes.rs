@@ -440,10 +440,10 @@ pub fn relative_path_under_root(root: &Path, input: &Path) -> anyhow::Result<Pat
         let rel = input
             .strip_prefix(root)
             .with_context(|| format!("path is outside workspace root: {}", input.display()))?;
-        return Ok(normalize_relative_path(rel)?);
+        return normalize_relative_path(rel);
     }
 
-    Ok(normalize_relative_path(input)?)
+    normalize_relative_path(input)
 }
 
 #[derive(Debug, Deserialize)]
