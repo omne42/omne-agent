@@ -1,18 +1,16 @@
 [package]
-name = "pm-git"
+name = "pm-eventlog"
 edition.workspace = true
 rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-async-trait.workspace = true
 fs2.workspace = true
-pm-core = { path = "../pm-core" }
+pm-protocol = { path = "../agent-protocol" }
 serde_json.workspace = true
+time.workspace = true
 tokio.workspace = true
-tracing.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
-time.workspace = true

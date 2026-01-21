@@ -7,8 +7,8 @@ version.workspace = true
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
-pm-jsonrpc = { path = "../pm-jsonrpc" }
-pm-protocol = { path = "../pm-protocol" }
+pm-jsonrpc = { path = "../jsonrpc" }
+pm-protocol = { path = "../agent-protocol" }
 serde.workspace = true
 serde_json.workspace = true
 time.workspace = true

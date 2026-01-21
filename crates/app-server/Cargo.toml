@@ -10,11 +10,11 @@ clap.workspace = true
 diffy.workspace = true
 globset.workspace = true
 nix.workspace = true
-pm-core = { path = "../pm-core" }
-pm-execpolicy = { path = "../pm-execpolicy" }
-pm-app-server-protocol = { path = "../pm-app-server-protocol" }
-pm-openai = { path = "../pm-openai" }
-pm-protocol = { path = "../pm-protocol" }
+pm-core = { path = "../core" }
+pm-execpolicy = { path = "../execpolicy" }
+pm-app-server-protocol = { path = "../app-server-protocol" }
+pm-openai = { path = "../openai" }
+pm-protocol = { path = "../agent-protocol" }
 regex.workspace = true
 serde.workspace = true
 serde_json.workspace = true

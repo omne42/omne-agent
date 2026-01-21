@@ -6,7 +6,7 @@ version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-pm-protocol = { path = "../pm-protocol" }
+pm-protocol = { path = "../agent-protocol" }
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true

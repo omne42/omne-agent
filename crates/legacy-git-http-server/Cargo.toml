@@ -9,8 +9,8 @@ anyhow.workspace = true
 axum.workspace = true
 bytes.workspace = true
 http-body-util.workspace = true
-pm-core = { path = "../pm-core" }
-pm-git = { path = "../pm-git" }
+pm-core = { path = "../core" }
+pm-git = { path = "../legacy-git-adapter" }
 serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true

@@ -8,9 +8,9 @@ version.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 clap.workspace = true
-pm-core = { path = "../pm-core" }
-pm-http = { path = "../pm-http" }
-pm-git = { path = "../pm-git" }
+pm-core = { path = "../core" }
+pm-http = { path = "../legacy-git-http-server" }
+pm-git = { path = "../legacy-git-adapter" }
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
