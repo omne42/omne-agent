@@ -23,6 +23,7 @@
 - 新增 `pm` CLI：作为 `pm-app-server` 的人类可用客户端，支持 `ask/watch --bell`、`thread/*`、`approval/*`、`process/*`（只读查看 + kill），并在 `ask` 中支持 Ctrl-C 触发 `turn/interrupt`。
 - `pm ask`：消费 `pm-app-server` 的 `item/delta` notifications 并实时输出 assistant 文本流（仅作为 UI 优化；最终仍以 `AssistantMessage` 落盘为准）。
 - `pm` CLI 新增 `inbox`：跨 thread 的 RTS 收件箱视图（可 `--watch` + `--bell` 去重提醒），用于快速发现 `need_approval/failed/running`。
+- `pm inbox --details`：现在会显示 `failed_processes` 摘要（数量 + 部分 id），便于快速定位后台失败。
 - `pm` CLI 补齐更多控制面命令：`pm thread fork/archive/unarchive/delete/clear-artifacts/disk-*` 与 `pm artifact list/read/delete`，便于手动清理与审计。
 - `pm` CLI 新增可解释性与状态查询：`pm thread state`、`pm thread config-explain`、`pm thread loaded`。
 - 新增 `TurnStatus::Stuck`：当 agent 超预算/超时（turn 时长、tool call、OpenAI 请求超时等）时显式标记为 `stuck`，并在 `thread/attention` 与 `pm * --bell` 中可见。

@@ -1084,6 +1084,8 @@ struct ThreadAttention {
     pending_approvals: Vec<PendingApproval>,
     #[serde(default)]
     running_processes: Vec<RunningProcess>,
+    #[serde(default)]
+    failed_processes: Vec<ProcessId>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -1268,6 +1270,24 @@ fn render_thread_details(att: &ThreadAttention) {
             "  processes: {} ({ids}{})",
             att.running_processes.len(),
             if att.running_processes.len() > 3 {
+                ", ..."
+            } else {
+                ""
+            }
+        );
+    }
+    if !att.failed_processes.is_empty() {
+        let ids = att
+            .failed_processes
+            .iter()
+            .take(3)
+            .map(|p| p.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        println!(
+            "  failed_processes: {} ({ids}{})",
+            att.failed_processes.len(),
+            if att.failed_processes.len() > 3 {
                 ", ..."
             } else {
                 ""
