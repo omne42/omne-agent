@@ -77,6 +77,16 @@ enum ThreadCommand {
         #[arg(long, default_value_t = false)]
         json: bool,
     },
+    Spawn {
+        thread_id: ThreadId,
+        input: String,
+        #[arg(long)]
+        model: Option<String>,
+        #[arg(long)]
+        openai_base_url: Option<String>,
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
     Archive {
         thread_id: ThreadId,
         #[arg(long, default_value_t = false)]

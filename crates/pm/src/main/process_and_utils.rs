@@ -229,6 +229,48 @@ impl App {
             .await
     }
 
+    async fn thread_spawn(
+        &mut self,
+        thread_id: ThreadId,
+        input: String,
+        model: Option<String>,
+        openai_base_url: Option<String>,
+    ) -> anyhow::Result<Value> {
+        #[derive(Debug, Deserialize)]
+        struct ForkResult {
+            thread_id: ThreadId,
+            log_path: String,
+            last_seq: u64,
+        }
+
+        let forked = self.thread_fork(thread_id).await?;
+        let forked: ForkResult = serde_json::from_value(forked).context("parse thread/fork")?;
+
+        if model.is_some() || openai_base_url.is_some() {
+            let _ = self
+                .rpc(
+                    "thread/configure",
+                    serde_json::json!({
+                        "thread_id": forked.thread_id,
+                        "approval_policy": null,
+                        "sandbox_policy": null,
+                        "mode": null,
+                        "model": model,
+                        "openai_base_url": openai_base_url,
+                    }),
+                )
+                .await?;
+        }
+
+        let turn_id = self.turn_start(forked.thread_id, input).await?;
+        Ok(serde_json::json!({
+            "thread_id": forked.thread_id,
+            "turn_id": turn_id,
+            "log_path": forked.log_path,
+            "last_seq": forked.last_seq,
+        }))
+    }
+
     async fn thread_archive(
         &mut self,
         thread_id: ThreadId,

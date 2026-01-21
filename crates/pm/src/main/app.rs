@@ -22,6 +22,16 @@ async fn main() -> anyhow::Result<()> {
                 let result = app.thread_fork(thread_id).await?;
                 print_json_or_pretty(json, &result)?;
             }
+            ThreadCommand::Spawn {
+                thread_id,
+                input,
+                model,
+                openai_base_url,
+                json,
+            } => {
+                let result = app.thread_spawn(thread_id, input, model, openai_base_url).await?;
+                print_json_or_pretty(json, &result)?;
+            }
             ThreadCommand::Archive {
                 thread_id,
                 force,
