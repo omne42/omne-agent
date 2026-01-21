@@ -42,6 +42,7 @@
 - `pm-app-server` 新增 `thread/list_meta`：批量返回 threads 的派生状态（支持 `include_archived`），减少 UI/CLI 人肉遍历与重复读取 event log。
 - `pm-app-server` 新增 Responses-first agent loop：`turn/start` 会调用 OpenAI Responses API 执行 tool calling（阻塞等待 approval 决策并复跑同一 tool call），并将 assistant 输出落盘为 `AssistantMessage` 事件以支持 resume。
 - `pm-app-server` agent loop：会读取 `<thread cwd>/AGENTS.md` 并追加到 instructions（写入前自动脱敏），让项目级规范从第一天就能约束 agent。
+- `pm-app-server` agent loop：支持 instructions layering（base/user/project）与按需加载 skills（`$skill` → `SKILL.md`），并提供 `CODE_PM_USER_INSTRUCTIONS_FILE`/`CODE_PM_SKILLS_DIR`。
 - `pm-app-server` agent loop：构建对话上下文时会把 tool/approval/process/turn-status 事件注入 history（resume 更接近 Codex 语义，减少重复执行与“失忆”）。
 - 新增 `pm-core::threads`：`ThreadStore` + `ThreadHandle`，基于 JSONL event log 实现 thread 创建/列举/resume（resume 会修复未完成 turn/进程并落盘）。
 - 新增 `pm-core::sandbox`：rooted path 解析与边界校验（拒绝 `..` 穿越与 symlink 逃逸）。

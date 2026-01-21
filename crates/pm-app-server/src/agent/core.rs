@@ -43,7 +43,7 @@ pub async fn run_agent_turn(
     server: Arc<super::Server>,
     thread_rt: Arc<super::ThreadRuntime>,
     turn_id: TurnId,
-    _input: String,
+    input: String,
     cancel: CancellationToken,
 ) -> anyhow::Result<()> {
     let (thread_id, thread_model, thread_openai_base_url, thread_cwd) = {
@@ -104,13 +104,30 @@ pub async fn run_agent_turn(
     ));
 
     let mut instructions = DEFAULT_INSTRUCTIONS.to_string();
-    if let Some(cwd) = thread_cwd {
+
+    if let Some(user_instructions_path) = resolve_user_instructions_path() {
+        if let Ok(contents) = tokio::fs::read_to_string(&user_instructions_path).await {
+            let contents = pm_core::redact_text(&contents);
+            instructions.push_str("\n\n# User instructions\n\n");
+            instructions.push_str(&format!(
+                "_Source: {}_\n\n",
+                user_instructions_path.display()
+            ));
+            instructions.push_str(&contents);
+        }
+    }
+
+    if let Some(cwd) = thread_cwd.as_deref() {
         let agents_path = PathBuf::from(cwd).join("AGENTS.md");
         if let Ok(contents) = tokio::fs::read_to_string(&agents_path).await {
             let contents = pm_core::redact_text(&contents);
             instructions.push_str("\n\n# Project instructions (AGENTS.md)\n\n");
             instructions.push_str(&contents);
         }
+    }
+
+    if let Some(skills) = load_skills_from_input(&input, thread_cwd.as_deref()).await? {
+        instructions.push_str(&skills);
     }
 
     let mut input_items = build_conversation(&server, thread_id).await?;
@@ -305,6 +322,124 @@ pub async fn run_agent_turn(
     }
 
     Ok(())
+}
+
+fn resolve_user_instructions_path() -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("CODE_PM_USER_INSTRUCTIONS_FILE") {
+        let path = path.trim();
+        if !path.is_empty() {
+            return Some(PathBuf::from(path));
+        }
+    }
+
+    let home = home_dir()?;
+    Some(home.join(".codepm").join("AGENTS.md"))
+}
+
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("USERPROFILE")
+                .filter(|s| !s.is_empty())
+                .map(PathBuf::from)
+        })
+}
+
+async fn load_skills_from_input(input: &str, thread_cwd: Option<&str>) -> anyhow::Result<Option<String>> {
+    let skill_names = parse_skill_names(input);
+    if skill_names.is_empty() {
+        return Ok(None);
+    }
+
+    let Some(thread_cwd) = thread_cwd else {
+        return Ok(None);
+    };
+
+    let mut out = String::new();
+    for name in skill_names {
+        if let Some((path, contents)) = load_skill(&name, PathBuf::from(thread_cwd)).await? {
+            out.push_str("\n\n# Skill\n\n");
+            out.push_str(&format!("_Name: `{}`_\n\n", name));
+            out.push_str(&format!("_Source: {}_\n\n", path.display()));
+            out.push_str(&contents);
+        } else {
+            out.push_str("\n\n# Skill (missing)\n\n");
+            out.push_str(&format!("_Name: `{}`_\n\n", name));
+            out.push_str("_Reason: not found in configured skill directories._\n");
+        }
+    }
+
+    Ok(Some(out))
+}
+
+fn parse_skill_names(input: &str) -> Vec<String> {
+    let mut out = Vec::<String>::new();
+    let mut seen = std::collections::HashSet::<String>::new();
+
+    let chars = input.chars().collect::<Vec<_>>();
+    let mut idx = 0usize;
+    while idx < chars.len() {
+        if chars[idx] != '$' {
+            idx += 1;
+            continue;
+        }
+        idx += 1;
+        let start = idx;
+        while idx < chars.len() {
+            let c = chars[idx];
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                idx += 1;
+                continue;
+            }
+            break;
+        }
+        if idx <= start {
+            continue;
+        }
+        let name = chars[start..idx].iter().collect::<String>();
+        if seen.insert(name.clone()) {
+            out.push(name);
+        }
+    }
+
+    out
+}
+
+async fn load_skill(name: &str, thread_root: PathBuf) -> anyhow::Result<Option<(PathBuf, String)>> {
+    let mut roots = Vec::<PathBuf>::new();
+
+    if let Ok(dir) = std::env::var("CODE_PM_SKILLS_DIR") {
+        let dir = dir.trim();
+        if !dir.is_empty() {
+            roots.push(PathBuf::from(dir));
+        }
+    }
+
+    roots.push(thread_root.join(".codepm").join("skills"));
+    roots.push(thread_root.join(".codex").join("skills"));
+
+    if let Some(home) = home_dir() {
+        roots.push(home.join(".codepm").join("skills"));
+    }
+
+    let candidates = [name.to_string(), name.to_ascii_lowercase()];
+    for root in roots {
+        for candidate in candidates.iter() {
+            let path = root.join(candidate).join("SKILL.md");
+            match tokio::fs::read_to_string(&path).await {
+                Ok(contents) => {
+                    let contents = pm_core::redact_text(&contents);
+                    return Ok(Some((path, contents)));
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(err) => return Err(err).with_context(|| format!("read {}", path.display())),
+            }
+        }
+    }
+
+    Ok(None)
 }
 
 fn parse_env_usize(key: &str, default: usize, min: usize, max: usize) -> usize {
