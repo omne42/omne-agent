@@ -1,3 +1,33 @@
+fn command_uses_network(argv: &[String]) -> bool {
+    let Some(program) = argv.first() else {
+        return false;
+    };
+
+    let mut name = Path::new(program)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(program.as_str())
+        .to_ascii_lowercase();
+    if let Some(stripped) = name.strip_suffix(".exe") {
+        name = stripped.to_string();
+    }
+
+    match name.as_str() {
+        "curl" | "wget" | "ssh" | "scp" | "sftp" | "ftp" | "telnet" | "nc" | "ncat"
+        | "netcat" | "gh" => true,
+        "git" => argv
+            .get(1)
+            .map(|subcommand| {
+                matches!(
+                    subcommand.as_str(),
+                    "clone" | "fetch" | "pull" | "push" | "ls-remote" | "submodule"
+                )
+            })
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
 async fn handle_process_start(
     server: &Server,
     params: ProcessStartParams,
@@ -7,12 +37,13 @@ async fn handle_process_start(
     }
 
     let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
-    let (approval_policy, sandbox_policy, mode_name) = {
+    let (approval_policy, sandbox_policy, sandbox_network_access, mode_name) = {
         let handle = thread_rt.handle.lock().await;
         let state = handle.state();
         (
             state.approval_policy,
             state.sandbox_policy,
+            state.sandbox_network_access,
             state.mode.clone(),
         )
     };
@@ -50,6 +81,38 @@ async fn handle_process_start(
         return Ok(serde_json::json!({
             "denied": true,
             "sandbox_policy": sandbox_policy,
+        }));
+    }
+
+    if sandbox_network_access == pm_protocol::SandboxNetworkAccess::Deny
+        && command_uses_network(&params.argv)
+    {
+        let tool_id = pm_protocol::ToolId::new();
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                tool_id,
+                turn_id: params.turn_id,
+                tool: "process/start".to_string(),
+                params: Some(serde_json::json!({
+                    "argv": params.argv.clone(),
+                    "cwd": cwd_str,
+                })),
+            })
+            .await?;
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                tool_id,
+                status: pm_protocol::ToolStatus::Denied,
+                error: Some("sandbox_network_access=deny forbids this command".to_string()),
+                result: Some(serde_json::json!({
+                    "sandbox_network_access": sandbox_network_access,
+                })),
+            })
+            .await?;
+        return Ok(serde_json::json!({
+            "tool_id": tool_id,
+            "denied": true,
+            "sandbox_network_access": sandbox_network_access,
         }));
     }
 
@@ -344,4 +407,136 @@ async fn handle_process_start(
         "stdout_path": stdout_path.display().to_string(),
         "stderr_path": stderr_path.display().to_string(),
     }))
+}
+
+#[cfg(test)]
+mod network_access_tests {
+    use super::*;
+
+    fn build_test_server(pm_root: PathBuf) -> Server {
+        let (out_tx, _out_rx) = mpsc::unbounded_channel::<String>();
+        Server {
+            cwd: pm_root.clone(),
+            out_tx,
+            thread_store: ThreadStore::new(PmPaths::new(pm_root)),
+            threads: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            processes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            disk_warning: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            exec_policy: pm_execpolicy::Policy::empty(),
+        }
+    }
+
+    async fn write_executable_sh(path: &Path, script: &str) -> anyhow::Result<()> {
+        tokio::fs::write(path, script).await?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let perms = std::fs::Permissions::from_mode(0o755);
+            tokio::fs::set_permissions(path, perms).await?;
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn process_start_denies_network_commands_when_network_access_is_denied() -> anyhow::Result<()>
+    {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+        write_executable_sh(repo_dir.join("curl").as_path(), "#!/bin/sh\nexit 0\n").await?;
+
+        let server = build_test_server(tmp.path().join(".code_pm"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let result = handle_process_start(
+            &server,
+            ProcessStartParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                argv: vec!["./curl".to_string()],
+                cwd: None,
+            },
+        )
+        .await?;
+
+        assert!(result["denied"].as_bool().unwrap_or(false));
+        assert_eq!(result["sandbox_network_access"].as_str(), Some("deny"));
+        assert!(server.processes.lock().await.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn process_start_allows_network_commands_when_network_access_is_allowed() -> anyhow::Result<()>
+    {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+        write_executable_sh(repo_dir.join("curl").as_path(), "#!/bin/sh\nexit 0\n").await?;
+
+        let server = build_test_server(tmp.path().join(".code_pm"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        handle_thread_configure(
+            &server,
+            ThreadConfigureParams {
+                thread_id,
+                approval_policy: None,
+                sandbox_policy: None,
+                sandbox_writable_roots: None,
+                sandbox_network_access: Some(pm_protocol::SandboxNetworkAccess::Allow),
+                mode: None,
+                model: None,
+                openai_base_url: None,
+            },
+        )
+        .await?;
+
+        let result = handle_process_start(
+            &server,
+            ProcessStartParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                argv: vec!["./curl".to_string()],
+                cwd: None,
+            },
+        )
+        .await?;
+
+        let process_id: ProcessId = result["process_id"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing process_id"))?
+            .parse()?;
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            let status = {
+                let entry = {
+                    let processes = server.processes.lock().await;
+                    processes
+                        .get(&process_id)
+                        .cloned()
+                        .ok_or_else(|| anyhow::anyhow!("missing process entry"))?
+                };
+                let info = entry.info.lock().await;
+                info.status.clone()
+            };
+
+            if matches!(status, ProcessStatus::Exited) {
+                break;
+            }
+            if tokio::time::Instant::now() > deadline {
+                anyhow::bail!("process did not exit in time");
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+
+        Ok(())
+    }
 }
