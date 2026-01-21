@@ -174,6 +174,8 @@ struct ThreadConfigureArgs {
     #[arg(long)]
     sandbox_policy: Option<CliSandboxPolicy>,
     #[arg(long)]
+    mode: Option<String>,
+    #[arg(long)]
     model: Option<String>,
     #[arg(long)]
     openai_base_url: Option<String>,
@@ -309,6 +311,9 @@ struct AskArgs {
     sandbox_policy: Option<CliSandboxPolicy>,
 
     #[arg(long)]
+    mode: Option<String>,
+
+    #[arg(long)]
     model: Option<String>,
 
     #[arg(long)]
@@ -334,6 +339,9 @@ struct ExecArgs {
 
     #[arg(long)]
     sandbox_policy: Option<CliSandboxPolicy>,
+
+    #[arg(long)]
+    mode: Option<String>,
 
     #[arg(long)]
     model: Option<String>,
@@ -704,6 +712,7 @@ async fn run_ask(app: &mut App, args: AskArgs) -> anyhow::Result<()> {
 
     if args.approval_policy.is_some()
         || args.sandbox_policy.is_some()
+        || args.mode.is_some()
         || args.model.is_some()
         || args.openai_base_url.is_some()
     {
@@ -711,6 +720,7 @@ async fn run_ask(app: &mut App, args: AskArgs) -> anyhow::Result<()> {
             thread_id,
             approval_policy: args.approval_policy,
             sandbox_policy: args.sandbox_policy,
+            mode: args.mode,
             model: args.model,
             openai_base_url: args.openai_base_url,
         })
@@ -846,6 +856,7 @@ async fn run_exec(app: &mut App, args: ExecArgs) -> anyhow::Result<i32> {
 
     if args.approval_policy.is_some()
         || args.sandbox_policy.is_some()
+        || args.mode.is_some()
         || args.model.is_some()
         || args.openai_base_url.is_some()
     {
@@ -853,6 +864,7 @@ async fn run_exec(app: &mut App, args: ExecArgs) -> anyhow::Result<i32> {
             thread_id,
             approval_policy: args.approval_policy,
             sandbox_policy: args.sandbox_policy,
+            mode: args.mode,
             model: args.model,
             openai_base_url: args.openai_base_url,
         })
@@ -1086,12 +1098,14 @@ fn render_event_to<W: std::io::Write>(
         pm_protocol::ThreadEventKind::ThreadConfigUpdated {
             approval_policy,
             sandbox_policy,
+            mode,
             model,
             openai_base_url,
         } => {
             let _ = writeln!(
                 writer,
-                "[{ts}] config approval_policy={approval_policy:?} sandbox_policy={sandbox_policy:?} model={} openai_base_url={}",
+                "[{ts}] config approval_policy={approval_policy:?} sandbox_policy={sandbox_policy:?} mode={} model={} openai_base_url={}",
+                mode.as_deref().unwrap_or(""),
                 model.as_deref().unwrap_or(""),
                 openai_base_url.as_deref().unwrap_or("")
             );
@@ -1693,11 +1707,13 @@ fn render_event(event: &ThreadEvent) {
         pm_protocol::ThreadEventKind::ThreadConfigUpdated {
             approval_policy,
             sandbox_policy,
+            mode,
             model,
             openai_base_url,
         } => {
             println!(
-                "[{ts}] config approval_policy={approval_policy:?} sandbox_policy={sandbox_policy:?} model={} openai_base_url={}",
+                "[{ts}] config approval_policy={approval_policy:?} sandbox_policy={sandbox_policy:?} mode={} model={} openai_base_url={}",
+                mode.as_deref().unwrap_or(""),
                 model.as_deref().unwrap_or(""),
                 openai_base_url.as_deref().unwrap_or("")
             );
@@ -2004,6 +2020,7 @@ impl App {
                     "thread_id": args.thread_id,
                     "approval_policy": approval_policy,
                     "sandbox_policy": sandbox_policy,
+                    "mode": args.mode,
                     "model": args.model,
                     "openai_base_url": args.openai_base_url,
                 }),

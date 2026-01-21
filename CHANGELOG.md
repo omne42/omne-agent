@@ -29,6 +29,7 @@
 - `pm inbox --details`：现在会显示 `failed_processes` 摘要（数量 + 部分 id），便于快速定位后台失败。
 - `pm` CLI 补齐更多控制面命令：`pm thread fork/archive/unarchive/delete/clear-artifacts/disk-*` 与 `pm artifact list/read/delete`，便于手动清理与审计。
 - `pm` CLI 新增可解释性与状态查询：`pm thread state`、`pm thread config-explain`、`pm thread loaded`。
+- `pm`/`pm-app-server`：thread 配置新增 `mode`（角色/权限边界）字段；`pm ask/exec/thread configure --mode <name>` 可设置；`thread/state`/`thread/config-explain` 会返回当前生效的 `mode`。
 - 新增 `TurnStatus::Stuck`：当 agent 超预算/超时（turn 时长、tool call、OpenAI 请求超时等）时显式标记为 `stuck`，并在 `thread/attention` 与 `pm * --bell` 中可见。
 - `pm-app-server` agent loop：新增 `CODE_PM_AGENT_MAX_*` 预算覆盖（steps/tool calls/turn seconds/OpenAI request timeout）。
 - `pm-app-server` 在退出前会尽力终止仍在运行的子进程（避免 CLI 关闭后留下孤儿进程）。

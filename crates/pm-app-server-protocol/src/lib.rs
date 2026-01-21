@@ -160,6 +160,9 @@ pub struct ThreadConfigureParams {
     pub sandbox_policy: Option<pm_protocol::SandboxPolicy>,
     #[serde(default)]
     #[ts(optional)]
+    pub mode: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
     pub model: Option<String>,
     #[serde(default)]
     #[ts(optional)]

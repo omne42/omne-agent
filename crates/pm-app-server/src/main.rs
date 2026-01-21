@@ -544,6 +544,8 @@ struct ThreadConfigureParams {
     #[serde(default)]
     sandbox_policy: Option<pm_protocol::SandboxPolicy>,
     #[serde(default)]
+    mode: Option<String>,
+    #[serde(default)]
     model: Option<String>,
     #[serde(default)]
     openai_base_url: Option<String>,
@@ -1209,6 +1211,7 @@ async fn main() -> anyhow::Result<()> {
                                 "paused_reason": state.paused_reason,
                                 "approval_policy": state.approval_policy,
                                 "sandbox_policy": state.sandbox_policy,
+                                "mode": state.mode,
                                 "model": state.model,
                                 "openai_base_url": state.openai_base_url,
                                 "last_seq": handle.last_seq().0,
@@ -2331,18 +2334,29 @@ async fn handle_thread_configure(
     params: ThreadConfigureParams,
 ) -> anyhow::Result<Value> {
     let rt = server.get_or_load_thread(params.thread_id).await?;
-    let (current_approval_policy, current_sandbox_policy, current_model, current_openai_base_url) = {
+    let (
+        current_approval_policy,
+        current_sandbox_policy,
+        current_mode,
+        current_model,
+        current_openai_base_url,
+    ) = {
         let handle = rt.handle.lock().await;
         let state = handle.state();
         (
             state.approval_policy,
             state.sandbox_policy,
+            state.mode.clone(),
             state.model.clone(),
             state.openai_base_url.clone(),
         )
     };
 
     let approval_policy = params.approval_policy.unwrap_or(current_approval_policy);
+    let mode = params
+        .mode
+        .map(|m| m.trim().to_string())
+        .filter(|m| !m.is_empty());
     let model = params.model.filter(|s| !s.trim().is_empty());
     let openai_base_url = params.openai_base_url.filter(|s| !s.trim().is_empty());
 
@@ -2350,6 +2364,7 @@ async fn handle_thread_configure(
         || params
             .sandbox_policy
             .is_some_and(|p| p != current_sandbox_policy)
+        || mode.as_ref().is_some_and(|m| m != &current_mode)
         || model.as_ref() != current_model.as_ref()
         || openai_base_url.as_ref() != current_openai_base_url.as_ref();
 
@@ -2357,6 +2372,7 @@ async fn handle_thread_configure(
         rt.append_event(pm_protocol::ThreadEventKind::ThreadConfigUpdated {
             approval_policy,
             sandbox_policy: params.sandbox_policy,
+            mode,
             model,
             openai_base_url,
         })
@@ -2377,15 +2393,18 @@ async fn handle_thread_config_explain(
 
     let default_model = "gpt-4.1".to_string();
     let default_openai_base_url = "https://api.openai.com".to_string();
+    let default_mode = "coder".to_string();
 
     let mut effective_approval_policy = pm_protocol::ApprovalPolicy::AutoApprove;
     let mut effective_sandbox_policy = pm_protocol::SandboxPolicy::WorkspaceWrite;
+    let mut effective_mode = default_mode.clone();
     let mut effective_model = default_model.clone();
     let mut effective_openai_base_url = default_openai_base_url.clone();
     let mut layers = vec![serde_json::json!({
         "source": "default",
         "approval_policy": effective_approval_policy,
         "sandbox_policy": effective_sandbox_policy,
+        "mode": effective_mode,
         "model": effective_model,
         "openai_base_url": effective_openai_base_url,
     })];
@@ -2414,6 +2433,7 @@ async fn handle_thread_config_explain(
         if let pm_protocol::ThreadEventKind::ThreadConfigUpdated {
             approval_policy,
             sandbox_policy,
+            mode,
             model,
             openai_base_url,
         } = event.kind
@@ -2422,6 +2442,9 @@ async fn handle_thread_config_explain(
             effective_approval_policy = approval_policy;
             if let Some(policy) = sandbox_policy {
                 effective_sandbox_policy = policy;
+            }
+            if let Some(mode) = mode {
+                effective_mode = mode;
             }
             if let Some(model) = model {
                 effective_model = model;
@@ -2435,6 +2458,7 @@ async fn handle_thread_config_explain(
                 "timestamp": ts,
                 "approval_policy": approval_policy,
                 "sandbox_policy": effective_sandbox_policy,
+                "mode": effective_mode,
                 "model": effective_model,
                 "openai_base_url": effective_openai_base_url,
             }));
@@ -2446,6 +2470,7 @@ async fn handle_thread_config_explain(
         "effective": {
             "approval_policy": effective_approval_policy,
             "sandbox_policy": effective_sandbox_policy,
+            "mode": effective_mode,
             "model": effective_model,
             "openai_base_url": effective_openai_base_url,
         },

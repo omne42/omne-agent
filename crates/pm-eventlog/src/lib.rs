@@ -218,6 +218,7 @@ pub struct ThreadState {
     pub paused_reason: Option<String>,
     pub approval_policy: ApprovalPolicy,
     pub sandbox_policy: SandboxPolicy,
+    pub mode: String,
     pub model: Option<String>,
     pub openai_base_url: Option<String>,
     pub last_seq: EventSeq,
@@ -244,6 +245,7 @@ impl ThreadState {
             paused_reason: None,
             approval_policy: ApprovalPolicy::AutoApprove,
             sandbox_policy: SandboxPolicy::WorkspaceWrite,
+            mode: "coder".to_string(),
             model: None,
             openai_base_url: None,
             last_seq: EventSeq::ZERO,
@@ -301,12 +303,16 @@ impl ThreadState {
             ThreadEventKind::ThreadConfigUpdated {
                 approval_policy,
                 sandbox_policy,
+                mode,
                 model,
                 openai_base_url,
             } => {
                 self.approval_policy = *approval_policy;
                 if let Some(policy) = sandbox_policy {
                     self.sandbox_policy = *policy;
+                }
+                if let Some(mode) = mode {
+                    self.mode = mode.clone();
                 }
                 if let Some(model) = model {
                     self.model = Some(model.clone());

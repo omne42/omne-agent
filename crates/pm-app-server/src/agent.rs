@@ -398,14 +398,16 @@ fn format_event_for_context(kind: &ThreadEventKind) -> Option<String> {
         ThreadEventKind::ThreadConfigUpdated {
             approval_policy,
             sandbox_policy,
+            mode,
             model,
             openai_base_url,
         } => Some(format!(
-            "[thread/config] approval_policy={approval_policy:?} sandbox_policy={} model={} openai_base_url={}",
+            "[thread/config] approval_policy={approval_policy:?} sandbox_policy={} mode={} model={} openai_base_url={}",
             sandbox_policy
                 .as_ref()
                 .map(|v| format!("{v:?}"))
                 .unwrap_or_else(|| "<unchanged>".to_string()),
+            mode.as_deref().unwrap_or("<unchanged>"),
             model.as_deref().unwrap_or("<unchanged>"),
             openai_base_url.as_deref().unwrap_or("<unchanged>"),
         )),
@@ -1361,6 +1363,7 @@ async fn run_tool_call_once(
                         thread_id: forked.thread_id,
                         approval_policy: None,
                         sandbox_policy: None,
+                        mode: None,
                         model: args.model,
                         openai_base_url: args.openai_base_url,
                     },
