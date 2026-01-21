@@ -298,6 +298,16 @@ pub enum ThreadEventKind {
         reason: Option<String>,
     },
 
+    ThreadPaused {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+
+    ThreadUnpaused {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+
     TurnStarted {
         turn_id: TurnId,
         input: String,

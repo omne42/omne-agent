@@ -2082,7 +2082,9 @@ async fn handle_thread_fork(server: &Server, params: ThreadForkParams) -> anyhow
         match kind {
             pm_protocol::ThreadEventKind::ThreadCreated { .. } => {}
             pm_protocol::ThreadEventKind::ThreadArchived { .. }
-            | pm_protocol::ThreadEventKind::ThreadUnarchived { .. } => {}
+            | pm_protocol::ThreadEventKind::ThreadUnarchived { .. }
+            | pm_protocol::ThreadEventKind::ThreadPaused { .. }
+            | pm_protocol::ThreadEventKind::ThreadUnpaused { .. } => {}
             kind @ pm_protocol::ThreadEventKind::ThreadConfigUpdated { .. } => {
                 forked.append(kind).await?;
             }

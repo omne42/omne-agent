@@ -213,6 +213,9 @@ pub struct ThreadState {
     pub archived: bool,
     pub archived_at: Option<OffsetDateTime>,
     pub archived_reason: Option<String>,
+    pub paused: bool,
+    pub paused_at: Option<OffsetDateTime>,
+    pub paused_reason: Option<String>,
     pub approval_policy: ApprovalPolicy,
     pub sandbox_policy: SandboxPolicy,
     pub model: Option<String>,
@@ -235,6 +238,9 @@ impl ThreadState {
             archived: false,
             archived_at: None,
             archived_reason: None,
+            paused: false,
+            paused_at: None,
+            paused_reason: None,
             approval_policy: ApprovalPolicy::AutoApprove,
             sandbox_policy: SandboxPolicy::WorkspaceWrite,
             model: None,
@@ -279,6 +285,16 @@ impl ThreadState {
                 self.archived = false;
                 self.archived_at = None;
                 self.archived_reason = None;
+            }
+            ThreadEventKind::ThreadPaused { reason } => {
+                self.paused = true;
+                self.paused_at = Some(event.timestamp);
+                self.paused_reason = reason.clone();
+            }
+            ThreadEventKind::ThreadUnpaused { reason: _ } => {
+                self.paused = false;
+                self.paused_at = None;
+                self.paused_reason = None;
             }
             ThreadEventKind::ThreadConfigUpdated {
                 approval_policy,

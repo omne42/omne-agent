@@ -145,7 +145,9 @@ pub(crate) fn redact_thread_event_kind(kind: &mut ThreadEventKind) {
             *cwd = redact_text(cwd);
         }
         ThreadEventKind::ThreadArchived { reason }
-        | ThreadEventKind::ThreadUnarchived { reason } => {
+        | ThreadEventKind::ThreadUnarchived { reason }
+        | ThreadEventKind::ThreadPaused { reason }
+        | ThreadEventKind::ThreadUnpaused { reason } => {
             if let Some(reason) = reason {
                 *reason = redact_text(reason);
             }

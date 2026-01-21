@@ -1160,6 +1160,18 @@ fn render_event(event: &ThreadEvent) {
                 reason.as_deref().unwrap_or("")
             );
         }
+        pm_protocol::ThreadEventKind::ThreadPaused { reason } => {
+            println!(
+                "[{ts}] thread paused reason={}",
+                reason.as_deref().unwrap_or("")
+            );
+        }
+        pm_protocol::ThreadEventKind::ThreadUnpaused { reason } => {
+            println!(
+                "[{ts}] thread unpaused reason={}",
+                reason.as_deref().unwrap_or("")
+            );
+        }
         pm_protocol::ThreadEventKind::TurnStarted { turn_id, input } => {
             println!("[{ts}] turn started {turn_id}");
             println!("user: {input}");
