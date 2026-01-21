@@ -105,6 +105,7 @@
 - `pm-app-server`：拆分 JSON-RPC router（`main/app.rs`）为按域 handler 的小文件（`main/app/*.rs`），避免入口路由继续膨胀。
 - `pm-app-server`：拆分 `thread_manage.rs` 为 `thread_manage/*.rs`（保留 include! 同模块作用域），降低单文件体积与后续变更冲突概率。
 - `pm-app-server`：拆分 `process_stream.rs` 为 `process_stream/*.rs`，隔离 inspect/tail/follow 与 rotate/scan helpers，避免日志与工具逻辑继续缠在一起。
+- `code-pm`：拆分 `main/tasks.rs`（测试与实现拆开），避免接近 1000 行的单文件继续膨胀。
 - `pm-core::modes`：clippy cleanups（`needless_question_mark`）。
 - `pm-eventlog`：`read_events_since` 忽略并发写入时可能出现的尾部半行（避免 reader 在 writer 追加期间误报 parse error）。
 - `pm-app-server file/*`：失败路径也会写入 `ToolCompleted`（避免工具卡在 “started but never finished”）。
