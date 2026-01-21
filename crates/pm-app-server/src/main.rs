@@ -119,6 +119,7 @@ const CODE_PM_ALREADY_INITIALIZED: i64 = -32_001;
 #[derive(Clone)]
 struct Server {
     cwd: PathBuf,
+    out_tx: mpsc::UnboundedSender<String>,
     thread_store: ThreadStore,
     threads: Arc<tokio::sync::Mutex<HashMap<ThreadId, Arc<ThreadRuntime>>>>,
     processes: Arc<tokio::sync::Mutex<HashMap<ProcessId, ProcessEntry>>>,
@@ -138,7 +139,7 @@ impl Server {
             .await?
             .ok_or_else(|| anyhow::anyhow!("thread not found: {thread_id}"))?;
 
-        let rt = Arc::new(ThreadRuntime::new(handle));
+        let rt = Arc::new(ThreadRuntime::new(handle, self.out_tx.clone()));
         threads.insert(thread_id, rt.clone());
         Ok(rt)
     }
@@ -180,13 +181,51 @@ enum ProcessCommand {
 struct ThreadRuntime {
     handle: tokio::sync::Mutex<pm_core::ThreadHandle>,
     active_turn: tokio::sync::Mutex<Option<ActiveTurn>>,
+    out_tx: mpsc::UnboundedSender<String>,
 }
 
 impl ThreadRuntime {
-    fn new(handle: pm_core::ThreadHandle) -> Self {
+    fn new(handle: pm_core::ThreadHandle, out_tx: mpsc::UnboundedSender<String>) -> Self {
         Self {
             handle: tokio::sync::Mutex::new(handle),
             active_turn: tokio::sync::Mutex::new(None),
+            out_tx,
+        }
+    }
+
+    fn emit_notification(&self, method: &'static str, event: &ThreadEvent) {
+        let payload = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": event,
+        });
+        if let Ok(line) = serde_json::to_string(&payload) {
+            let _ = self.out_tx.send(line);
+        }
+    }
+
+    fn emit_event_notifications(&self, event: &ThreadEvent) {
+        self.emit_notification("thread/event", event);
+
+        match &event.kind {
+            pm_protocol::ThreadEventKind::TurnStarted { .. } => {
+                self.emit_notification("turn/started", event);
+            }
+            pm_protocol::ThreadEventKind::TurnCompleted { .. } => {
+                self.emit_notification("turn/completed", event);
+            }
+            pm_protocol::ThreadEventKind::ToolStarted { .. }
+            | pm_protocol::ThreadEventKind::ProcessStarted { .. }
+            | pm_protocol::ThreadEventKind::ApprovalRequested { .. } => {
+                self.emit_notification("item/started", event);
+            }
+            pm_protocol::ThreadEventKind::ToolCompleted { .. }
+            | pm_protocol::ThreadEventKind::ProcessExited { .. }
+            | pm_protocol::ThreadEventKind::ApprovalDecided { .. }
+            | pm_protocol::ThreadEventKind::AssistantMessage { .. } => {
+                self.emit_notification("item/completed", event);
+            }
+            _ => {}
         }
     }
 
@@ -209,13 +248,14 @@ impl ThreadRuntime {
 
         let turn_id = TurnId::new();
         let input_for_event = input.clone();
-        handle
+        let event = handle
             .append(pm_protocol::ThreadEventKind::TurnStarted {
                 turn_id,
                 input: input_for_event,
             })
             .await?;
         drop(handle);
+        self.emit_event_notifications(&event);
 
         let cancel = CancellationToken::new();
         {
@@ -239,7 +279,10 @@ impl ThreadRuntime {
         kind: pm_protocol::ThreadEventKind,
     ) -> anyhow::Result<ThreadEvent> {
         let mut handle = self.handle.lock().await;
-        handle.append(kind).await
+        let event = handle.append(kind).await?;
+        drop(handle);
+        self.emit_event_notifications(&event);
+        Ok(event)
     }
 
     async fn interrupt_turn(&self, turn_id: TurnId, reason: Option<String>) -> anyhow::Result<()> {
@@ -262,10 +305,11 @@ impl ThreadRuntime {
             cancel.cancel();
             return Ok(());
         }
-        handle
+        let event = handle
             .append(pm_protocol::ThreadEventKind::TurnInterruptRequested { turn_id, reason })
             .await?;
         drop(handle);
+        self.emit_event_notifications(&event);
 
         cancel.cancel();
         Ok(())
@@ -300,13 +344,16 @@ impl ThreadRuntime {
         };
 
         let mut handle = self.handle.lock().await;
-        let _ = handle
+        if let Ok(event) = handle
             .append(pm_protocol::ThreadEventKind::TurnCompleted {
                 turn_id,
                 status,
                 reason,
             })
-            .await;
+            .await
+        {
+            self.emit_event_notifications(&event);
+        }
         drop(handle);
 
         let mut active = self.active_turn.lock().await;
@@ -722,8 +769,11 @@ async fn main() -> anyhow::Result<()> {
         pm_execpolicy::execpolicycheck::load_policies(&args.execpolicy_rules)?
     };
 
+    let (out_tx, mut out_rx) = mpsc::unbounded_channel::<String>();
+
     let server = Arc::new(Server {
         cwd,
+        out_tx: out_tx.clone(),
         thread_store: ThreadStore::new(PmPaths::new(pm_root)),
         threads: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         processes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
@@ -733,6 +783,19 @@ async fn main() -> anyhow::Result<()> {
     let local = tokio::task::LocalSet::new();
     local
         .run_until(async move {
+            tokio::task::spawn_local(async move {
+                let mut stdout = tokio::io::stdout();
+                while let Some(line) = out_rx.recv().await {
+                    if stdout.write_all(line.as_bytes()).await.is_err() {
+                        break;
+                    }
+                    if stdout.write_all(b"\n").await.is_err() {
+                        break;
+                    }
+                    let _ = stdout.flush().await;
+                }
+            });
+
             let stdin = tokio::io::stdin();
             let mut lines = tokio::io::BufReader::new(stdin).lines();
 
@@ -796,7 +859,7 @@ async fn main() -> anyhow::Result<()> {
                             let thread_id = handle.thread_id();
                             let log_path = handle.log_path().display().to_string();
                             let last_seq = handle.last_seq().0;
-                            let rt = Arc::new(ThreadRuntime::new(handle));
+                            let rt = Arc::new(ThreadRuntime::new(handle, server.out_tx.clone()));
                             server.threads.lock().await.insert(thread_id, rt);
 
                             JsonRpcResponse::ok(
@@ -1553,7 +1616,8 @@ async fn main() -> anyhow::Result<()> {
             ),
         };
 
-                println!("{}", serde_json::to_string(&response)?);
+                let line = serde_json::to_string(&response)?;
+                let _ = server.out_tx.send(line);
             }
 
             shutdown_running_processes(&server).await;
@@ -2222,7 +2286,7 @@ async fn handle_thread_fork(server: &Server, params: ThreadForkParams) -> anyhow
     let log_path = forked.log_path().display().to_string();
     let last_seq = forked.last_seq().0;
 
-    let rt = Arc::new(ThreadRuntime::new(forked));
+    let rt = Arc::new(ThreadRuntime::new(forked, server.out_tx.clone()));
     server.threads.lock().await.insert(forked_id, rt);
 
     Ok(serde_json::json!({

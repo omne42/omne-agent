@@ -8,6 +8,7 @@ use ts_rs::TS;
 
 use crate::{
     ClientRequest, JsonRpcError, JsonRpcErrorResponse, JsonRpcRequest, JsonRpcResponse, RequestId,
+    ServerNotification,
 };
 
 pub fn generate_ts(out_dir: &Path) -> anyhow::Result<()> {
@@ -20,6 +21,7 @@ pub fn generate_ts(out_dir: &Path) -> anyhow::Result<()> {
         .context("export JsonRpcErrorResponse typescript")?;
     JsonRpcError::export_all_to(out_dir).context("export JsonRpcError typescript")?;
     ClientRequest::export_all_to(out_dir).context("export ClientRequest typescript")?;
+    ServerNotification::export_all_to(out_dir).context("export ServerNotification typescript")?;
     pm_protocol::ThreadEvent::export_all_to(out_dir).context("export ThreadEvent typescript")?;
 
     Ok(())
@@ -34,6 +36,7 @@ pub fn generate_json_schema(out_dir: &Path) -> anyhow::Result<()> {
     write_schema::<JsonRpcErrorResponse>(out_dir, "JsonRpcErrorResponse")?;
     write_schema::<JsonRpcError>(out_dir, "JsonRpcError")?;
     write_schema::<ClientRequest>(out_dir, "ClientRequest")?;
+    write_schema::<ServerNotification>(out_dir, "ServerNotification")?;
     write_schema::<pm_protocol::ThreadEvent>(out_dir, "ThreadEvent")?;
 
     Ok(())
