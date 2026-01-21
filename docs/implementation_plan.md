@@ -63,7 +63,7 @@
 来自：`docs/research/onecode.md`、`docs/research/superset.md`
 
 - 用 repo 内配置文件声明 “worktree/workspace 创建后要跑什么”。
-- 把外部资源（端口/DB/缓存/本地进程）也 workspace 化，setup/teardown 自动化（**v0.2.0 不依赖 Docker**）。
+- 把外部资源（端口/DB/缓存/本地进程）也 workspace 化，setup/teardown 自动化（**git/workspace 用 `/tmp`/worktree 目录隔离，不以 Docker 为前提；但不禁止 agent 自己运行 Docker**）。
 
 ### 2.4 Artifacts/Preview：AionUi
 
@@ -162,7 +162,7 @@ Attention/Inbox（派生视图）至少包含：
 参考实现方向：
 
 - 1Code：`.1code/worktree.json` 的 `setup-worktree*` + `ROOT_WORKTREE_PATH` 注入。
-- Superset：`.superset/config.json` + `setup.sh/teardown.sh`（外部资源隔离的标准答案；我们只学“生命周期脚本化 + 资源命名/隔离”，不引入 Docker 依赖）。
+- Superset：`.superset/config.json` + `setup.sh/teardown.sh`（外部资源隔离的标准答案；我们只学“生命周期脚本化 + 资源命名/隔离”，不把 Docker 当作实现前提）。
 
 ---
 

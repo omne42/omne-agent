@@ -22,7 +22,7 @@
 ## 2) 主流程（Plan → Approve → Act，默认节奏）
 
 1. **创建 workspace**
-   - 系统创建隔离目录（本地 `/tmp` 或 git worktree 等目录级隔离方案是实现细节；**v0.2.0 基建不依赖 Docker**）。
+   - 系统创建隔离目录（本地 `/tmp` 或 git worktree 等目录级隔离方案是实现细节；**git/workspace 不以 Docker 为前提，但不禁止 agent 自己运行 Docker**）。
    - 自动执行 `setup` 生命周期脚本（复制 env/装依赖/启动外部资源/端口映射）。
 2. **Plan（先想清楚）**
    - agent 输出结构化 plan（作为 artifact 落盘）。
