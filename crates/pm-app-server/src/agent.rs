@@ -13,10 +13,15 @@ use tokio_util::sync::CancellationToken;
 use super::ProcessCommand;
 
 const DEFAULT_MODEL: &str = "gpt-4.1";
-const MAX_AGENT_STEPS: usize = 24;
-const MAX_TOOL_CALLS: usize = 128;
-const MAX_TURN_SECONDS: u64 = 10 * 60;
-const MAX_OPENAI_REQUEST_SECONDS: u64 = 120;
+const DEFAULT_MAX_AGENT_STEPS: usize = 24;
+const DEFAULT_MAX_TOOL_CALLS: usize = 128;
+const DEFAULT_MAX_TURN_SECONDS: u64 = 10 * 60;
+const DEFAULT_MAX_OPENAI_REQUEST_SECONDS: u64 = 120;
+
+const MAX_MAX_AGENT_STEPS: usize = 10_000;
+const MAX_MAX_TOOL_CALLS: usize = 10_000;
+const MAX_MAX_TURN_SECONDS: u64 = 24 * 60 * 60;
+const MAX_MAX_OPENAI_REQUEST_SECONDS: u64 = 60 * 60;
 
 const DEFAULT_INSTRUCTIONS: &str = r#"
 You are a coding agent.
@@ -75,6 +80,31 @@ pub async fn run_agent_turn(
     let openai = pm_openai::Client::new_with_base_url(api_key, base_url)?;
     let tools = build_tools();
 
+    let max_agent_steps = parse_env_usize(
+        "CODE_PM_AGENT_MAX_STEPS",
+        DEFAULT_MAX_AGENT_STEPS,
+        1,
+        MAX_MAX_AGENT_STEPS,
+    );
+    let max_tool_calls = parse_env_usize(
+        "CODE_PM_AGENT_MAX_TOOL_CALLS",
+        DEFAULT_MAX_TOOL_CALLS,
+        1,
+        MAX_MAX_TOOL_CALLS,
+    );
+    let max_turn_duration = Duration::from_secs(parse_env_u64(
+        "CODE_PM_AGENT_MAX_TURN_SECONDS",
+        DEFAULT_MAX_TURN_SECONDS,
+        1,
+        MAX_MAX_TURN_SECONDS,
+    ));
+    let max_openai_request_duration = Duration::from_secs(parse_env_u64(
+        "CODE_PM_AGENT_MAX_OPENAI_REQUEST_SECONDS",
+        DEFAULT_MAX_OPENAI_REQUEST_SECONDS,
+        1,
+        MAX_MAX_OPENAI_REQUEST_SECONDS,
+    ));
+
     let mut instructions = DEFAULT_INSTRUCTIONS.to_string();
     if let Some(cwd) = thread_cwd {
         let agents_path = PathBuf::from(cwd).join("AGENTS.md");
@@ -94,11 +124,11 @@ pub async fn run_agent_turn(
     let mut finished = false;
     let started_at = tokio::time::Instant::now();
 
-    for _step in 0..MAX_AGENT_STEPS {
+    for _step in 0..max_agent_steps {
         if cancel.is_cancelled() {
             return Err(AgentTurnError::Cancelled.into());
         }
-        if started_at.elapsed() > Duration::from_secs(MAX_TURN_SECONDS) {
+        if started_at.elapsed() > max_turn_duration {
             return Err(AgentTurnError::BudgetExceeded {
                 budget: "turn_seconds",
             }
@@ -116,83 +146,82 @@ pub async fn run_agent_turn(
             stream: true,
         };
 
-        let resp =
-            match tokio::time::timeout(Duration::from_secs(MAX_OPENAI_REQUEST_SECONDS), async {
-                let mut stream = openai.create_response_stream(&req).await?;
-                let mut response_id = String::new();
-                let mut usage: Option<Value> = None;
-                let mut output_items = Vec::new();
-                let mut output_text = String::new();
+        let resp = match tokio::time::timeout(max_openai_request_duration, async {
+            let mut stream = openai.create_response_stream(&req).await?;
+            let mut response_id = String::new();
+            let mut usage: Option<Value> = None;
+            let mut output_items = Vec::new();
+            let mut output_text = String::new();
 
-                while let Some(event) = stream.recv().await {
-                    let event = event?;
-                    match event {
-                        pm_openai::ResponseEvent::Created { response_id: id } => {
-                            if response_id.is_empty()
-                                && let Some(id) = id
-                                && !id.trim().is_empty()
-                            {
-                                response_id = id;
-                            }
+            while let Some(event) = stream.recv().await {
+                let event = event?;
+                match event {
+                    pm_openai::ResponseEvent::Created { response_id: id } => {
+                        if response_id.is_empty()
+                            && let Some(id) = id
+                            && !id.trim().is_empty()
+                        {
+                            response_id = id;
                         }
-                        pm_openai::ResponseEvent::OutputTextDelta(delta) => {
-                            output_text.push_str(&delta);
-                            let delta = pm_core::redact_text(&delta);
-                            let response_id_snapshot = response_id.clone();
-                            thread_rt.emit_notification(
-                                "item/delta",
-                                &serde_json::json!({
-                                    "thread_id": thread_id,
-                                    "turn_id": turn_id,
-                                    "response_id": response_id_snapshot,
-                                    "kind": "output_text",
-                                    "delta": delta,
-                                }),
-                            );
-                        }
-                        pm_openai::ResponseEvent::OutputItemDone(item) => output_items.push(item),
-                        pm_openai::ResponseEvent::Completed {
-                            response_id: id,
-                            usage: u,
-                        } => {
-                            if response_id.is_empty() {
-                                response_id = id;
-                            }
-                            usage = u;
-                            break;
-                        }
-                        _ => {}
                     }
-                }
-
-                if response_id.trim().is_empty() {
-                    response_id = "<unknown>".to_string();
-                }
-
-                Ok::<_, anyhow::Error>((
-                    pm_openai::ResponsesApiResponse {
-                        id: response_id,
-                        output: output_items,
-                        usage,
-                    },
-                    output_text,
-                ))
-            })
-            .await
-            {
-                Ok(result) => {
-                    let (mut resp, output_text) = result?;
-                    if extract_assistant_text(&resp.output).is_empty() && !output_text.is_empty() {
-                        let output_text = pm_core::redact_text(&output_text);
-                        resp.output.push(pm_openai::ResponseItem::Message {
-                            role: "assistant".to_string(),
-                            content: vec![pm_openai::ContentItem::OutputText { text: output_text }],
-                        });
+                    pm_openai::ResponseEvent::OutputTextDelta(delta) => {
+                        output_text.push_str(&delta);
+                        let delta = pm_core::redact_text(&delta);
+                        let response_id_snapshot = response_id.clone();
+                        thread_rt.emit_notification(
+                            "item/delta",
+                            &serde_json::json!({
+                                "thread_id": thread_id,
+                                "turn_id": turn_id,
+                                "response_id": response_id_snapshot,
+                                "kind": "output_text",
+                                "delta": delta,
+                            }),
+                        );
                     }
-                    resp
+                    pm_openai::ResponseEvent::OutputItemDone(item) => output_items.push(item),
+                    pm_openai::ResponseEvent::Completed {
+                        response_id: id,
+                        usage: u,
+                    } => {
+                        if response_id.is_empty() {
+                            response_id = id;
+                        }
+                        usage = u;
+                        break;
+                    }
+                    _ => {}
                 }
-                Err(_) => return Err(AgentTurnError::OpenAiRequestTimedOut.into()),
-            };
+            }
+
+            if response_id.trim().is_empty() {
+                response_id = "<unknown>".to_string();
+            }
+
+            Ok::<_, anyhow::Error>((
+                pm_openai::ResponsesApiResponse {
+                    id: response_id,
+                    output: output_items,
+                    usage,
+                },
+                output_text,
+            ))
+        })
+        .await
+        {
+            Ok(result) => {
+                let (mut resp, output_text) = result?;
+                if extract_assistant_text(&resp.output).is_empty() && !output_text.is_empty() {
+                    let output_text = pm_core::redact_text(&output_text);
+                    resp.output.push(pm_openai::ResponseItem::Message {
+                        role: "assistant".to_string(),
+                        content: vec![pm_openai::ContentItem::OutputText { text: output_text }],
+                    });
+                }
+                resp
+            }
+            Err(_) => return Err(AgentTurnError::OpenAiRequestTimedOut.into()),
+        };
         last_response_id = resp.id.clone();
         last_usage = resp.usage.clone();
 
@@ -218,7 +247,7 @@ pub async fn run_agent_turn(
 
         for (tool_name, arguments, call_id) in function_calls {
             tool_calls_total += 1;
-            if tool_calls_total > MAX_TOOL_CALLS {
+            if tool_calls_total > max_tool_calls {
                 return Err(AgentTurnError::BudgetExceeded {
                     budget: "tool_calls",
                 }
@@ -278,6 +307,22 @@ pub async fn run_agent_turn(
     }
 
     Ok(())
+}
+
+fn parse_env_usize(key: &str, default: usize, min: usize, max: usize) -> usize {
+    std::env::var(key)
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .map(|value| value.clamp(min, max))
+        .unwrap_or(default)
+}
+
+fn parse_env_u64(key: &str, default: u64, min: u64, max: u64) -> u64 {
+    std::env::var(key)
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .map(|value| value.clamp(min, max))
+        .unwrap_or(default)
 }
 
 async fn build_conversation(
