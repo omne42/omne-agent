@@ -147,6 +147,106 @@ async fn ensure_approval(
     }
 }
 
+enum ApprovalGate {
+    Approved,
+    Denied { remembered: bool },
+    NeedsApproval { approval_id: pm_protocol::ApprovalId },
+}
+
+struct ApprovalRequest<'a> {
+    approval_id: Option<pm_protocol::ApprovalId>,
+    action: &'a str,
+    params: &'a serde_json::Value,
+}
+
+async fn gate_approval(
+    server: &Server,
+    thread_rt: &Arc<ThreadRuntime>,
+    thread_id: ThreadId,
+    turn_id: Option<TurnId>,
+    approval_policy: pm_protocol::ApprovalPolicy,
+    request: ApprovalRequest<'_>,
+) -> anyhow::Result<ApprovalGate> {
+    if let Some(approval_id) = request.approval_id {
+        ensure_approval(
+            server,
+            thread_id,
+            approval_id,
+            request.action,
+            request.params,
+        )
+        .await?;
+        return Ok(ApprovalGate::Approved);
+    }
+
+    if let Some(decision) =
+        remembered_approval_decision(server, thread_id, request.action, request.params).await?
+    {
+        let approval_id = pm_protocol::ApprovalId::new();
+        let reason = match decision {
+            pm_protocol::ApprovalDecision::Approved => "auto-approved by remembered decision",
+            pm_protocol::ApprovalDecision::Denied => "auto-denied by remembered decision",
+        };
+
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ApprovalRequested {
+                approval_id,
+                turn_id,
+                action: request.action.to_string(),
+                params: request.params.clone(),
+            })
+            .await?;
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ApprovalDecided {
+                approval_id,
+                decision,
+                remember: false,
+                reason: Some(reason.to_string()),
+            })
+            .await?;
+
+        return match decision {
+            pm_protocol::ApprovalDecision::Approved => Ok(ApprovalGate::Approved),
+            pm_protocol::ApprovalDecision::Denied => Ok(ApprovalGate::Denied { remembered: true }),
+        };
+    }
+
+    match approval_policy {
+        pm_protocol::ApprovalPolicy::AutoApprove => {
+            let approval_id = pm_protocol::ApprovalId::new();
+            thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ApprovalRequested {
+                approval_id,
+                turn_id,
+                action: request.action.to_string(),
+                params: request.params.clone(),
+            })
+            .await?;
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ApprovalDecided {
+                    approval_id,
+                    decision: pm_protocol::ApprovalDecision::Approved,
+                    remember: false,
+                    reason: Some("auto-approved by policy".to_string()),
+                })
+                .await?;
+            Ok(ApprovalGate::Approved)
+        }
+        pm_protocol::ApprovalPolicy::Manual => {
+            let approval_id = pm_protocol::ApprovalId::new();
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ApprovalRequested {
+                    approval_id,
+                    turn_id,
+                    action: request.action.to_string(),
+                    params: request.params.clone(),
+                })
+                .await?;
+            Ok(ApprovalGate::NeedsApproval { approval_id })
+        }
+    }
+}
+
 fn approval_rule_key(action: &str, params: &serde_json::Value) -> anyhow::Result<String> {
     let obj = params.as_object();
     match action {
@@ -302,4 +402,3 @@ async fn resolve_file_for_sandbox(
         _ => pm_core::resolve_file(thread_root, input, access, create_parent_dirs).await,
     }
 }
-

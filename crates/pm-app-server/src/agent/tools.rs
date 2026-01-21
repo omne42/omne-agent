@@ -506,6 +506,7 @@ async fn run_tool_call_once(
                 super::FileReadParams {
                     thread_id,
                     turn_id,
+                    approval_id,
                     path: args.path,
                     max_bytes: args.max_bytes,
                 },
@@ -519,6 +520,7 @@ async fn run_tool_call_once(
                 super::FileGlobParams {
                     thread_id,
                     turn_id,
+                    approval_id,
                     pattern: args.pattern,
                     max_results: args.max_results,
                 },
@@ -532,6 +534,7 @@ async fn run_tool_call_once(
                 super::FileGrepParams {
                     thread_id,
                     turn_id,
+                    approval_id,
                     query: args.query,
                     is_regex: args.is_regex,
                     include_glob: args.include_glob,

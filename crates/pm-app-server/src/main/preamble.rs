@@ -658,6 +658,8 @@ struct FileReadParams {
     thread_id: ThreadId,
     #[serde(default)]
     turn_id: Option<TurnId>,
+    #[serde(default)]
+    approval_id: Option<pm_protocol::ApprovalId>,
     path: String,
     #[serde(default)]
     max_bytes: Option<u64>,
@@ -668,6 +670,8 @@ struct FileGlobParams {
     thread_id: ThreadId,
     #[serde(default)]
     turn_id: Option<TurnId>,
+    #[serde(default)]
+    approval_id: Option<pm_protocol::ApprovalId>,
     pattern: String,
     #[serde(default)]
     max_results: Option<usize>,
@@ -678,6 +682,8 @@ struct FileGrepParams {
     thread_id: ThreadId,
     #[serde(default)]
     turn_id: Option<TurnId>,
+    #[serde(default)]
+    approval_id: Option<pm_protocol::ApprovalId>,
     query: String,
     #[serde(default)]
     is_regex: bool,

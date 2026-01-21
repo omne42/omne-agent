@@ -283,6 +283,9 @@ pub struct FileReadParams {
     #[serde(default)]
     #[ts(optional)]
     pub turn_id: Option<pm_protocol::TurnId>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub approval_id: Option<pm_protocol::ApprovalId>,
     pub path: String,
     #[serde(default)]
     #[ts(optional)]
@@ -295,6 +298,9 @@ pub struct FileGlobParams {
     #[serde(default)]
     #[ts(optional)]
     pub turn_id: Option<pm_protocol::TurnId>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub approval_id: Option<pm_protocol::ApprovalId>,
     pub pattern: String,
     #[serde(default)]
     #[ts(optional)]
@@ -307,6 +313,9 @@ pub struct FileGrepParams {
     #[serde(default)]
     #[ts(optional)]
     pub turn_id: Option<pm_protocol::TurnId>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub approval_id: Option<pm_protocol::ApprovalId>,
     pub query: String,
     #[serde(default)]
     pub is_regex: bool,

@@ -1,13 +1,21 @@
 async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Result<Value> {
     let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
-    let (sandbox_policy, mode_name) = {
+    let (approval_policy, sandbox_policy, mode_name) = {
         let handle = thread_rt.handle.lock().await;
         let state = handle.state();
-        (state.sandbox_policy, state.mode.clone())
+        (
+            state.approval_policy,
+            state.sandbox_policy,
+            state.mode.clone(),
+        )
     };
 
     let max_bytes = params.max_bytes.unwrap_or(256 * 1024).min(4 * 1024 * 1024);
     let tool_id = pm_protocol::ToolId::new();
+    let approval_params = serde_json::json!({
+        "path": params.path.clone(),
+        "max_bytes": max_bytes,
+    });
 
     let rel_path = pm_core::modes::relative_path_under_root(&thread_root, Path::new(&params.path));
     let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
@@ -21,10 +29,7 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
                     tool_id,
                     turn_id: params.turn_id,
                     tool: "file/read".to_string(),
-                    params: Some(serde_json::json!({
-                        "path": params.path.clone(),
-                        "max_bytes": max_bytes,
-                    })),
+                    params: Some(approval_params.clone()),
                 })
                 .await?;
             thread_rt
@@ -66,10 +71,7 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
                 tool_id,
                 turn_id: params.turn_id,
                 tool: "file/read".to_string(),
-                params: Some(serde_json::json!({
-                    "path": params.path.clone(),
-                    "max_bytes": max_bytes,
-                })),
+                params: Some(approval_params.clone()),
             })
             .await?;
         thread_rt
@@ -91,15 +93,62 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
         }));
     }
 
+    if effective_decision == pm_core::modes::Decision::Prompt {
+        match gate_approval(
+            server,
+            &thread_rt,
+            params.thread_id,
+            params.turn_id,
+            approval_policy,
+            ApprovalRequest {
+                approval_id: params.approval_id,
+                action: "file/read",
+                params: &approval_params,
+            },
+        )
+        .await?
+        {
+            ApprovalGate::Approved => {}
+            ApprovalGate::Denied { remembered } => {
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                        tool_id,
+                        turn_id: params.turn_id,
+                        tool: "file/read".to_string(),
+                        params: Some(approval_params.clone()),
+                    })
+                    .await?;
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                        tool_id,
+                        status: pm_protocol::ToolStatus::Denied,
+                        error: Some("approval denied (remembered)".to_string()),
+                        result: Some(serde_json::json!({
+                            "approval_policy": approval_policy,
+                        })),
+                    })
+                    .await?;
+                return Ok(serde_json::json!({
+                    "tool_id": tool_id,
+                    "denied": true,
+                    "remembered": remembered,
+                }));
+            }
+            ApprovalGate::NeedsApproval { approval_id } => {
+                return Ok(serde_json::json!({
+                    "needs_approval": true,
+                    "approval_id": approval_id,
+                }));
+            }
+        }
+    }
+
     thread_rt
         .append_event(pm_protocol::ThreadEventKind::ToolStarted {
             tool_id,
             turn_id: params.turn_id,
             tool: "file/read".to_string(),
-            params: Some(serde_json::json!({
-                "path": params.path.clone(),
-                "max_bytes": max_bytes,
-            })),
+            params: Some(approval_params.clone()),
         })
         .await?;
 
@@ -190,10 +239,15 @@ async fn handle_file_glob(server: &Server, params: FileGlobParams) -> anyhow::Re
 
     let max_results = params.max_results.unwrap_or(2000).min(20_000);
     let tool_id = pm_protocol::ToolId::new();
+    let approval_params = serde_json::json!({
+        "pattern": params.pattern.clone(),
+        "max_results": max_results,
+    });
 
-    let mode_name = {
+    let (approval_policy, mode_name) = {
         let handle = thread_rt.handle.lock().await;
-        handle.state().mode.clone()
+        let state = handle.state();
+        (state.approval_policy, state.mode.clone())
     };
     let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {
@@ -207,10 +261,7 @@ async fn handle_file_glob(server: &Server, params: FileGlobParams) -> anyhow::Re
                     tool_id,
                     turn_id: params.turn_id,
                     tool: "file/glob".to_string(),
-                    params: Some(serde_json::json!({
-                        "pattern": params.pattern.clone(),
-                        "max_results": max_results,
-                    })),
+                    params: Some(approval_params.clone()),
                 })
                 .await?;
             thread_rt
@@ -247,10 +298,7 @@ async fn handle_file_glob(server: &Server, params: FileGlobParams) -> anyhow::Re
                 tool_id,
                 turn_id: params.turn_id,
                 tool: "file/glob".to_string(),
-                params: Some(serde_json::json!({
-                    "pattern": params.pattern.clone(),
-                    "max_results": max_results,
-                })),
+                params: Some(approval_params.clone()),
             })
             .await?;
         thread_rt
@@ -272,15 +320,62 @@ async fn handle_file_glob(server: &Server, params: FileGlobParams) -> anyhow::Re
         }));
     }
 
+    if effective_decision == pm_core::modes::Decision::Prompt {
+        match gate_approval(
+            server,
+            &thread_rt,
+            params.thread_id,
+            params.turn_id,
+            approval_policy,
+            ApprovalRequest {
+                approval_id: params.approval_id,
+                action: "file/glob",
+                params: &approval_params,
+            },
+        )
+        .await?
+        {
+            ApprovalGate::Approved => {}
+            ApprovalGate::Denied { remembered } => {
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                        tool_id,
+                        turn_id: params.turn_id,
+                        tool: "file/glob".to_string(),
+                        params: Some(approval_params.clone()),
+                    })
+                    .await?;
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                        tool_id,
+                        status: pm_protocol::ToolStatus::Denied,
+                        error: Some("approval denied (remembered)".to_string()),
+                        result: Some(serde_json::json!({
+                            "approval_policy": approval_policy,
+                        })),
+                    })
+                    .await?;
+                return Ok(serde_json::json!({
+                    "tool_id": tool_id,
+                    "denied": true,
+                    "remembered": remembered,
+                }));
+            }
+            ApprovalGate::NeedsApproval { approval_id } => {
+                return Ok(serde_json::json!({
+                    "needs_approval": true,
+                    "approval_id": approval_id,
+                }));
+            }
+        }
+    }
+
     thread_rt
         .append_event(pm_protocol::ThreadEventKind::ToolStarted {
             tool_id,
             turn_id: params.turn_id,
             tool: "file/glob".to_string(),
-            params: Some(serde_json::json!({
-                "pattern": params.pattern.clone(),
-                "max_results": max_results,
-            })),
+            params: Some(approval_params.clone()),
         })
         .await?;
 
@@ -380,10 +475,19 @@ async fn handle_file_grep(server: &Server, params: FileGrepParams) -> anyhow::Re
         .min(16 * 1024 * 1024);
     let max_files = params.max_files.unwrap_or(20_000).min(200_000);
     let tool_id = pm_protocol::ToolId::new();
+    let approval_params = serde_json::json!({
+        "query": params.query.clone(),
+        "is_regex": params.is_regex,
+        "include_glob": params.include_glob.clone(),
+        "max_matches": max_matches,
+        "max_bytes_per_file": max_bytes_per_file,
+        "max_files": max_files,
+    });
 
-    let mode_name = {
+    let (approval_policy, mode_name) = {
         let handle = thread_rt.handle.lock().await;
-        handle.state().mode.clone()
+        let state = handle.state();
+        (state.approval_policy, state.mode.clone())
     };
     let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {
@@ -397,14 +501,7 @@ async fn handle_file_grep(server: &Server, params: FileGrepParams) -> anyhow::Re
                     tool_id,
                     turn_id: params.turn_id,
                     tool: "file/grep".to_string(),
-                    params: Some(serde_json::json!({
-                        "query": params.query.clone(),
-                        "is_regex": params.is_regex,
-                        "include_glob": params.include_glob,
-                        "max_matches": max_matches,
-                        "max_bytes_per_file": max_bytes_per_file,
-                        "max_files": max_files,
-                    })),
+                    params: Some(approval_params.clone()),
                 })
                 .await?;
             thread_rt
@@ -441,14 +538,7 @@ async fn handle_file_grep(server: &Server, params: FileGrepParams) -> anyhow::Re
                 tool_id,
                 turn_id: params.turn_id,
                 tool: "file/grep".to_string(),
-                params: Some(serde_json::json!({
-                    "query": params.query.clone(),
-                    "is_regex": params.is_regex,
-                    "include_glob": params.include_glob,
-                    "max_matches": max_matches,
-                    "max_bytes_per_file": max_bytes_per_file,
-                    "max_files": max_files,
-                })),
+                params: Some(approval_params.clone()),
             })
             .await?;
         thread_rt
@@ -470,19 +560,62 @@ async fn handle_file_grep(server: &Server, params: FileGrepParams) -> anyhow::Re
         }));
     }
 
+    if effective_decision == pm_core::modes::Decision::Prompt {
+        match gate_approval(
+            server,
+            &thread_rt,
+            params.thread_id,
+            params.turn_id,
+            approval_policy,
+            ApprovalRequest {
+                approval_id: params.approval_id,
+                action: "file/grep",
+                params: &approval_params,
+            },
+        )
+        .await?
+        {
+            ApprovalGate::Approved => {}
+            ApprovalGate::Denied { remembered } => {
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                        tool_id,
+                        turn_id: params.turn_id,
+                        tool: "file/grep".to_string(),
+                        params: Some(approval_params.clone()),
+                    })
+                    .await?;
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                        tool_id,
+                        status: pm_protocol::ToolStatus::Denied,
+                        error: Some("approval denied (remembered)".to_string()),
+                        result: Some(serde_json::json!({
+                            "approval_policy": approval_policy,
+                        })),
+                    })
+                    .await?;
+                return Ok(serde_json::json!({
+                    "tool_id": tool_id,
+                    "denied": true,
+                    "remembered": remembered,
+                }));
+            }
+            ApprovalGate::NeedsApproval { approval_id } => {
+                return Ok(serde_json::json!({
+                    "needs_approval": true,
+                    "approval_id": approval_id,
+                }));
+            }
+        }
+    }
+
     thread_rt
         .append_event(pm_protocol::ThreadEventKind::ToolStarted {
             tool_id,
             turn_id: params.turn_id,
             tool: "file/grep".to_string(),
-            params: Some(serde_json::json!({
-                "query": params.query.clone(),
-                "is_regex": params.is_regex,
-                "include_glob": params.include_glob,
-                "max_matches": max_matches,
-                "max_bytes_per_file": max_bytes_per_file,
-                "max_files": max_files,
-            })),
+            params: Some(approval_params.clone()),
         })
         .await?;
 
@@ -618,4 +751,3 @@ async fn handle_file_grep(server: &Server, params: FileGrepParams) -> anyhow::Re
         }
     }
 }
-
