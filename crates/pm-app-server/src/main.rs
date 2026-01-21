@@ -1576,7 +1576,7 @@ async fn handle_thread_attention(
     let running_processes = processes
         .into_iter()
         .filter(|p| matches!(p.status, ProcessStatus::Running))
-        .map(|p| serde_json::to_value(p))
+        .map(serde_json::to_value)
         .collect::<Result<Vec<_>, _>>()?;
 
     let attention_state = if !pending_approvals.is_empty() {
@@ -3013,7 +3013,7 @@ async fn handle_file_grep(server: &Server, params: FileGrepParams) -> anyhow::Re
                     Ok(bytes) => bytes,
                     Err(_) => continue,
                 };
-                if bytes.iter().any(|b| *b == 0) {
+                if bytes.contains(&0) {
                     files_skipped_binary += 1;
                     continue;
                 }
@@ -3103,7 +3103,7 @@ async fn handle_file_write(server: &Server, params: FileWriteParams) -> anyhow::
         )
     };
     let tool_id = pm_protocol::ToolId::new();
-    let bytes = params.text.as_bytes().len();
+    let bytes = params.text.len();
 
     let approval_params = serde_json::json!({
         "path": params.path.clone(),
@@ -3274,7 +3274,7 @@ async fn handle_file_patch(server: &Server, params: FilePatchParams) -> anyhow::
         .max_bytes
         .unwrap_or(4 * 1024 * 1024)
         .min(16 * 1024 * 1024);
-    let patch_bytes = params.patch.as_bytes().len();
+    let patch_bytes = params.patch.len();
 
     let (approval_policy, sandbox_policy) = {
         let handle = thread_rt.handle.lock().await;
@@ -3420,7 +3420,7 @@ async fn handle_file_patch(server: &Server, params: FilePatchParams) -> anyhow::
         let patch = Patch::from_str(&params.patch).context("parse unified diff patch")?;
         let updated = apply(&original, &patch).context("apply patch")?;
         let changed = updated != original;
-        let bytes_written = updated.as_bytes().len();
+        let bytes_written = updated.len();
         if bytes_written > max_bytes as usize {
             anyhow::bail!(
                 "patched file too large: {} ({} bytes)",
@@ -3670,7 +3670,7 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
             text = text.replacen(&edit.old, &edit.new, expected);
         }
 
-        let bytes_written = text.as_bytes().len();
+        let bytes_written = text.len();
         tokio::fs::OpenOptions::new()
             .write(true)
             .truncate(true)
@@ -4182,7 +4182,7 @@ async fn handle_artifact_write(
 
     let thread_rt = server.get_or_load_thread(params.thread_id).await?;
     let tool_id = pm_protocol::ToolId::new();
-    let bytes_len = params.text.as_bytes().len();
+    let bytes_len = params.text.len();
     let artifact_type = params.artifact_type.clone();
     let summary = params.summary.clone();
 
@@ -4200,7 +4200,7 @@ async fn handle_artifact_write(
         })
         .await?;
 
-    let artifact_id = params.artifact_id.unwrap_or_else(ArtifactId::new);
+    let artifact_id = params.artifact_id.unwrap_or_default();
     let (content_path, metadata_path) = user_artifact_paths(server, params.thread_id, artifact_id);
 
     let now = OffsetDateTime::now_utc();

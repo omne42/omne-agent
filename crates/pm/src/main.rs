@@ -1463,7 +1463,7 @@ impl App {
                 serde_json::json!({ "thread_id": thread_id, "input": input }),
             )
             .await?;
-        Ok(serde_json::from_value(v["turn_id"].clone()).context("turn_id missing in result")?)
+        serde_json::from_value(v["turn_id"].clone()).context("turn_id missing in result")
     }
 
     async fn turn_interrupt(

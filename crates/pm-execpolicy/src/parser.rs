@@ -2,7 +2,6 @@ use std::cell::{RefCell, RefMut};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use shlex;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::{GlobalsBuilder, Module};
 use starlark::eval::Evaluator;

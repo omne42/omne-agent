@@ -84,13 +84,20 @@ impl Client {
             let Some(line) = self.stdout_lines.next_line().await? else {
                 return Err(Error::Protocol("server closed stdout".to_string()));
             };
-            let resp: JsonRpcResponse = serde_json::from_str(&line)?;
+
+            let value: Value = serde_json::from_str(&line)?;
+            if value.get("id").is_none() {
+                continue;
+            }
+
+            let resp: JsonRpcResponse = serde_json::from_value(value)?;
             if resp.id != serde_json::json!(id) {
                 return Err(Error::Protocol(format!(
                     "unexpected response id: expected {id}, got {}",
                     resp.id
                 )));
             }
+
             if let Some(err) = resp.error {
                 return Err(Error::Rpc {
                     code: err.code,
@@ -98,6 +105,7 @@ impl Client {
                     data: err.data,
                 });
             }
+
             let Some(result) = resp.result else {
                 return Err(Error::Protocol("missing result".to_string()));
             };
@@ -106,7 +114,7 @@ impl Client {
     }
 
     pub async fn wait(&mut self) -> Result<std::process::ExitStatus, Error> {
-        Ok(self.child.wait().await.map_err(std::io::Error::from)?)
+        Ok(self.child.wait().await?)
     }
 }
 

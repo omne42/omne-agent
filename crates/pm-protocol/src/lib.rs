@@ -19,6 +19,12 @@ impl ThreadId {
     }
 }
 
+impl Default for ThreadId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl fmt::Display for ThreadId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
@@ -40,6 +46,12 @@ pub struct TurnId(pub Uuid);
 impl TurnId {
     pub fn new() -> Self {
         Self(Uuid::new_v4())
+    }
+}
+
+impl Default for TurnId {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -67,6 +79,12 @@ impl ProcessId {
     }
 }
 
+impl Default for ProcessId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl fmt::Display for ProcessId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
@@ -88,6 +106,12 @@ pub struct ToolId(pub Uuid);
 impl ToolId {
     pub fn new() -> Self {
         Self(Uuid::new_v4())
+    }
+}
+
+impl Default for ToolId {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -115,6 +139,12 @@ impl ApprovalId {
     }
 }
 
+impl Default for ApprovalId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl fmt::Display for ApprovalId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
@@ -136,6 +166,12 @@ pub struct ArtifactId(pub Uuid);
 impl ArtifactId {
     pub fn new() -> Self {
         Self(Uuid::new_v4())
+    }
+}
+
+impl Default for ArtifactId {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

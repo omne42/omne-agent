@@ -120,6 +120,7 @@
 - session 元信息新增独立存储 `sessions/<id>/meta.json`（`list_session_meta` 优先读取，避免为列表读入大 prompt）。
 
 ### Fixed
+- Rust workspace：修复 `cargo clippy -- -D warnings` 下的告警（`pm-jsonrpc` 忽略无 `id` 的 stdout 行、`pm-protocol` 的 id newtype 实现 `Default`、`pm-eventlog` lockfile 显式 `truncate(false)`、以及 `pm-app-server` 若干 clippy cleanups）。
 - `code-pm run --max-concurrency`：现在会校验为 `>= 1`（拒绝 `0`，避免静默回退到 `1`）。
 - `pm-app-server approvals`：当同类操作被 `remember=true` 记住为 `deny` 时，`file/write|patch|edit|delete`、`fs/mkdir`、`process/start` 现在会返回结构化 `denied` 结果并写入 `ToolStatus=Denied`（不再走内部 error 路径）。
 - `pm-core threads resume`：现在会修复 “ToolStarted 没有对应 ToolCompleted” 的中间态，自动补写 `ToolStatus=Cancelled`（避免崩溃/中断后留下悬空 tool）。

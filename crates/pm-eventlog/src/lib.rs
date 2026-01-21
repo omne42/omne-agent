@@ -30,6 +30,7 @@ impl EventLogWriter {
             .create(true)
             .read(true)
             .write(true)
+            .truncate(false)
             .open(&lock_path)
             .with_context(|| format!("open lock file {}", lock_path.display()))?;
         lock_file
