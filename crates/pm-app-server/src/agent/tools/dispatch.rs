@@ -376,6 +376,19 @@ async fn run_tool_call_once(
                 "has_more": has_more,
             }))
         }
+        "thread_hook_run" => {
+            let args: ThreadHookRunArgs = serde_json::from_value(args)?;
+            super::handle_thread_hook_run(
+                server,
+                super::ThreadHookRunParams {
+                    thread_id,
+                    turn_id,
+                    approval_id,
+                    hook: args.hook,
+                },
+            )
+            .await
+        }
         "agent_spawn" => {
             #[derive(Debug, Deserialize)]
             struct ForkResult {

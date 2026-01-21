@@ -142,6 +142,11 @@ struct ThreadEventsArgs {
 }
 
 #[derive(Debug, Deserialize)]
+struct ThreadHookRunArgs {
+    hook: super::WorkspaceHookName,
+}
+
+#[derive(Debug, Deserialize)]
 struct AgentSpawnArgs {
     input: String,
     #[serde(default)]

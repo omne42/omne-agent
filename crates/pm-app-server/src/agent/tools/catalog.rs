@@ -265,6 +265,18 @@ fn build_tools() -> Vec<Value> {
             }),
         ),
         pm_openai::tool_function(
+            "thread_hook_run",
+            "Run a configured workspace hook for this thread.",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "hook": { "type": "string", "enum": ["setup", "run", "archive"] },
+                },
+                "required": ["hook"],
+                "additionalProperties": false,
+            }),
+        ),
+        pm_openai::tool_function(
             "agent_spawn",
             "Fork the current thread and start a background agent turn in the forked thread.",
             serde_json::json!({
