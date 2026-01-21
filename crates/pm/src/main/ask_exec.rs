@@ -42,6 +42,8 @@ async fn run_ask(app: &mut App, args: AskArgs) -> anyhow::Result<()> {
             thread_id,
             approval_policy: args.approval_policy,
             sandbox_policy: args.sandbox_policy,
+            sandbox_writable_roots: None,
+            sandbox_network_access: None,
             mode: args.mode,
             model: args.model,
             openai_base_url: args.openai_base_url,
@@ -186,6 +188,8 @@ async fn run_exec(app: &mut App, args: ExecArgs) -> anyhow::Result<i32> {
             thread_id,
             approval_policy: args.approval_policy,
             sandbox_policy: args.sandbox_policy,
+            sandbox_writable_roots: None,
+            sandbox_network_access: None,
             mode: args.mode,
             model: args.model,
             openai_base_url: args.openai_base_url,
@@ -420,13 +424,15 @@ fn render_event_to<W: std::io::Write>(
         pm_protocol::ThreadEventKind::ThreadConfigUpdated {
             approval_policy,
             sandbox_policy,
+            sandbox_writable_roots,
+            sandbox_network_access,
             mode,
             model,
             openai_base_url,
         } => {
             let _ = writeln!(
                 writer,
-                "[{ts}] config approval_policy={approval_policy:?} sandbox_policy={sandbox_policy:?} mode={} model={} openai_base_url={}",
+                "[{ts}] config approval_policy={approval_policy:?} sandbox_policy={sandbox_policy:?} sandbox_writable_roots={sandbox_writable_roots:?} sandbox_network_access={sandbox_network_access:?} mode={} model={} openai_base_url={}",
                 mode.as_deref().unwrap_or(""),
                 model.as_deref().unwrap_or(""),
                 openai_base_url.as_deref().unwrap_or("")
@@ -566,4 +572,3 @@ fn prompt_approval(
         reason,
     })
 }
-

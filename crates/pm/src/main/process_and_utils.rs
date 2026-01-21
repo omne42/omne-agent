@@ -85,12 +85,14 @@ fn render_event(event: &ThreadEvent) {
         pm_protocol::ThreadEventKind::ThreadConfigUpdated {
             approval_policy,
             sandbox_policy,
+            sandbox_writable_roots,
+            sandbox_network_access,
             mode,
             model,
             openai_base_url,
         } => {
             println!(
-                "[{ts}] config approval_policy={approval_policy:?} sandbox_policy={sandbox_policy:?} mode={} model={} openai_base_url={}",
+                "[{ts}] config approval_policy={approval_policy:?} sandbox_policy={sandbox_policy:?} sandbox_writable_roots={sandbox_writable_roots:?} sandbox_network_access={sandbox_network_access:?} mode={} model={} openai_base_url={}",
                 mode.as_deref().unwrap_or(""),
                 model.as_deref().unwrap_or(""),
                 openai_base_url.as_deref().unwrap_or("")
@@ -458,6 +460,8 @@ impl App {
     async fn thread_configure(&mut self, args: ThreadConfigureArgs) -> anyhow::Result<()> {
         let approval_policy: Option<ApprovalPolicy> = args.approval_policy.map(Into::into);
         let sandbox_policy: Option<SandboxPolicy> = args.sandbox_policy.map(Into::into);
+        let sandbox_network_access: Option<pm_protocol::SandboxNetworkAccess> =
+            args.sandbox_network_access.map(Into::into);
         let _ = self
             .rpc(
                 "thread/configure",
@@ -465,6 +469,8 @@ impl App {
                     "thread_id": args.thread_id,
                     "approval_policy": approval_policy,
                     "sandbox_policy": sandbox_policy,
+                    "sandbox_writable_roots": args.sandbox_writable_roots,
+                    "sandbox_network_access": sandbox_network_access,
                     "mode": args.mode,
                     "model": args.model,
                     "openai_base_url": args.openai_base_url,

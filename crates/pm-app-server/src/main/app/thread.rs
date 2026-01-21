@@ -193,6 +193,8 @@ async fn handle_thread_request(
                             "paused_reason": state.paused_reason,
                             "approval_policy": state.approval_policy,
                             "sandbox_policy": state.sandbox_policy,
+                            "sandbox_writable_roots": state.sandbox_writable_roots,
+                            "sandbox_network_access": state.sandbox_network_access,
                             "mode": state.mode,
                             "model": state.model,
                             "openai_base_url": state.openai_base_url,
@@ -257,4 +259,3 @@ async fn handle_thread_request(
         }
     }
 }
-

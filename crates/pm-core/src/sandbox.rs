@@ -2,7 +2,7 @@ use std::path::{Component, Path, PathBuf};
 
 use anyhow::Context;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PathAccess {
     Read,
     Write,
@@ -114,6 +114,51 @@ pub async fn resolve_file(
     }
 }
 
+pub async fn resolve_file_with_writable_roots(
+    root: &Path,
+    writable_roots: &[PathBuf],
+    input: &Path,
+    access: PathAccess,
+    create_parent_dirs: bool,
+) -> anyhow::Result<PathBuf> {
+    if access == PathAccess::Read || writable_roots.is_empty() || !input.is_absolute() {
+        return resolve_file(root, input, access, create_parent_dirs).await;
+    }
+
+    let root = tokio::fs::canonicalize(root)
+        .await
+        .with_context(|| format!("canonicalize root {}", root.display()))?;
+
+    let mut allowed_roots = Vec::with_capacity(1 + writable_roots.len());
+    allowed_roots.push(root);
+    for writable_root in writable_roots {
+        let canon = tokio::fs::canonicalize(writable_root)
+            .await
+            .with_context(|| format!("canonicalize root {}", writable_root.display()))?;
+        let meta = tokio::fs::metadata(&canon)
+            .await
+            .with_context(|| format!("stat {}", canon.display()))?;
+        if !meta.is_dir() {
+            anyhow::bail!("not a directory: {}", canon.display());
+        }
+        allowed_roots.push(canon);
+    }
+
+    reject_parent_components(input)?;
+    let input = strip_cur_dir_components(input);
+    let candidate = canonicalize_nonexistent_file_path(&input).await?;
+
+    let Some(selected_root) = allowed_roots
+        .iter()
+        .filter(|root| candidate.starts_with(root))
+        .max_by_key(|root| root.components().count())
+    else {
+        anyhow::bail!("path escapes roots: {}", candidate.display());
+    };
+
+    resolve_file(selected_root, &candidate, access, create_parent_dirs).await
+}
+
 pub async fn resolve_dir_unrestricted(base: &Path, input: &Path) -> anyhow::Result<PathBuf> {
     let base = tokio::fs::canonicalize(base)
         .await
@@ -196,6 +241,51 @@ fn strip_cur_dir_components(path: &Path) -> PathBuf {
         }
     }
     out
+}
+
+async fn canonicalize_nonexistent_file_path(path: &Path) -> anyhow::Result<PathBuf> {
+    let Some(parent) = path.parent() else {
+        anyhow::bail!("path has no parent: {}", path.display());
+    };
+    let Some(file_name) = path.file_name() else {
+        anyhow::bail!("path has no file name: {}", path.display());
+    };
+    let parent = canonicalize_nonexistent_path(parent).await?;
+    Ok(parent.join(file_name))
+}
+
+async fn canonicalize_nonexistent_path(path: &Path) -> anyhow::Result<PathBuf> {
+    let mut cursor = path.to_path_buf();
+    let mut suffix = Vec::<std::ffi::OsString>::new();
+
+    loop {
+        match tokio::fs::canonicalize(&cursor).await {
+            Ok(canon) => {
+                let mut out = canon;
+                for comp in suffix.into_iter().rev() {
+                    out.push(comp);
+                }
+                return Ok(out);
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                let Some(file_name) = cursor.file_name() else {
+                    return Err(err).with_context(|| {
+                        format!("canonicalize {} (path has no file name)", cursor.display())
+                    });
+                };
+                suffix.push(file_name.to_os_string());
+                if !cursor.pop() {
+                    return Err(err).with_context(|| {
+                        format!("canonicalize {} (path has no parent)", cursor.display())
+                    });
+                }
+            }
+            Err(err) => {
+                return Err(err)
+                    .with_context(|| format!("canonicalize existing prefix {}", cursor.display()));
+            }
+        }
+    }
 }
 
 async fn ensure_dir_tree_no_symlink(root: &Path, dir: &Path) -> anyhow::Result<()> {
@@ -334,6 +424,84 @@ mod tests {
                 .await
                 .unwrap_err();
             assert!(err.to_string().contains("symlink"));
+        }
+    }
+
+    #[tokio::test]
+    async fn resolve_file_with_writable_roots_allows_write_outside_workspace() {
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = dir.path().join("workspace");
+        let extra = dir.path().join("extra");
+        tokio::fs::create_dir_all(&workspace).await.unwrap();
+        tokio::fs::create_dir_all(&extra).await.unwrap();
+
+        let input = extra.join("out.txt");
+        let resolved = resolve_file_with_writable_roots(
+            &workspace,
+            std::slice::from_ref(&extra),
+            &input,
+            PathAccess::Write,
+            true,
+        )
+        .await
+        .unwrap();
+        let extra_canon = tokio::fs::canonicalize(&extra).await.unwrap();
+        assert!(resolved.starts_with(extra_canon));
+    }
+
+    #[tokio::test]
+    async fn resolve_file_with_writable_roots_rejects_read_outside_workspace() {
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = dir.path().join("workspace");
+        let extra = dir.path().join("extra");
+        tokio::fs::create_dir_all(&workspace).await.unwrap();
+        tokio::fs::create_dir_all(&extra).await.unwrap();
+        tokio::fs::write(extra.join("secret.txt"), "nope")
+            .await
+            .unwrap();
+
+        let err = resolve_file_with_writable_roots(
+            &workspace,
+            std::slice::from_ref(&extra),
+            &extra.join("secret.txt"),
+            PathAccess::Read,
+            false,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("escapes root"));
+    }
+
+    #[tokio::test]
+    async fn resolve_file_with_writable_roots_accepts_symlinked_root_on_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = dir.path().join("workspace");
+        let real_root = dir.path().join("real");
+        let alias_root = dir.path().join("alias");
+        tokio::fs::create_dir_all(&workspace).await.unwrap();
+        tokio::fs::create_dir_all(&real_root).await.unwrap();
+
+        #[cfg(unix)]
+        {
+            symlink(&real_root, &alias_root).unwrap();
+            let input = alias_root.join("nested/file.txt");
+            let resolved = resolve_file_with_writable_roots(
+                &workspace,
+                std::slice::from_ref(&alias_root),
+                &input,
+                PathAccess::Write,
+                true,
+            )
+            .await
+            .unwrap();
+            let real_canon = tokio::fs::canonicalize(&real_root).await.unwrap();
+            assert!(resolved.starts_with(real_canon));
+            assert!(
+                tokio::fs::metadata(real_root.join("nested"))
+                    .await
+                    .unwrap()
+                    .is_dir()
+            );
         }
     }
 }

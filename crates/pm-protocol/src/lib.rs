@@ -263,6 +263,13 @@ pub enum SandboxPolicy {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
+pub enum SandboxNetworkAccess {
+    Deny,
+    Allow,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
 pub enum ApprovalDecision {
     Approved,
     Denied,
@@ -359,6 +366,10 @@ pub enum ThreadEventKind {
         approval_policy: ApprovalPolicy,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         sandbox_policy: Option<SandboxPolicy>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sandbox_writable_roots: Option<Vec<String>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sandbox_network_access: Option<SandboxNetworkAccess>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         mode: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]

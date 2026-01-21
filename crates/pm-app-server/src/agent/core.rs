@@ -531,14 +531,24 @@ fn format_event_for_context(kind: &ThreadEventKind) -> Option<String> {
         ThreadEventKind::ThreadConfigUpdated {
             approval_policy,
             sandbox_policy,
+            sandbox_writable_roots,
+            sandbox_network_access,
             mode,
             model,
             openai_base_url,
         } => Some(format!(
-            "[thread/config] approval_policy={approval_policy:?} sandbox_policy={} mode={} model={} openai_base_url={}",
+            "[thread/config] approval_policy={approval_policy:?} sandbox_policy={} sandbox_writable_roots={} sandbox_network_access={} mode={} model={} openai_base_url={}",
             sandbox_policy
                 .as_ref()
                 .map(|v| format!("{v:?}"))
+                .unwrap_or_else(|| "<unchanged>".to_string()),
+            sandbox_writable_roots
+                .as_ref()
+                .map(|roots| json_one_line(&serde_json::json!(roots), 2000))
+                .unwrap_or_else(|| "<unchanged>".to_string()),
+            sandbox_network_access
+                .as_ref()
+                .map(|access| format!("{access:?}"))
                 .unwrap_or_else(|| "<unchanged>".to_string()),
             mode.as_deref().unwrap_or("<unchanged>"),
             model.as_deref().unwrap_or("<unchanged>"),

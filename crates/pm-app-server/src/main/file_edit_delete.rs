@@ -13,12 +13,13 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
         .unwrap_or(4 * 1024 * 1024)
         .min(16 * 1024 * 1024);
 
-    let (approval_policy, sandbox_policy, mode_name) = {
+    let (approval_policy, sandbox_policy, sandbox_writable_roots, mode_name) = {
         let handle = thread_rt.handle.lock().await;
         let state = handle.state();
         (
             state.approval_policy,
             state.sandbox_policy,
+            state.sandbox_writable_roots.clone(),
             state.mode.clone(),
         )
     };
@@ -198,6 +199,7 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
         let path = resolve_file_for_sandbox(
             &thread_root,
             sandbox_policy,
+            &sandbox_writable_roots,
             Path::new(&params.path),
             pm_core::PathAccess::Write,
             false,
@@ -290,12 +292,13 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
 async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow::Result<Value> {
     let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
 
-    let (approval_policy, sandbox_policy, mode_name) = {
+    let (approval_policy, sandbox_policy, sandbox_writable_roots, mode_name) = {
         let handle = thread_rt.handle.lock().await;
         let state = handle.state();
         (
             state.approval_policy,
             state.sandbox_policy,
+            state.sandbox_writable_roots.clone(),
             state.mode.clone(),
         )
     };
@@ -471,6 +474,7 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
         let path = resolve_file_for_sandbox(
             &thread_root,
             sandbox_policy,
+            &sandbox_writable_roots,
             Path::new(&params.path),
             pm_core::PathAccess::Write,
             false,

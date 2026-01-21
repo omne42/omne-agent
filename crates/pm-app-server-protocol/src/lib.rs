@@ -180,6 +180,12 @@ pub struct ThreadConfigureParams {
     pub sandbox_policy: Option<pm_protocol::SandboxPolicy>,
     #[serde(default)]
     #[ts(optional)]
+    pub sandbox_writable_roots: Option<Vec<String>>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub sandbox_network_access: Option<pm_protocol::SandboxNetworkAccess>,
+    #[serde(default)]
+    #[ts(optional)]
     pub mode: Option<String>,
     #[serde(default)]
     #[ts(optional)]

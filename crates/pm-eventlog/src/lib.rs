@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use fs2::FileExt;
 use pm_protocol::{
-    ApprovalId, ApprovalPolicy, EventSeq, ProcessId, SandboxPolicy, ThreadEvent, ThreadEventKind,
-    ThreadId, TurnId, TurnStatus,
+    ApprovalId, ApprovalPolicy, EventSeq, ProcessId, SandboxNetworkAccess, SandboxPolicy,
+    ThreadEvent, ThreadEventKind, ThreadId, TurnId, TurnStatus,
 };
 use time::OffsetDateTime;
 use tokio::io::AsyncWriteExt;
@@ -218,6 +218,8 @@ pub struct ThreadState {
     pub paused_reason: Option<String>,
     pub approval_policy: ApprovalPolicy,
     pub sandbox_policy: SandboxPolicy,
+    pub sandbox_writable_roots: Vec<String>,
+    pub sandbox_network_access: SandboxNetworkAccess,
     pub mode: String,
     pub model: Option<String>,
     pub openai_base_url: Option<String>,
@@ -245,6 +247,8 @@ impl ThreadState {
             paused_reason: None,
             approval_policy: ApprovalPolicy::AutoApprove,
             sandbox_policy: SandboxPolicy::WorkspaceWrite,
+            sandbox_writable_roots: Vec::new(),
+            sandbox_network_access: SandboxNetworkAccess::Deny,
             mode: "coder".to_string(),
             model: None,
             openai_base_url: None,
@@ -303,6 +307,8 @@ impl ThreadState {
             ThreadEventKind::ThreadConfigUpdated {
                 approval_policy,
                 sandbox_policy,
+                sandbox_writable_roots,
+                sandbox_network_access,
                 mode,
                 model,
                 openai_base_url,
@@ -310,6 +316,12 @@ impl ThreadState {
                 self.approval_policy = *approval_policy;
                 if let Some(policy) = sandbox_policy {
                     self.sandbox_policy = *policy;
+                }
+                if let Some(roots) = sandbox_writable_roots {
+                    self.sandbox_writable_roots = roots.clone();
+                }
+                if let Some(access) = sandbox_network_access {
+                    self.sandbox_network_access = *access;
                 }
                 if let Some(mode) = mode {
                     self.mode = mode.clone();

@@ -560,6 +560,10 @@ struct ThreadConfigureParams {
     #[serde(default)]
     sandbox_policy: Option<pm_protocol::SandboxPolicy>,
     #[serde(default)]
+    sandbox_writable_roots: Option<Vec<String>>,
+    #[serde(default)]
+    sandbox_network_access: Option<pm_protocol::SandboxNetworkAccess>,
+    #[serde(default)]
     mode: Option<String>,
     #[serde(default)]
     model: Option<String>,

@@ -191,6 +191,10 @@ struct ThreadConfigureArgs {
     approval_policy: Option<CliApprovalPolicy>,
     #[arg(long)]
     sandbox_policy: Option<CliSandboxPolicy>,
+    #[arg(long, value_delimiter = ',')]
+    sandbox_writable_roots: Option<Vec<String>>,
+    #[arg(long)]
+    sandbox_network_access: Option<CliSandboxNetworkAccess>,
     #[arg(long)]
     mode: Option<String>,
     #[arg(long)]
@@ -463,6 +467,21 @@ impl From<CliSandboxPolicy> for SandboxPolicy {
             CliSandboxPolicy::ReadOnly => Self::ReadOnly,
             CliSandboxPolicy::WorkspaceWrite => Self::WorkspaceWrite,
             CliSandboxPolicy::DangerFullAccess => Self::DangerFullAccess,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum CliSandboxNetworkAccess {
+    Deny,
+    Allow,
+}
+
+impl From<CliSandboxNetworkAccess> for pm_protocol::SandboxNetworkAccess {
+    fn from(value: CliSandboxNetworkAccess) -> Self {
+        match value {
+            CliSandboxNetworkAccess::Deny => Self::Deny,
+            CliSandboxNetworkAccess::Allow => Self::Allow,
         }
     }
 }

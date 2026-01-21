@@ -413,6 +413,8 @@ async fn run_tool_call_once(
                         thread_id: forked.thread_id,
                         approval_policy: None,
                         sandbox_policy: None,
+                        sandbox_writable_roots: None,
+                        sandbox_network_access: None,
                         mode: None,
                         model: args.model,
                         openai_base_url: args.openai_base_url,

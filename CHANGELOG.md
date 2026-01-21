@@ -85,6 +85,7 @@
 - `pm-eventlog ThreadState`：增加 `model`/`openai_base_url`（默认跟随 env/default）；`pm-app-server thread/state`/`thread/attention`/`thread/config/explain` 返回当前值。
 - `pm-eventlog ThreadState`：增加 `archived/archived_at/archived_reason` 与 `last_turn_id/last_turn_status/last_turn_reason`；`pm-app-server thread/state`/`thread/attention` 返回归档与 last turn 信息，并派生 `attention_state`（含 `archived`）。
 - `pm-app-server thread/configure`：`approval_policy` 现在可选（省略时沿用当前），并支持设置 `model`/`openai_base_url`（thread override）。
+- `pm-protocol`/`pm-eventlog`/`pm-app-server`/`pm`：thread config 新增 `sandbox_writable_roots`/`sandbox_network_access`；`file/write|patch|edit|delete` 与 `fs/mkdir` 在非 `danger-full-access` 下支持写入额外 roots（仍硬防 `..`/symlink 逃逸）。
 - `pm-app-server`：当 `approval_policy=manual` 时，`file/write`/`file/delete`/`fs/mkdir`/`process/start` 会返回 `needs_approval` 并写入 `ApprovalRequested`；提供 `approval_id` 且已 `approval/decide` 后才会执行。
 - `pm-app-server`：当 `sandbox_policy=read_only` 时，`file/write`/`file/patch`/`file/edit`/`file/delete`/`fs/mkdir`/`process/start` 会直接拒绝（ToolStatus=Denied）。
 - `pm-app-server approvals`：`approval/decide` 支持 `remember=true`（session 内记忆 approve/deny），同类操作无需重复弹审批；拒绝也会被记住并直接拦截。

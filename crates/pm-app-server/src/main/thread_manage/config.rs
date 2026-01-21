@@ -6,6 +6,8 @@ async fn handle_thread_configure(
     let (
         current_approval_policy,
         current_sandbox_policy,
+        current_sandbox_writable_roots,
+        current_sandbox_network_access,
         current_mode,
         current_model,
         current_openai_base_url,
@@ -15,6 +17,8 @@ async fn handle_thread_configure(
         (
             state.approval_policy,
             state.sandbox_policy,
+            state.sandbox_writable_roots.clone(),
+            state.sandbox_network_access,
             state.mode.clone(),
             state.model.clone(),
             state.openai_base_url.clone(),
@@ -22,6 +26,30 @@ async fn handle_thread_configure(
     };
 
     let approval_policy = params.approval_policy.unwrap_or(current_approval_policy);
+    let sandbox_writable_roots = params.sandbox_writable_roots.map(|roots| {
+        roots
+            .into_iter()
+            .map(|root| root.trim().to_string())
+            .filter(|root| !root.is_empty())
+            .collect::<Vec<_>>()
+    });
+    let sandbox_writable_roots = match sandbox_writable_roots {
+        Some(roots) => {
+            let mut out = Vec::<String>::new();
+            let mut seen = std::collections::BTreeSet::<String>::new();
+            for root in roots {
+                let resolved =
+                    pm_core::resolve_dir_unrestricted(&thread_root, Path::new(&root)).await?;
+                let resolved = resolved.display().to_string();
+                if seen.insert(resolved.clone()) {
+                    out.push(resolved);
+                }
+            }
+            Some(out)
+        }
+        None => None,
+    };
+    let sandbox_network_access = params.sandbox_network_access;
     let mode = params
         .mode
         .map(|m| m.trim().to_string())
@@ -40,6 +68,11 @@ async fn handle_thread_configure(
         || params
             .sandbox_policy
             .is_some_and(|p| p != current_sandbox_policy)
+        || sandbox_writable_roots
+            .as_ref()
+            .is_some_and(|roots| roots != &current_sandbox_writable_roots)
+        || sandbox_network_access
+            .is_some_and(|access| access != current_sandbox_network_access)
         || mode.as_ref().is_some_and(|m| m != &current_mode)
         || model.as_ref() != current_model.as_ref()
         || openai_base_url.as_ref() != current_openai_base_url.as_ref();
@@ -48,6 +81,8 @@ async fn handle_thread_configure(
         rt.append_event(pm_protocol::ThreadEventKind::ThreadConfigUpdated {
             approval_policy,
             sandbox_policy: params.sandbox_policy,
+            sandbox_writable_roots,
+            sandbox_network_access,
             mode,
             model,
             openai_base_url,
@@ -83,6 +118,8 @@ async fn handle_thread_config_explain(
 
     let mut effective_approval_policy = pm_protocol::ApprovalPolicy::AutoApprove;
     let mut effective_sandbox_policy = pm_protocol::SandboxPolicy::WorkspaceWrite;
+    let mut effective_sandbox_writable_roots = Vec::<String>::new();
+    let mut effective_sandbox_network_access = pm_protocol::SandboxNetworkAccess::Deny;
     let mut effective_mode = default_mode.clone();
     let mut effective_model = default_model.clone();
     let mut effective_openai_base_url = default_openai_base_url.clone();
@@ -90,6 +127,8 @@ async fn handle_thread_config_explain(
         "source": "default",
         "approval_policy": effective_approval_policy,
         "sandbox_policy": effective_sandbox_policy,
+        "sandbox_writable_roots": effective_sandbox_writable_roots,
+        "sandbox_network_access": effective_sandbox_network_access,
         "mode": effective_mode,
         "model": effective_model,
         "openai_base_url": effective_openai_base_url,
@@ -119,6 +158,8 @@ async fn handle_thread_config_explain(
         if let pm_protocol::ThreadEventKind::ThreadConfigUpdated {
             approval_policy,
             sandbox_policy,
+            sandbox_writable_roots,
+            sandbox_network_access,
             mode,
             model,
             openai_base_url,
@@ -128,6 +169,12 @@ async fn handle_thread_config_explain(
             effective_approval_policy = approval_policy;
             if let Some(policy) = sandbox_policy {
                 effective_sandbox_policy = policy;
+            }
+            if let Some(roots) = sandbox_writable_roots {
+                effective_sandbox_writable_roots = roots;
+            }
+            if let Some(access) = sandbox_network_access {
+                effective_sandbox_network_access = access;
             }
             if let Some(mode) = mode {
                 effective_mode = mode;
@@ -144,6 +191,8 @@ async fn handle_thread_config_explain(
                 "timestamp": ts,
                 "approval_policy": approval_policy,
                 "sandbox_policy": effective_sandbox_policy,
+                "sandbox_writable_roots": effective_sandbox_writable_roots,
+                "sandbox_network_access": effective_sandbox_network_access,
                 "mode": effective_mode,
                 "model": effective_model,
                 "openai_base_url": effective_openai_base_url,
@@ -190,6 +239,8 @@ async fn handle_thread_config_explain(
         "effective": {
             "approval_policy": effective_approval_policy,
             "sandbox_policy": effective_sandbox_policy,
+            "sandbox_writable_roots": effective_sandbox_writable_roots,
+            "sandbox_network_access": effective_sandbox_network_access,
             "mode": effective_mode,
             "model": effective_model,
             "openai_base_url": effective_openai_base_url,

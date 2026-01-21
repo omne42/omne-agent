@@ -1,11 +1,12 @@
 async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Result<Value> {
     let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
-    let (approval_policy, sandbox_policy, mode_name) = {
+    let (approval_policy, sandbox_policy, sandbox_writable_roots, mode_name) = {
         let handle = thread_rt.handle.lock().await;
         let state = handle.state();
         (
             state.approval_policy,
             state.sandbox_policy,
+            state.sandbox_writable_roots.clone(),
             state.mode.clone(),
         )
     };
@@ -156,6 +157,7 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
         let path = resolve_file_for_sandbox(
             &thread_root,
             sandbox_policy,
+            &sandbox_writable_roots,
             Path::new(&params.path),
             pm_core::PathAccess::Read,
             false,

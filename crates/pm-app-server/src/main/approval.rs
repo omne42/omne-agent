@@ -419,6 +419,7 @@ async fn resolve_dir_for_sandbox(
 async fn resolve_file_for_sandbox(
     thread_root: &Path,
     sandbox_policy: pm_protocol::SandboxPolicy,
+    sandbox_writable_roots: &[String],
     input: &Path,
     access: pm_core::PathAccess,
     create_parent_dirs: bool,
@@ -427,6 +428,23 @@ async fn resolve_file_for_sandbox(
         pm_protocol::SandboxPolicy::DangerFullAccess => {
             pm_core::resolve_file_unrestricted(thread_root, input, access, create_parent_dirs).await
         }
-        _ => pm_core::resolve_file(thread_root, input, access, create_parent_dirs).await,
+        _ => {
+            if matches!(access, pm_core::PathAccess::Write) && !sandbox_writable_roots.is_empty() {
+                let writable_roots = sandbox_writable_roots
+                    .iter()
+                    .map(PathBuf::from)
+                    .collect::<Vec<_>>();
+                pm_core::resolve_file_with_writable_roots(
+                    thread_root,
+                    &writable_roots,
+                    input,
+                    access,
+                    create_parent_dirs,
+                )
+                .await
+            } else {
+                pm_core::resolve_file(thread_root, input, access, create_parent_dirs).await
+            }
+        }
     }
 }

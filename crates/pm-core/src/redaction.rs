@@ -168,6 +168,7 @@ pub(crate) fn redact_thread_event_kind(kind: &mut ThreadEventKind) {
         ThreadEventKind::ThreadConfigUpdated {
             model,
             openai_base_url,
+            sandbox_writable_roots,
             ..
         } => {
             if let Some(model) = model {
@@ -175,6 +176,11 @@ pub(crate) fn redact_thread_event_kind(kind: &mut ThreadEventKind) {
             }
             if let Some(openai_base_url) = openai_base_url {
                 *openai_base_url = redact_text(openai_base_url);
+            }
+            if let Some(roots) = sandbox_writable_roots {
+                for root in roots {
+                    *root = redact_text(root);
+                }
             }
         }
         ThreadEventKind::ApprovalRequested { params, .. } => {

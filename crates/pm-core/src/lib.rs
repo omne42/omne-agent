@@ -22,6 +22,7 @@ pub use crate::paths::{PmPaths, SessionPaths, TaskPaths};
 pub use crate::redaction::redact_text;
 pub use crate::sandbox::{
     PathAccess, resolve_dir, resolve_dir_unrestricted, resolve_file, resolve_file_unrestricted,
+    resolve_file_with_writable_roots,
 };
 pub use crate::storage::{FsStorage, Storage};
 pub use crate::threads::{ThreadHandle, ThreadStore};
