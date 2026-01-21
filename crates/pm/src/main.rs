@@ -789,10 +789,11 @@ async fn run_ask(app: &mut App, args: AskArgs) -> anyhow::Result<()> {
             render_event_for_ask(event, did_stream);
             if let pm_protocol::ThreadEventKind::ApprovalRequested {
                 approval_id,
+                turn_id: Some(approval_turn_id),
                 action,
                 params,
-                ..
             } = &event.kind
+                && *approval_turn_id == turn_id
             {
                 if did_stream {
                     println!();
@@ -903,10 +904,10 @@ async fn run_exec(app: &mut App, args: ExecArgs) -> anyhow::Result<i32> {
                 }
                 pm_protocol::ThreadEventKind::ApprovalRequested {
                     approval_id,
+                    turn_id: Some(approval_turn_id),
                     action,
                     params,
-                    ..
-                } if !handled_approvals.contains(approval_id) => {
+                } if *approval_turn_id == turn_id && !handled_approvals.contains(approval_id) => {
                     handled_approvals.insert(*approval_id);
                     match args.on_approval {
                         CliOnApproval::Fail => {

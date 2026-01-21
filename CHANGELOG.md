@@ -141,6 +141,7 @@
 
 ### Fixed
 - `pm-jsonrpc`/`pm-openai`：修复 `cargo clippy -- -D warnings` 下的 lint（`type_complexity`/`io_other_error`）。
+- `pm ask`/`pm exec`：只会处理当前 turn 触发的 `ApprovalRequested`（避免误处理历史遗留 approval）。
 - `code-pm run --max-concurrency`：现在会校验为 `>= 1`（拒绝 `0`，避免静默回退到 `1`）。
 - `code-pm run`：隐式 `--repo-src` 模式现在会严格要求处于真实 git worktree（基于 `git rev-parse` 判断），避免仅凭 `.git` 路径误判导致后续 clone 失败。
 - `code-pm` CLI：`--repo/--repo-src/--pr-name/--base` 以及 `repo inject` 的 `source/--name` 现在会拒绝空值（包括仅空白字符），避免静默回退到默认 sanitize 值。
