@@ -639,6 +639,10 @@ enum ProcessStream {
 #[derive(Debug, Deserialize)]
 struct ProcessTailParams {
     process_id: ProcessId,
+    #[serde(default)]
+    turn_id: Option<TurnId>,
+    #[serde(default)]
+    approval_id: Option<pm_protocol::ApprovalId>,
     stream: ProcessStream,
     #[serde(default)]
     max_lines: Option<usize>,
@@ -647,6 +651,10 @@ struct ProcessTailParams {
 #[derive(Debug, Deserialize)]
 struct ProcessFollowParams {
     process_id: ProcessId,
+    #[serde(default)]
+    turn_id: Option<TurnId>,
+    #[serde(default)]
+    approval_id: Option<pm_protocol::ApprovalId>,
     stream: ProcessStream,
     #[serde(default)]
     since_offset: u64,
@@ -657,6 +665,10 @@ struct ProcessFollowParams {
 #[derive(Debug, Deserialize)]
 struct ProcessInspectParams {
     process_id: ProcessId,
+    #[serde(default)]
+    turn_id: Option<TurnId>,
+    #[serde(default)]
+    approval_id: Option<pm_protocol::ApprovalId>,
     #[serde(default)]
     max_lines: Option<usize>,
 }

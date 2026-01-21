@@ -272,6 +272,12 @@ pub enum ProcessStream {
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
 pub struct ProcessTailParams {
     pub process_id: pm_protocol::ProcessId,
+    #[serde(default)]
+    #[ts(optional)]
+    pub turn_id: Option<pm_protocol::TurnId>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub approval_id: Option<pm_protocol::ApprovalId>,
     pub stream: ProcessStream,
     #[serde(default)]
     #[ts(optional)]
@@ -281,6 +287,12 @@ pub struct ProcessTailParams {
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
 pub struct ProcessFollowParams {
     pub process_id: pm_protocol::ProcessId,
+    #[serde(default)]
+    #[ts(optional)]
+    pub turn_id: Option<pm_protocol::TurnId>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub approval_id: Option<pm_protocol::ApprovalId>,
     pub stream: ProcessStream,
     #[serde(default)]
     pub since_offset: u64,
@@ -292,6 +304,12 @@ pub struct ProcessFollowParams {
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
 pub struct ProcessInspectParams {
     pub process_id: pm_protocol::ProcessId,
+    #[serde(default)]
+    #[ts(optional)]
+    pub turn_id: Option<pm_protocol::TurnId>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub approval_id: Option<pm_protocol::ApprovalId>,
     #[serde(default)]
     #[ts(optional)]
     pub max_lines: Option<usize>,

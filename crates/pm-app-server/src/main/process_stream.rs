@@ -1,15 +1,191 @@
 async fn handle_process_tail(server: &Server, params: ProcessTailParams) -> anyhow::Result<Value> {
-    let (stdout_path, stderr_path) = resolve_process_log_paths(server, params.process_id).await?;
+    let max_lines = params.max_lines.unwrap_or(200).min(2000);
+    let stream = stream_label(params.stream);
 
-    let path = match params.stream {
-        ProcessStream::Stdout => stdout_path,
-        ProcessStream::Stderr => stderr_path,
+    let info = resolve_process_info(server, params.process_id).await?;
+    let (thread_rt, thread_root) = load_thread_root(server, info.thread_id).await?;
+    let (approval_policy, mode_name) = {
+        let handle = thread_rt.handle.lock().await;
+        let state = handle.state();
+        (state.approval_policy, state.mode.clone())
+    };
+    let tool_id = pm_protocol::ToolId::new();
+
+    let approval_params = serde_json::json!({
+        "process_id": params.process_id,
+        "stream": stream,
+        "max_lines": max_lines,
+    });
+
+    let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
+    let mode = match catalog.mode(&mode_name) {
+        Some(mode) => mode,
+        None => {
+            let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
+            let decision = pm_core::modes::Decision::Deny;
+
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                    tool_id,
+                    turn_id: params.turn_id,
+                    tool: "process/tail".to_string(),
+                    params: Some(approval_params),
+                })
+                .await?;
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: pm_protocol::ToolStatus::Denied,
+                    error: Some("unknown mode".to_string()),
+                    result: Some(serde_json::json!({
+                        "mode": mode_name,
+                        "decision": decision,
+                        "available": available,
+                        "load_error": catalog.load_error.clone(),
+                    })),
+                })
+                .await?;
+            return Ok(serde_json::json!({
+                "tool_id": tool_id,
+                "denied": true,
+                "thread_id": info.thread_id,
+                "mode": mode_name,
+                "decision": decision,
+                "available": available,
+                "load_error": catalog.load_error.clone(),
+            }));
+        }
     };
 
-    let max_lines = params.max_lines.unwrap_or(200).min(2000);
-    let text = tail_file_lines(PathBuf::from(path), max_lines).await?;
-    let text = pm_core::redact_text(&text);
-    Ok(serde_json::json!({ "text": text }))
+    let base_decision = mode.permissions.process.inspect;
+    let effective_decision = match mode.tool_overrides.get("process/tail").copied() {
+        Some(override_decision) => base_decision.combine(override_decision),
+        None => base_decision,
+    };
+    if effective_decision == pm_core::modes::Decision::Deny {
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                tool_id,
+                turn_id: params.turn_id,
+                tool: "process/tail".to_string(),
+                params: Some(approval_params),
+            })
+            .await?;
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                tool_id,
+                status: pm_protocol::ToolStatus::Denied,
+                error: Some("mode denies process/tail".to_string()),
+                result: Some(serde_json::json!({
+                    "mode": mode_name,
+                    "decision": effective_decision,
+                })),
+            })
+            .await?;
+        return Ok(serde_json::json!({
+            "tool_id": tool_id,
+            "denied": true,
+            "thread_id": info.thread_id,
+            "mode": mode_name,
+            "decision": effective_decision,
+        }));
+    }
+
+    if effective_decision == pm_core::modes::Decision::Prompt {
+        match gate_approval(
+            server,
+            &thread_rt,
+            info.thread_id,
+            params.turn_id,
+            approval_policy,
+            ApprovalRequest {
+                approval_id: params.approval_id,
+                action: "process/tail",
+                params: &approval_params,
+            },
+        )
+        .await?
+        {
+            ApprovalGate::Approved => {}
+            ApprovalGate::Denied { remembered } => {
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                        tool_id,
+                        turn_id: params.turn_id,
+                        tool: "process/tail".to_string(),
+                        params: Some(approval_params),
+                    })
+                    .await?;
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                        tool_id,
+                        status: pm_protocol::ToolStatus::Denied,
+                        error: Some("approval denied (remembered)".to_string()),
+                        result: Some(serde_json::json!({
+                            "approval_policy": approval_policy,
+                        })),
+                    })
+                    .await?;
+                return Ok(serde_json::json!({
+                    "tool_id": tool_id,
+                    "denied": true,
+                    "thread_id": info.thread_id,
+                    "remembered": remembered,
+                }));
+            }
+            ApprovalGate::NeedsApproval { approval_id } => {
+                return Ok(serde_json::json!({
+                    "needs_approval": true,
+                    "thread_id": info.thread_id,
+                    "approval_id": approval_id,
+                }));
+            }
+        }
+    }
+
+    thread_rt
+        .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+            tool_id,
+            turn_id: params.turn_id,
+            tool: "process/tail".to_string(),
+            params: Some(approval_params),
+        })
+        .await?;
+
+    let path = match params.stream {
+        ProcessStream::Stdout => info.stdout_path,
+        ProcessStream::Stderr => info.stderr_path,
+    };
+
+    let outcome = tail_file_lines(PathBuf::from(&path), max_lines).await;
+    match outcome {
+        Ok(text) => {
+            let text = pm_core::redact_text(&text);
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: pm_protocol::ToolStatus::Completed,
+                    error: None,
+                    result: Some(serde_json::json!({
+                        "path": path,
+                        "max_lines": max_lines,
+                    })),
+                })
+                .await?;
+            Ok(serde_json::json!({ "tool_id": tool_id, "text": text }))
+        }
+        Err(err) => {
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: pm_protocol::ToolStatus::Failed,
+                    error: Some(err.to_string()),
+                    result: None,
+                })
+                .await?;
+            Err(err)
+        }
+    }
 }
 
 async fn tail_file_lines(path: PathBuf, max_lines: usize) -> anyhow::Result<String> {
@@ -72,42 +248,224 @@ async fn handle_process_follow(
     server: &Server,
     params: ProcessFollowParams,
 ) -> anyhow::Result<Value> {
-    let (stdout_path, stderr_path) = resolve_process_log_paths(server, params.process_id).await?;
+    let max_bytes = params.max_bytes.unwrap_or(64 * 1024).min(1024 * 1024);
+    let stream = stream_label(params.stream);
 
-    let path = match params.stream {
-        ProcessStream::Stdout => stdout_path,
-        ProcessStream::Stderr => stderr_path,
+    let info = resolve_process_info(server, params.process_id).await?;
+    let (thread_rt, thread_root) = load_thread_root(server, info.thread_id).await?;
+    let (approval_policy, mode_name) = {
+        let handle = thread_rt.handle.lock().await;
+        let state = handle.state();
+        (state.approval_policy, state.mode.clone())
+    };
+    let tool_id = pm_protocol::ToolId::new();
+
+    let approval_params = serde_json::json!({
+        "process_id": params.process_id,
+        "stream": stream,
+        "since_offset": params.since_offset,
+        "max_bytes": max_bytes,
+    });
+
+    let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
+    let mode = match catalog.mode(&mode_name) {
+        Some(mode) => mode,
+        None => {
+            let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
+            let decision = pm_core::modes::Decision::Deny;
+
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                    tool_id,
+                    turn_id: params.turn_id,
+                    tool: "process/follow".to_string(),
+                    params: Some(approval_params),
+                })
+                .await?;
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: pm_protocol::ToolStatus::Denied,
+                    error: Some("unknown mode".to_string()),
+                    result: Some(serde_json::json!({
+                        "mode": mode_name,
+                        "decision": decision,
+                        "available": available,
+                        "load_error": catalog.load_error.clone(),
+                    })),
+                })
+                .await?;
+            return Ok(serde_json::json!({
+                "tool_id": tool_id,
+                "denied": true,
+                "thread_id": info.thread_id,
+                "mode": mode_name,
+                "decision": decision,
+                "available": available,
+                "load_error": catalog.load_error.clone(),
+            }));
+        }
     };
 
-    let max_bytes = params.max_bytes.unwrap_or(64 * 1024).min(1024 * 1024);
-    let (text, next_offset, eof) =
-        read_file_chunk(PathBuf::from(path), params.since_offset, max_bytes).await?;
-    let text = pm_core::redact_text(&text);
+    let base_decision = mode.permissions.process.inspect;
+    let effective_decision = match mode.tool_overrides.get("process/follow").copied() {
+        Some(override_decision) => base_decision.combine(override_decision),
+        None => base_decision,
+    };
+    if effective_decision == pm_core::modes::Decision::Deny {
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                tool_id,
+                turn_id: params.turn_id,
+                tool: "process/follow".to_string(),
+                params: Some(approval_params),
+            })
+            .await?;
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                tool_id,
+                status: pm_protocol::ToolStatus::Denied,
+                error: Some("mode denies process/follow".to_string()),
+                result: Some(serde_json::json!({
+                    "mode": mode_name,
+                    "decision": effective_decision,
+                })),
+            })
+            .await?;
+        return Ok(serde_json::json!({
+            "tool_id": tool_id,
+            "denied": true,
+            "thread_id": info.thread_id,
+            "mode": mode_name,
+            "decision": effective_decision,
+        }));
+    }
 
-    Ok(serde_json::json!({
-        "text": text,
-        "next_offset": next_offset,
-        "eof": eof,
-    }))
+    if effective_decision == pm_core::modes::Decision::Prompt {
+        match gate_approval(
+            server,
+            &thread_rt,
+            info.thread_id,
+            params.turn_id,
+            approval_policy,
+            ApprovalRequest {
+                approval_id: params.approval_id,
+                action: "process/follow",
+                params: &approval_params,
+            },
+        )
+        .await?
+        {
+            ApprovalGate::Approved => {}
+            ApprovalGate::Denied { remembered } => {
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                        tool_id,
+                        turn_id: params.turn_id,
+                        tool: "process/follow".to_string(),
+                        params: Some(approval_params),
+                    })
+                    .await?;
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                        tool_id,
+                        status: pm_protocol::ToolStatus::Denied,
+                        error: Some("approval denied (remembered)".to_string()),
+                        result: Some(serde_json::json!({
+                            "approval_policy": approval_policy,
+                        })),
+                    })
+                    .await?;
+                return Ok(serde_json::json!({
+                    "tool_id": tool_id,
+                    "denied": true,
+                    "thread_id": info.thread_id,
+                    "remembered": remembered,
+                }));
+            }
+            ApprovalGate::NeedsApproval { approval_id } => {
+                return Ok(serde_json::json!({
+                    "needs_approval": true,
+                    "thread_id": info.thread_id,
+                    "approval_id": approval_id,
+                }));
+            }
+        }
+    }
+
+    thread_rt
+        .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+            tool_id,
+            turn_id: params.turn_id,
+            tool: "process/follow".to_string(),
+            params: Some(approval_params),
+        })
+        .await?;
+
+    let path = match params.stream {
+        ProcessStream::Stdout => info.stdout_path,
+        ProcessStream::Stderr => info.stderr_path,
+    };
+
+    let outcome = read_file_chunk(PathBuf::from(&path), params.since_offset, max_bytes).await;
+    match outcome {
+        Ok((text, next_offset, eof)) => {
+            let text = pm_core::redact_text(&text);
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: pm_protocol::ToolStatus::Completed,
+                    error: None,
+                    result: Some(serde_json::json!({
+                        "path": path,
+                        "max_bytes": max_bytes,
+                        "next_offset": next_offset,
+                        "eof": eof,
+                    })),
+                })
+                .await?;
+
+            Ok(serde_json::json!({
+                "tool_id": tool_id,
+                "text": text,
+                "next_offset": next_offset,
+                "eof": eof,
+            }))
+        }
+        Err(err) => {
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: pm_protocol::ToolStatus::Failed,
+                    error: Some(err.to_string()),
+                    result: None,
+                })
+                .await?;
+            Err(err)
+        }
+    }
 }
 
-async fn resolve_process_log_paths(
-    server: &Server,
-    process_id: ProcessId,
-) -> anyhow::Result<(String, String)> {
+fn stream_label(stream: ProcessStream) -> &'static str {
+    match stream {
+        ProcessStream::Stdout => "stdout",
+        ProcessStream::Stderr => "stderr",
+    }
+}
+
+async fn resolve_process_info(server: &Server, process_id: ProcessId) -> anyhow::Result<ProcessInfo> {
     let entry = server.processes.lock().await.get(&process_id).cloned();
 
     if let Some(entry) = entry {
         let info = entry.info.lock().await;
-        return Ok((info.stdout_path.clone(), info.stderr_path.clone()));
+        return Ok(info.clone());
     }
 
-    let mut processes = handle_process_list(server, ProcessListParams { thread_id: None }).await?;
-    let info = processes
-        .iter_mut()
+    let processes = handle_process_list(server, ProcessListParams { thread_id: None }).await?;
+    processes
+        .into_iter()
         .find(|p| p.process_id == process_id)
-        .ok_or_else(|| anyhow::anyhow!("process not found: {}", process_id))?;
-    Ok((info.stdout_path.clone(), info.stderr_path.clone()))
+        .ok_or_else(|| anyhow::anyhow!("process not found: {}", process_id))
 }
 
 async fn read_file_chunk(
@@ -335,36 +693,176 @@ async fn handle_process_inspect(
     server: &Server,
     params: ProcessInspectParams,
 ) -> anyhow::Result<Value> {
-    let mut info: Option<ProcessInfo> = None;
-    if let Some(entry) = server
-        .processes
-        .lock()
-        .await
-        .get(&params.process_id)
-        .cloned()
-    {
-        info = Some(entry.info.lock().await.clone());
-    }
+    let max_lines = params.max_lines.unwrap_or(200).min(2000);
 
-    let info = match info {
-        Some(info) => info,
+    let info = resolve_process_info(server, params.process_id).await?;
+    let (thread_rt, thread_root) = load_thread_root(server, info.thread_id).await?;
+    let (approval_policy, mode_name) = {
+        let handle = thread_rt.handle.lock().await;
+        let state = handle.state();
+        (state.approval_policy, state.mode.clone())
+    };
+    let tool_id = pm_protocol::ToolId::new();
+
+    let approval_params = serde_json::json!({
+        "process_id": params.process_id,
+        "max_lines": max_lines,
+    });
+
+    let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
+    let mode = match catalog.mode(&mode_name) {
+        Some(mode) => mode,
         None => {
-            let processes =
-                handle_process_list(server, ProcessListParams { thread_id: None }).await?;
-            processes
-                .into_iter()
-                .find(|p| p.process_id == params.process_id)
-                .ok_or_else(|| anyhow::anyhow!("process not found: {}", params.process_id))?
+            let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
+            let decision = pm_core::modes::Decision::Deny;
+
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                    tool_id,
+                    turn_id: params.turn_id,
+                    tool: "process/inspect".to_string(),
+                    params: Some(approval_params),
+                })
+                .await?;
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: pm_protocol::ToolStatus::Denied,
+                    error: Some("unknown mode".to_string()),
+                    result: Some(serde_json::json!({
+                        "mode": mode_name,
+                        "decision": decision,
+                        "available": available,
+                        "load_error": catalog.load_error.clone(),
+                    })),
+                })
+                .await?;
+            return Ok(serde_json::json!({
+                "tool_id": tool_id,
+                "denied": true,
+                "thread_id": info.thread_id,
+                "mode": mode_name,
+                "decision": decision,
+                "available": available,
+                "load_error": catalog.load_error.clone(),
+            }));
         }
     };
 
-    let max_lines = params.max_lines.unwrap_or(200).min(2000);
+    let base_decision = mode.permissions.process.inspect;
+    let effective_decision = match mode.tool_overrides.get("process/inspect").copied() {
+        Some(override_decision) => base_decision.combine(override_decision),
+        None => base_decision,
+    };
+    if effective_decision == pm_core::modes::Decision::Deny {
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                tool_id,
+                turn_id: params.turn_id,
+                tool: "process/inspect".to_string(),
+                params: Some(approval_params),
+            })
+            .await?;
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                tool_id,
+                status: pm_protocol::ToolStatus::Denied,
+                error: Some("mode denies process/inspect".to_string()),
+                result: Some(serde_json::json!({
+                    "mode": mode_name,
+                    "decision": effective_decision,
+                })),
+            })
+            .await?;
+        return Ok(serde_json::json!({
+            "tool_id": tool_id,
+            "denied": true,
+            "thread_id": info.thread_id,
+            "mode": mode_name,
+            "decision": effective_decision,
+        }));
+    }
+
+    if effective_decision == pm_core::modes::Decision::Prompt {
+        match gate_approval(
+            server,
+            &thread_rt,
+            info.thread_id,
+            params.turn_id,
+            approval_policy,
+            ApprovalRequest {
+                approval_id: params.approval_id,
+                action: "process/inspect",
+                params: &approval_params,
+            },
+        )
+        .await?
+        {
+            ApprovalGate::Approved => {}
+            ApprovalGate::Denied { remembered } => {
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                        tool_id,
+                        turn_id: params.turn_id,
+                        tool: "process/inspect".to_string(),
+                        params: Some(approval_params),
+                    })
+                    .await?;
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                        tool_id,
+                        status: pm_protocol::ToolStatus::Denied,
+                        error: Some("approval denied (remembered)".to_string()),
+                        result: Some(serde_json::json!({
+                            "approval_policy": approval_policy,
+                        })),
+                    })
+                    .await?;
+                return Ok(serde_json::json!({
+                    "tool_id": tool_id,
+                    "denied": true,
+                    "thread_id": info.thread_id,
+                    "remembered": remembered,
+                }));
+            }
+            ApprovalGate::NeedsApproval { approval_id } => {
+                return Ok(serde_json::json!({
+                    "needs_approval": true,
+                    "thread_id": info.thread_id,
+                    "approval_id": approval_id,
+                }));
+            }
+        }
+    }
+
+    thread_rt
+        .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+            tool_id,
+            turn_id: params.turn_id,
+            tool: "process/inspect".to_string(),
+            params: Some(approval_params),
+        })
+        .await?;
+
     let stdout_tail =
         pm_core::redact_text(&tail_file_lines(PathBuf::from(&info.stdout_path), max_lines).await?);
     let stderr_tail =
         pm_core::redact_text(&tail_file_lines(PathBuf::from(&info.stderr_path), max_lines).await?);
 
+    thread_rt
+        .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+            tool_id,
+            status: pm_protocol::ToolStatus::Completed,
+            error: None,
+            result: Some(serde_json::json!({
+                "process_id": params.process_id,
+                "max_lines": max_lines,
+            })),
+        })
+        .await?;
+
     Ok(serde_json::json!({
+        "tool_id": tool_id,
         "process": info,
         "stdout_tail": stdout_tail,
         "stderr_tail": stderr_tail,

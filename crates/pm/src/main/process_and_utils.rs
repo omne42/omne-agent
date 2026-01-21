@@ -536,6 +536,7 @@ impl App {
                 }),
             )
             .await?;
+        ensure_approval_and_denial_handled("process/tail", &v)?;
         Ok(v["text"].as_str().unwrap_or("").to_string())
     }
 
@@ -558,6 +559,7 @@ impl App {
                 }),
             )
             .await?;
+        ensure_approval_and_denial_handled("process/follow", &v)?;
 
         let text = v["text"].as_str().unwrap_or("").to_string();
         let next_offset = v["next_offset"].as_u64().unwrap_or(since_offset);

@@ -647,6 +647,8 @@ async fn run_tool_call_once(
                 server,
                 super::ProcessInspectParams {
                     process_id: args.process_id.parse()?,
+                    turn_id,
+                    approval_id,
                     max_lines: args.max_lines,
                 },
             )
@@ -658,6 +660,8 @@ async fn run_tool_call_once(
                 server,
                 super::ProcessTailParams {
                     process_id: args.process_id.parse()?,
+                    turn_id,
+                    approval_id,
                     stream: args.stream,
                     max_lines: args.max_lines,
                 },
@@ -670,6 +674,8 @@ async fn run_tool_call_once(
                 server,
                 super::ProcessFollowParams {
                     process_id: args.process_id.parse()?,
+                    turn_id,
+                    approval_id,
                     stream: args.stream,
                     since_offset: args.since_offset,
                     max_bytes: args.max_bytes,
