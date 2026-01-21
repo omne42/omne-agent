@@ -433,6 +433,7 @@ fn classify_agent_turn_error(err: &anyhow::Error) -> TurnStatus {
             return match agent_err {
                 agent::AgentTurnError::Cancelled => TurnStatus::Interrupted,
                 agent::AgentTurnError::BudgetExceeded { .. }
+                | agent::AgentTurnError::TokenBudgetExceeded { .. }
                 | agent::AgentTurnError::OpenAiRequestTimedOut => TurnStatus::Stuck,
             };
         }

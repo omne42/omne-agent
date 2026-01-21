@@ -15,12 +15,14 @@ const DEFAULT_MODEL: &str = "gpt-4.1";
 const DEFAULT_MAX_AGENT_STEPS: usize = 24;
 const DEFAULT_MAX_TOOL_CALLS: usize = 128;
 const DEFAULT_MAX_PARALLEL_TOOL_CALLS: usize = 8;
+const DEFAULT_MAX_TOTAL_TOKENS: u64 = 0;
 const DEFAULT_MAX_TURN_SECONDS: u64 = 10 * 60;
 const DEFAULT_MAX_OPENAI_REQUEST_SECONDS: u64 = 120;
 
 const MAX_MAX_AGENT_STEPS: usize = 10_000;
 const MAX_MAX_TOOL_CALLS: usize = 10_000;
 const MAX_MAX_PARALLEL_TOOL_CALLS: usize = 128;
+const MAX_MAX_TOTAL_TOKENS: u64 = 10_000_000;
 const MAX_MAX_TURN_SECONDS: u64 = 24 * 60 * 60;
 const MAX_MAX_OPENAI_REQUEST_SECONDS: u64 = 60 * 60;
 
@@ -38,6 +40,8 @@ pub enum AgentTurnError {
     Cancelled,
     #[error("budget exceeded: {budget}")]
     BudgetExceeded { budget: &'static str },
+    #[error("token budget exceeded: used {used} > limit {limit}")]
+    TokenBudgetExceeded { used: u64, limit: u64 },
     #[error("openai request timed out")]
     OpenAiRequestTimedOut,
 }
@@ -105,6 +109,12 @@ pub async fn run_agent_turn(
         1,
         MAX_MAX_OPENAI_REQUEST_SECONDS,
     ));
+    let max_total_tokens = parse_env_u64(
+        "CODE_PM_AGENT_MAX_TOTAL_TOKENS",
+        DEFAULT_MAX_TOTAL_TOKENS,
+        0,
+        MAX_MAX_TOTAL_TOKENS,
+    );
     let parallel_tool_calls = parse_env_bool("CODE_PM_AGENT_PARALLEL_TOOL_CALLS", false);
     let max_parallel_tool_calls = parse_env_usize(
         "CODE_PM_AGENT_MAX_PARALLEL_TOOL_CALLS",
@@ -146,6 +156,7 @@ pub async fn run_agent_turn(
     let mut last_usage: Option<Value> = None;
     let mut last_text = String::new();
     let mut tool_calls_total = 0usize;
+    let mut total_tokens_used = 0u64;
     let mut finished = false;
     let started_at = tokio::time::Instant::now();
 
@@ -273,6 +284,20 @@ pub async fn run_agent_turn(
             .usage
             .as_ref()
             .and_then(|usage| serde_json::to_value(usage).ok());
+        if max_total_tokens > 0 {
+            if let Some(tokens) = resp.usage.as_ref().and_then(usage_total_tokens) {
+                total_tokens_used = total_tokens_used.saturating_add(tokens);
+                if total_tokens_used > max_total_tokens {
+                    return Err(
+                        AgentTurnError::TokenBudgetExceeded {
+                            used: total_tokens_used,
+                            limit: max_total_tokens,
+                        }
+                        .into(),
+                    );
+                }
+            }
+        }
 
         let mut function_calls = Vec::new();
         last_text = extract_assistant_text(&resp.output);
@@ -598,6 +623,15 @@ fn tool_is_read_only(tool_name: &str) -> bool {
     )
 }
 
+fn usage_total_tokens(usage: &pm_openai::TokenUsage) -> Option<u64> {
+    usage.total_tokens.or_else(|| match (usage.input_tokens, usage.output_tokens) {
+        (Some(input), Some(output)) => input.checked_add(output),
+        (Some(input), None) => Some(input),
+        (None, Some(output)) => Some(output),
+        (None, None) => None,
+    })
+}
+
 async fn build_conversation(
     server: &super::Server,
     thread_id: pm_protocol::ThreadId,
@@ -842,6 +876,32 @@ mod tool_parallelism_tests {
 
         assert_eq!(parse_bool_value("maybe"), None);
         assert_eq!(parse_bool_value(""), None);
+    }
+
+    #[test]
+    fn usage_total_tokens_prefers_total_tokens() {
+        let usage = pm_openai::TokenUsage {
+            input_tokens: Some(10),
+            output_tokens: Some(5),
+            total_tokens: Some(20),
+            input_tokens_details: None,
+            output_tokens_details: None,
+            other: std::collections::BTreeMap::new(),
+        };
+        assert_eq!(usage_total_tokens(&usage), Some(20));
+    }
+
+    #[test]
+    fn usage_total_tokens_falls_back_to_input_plus_output() {
+        let usage = pm_openai::TokenUsage {
+            input_tokens: Some(10),
+            output_tokens: Some(5),
+            total_tokens: None,
+            input_tokens_details: None,
+            output_tokens_details: None,
+            other: std::collections::BTreeMap::new(),
+        };
+        assert_eq!(usage_total_tokens(&usage), Some(15));
     }
 
     #[test]
