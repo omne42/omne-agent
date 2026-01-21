@@ -77,13 +77,13 @@
 - `pm-app-server`：当 `sandbox_policy=read_only` 时，`file/write`/`file/patch`/`file/edit`/`file/delete`/`fs/mkdir`/`process/start` 会直接拒绝（ToolStatus=Denied）。
 - `pm-app-server approvals`：`approval/decide` 支持 `remember=true`（session 内记忆 approve/deny），同类操作无需重复弹审批；拒绝也会被记住并直接拦截。
 - `pm-app-server process/start`：引入 `pm-execpolicy` gate（`prefix_rule`）：`forbidden` 直接拒绝并写入 `ToolStatus::Denied`；`manual` 策略下仅当 `prompt`/未匹配时才要求 approval（用 allowlist 降低骚扰）。
-- `pm-app-server turn/interrupt`：会尝试终止同一 turn 下仍在运行的后台进程（best-effort）。
+- `pm-app-server turn/interrupt`：会先对同一 turn 下仍在运行的后台进程发送 `process/interrupt`（SIGINT，best-effort），随后再 fallback `process/kill`（避免直接硬杀导致环境残留）。
 - `pm-app-server turn/interrupt`：当 turn 被中断时，`TurnCompleted` 会携带 `reason`（与 `TurnInterruptRequested` 一致），便于 resume 拼合历史与审计。
 - `pm-app-server process/start`：默认 cwd 改为 thread 的 `cwd`，并对 `cwd` 做 root + symlink 边界校验（见 `pm-core::sandbox`）。
 - 明确 v0.2.0 的“运行中可观测性”：中间态 artifacts 必须流式落盘；任意后台进程/多子 agent 进程必须可随时 inspect/attach/kill（文档层先固化要求）。
 - 细化 v0.2.0 “不会丢”的事件流语义：订阅端 `since_seq` 重放、允许重复（at-least-once）+ `seq` 去重；补齐 approval 记忆范围、artifact metadata/分片、通知节流与 process registry 最小字段（见 `docs/v0.2.0_parity.md` / `docs/rts_workflow.md`）。
 - `pm-protocol`：`TurnCompleted` 事件增加可选 `reason` 字段（便于 resume 修复与审计）。
-- `pm-protocol`：新增 `ProcessId` 与 `ProcessStarted/ProcessKillRequested/ProcessExited` 事件，作为 process registry 的可回放真相来源。
+- `pm-protocol`：新增 `ProcessId` 与 `ProcessStarted/ProcessInterruptRequested/ProcessKillRequested/ProcessExited` 事件，作为 process registry 的可回放真相来源。
 - `pm-protocol`：新增 `ToolId` 与 `ToolStarted/ToolCompleted` 事件，作为 tool runtime 的可审计边界。
 - `pm-protocol`：新增 `ApprovalId`、`ApprovalRequested/ApprovalDecided` 与 `ThreadConfigUpdated(approval_policy)`，为 approvals 做事件化与回放打底。
 - `pm-protocol`：新增 `AssistantMessage` 事件，用于把模型输出落盘并支撑 resume 拼合对话上下文。

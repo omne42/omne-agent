@@ -1345,13 +1345,24 @@ async fn main() -> anyhow::Result<()> {
                             .or_else(|| Some("turn interrupted".to_string()));
                         match rt.interrupt_turn(params.turn_id, kill_reason.clone()).await {
                             Ok(()) => {
-                                kill_processes_for_turn(
+                                interrupt_processes_for_turn(
                                     &server,
                                     params.thread_id,
                                     params.turn_id,
-                                    kill_reason,
+                                    kill_reason.clone(),
                                 )
                                 .await;
+                                let server = server.clone();
+                                tokio::spawn(async move {
+                                    tokio::time::sleep(Duration::from_secs(2)).await;
+                                    kill_processes_for_turn(
+                                        &server,
+                                        params.thread_id,
+                                        params.turn_id,
+                                        kill_reason,
+                                    )
+                                    .await;
+                                });
                                 JsonRpcResponse::ok(id, serde_json::json!({ "ok": true }))
                             }
                             Err(err) => JsonRpcResponse::err(
@@ -2560,6 +2571,8 @@ async fn handle_thread_archive(
             .interrupt_turn(turn_id, reason.clone())
             .await
             .context("interrupt active turn");
+        interrupt_processes_for_turn(server, params.thread_id, turn_id, reason.clone()).await;
+        tokio::time::sleep(Duration::from_secs(2)).await;
         kill_processes_for_turn(server, params.thread_id, turn_id, reason.clone()).await;
 
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
@@ -2696,6 +2709,8 @@ async fn handle_thread_pause(server: &Server, params: ThreadPauseParams) -> anyh
             .interrupt_turn(turn_id, reason.clone())
             .await
             .context("interrupt active turn");
+        interrupt_processes_for_turn(server, params.thread_id, turn_id, reason.clone()).await;
+        tokio::time::sleep(Duration::from_secs(2)).await;
         kill_processes_for_turn(server, params.thread_id, turn_id, reason.clone()).await;
 
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
@@ -5015,6 +5030,35 @@ async fn kill_processes_for_turn(
             let _ = entry
                 .cmd_tx
                 .send(ProcessCommand::Kill {
+                    reason: reason.clone(),
+                })
+                .await;
+        }
+    }
+}
+
+async fn interrupt_processes_for_turn(
+    server: &Server,
+    thread_id: ThreadId,
+    turn_id: TurnId,
+    reason: Option<String>,
+) {
+    let entries = {
+        let entries = server.processes.lock().await;
+        entries.values().cloned().collect::<Vec<_>>()
+    };
+
+    for entry in entries {
+        let should_interrupt = {
+            let info = entry.info.lock().await;
+            info.thread_id == thread_id
+                && info.turn_id == Some(turn_id)
+                && matches!(info.status, ProcessStatus::Running)
+        };
+        if should_interrupt {
+            let _ = entry
+                .cmd_tx
+                .send(ProcessCommand::Interrupt {
                     reason: reason.clone(),
                 })
                 .await;
