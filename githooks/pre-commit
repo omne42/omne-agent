@@ -34,6 +34,28 @@ if [[ "$other_count" -eq 0 ]]; then
   exit 1
 fi
 
+if [[ "${CODE_PM_ALLOW_CHANGELOG_RELEASE_EDIT:-}" != "1" ]]; then
+  head_changelog="$(git show HEAD:CHANGELOG.md 2>/dev/null || true)"
+  index_changelog="$(git show :CHANGELOG.md 2>/dev/null || true)"
+
+  if [[ -n "${head_changelog}" && -n "${index_changelog}" ]]; then
+    head_released="$(printf '%s\n' "${head_changelog}" | awk 'BEGIN{s=0} /^## \\[[0-9]/{s=1} s{print}')"
+    index_released="$(printf '%s\n' "${index_changelog}" | awk 'BEGIN{s=0} /^## \\[[0-9]/{s=1} s{print}')"
+
+    if [[ "${head_released}" != "${index_released}" ]]; then
+      cat >&2 <<'EOF'
+pre-commit: refusing to modify released CHANGELOG sections.
+
+Only edit entries under [Unreleased]. Released version sections (e.g. [0.x.y]) are immutable.
+
+If you are cutting a release and intentionally updating versioned sections, re-run with:
+  CODE_PM_ALLOW_CHANGELOG_RELEASE_EDIT=1 git commit ...
+EOF
+      exit 1
+    fi
+  fi
+fi
+
 workspace_root=""
 if [[ -f "$repo_root/Cargo.toml" ]]; then
   workspace_root="$repo_root"
