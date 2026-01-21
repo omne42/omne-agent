@@ -260,6 +260,14 @@ fn format_event_for_context(kind: &ThreadEventKind) -> Option<String> {
             "[thread/unarchived] reason={}",
             reason.as_deref().unwrap_or("")
         )),
+        ThreadEventKind::ThreadPaused { reason } => Some(format!(
+            "[thread/paused] reason={}",
+            reason.as_deref().unwrap_or("")
+        )),
+        ThreadEventKind::ThreadUnpaused { reason } => Some(format!(
+            "[thread/unpaused] reason={}",
+            reason.as_deref().unwrap_or("")
+        )),
         ThreadEventKind::TurnInterruptRequested { turn_id, reason } => Some(format!(
             "[turn/interrupt_requested] turn_id={turn_id} reason={}",
             reason.as_deref().unwrap_or("")
@@ -1159,12 +1167,16 @@ async fn run_tool_call_once(
             let handle = rt.handle.lock().await;
             let state = handle.state();
             let archived_at = state.archived_at.and_then(|ts| ts.format(&Rfc3339).ok());
+            let paused_at = state.paused_at.and_then(|ts| ts.format(&Rfc3339).ok());
             Ok(serde_json::json!({
                 "thread_id": handle.thread_id(),
                 "cwd": state.cwd,
                 "archived": state.archived,
                 "archived_at": archived_at,
                 "archived_reason": state.archived_reason,
+                "paused": state.paused,
+                "paused_at": paused_at,
+                "paused_reason": state.paused_reason,
                 "approval_policy": state.approval_policy,
                 "sandbox_policy": state.sandbox_policy,
                 "model": state.model,

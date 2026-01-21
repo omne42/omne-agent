@@ -34,6 +34,7 @@
 - `pm-app-server` 新增 `thread/state`：返回 thread 派生状态（active turn、`last_seq`、interrupt 标记）。
 - `pm-app-server` 新增 `thread/fork`：复制 thread 的对话/审批/配置事件到新 thread（跳过 tool/process 事件与 thread 专属 artifact 路径，并自动跳过进行中的 active turn），用于多子 agent 并行。
 - `pm-app-server` 新增 `thread/archive`/`thread/unarchive`：归档 thread（默认拒绝含 active turn/running process；`force=true` 可中断 turn 并终止进程）。
+- `pm-app-server` 新增 `thread/pause`/`thread/unpause`：暂停/恢复 thread（pause 会尽力中断 active turn 并终止该 turn 启动的进程），并在 `thread/attention` 与 `thread/state` 中暴露 `paused` 状态；`turn/start` 现在会拒绝对 `archived/paused` thread 启动新 turn；`pm thread pause/unpause` 提供对应 CLI。
 - `pm-app-server thread/events`：支持 `max_events` 分页，并返回 `has_more`/`thread_last_seq` 便于订阅端处理 lag 与续读。
 - `pm-app-server thread/subscribe`：长轮询读取 thread events（`wait_ms` 超时），用于实现“不断线不丢”的订阅式消费（`since_seq` + `seq` 去重）。
 - `pm-app-server` 新增 thread 清理 API：`thread/delete(force?)` 与 `thread/clear_artifacts(force?)`，用于一键清除 history 与中间态产物。

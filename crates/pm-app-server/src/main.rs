@@ -178,7 +178,14 @@ impl ThreadRuntime {
         input: String,
     ) -> anyhow::Result<TurnId> {
         let mut handle = self.handle.lock().await;
-        if handle.state().active_turn_id.is_some() {
+        let state = handle.state();
+        if state.archived {
+            anyhow::bail!("thread is archived");
+        }
+        if state.paused {
+            anyhow::bail!("thread is paused");
+        }
+        if state.active_turn_id.is_some() {
             anyhow::bail!("turn already active");
         }
 
@@ -337,6 +344,20 @@ struct ThreadArchiveParams {
 
 #[derive(Debug, Deserialize)]
 struct ThreadUnarchiveParams {
+    thread_id: ThreadId,
+    #[serde(default)]
+    reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ThreadPauseParams {
+    thread_id: ThreadId,
+    #[serde(default)]
+    reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ThreadUnpauseParams {
     thread_id: ThreadId,
     #[serde(default)]
     reason: Option<String>,
@@ -839,6 +860,34 @@ async fn main() -> anyhow::Result<()> {
                     ),
                 }
             }
+            "thread/pause" => match serde_json::from_value::<ThreadPauseParams>(request.params) {
+                Ok(params) => match handle_thread_pause(&server, params).await {
+                    Ok(result) => JsonRpcResponse::ok(id, result),
+                    Err(err) => JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None),
+                },
+                Err(err) => JsonRpcResponse::err(
+                    id,
+                    JSONRPC_INVALID_PARAMS,
+                    "invalid params",
+                    Some(serde_json::json!({ "error": err.to_string() })),
+                ),
+            },
+            "thread/unpause" => {
+                match serde_json::from_value::<ThreadUnpauseParams>(request.params) {
+                    Ok(params) => match handle_thread_unpause(&server, params).await {
+                        Ok(result) => JsonRpcResponse::ok(id, result),
+                        Err(err) => {
+                            JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None)
+                        }
+                    },
+                    Err(err) => JsonRpcResponse::err(
+                        id,
+                        JSONRPC_INVALID_PARAMS,
+                        "invalid params",
+                        Some(serde_json::json!({ "error": err.to_string() })),
+                    ),
+                }
+            }
             "thread/delete" => match serde_json::from_value::<ThreadDeleteParams>(request.params) {
                 Ok(params) => match handle_thread_delete(&server, params).await {
                     Ok(result) => JsonRpcResponse::ok(id, result),
@@ -981,6 +1030,7 @@ async fn main() -> anyhow::Result<()> {
                         let archived_at = state
                             .archived_at
                             .and_then(|ts| ts.format(&Rfc3339).ok());
+                        let paused_at = state.paused_at.and_then(|ts| ts.format(&Rfc3339).ok());
                         JsonRpcResponse::ok(
                             id,
                             serde_json::json!({
@@ -989,6 +1039,9 @@ async fn main() -> anyhow::Result<()> {
                                 "archived": state.archived,
                                 "archived_at": archived_at,
                                 "archived_reason": state.archived_reason,
+                                "paused": state.paused,
+                                "paused_at": paused_at,
+                                "paused_reason": state.paused_reason,
                                 "approval_policy": state.approval_policy,
                                 "sandbox_policy": state.sandbox_policy,
                                 "model": state.model,
@@ -1497,6 +1550,9 @@ async fn handle_thread_attention(
         archived,
         archived_at,
         archived_reason,
+        paused,
+        paused_at,
+        paused_reason,
         approval_policy,
         sandbox_policy,
         model,
@@ -1515,6 +1571,9 @@ async fn handle_thread_attention(
             state.archived,
             state.archived_at.and_then(|ts| ts.format(&Rfc3339).ok()),
             state.archived_reason.clone(),
+            state.paused,
+            state.paused_at.and_then(|ts| ts.format(&Rfc3339).ok()),
+            state.paused_reason.clone(),
             state.approval_policy,
             state.sandbox_policy,
             state.model.clone(),
@@ -1583,6 +1642,8 @@ async fn handle_thread_attention(
         "need_approval"
     } else if active_turn_id.is_some() || !running_processes.is_empty() {
         "running"
+    } else if paused {
+        "paused"
     } else if archived {
         "archived"
     } else {
@@ -1602,6 +1663,9 @@ async fn handle_thread_attention(
         "archived": archived,
         "archived_at": archived_at,
         "archived_reason": archived_reason,
+        "paused": paused,
+        "paused_at": paused_at,
+        "paused_reason": paused_reason,
         "approval_policy": approval_policy,
         "sandbox_policy": sandbox_policy,
         "model": model,
@@ -1642,6 +1706,8 @@ async fn handle_thread_list_meta(
             "need_approval"
         } else if state.active_turn_id.is_some() || !state.running_processes.is_empty() {
             "running"
+        } else if state.paused {
+            "paused"
         } else {
             match state.last_turn_status {
                 Some(pm_protocol::TurnStatus::Completed) => "done",
@@ -2270,6 +2336,101 @@ async fn handle_thread_unarchive(
         "thread_id": params.thread_id,
         "archived": false,
         "already_unarchived": false,
+    }))
+}
+
+async fn handle_thread_pause(server: &Server, params: ThreadPauseParams) -> anyhow::Result<Value> {
+    let thread_rt = server.get_or_load_thread(params.thread_id).await?;
+
+    let (already_paused, archived, active_turn_id) = {
+        let handle = thread_rt.handle.lock().await;
+        let state = handle.state();
+        (state.paused, state.archived, state.active_turn_id)
+    };
+
+    if archived {
+        anyhow::bail!("refusing to pause an archived thread (unarchive first)");
+    }
+
+    if already_paused {
+        return Ok(serde_json::json!({
+            "thread_id": params.thread_id,
+            "paused": true,
+            "already_paused": true,
+        }));
+    }
+
+    let reason = params
+        .reason
+        .clone()
+        .or_else(|| Some("thread paused".to_string()));
+
+    if let Some(turn_id) = active_turn_id {
+        let _ = thread_rt
+            .interrupt_turn(turn_id, reason.clone())
+            .await
+            .context("interrupt active turn");
+        kill_processes_for_turn(server, params.thread_id, turn_id, reason.clone()).await;
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let done = {
+                let handle = thread_rt.handle.lock().await;
+                handle.state().active_turn_id.is_none()
+            };
+            if done {
+                break;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+    }
+
+    thread_rt
+        .append_event(pm_protocol::ThreadEventKind::ThreadPaused {
+            reason: reason.clone(),
+        })
+        .await?;
+
+    Ok(serde_json::json!({
+        "thread_id": params.thread_id,
+        "paused": true,
+        "already_paused": false,
+        "interrupted_turn_id": active_turn_id,
+    }))
+}
+
+async fn handle_thread_unpause(
+    server: &Server,
+    params: ThreadUnpauseParams,
+) -> anyhow::Result<Value> {
+    let thread_rt = server.get_or_load_thread(params.thread_id).await?;
+
+    let already_unpaused = {
+        let handle = thread_rt.handle.lock().await;
+        !handle.state().paused
+    };
+
+    if already_unpaused {
+        return Ok(serde_json::json!({
+            "thread_id": params.thread_id,
+            "paused": false,
+            "already_unpaused": true,
+        }));
+    }
+
+    thread_rt
+        .append_event(pm_protocol::ThreadEventKind::ThreadUnpaused {
+            reason: params.reason,
+        })
+        .await?;
+
+    Ok(serde_json::json!({
+        "thread_id": params.thread_id,
+        "paused": false,
+        "already_unpaused": false,
     }))
 }
 

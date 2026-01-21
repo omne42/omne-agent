@@ -86,6 +86,16 @@ enum ThreadCommand {
         #[arg(long)]
         reason: Option<String>,
     },
+    Pause {
+        thread_id: ThreadId,
+        #[arg(long)]
+        reason: Option<String>,
+    },
+    Unpause {
+        thread_id: ThreadId,
+        #[arg(long)]
+        reason: Option<String>,
+    },
     Delete {
         thread_id: ThreadId,
         #[arg(long, default_value_t = false)]
@@ -394,6 +404,14 @@ async fn main() -> anyhow::Result<()> {
             }
             ThreadCommand::Unarchive { thread_id, reason } => {
                 let result = app.thread_unarchive(thread_id, reason).await?;
+                print_json_or_pretty(true, &result)?;
+            }
+            ThreadCommand::Pause { thread_id, reason } => {
+                let result = app.thread_pause(thread_id, reason).await?;
+                print_json_or_pretty(true, &result)?;
+            }
+            ThreadCommand::Unpause { thread_id, reason } => {
+                let result = app.thread_unpause(thread_id, reason).await?;
                 print_json_or_pretty(true, &result)?;
             }
             ThreadCommand::Delete {
@@ -1345,6 +1363,36 @@ impl App {
     ) -> anyhow::Result<Value> {
         self.rpc(
             "thread/unarchive",
+            serde_json::json!({
+                "thread_id": thread_id,
+                "reason": reason,
+            }),
+        )
+        .await
+    }
+
+    async fn thread_pause(
+        &mut self,
+        thread_id: ThreadId,
+        reason: Option<String>,
+    ) -> anyhow::Result<Value> {
+        self.rpc(
+            "thread/pause",
+            serde_json::json!({
+                "thread_id": thread_id,
+                "reason": reason,
+            }),
+        )
+        .await
+    }
+
+    async fn thread_unpause(
+        &mut self,
+        thread_id: ThreadId,
+        reason: Option<String>,
+    ) -> anyhow::Result<Value> {
+        self.rpc(
+            "thread/unpause",
             serde_json::json!({
                 "thread_id": thread_id,
                 "reason": reason,
