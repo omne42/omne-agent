@@ -1,0 +1,206 @@
+async fn handle_thread_configure(
+    server: &Server,
+    params: ThreadConfigureParams,
+) -> anyhow::Result<Value> {
+    let (rt, thread_root) = load_thread_root(server, params.thread_id).await?;
+    let (
+        current_approval_policy,
+        current_sandbox_policy,
+        current_mode,
+        current_model,
+        current_openai_base_url,
+    ) = {
+        let handle = rt.handle.lock().await;
+        let state = handle.state();
+        (
+            state.approval_policy,
+            state.sandbox_policy,
+            state.mode.clone(),
+            state.model.clone(),
+            state.openai_base_url.clone(),
+        )
+    };
+
+    let approval_policy = params.approval_policy.unwrap_or(current_approval_policy);
+    let mode = params
+        .mode
+        .map(|m| m.trim().to_string())
+        .filter(|m| !m.is_empty());
+    if let Some(mode) = mode.as_deref() {
+        let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
+        if catalog.mode(mode).is_none() {
+            let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
+            anyhow::bail!("unknown mode: {mode} (available: {available})");
+        }
+    }
+    let model = params.model.filter(|s| !s.trim().is_empty());
+    let openai_base_url = params.openai_base_url.filter(|s| !s.trim().is_empty());
+
+    let changed = approval_policy != current_approval_policy
+        || params
+            .sandbox_policy
+            .is_some_and(|p| p != current_sandbox_policy)
+        || mode.as_ref().is_some_and(|m| m != &current_mode)
+        || model.as_ref() != current_model.as_ref()
+        || openai_base_url.as_ref() != current_openai_base_url.as_ref();
+
+    if changed {
+        rt.append_event(pm_protocol::ThreadEventKind::ThreadConfigUpdated {
+            approval_policy,
+            sandbox_policy: params.sandbox_policy,
+            mode,
+            model,
+            openai_base_url,
+        })
+        .await?;
+    }
+    Ok(serde_json::json!({ "ok": true }))
+}
+
+async fn handle_thread_config_explain(
+    server: &Server,
+    params: ThreadConfigExplainParams,
+) -> anyhow::Result<Value> {
+    let events = server
+        .thread_store
+        .read_events_since(params.thread_id, EventSeq::ZERO)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("thread not found: {}", params.thread_id))?;
+
+    let thread_cwd = events
+        .iter()
+        .find_map(|event| match &event.kind {
+            pm_protocol::ThreadEventKind::ThreadCreated { cwd, .. } => Some(cwd.clone()),
+            _ => None,
+        })
+        .ok_or_else(|| anyhow::anyhow!("thread cwd is missing: {}", params.thread_id))?;
+    let thread_root = pm_core::resolve_dir(Path::new(&thread_cwd), Path::new(".")).await?;
+    let mode_catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
+
+    let default_model = "gpt-4.1".to_string();
+    let default_openai_base_url = "https://api.openai.com".to_string();
+    let default_mode = "coder".to_string();
+
+    let mut effective_approval_policy = pm_protocol::ApprovalPolicy::AutoApprove;
+    let mut effective_sandbox_policy = pm_protocol::SandboxPolicy::WorkspaceWrite;
+    let mut effective_mode = default_mode.clone();
+    let mut effective_model = default_model.clone();
+    let mut effective_openai_base_url = default_openai_base_url.clone();
+    let mut layers = vec![serde_json::json!({
+        "source": "default",
+        "approval_policy": effective_approval_policy,
+        "sandbox_policy": effective_sandbox_policy,
+        "mode": effective_mode,
+        "model": effective_model,
+        "openai_base_url": effective_openai_base_url,
+    })];
+
+    let env_model = std::env::var("CODE_PM_OPENAI_MODEL")
+        .ok()
+        .filter(|s| !s.trim().is_empty());
+    let env_openai_base_url = std::env::var("CODE_PM_OPENAI_BASE_URL")
+        .ok()
+        .filter(|s| !s.trim().is_empty());
+    if env_model.is_some() || env_openai_base_url.is_some() {
+        if let Some(model) = env_model {
+            effective_model = model;
+        }
+        if let Some(openai_base_url) = env_openai_base_url {
+            effective_openai_base_url = openai_base_url;
+        }
+        layers.push(serde_json::json!({
+            "source": "env",
+            "model": effective_model,
+            "openai_base_url": effective_openai_base_url,
+        }));
+    }
+
+    for event in events {
+        if let pm_protocol::ThreadEventKind::ThreadConfigUpdated {
+            approval_policy,
+            sandbox_policy,
+            mode,
+            model,
+            openai_base_url,
+        } = event.kind
+        {
+            let ts = event.timestamp.format(&Rfc3339)?;
+            effective_approval_policy = approval_policy;
+            if let Some(policy) = sandbox_policy {
+                effective_sandbox_policy = policy;
+            }
+            if let Some(mode) = mode {
+                effective_mode = mode;
+            }
+            if let Some(model) = model {
+                effective_model = model;
+            }
+            if let Some(openai_base_url) = openai_base_url {
+                effective_openai_base_url = openai_base_url;
+            }
+            layers.push(serde_json::json!({
+                "source": "thread",
+                "seq": event.seq.0,
+                "timestamp": ts,
+                "approval_policy": approval_policy,
+                "sandbox_policy": effective_sandbox_policy,
+                "mode": effective_mode,
+                "model": effective_model,
+                "openai_base_url": effective_openai_base_url,
+            }));
+        }
+    }
+
+    let (mode_catalog_source, mode_catalog_path) = match &mode_catalog.source {
+        pm_core::modes::ModeCatalogSource::Builtin => ("builtin", None),
+        pm_core::modes::ModeCatalogSource::Env(path) => ("env", Some(path.display().to_string())),
+        pm_core::modes::ModeCatalogSource::Project(path) => ("project", Some(path.display().to_string())),
+    };
+    let available_modes = mode_catalog
+        .mode_names()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    let effective_mode_name = effective_mode.clone();
+    let effective_mode_def = mode_catalog.mode(&effective_mode).map(|mode| {
+        serde_json::json!({
+            "name": effective_mode_name,
+            "description": mode.description.as_str(),
+            "permissions": {
+                "read": mode.permissions.read,
+                "edit": {
+                    "decision": mode.permissions.edit.decision,
+                    "allow_globs": &mode.permissions.edit.allow_globs,
+                    "deny_globs": &mode.permissions.edit.deny_globs,
+                },
+                "command": mode.permissions.command,
+                "process": {
+                    "inspect": mode.permissions.process.inspect,
+                    "kill": mode.permissions.process.kill,
+                    "interact": mode.permissions.process.interact,
+                },
+                "artifact": mode.permissions.artifact,
+                "browser": mode.permissions.browser,
+            },
+            "tool_overrides": &mode.tool_overrides,
+        })
+    });
+
+    Ok(serde_json::json!({
+        "thread_id": params.thread_id,
+        "effective": {
+            "approval_policy": effective_approval_policy,
+            "sandbox_policy": effective_sandbox_policy,
+            "mode": effective_mode,
+            "model": effective_model,
+            "openai_base_url": effective_openai_base_url,
+        },
+        "mode_catalog": {
+            "source": mode_catalog_source,
+            "path": mode_catalog_path,
+            "load_error": mode_catalog.load_error,
+            "modes": available_modes,
+        },
+        "effective_mode_def": effective_mode_def,
+        "layers": layers,
+    }))
+}
