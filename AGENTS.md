@@ -5,19 +5,25 @@
 - `crates/`: Rust workspace（当前主要实现）
   - `crates/pm-app-server/`: Codex 风格控制面（JSON-RPC over stdio）+ agent loop + tools + JSONL 事件落盘/回放
   - `crates/pm/`: 人类可用 CLI（驱动 `pm-app-server`）：`ask/watch/inbox/exec/thread/process/approval/artifact`
-  - `crates/pm-protocol/`: 事件/ID/协议类型（TypeScript/JSON Schema 由 app-server 生成）
+  - `crates/pm-app-server-protocol/`: app-server JSON-RPC 协议类型；TypeScript/JSON Schema 由此生成
+  - `crates/pm-protocol/`: Thread/Turn/Item 事件、ID、tool/process/approval 类型
   - `crates/pm-eventlog/`: append-only JSONL event log + replay/派生 `ThreadState`
-  - `crates/pm-core/`: 存储/脱敏/sandbox/path 边界等通用能力
+  - `crates/pm-core/`: 存储/脱敏/sandbox/path 边界、threads/modes 等通用能力
   - `crates/pm-openai/`: OpenAI Responses API（含 SSE stream）
   - `crates/pm-jsonrpc/`: JSON-RPC stdio client（`pm` 使用）
   - `crates/pm-execpolicy/`: prefix-rule 执行策略引擎（Codex 子集）
-  - `crates/code-pm/`: v0.1.x 遗留的 git pipeline（保留参考；v0.2.x 以 `pm*` 为主）
+  - `crates/pm-git/`：v0.1.x git adapter（保留参考；v0.2.x 目标是 agent-first CLI）
+  - `crates/pm-http/`：v0.1.x git smart-http server（保留参考）
+  - `crates/code-pm/`: v0.1.x 遗留 CLI（git pipeline；保留参考）
 - `docs/`: 规划、架构与调研文档
   - `docs/start.md`: 目标、范围与约束
   - `docs/implementation_plan.md`: Rust 优先的实现计划与里程碑
+  - `docs/v0.2.0_parity.md`: v0.2.0 对齐清单（以 agent-first CLI 为中心）
+  - `docs/modes.md`: Mode（角色权限边界）规范（可落盘/可审计/可强制）
   - `docs/research/`: 上游快照仓库的设计分析（索引见 `docs/research/README.md`）
 - `example/`: 上游仓库的本地快照，仅供参考；已被 `.gitignore` 忽略（不要在 PR 中修改，也不要将其作为 CI 依赖）
 - `githooks/`: 提交前质量门槛（Conventional Commits + changelog 绑定 + Rust gates）
+- `.codepm/`: 项目级配置目录（可提交/可 review；例如 `modes.yaml`、execpolicy rules 等）
 - `.code_pm/`: 运行时数据目录（本地状态/threads/artifacts；不要提交）
 
 ## 构建、测试与开发命令

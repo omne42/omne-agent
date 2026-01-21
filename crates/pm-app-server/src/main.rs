@@ -245,6 +245,7 @@ struct ThreadRuntime {
     handle: tokio::sync::Mutex<pm_core::ThreadHandle>,
     active_turn: tokio::sync::Mutex<Option<ActiveTurn>>,
     out_tx: mpsc::UnboundedSender<String>,
+    mode_catalog: tokio::sync::OnceCell<pm_core::modes::ModeCatalog>,
 }
 
 impl ThreadRuntime {
@@ -253,7 +254,15 @@ impl ThreadRuntime {
             handle: tokio::sync::Mutex::new(handle),
             active_turn: tokio::sync::Mutex::new(None),
             out_tx,
+            mode_catalog: tokio::sync::OnceCell::new(),
         }
+    }
+
+    async fn mode_catalog(&self, thread_root: &Path) -> &pm_core::modes::ModeCatalog {
+        let root = thread_root.to_path_buf();
+        self.mode_catalog
+            .get_or_init(|| async move { pm_core::modes::ModeCatalog::load(&root).await })
+            .await
     }
 
     fn emit_notification<T>(&self, method: &'static str, params: &T)
@@ -2333,7 +2342,7 @@ async fn handle_thread_configure(
     server: &Server,
     params: ThreadConfigureParams,
 ) -> anyhow::Result<Value> {
-    let rt = server.get_or_load_thread(params.thread_id).await?;
+    let (rt, thread_root) = load_thread_root(server, params.thread_id).await?;
     let (
         current_approval_policy,
         current_sandbox_policy,
@@ -2357,6 +2366,13 @@ async fn handle_thread_configure(
         .mode
         .map(|m| m.trim().to_string())
         .filter(|m| !m.is_empty());
+    if let Some(mode) = mode.as_deref() {
+        let catalog = rt.mode_catalog(&thread_root).await;
+        if catalog.mode(mode).is_none() {
+            let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
+            anyhow::bail!("unknown mode: {mode} (available: {available})");
+        }
+    }
     let model = params.model.filter(|s| !s.trim().is_empty());
     let openai_base_url = params.openai_base_url.filter(|s| !s.trim().is_empty());
 
@@ -3263,13 +3279,96 @@ async fn resolve_file_for_sandbox(
 
 async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Result<Value> {
     let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
-    let sandbox_policy = {
+    let (sandbox_policy, mode_name) = {
         let handle = thread_rt.handle.lock().await;
-        handle.state().sandbox_policy
+        let state = handle.state();
+        (state.sandbox_policy, state.mode.clone())
     };
 
     let max_bytes = params.max_bytes.unwrap_or(256 * 1024).min(4 * 1024 * 1024);
     let tool_id = pm_protocol::ToolId::new();
+
+    let rel_path = pm_core::modes::relative_path_under_root(&thread_root, Path::new(&params.path));
+    let catalog = thread_rt.mode_catalog(&thread_root).await;
+    let mode = match catalog.mode(&mode_name) {
+        Some(mode) => mode,
+        None => {
+            let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
+
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                    tool_id,
+                    turn_id: params.turn_id,
+                    tool: "file/read".to_string(),
+                    params: Some(serde_json::json!({
+                        "path": params.path.clone(),
+                        "max_bytes": max_bytes,
+                    })),
+                })
+                .await?;
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: pm_protocol::ToolStatus::Denied,
+                    error: Some("unknown mode".to_string()),
+                    result: Some(serde_json::json!({
+                        "mode": mode_name,
+                        "decision": pm_core::modes::Decision::Deny,
+                        "available": available,
+                        "load_error": catalog.load_error.clone(),
+                    })),
+                })
+                .await?;
+            return Ok(serde_json::json!({
+                "tool_id": tool_id,
+                "denied": true,
+                "mode": mode_name,
+                "decision": pm_core::modes::Decision::Deny,
+                "available": available,
+                "load_error": catalog.load_error.clone(),
+            }));
+        }
+    };
+
+    let base_decision = match rel_path.as_ref() {
+        Ok(rel) if mode.permissions.edit.is_denied(rel) => pm_core::modes::Decision::Deny,
+        Ok(_) => mode.permissions.read,
+        Err(_) => pm_core::modes::Decision::Deny,
+    };
+    let effective_decision = match mode.tool_overrides.get("file/read").copied() {
+        Some(override_decision) => base_decision.combine(override_decision),
+        None => base_decision,
+    };
+    if effective_decision == pm_core::modes::Decision::Deny {
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                tool_id,
+                turn_id: params.turn_id,
+                tool: "file/read".to_string(),
+                params: Some(serde_json::json!({
+                    "path": params.path.clone(),
+                    "max_bytes": max_bytes,
+                })),
+            })
+            .await?;
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                tool_id,
+                status: pm_protocol::ToolStatus::Denied,
+                error: Some("mode denies file/read".to_string()),
+                result: Some(serde_json::json!({
+                    "mode": mode_name,
+                    "decision": effective_decision,
+                })),
+            })
+            .await?;
+        return Ok(serde_json::json!({
+            "tool_id": tool_id,
+            "denied": true,
+            "mode": mode_name,
+            "decision": effective_decision,
+        }));
+    }
 
     thread_rt
         .append_event(pm_protocol::ThreadEventKind::ToolStarted {
@@ -3345,7 +3444,14 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
     }
 }
 
-const DEFAULT_IGNORED_DIRS: &[&str] = &[".git", ".code_pm", "target", "node_modules", "example"];
+const DEFAULT_IGNORED_DIRS: &[&str] = &[
+    ".git",
+    ".code_pm",
+    ".codepm",
+    "target",
+    "node_modules",
+    "example",
+];
 
 fn should_walk_entry(entry: &walkdir::DirEntry) -> bool {
     if entry.depth() == 0 {
@@ -3363,6 +3469,87 @@ async fn handle_file_glob(server: &Server, params: FileGlobParams) -> anyhow::Re
 
     let max_results = params.max_results.unwrap_or(2000).min(20_000);
     let tool_id = pm_protocol::ToolId::new();
+
+    let mode_name = {
+        let handle = thread_rt.handle.lock().await;
+        handle.state().mode.clone()
+    };
+    let catalog = thread_rt.mode_catalog(&thread_root).await;
+    let mode = match catalog.mode(&mode_name) {
+        Some(mode) => mode,
+        None => {
+            let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
+            let decision = pm_core::modes::Decision::Deny;
+
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                    tool_id,
+                    turn_id: params.turn_id,
+                    tool: "file/glob".to_string(),
+                    params: Some(serde_json::json!({
+                        "pattern": params.pattern.clone(),
+                        "max_results": max_results,
+                    })),
+                })
+                .await?;
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: pm_protocol::ToolStatus::Denied,
+                    error: Some("unknown mode".to_string()),
+                    result: Some(serde_json::json!({
+                        "mode": mode_name,
+                        "decision": decision,
+                        "available": available,
+                        "load_error": catalog.load_error.clone(),
+                    })),
+                })
+                .await?;
+            return Ok(serde_json::json!({
+                "tool_id": tool_id,
+                "denied": true,
+                "mode": mode_name,
+                "decision": decision,
+                "available": available,
+                "load_error": catalog.load_error.clone(),
+            }));
+        }
+    };
+    let base_decision = mode.permissions.read;
+    let effective_decision = match mode.tool_overrides.get("file/glob").copied() {
+        Some(override_decision) => base_decision.combine(override_decision),
+        None => base_decision,
+    };
+    if effective_decision == pm_core::modes::Decision::Deny {
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                tool_id,
+                turn_id: params.turn_id,
+                tool: "file/glob".to_string(),
+                params: Some(serde_json::json!({
+                    "pattern": params.pattern.clone(),
+                    "max_results": max_results,
+                })),
+            })
+            .await?;
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                tool_id,
+                status: pm_protocol::ToolStatus::Denied,
+                error: Some("mode denies file/glob".to_string()),
+                result: Some(serde_json::json!({
+                    "mode": mode_name,
+                    "decision": effective_decision,
+                })),
+            })
+            .await?;
+        return Ok(serde_json::json!({
+            "tool_id": tool_id,
+            "denied": true,
+            "mode": mode_name,
+            "decision": effective_decision,
+        }));
+    }
 
     thread_rt
         .append_event(pm_protocol::ThreadEventKind::ToolStarted {
@@ -3472,6 +3659,95 @@ async fn handle_file_grep(server: &Server, params: FileGrepParams) -> anyhow::Re
         .min(16 * 1024 * 1024);
     let max_files = params.max_files.unwrap_or(20_000).min(200_000);
     let tool_id = pm_protocol::ToolId::new();
+
+    let mode_name = {
+        let handle = thread_rt.handle.lock().await;
+        handle.state().mode.clone()
+    };
+    let catalog = thread_rt.mode_catalog(&thread_root).await;
+    let mode = match catalog.mode(&mode_name) {
+        Some(mode) => mode,
+        None => {
+            let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
+            let decision = pm_core::modes::Decision::Deny;
+
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                    tool_id,
+                    turn_id: params.turn_id,
+                    tool: "file/grep".to_string(),
+                    params: Some(serde_json::json!({
+                        "query": params.query.clone(),
+                        "is_regex": params.is_regex,
+                        "include_glob": params.include_glob,
+                        "max_matches": max_matches,
+                        "max_bytes_per_file": max_bytes_per_file,
+                        "max_files": max_files,
+                    })),
+                })
+                .await?;
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: pm_protocol::ToolStatus::Denied,
+                    error: Some("unknown mode".to_string()),
+                    result: Some(serde_json::json!({
+                        "mode": mode_name,
+                        "decision": decision,
+                        "available": available,
+                        "load_error": catalog.load_error.clone(),
+                    })),
+                })
+                .await?;
+            return Ok(serde_json::json!({
+                "tool_id": tool_id,
+                "denied": true,
+                "mode": mode_name,
+                "decision": decision,
+                "available": available,
+                "load_error": catalog.load_error.clone(),
+            }));
+        }
+    };
+    let base_decision = mode.permissions.read;
+    let effective_decision = match mode.tool_overrides.get("file/grep").copied() {
+        Some(override_decision) => base_decision.combine(override_decision),
+        None => base_decision,
+    };
+    if effective_decision == pm_core::modes::Decision::Deny {
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                tool_id,
+                turn_id: params.turn_id,
+                tool: "file/grep".to_string(),
+                params: Some(serde_json::json!({
+                    "query": params.query.clone(),
+                    "is_regex": params.is_regex,
+                    "include_glob": params.include_glob,
+                    "max_matches": max_matches,
+                    "max_bytes_per_file": max_bytes_per_file,
+                    "max_files": max_files,
+                })),
+            })
+            .await?;
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                tool_id,
+                status: pm_protocol::ToolStatus::Denied,
+                error: Some("mode denies file/grep".to_string()),
+                result: Some(serde_json::json!({
+                    "mode": mode_name,
+                    "decision": effective_decision,
+                })),
+            })
+            .await?;
+        return Ok(serde_json::json!({
+            "tool_id": tool_id,
+            "denied": true,
+            "mode": mode_name,
+            "decision": effective_decision,
+        }));
+    }
 
     thread_rt
         .append_event(pm_protocol::ThreadEventKind::ToolStarted {
@@ -3626,11 +3902,13 @@ async fn handle_file_write(server: &Server, params: FileWriteParams) -> anyhow::
     let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
 
     let create_parent_dirs = params.create_parent_dirs.unwrap_or(true);
-    let (approval_policy, sandbox_policy) = {
+    let (approval_policy, sandbox_policy, mode_name) = {
         let handle = thread_rt.handle.lock().await;
+        let state = handle.state();
         (
-            handle.state().approval_policy,
-            handle.state().sandbox_policy,
+            state.approval_policy,
+            state.sandbox_policy,
+            state.mode.clone(),
         )
     };
     let tool_id = pm_protocol::ToolId::new();
@@ -3666,6 +3944,83 @@ async fn handle_file_write(server: &Server, params: FileWriteParams) -> anyhow::
             "sandbox_policy": sandbox_policy,
         }));
     }
+
+    let rel_path = pm_core::modes::relative_path_under_root(&thread_root, Path::new(&params.path));
+    let catalog = thread_rt.mode_catalog(&thread_root).await;
+    let mode = match catalog.mode(&mode_name) {
+        Some(mode) => mode,
+        None => {
+            let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
+            let decision = pm_core::modes::Decision::Deny;
+
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                    tool_id,
+                    turn_id: params.turn_id,
+                    tool: "file/write".to_string(),
+                    params: Some(approval_params),
+                })
+                .await?;
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: pm_protocol::ToolStatus::Denied,
+                    error: Some("unknown mode".to_string()),
+                    result: Some(serde_json::json!({
+                        "mode": mode_name,
+                        "decision": decision,
+                        "available": available,
+                        "load_error": catalog.load_error.clone(),
+                    })),
+                })
+                .await?;
+            return Ok(serde_json::json!({
+                "tool_id": tool_id,
+                "denied": true,
+                "mode": mode_name,
+                "decision": decision,
+                "available": available,
+                "load_error": catalog.load_error.clone(),
+            }));
+        }
+    };
+
+    let base_decision = match rel_path.as_ref() {
+        Ok(rel) => mode.permissions.edit.decision_for_path(rel),
+        Err(_) => pm_core::modes::Decision::Deny,
+    };
+    let effective_decision = match mode.tool_overrides.get("file/write").copied() {
+        Some(override_decision) => base_decision.combine(override_decision),
+        None => base_decision,
+    };
+    if effective_decision == pm_core::modes::Decision::Deny {
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                tool_id,
+                turn_id: params.turn_id,
+                tool: "file/write".to_string(),
+                params: Some(approval_params),
+            })
+            .await?;
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                tool_id,
+                status: pm_protocol::ToolStatus::Denied,
+                error: Some("mode denies file/write".to_string()),
+                result: Some(serde_json::json!({
+                    "mode": mode_name,
+                    "decision": effective_decision,
+                })),
+            })
+            .await?;
+        return Ok(serde_json::json!({
+            "tool_id": tool_id,
+            "denied": true,
+            "mode": mode_name,
+            "decision": effective_decision,
+        }));
+    }
+
     if approval_policy == pm_protocol::ApprovalPolicy::Manual {
         match params.approval_id {
             Some(approval_id) => {
@@ -3807,11 +4162,13 @@ async fn handle_file_patch(server: &Server, params: FilePatchParams) -> anyhow::
         .min(16 * 1024 * 1024);
     let patch_bytes = params.patch.len();
 
-    let (approval_policy, sandbox_policy) = {
+    let (approval_policy, sandbox_policy, mode_name) = {
         let handle = thread_rt.handle.lock().await;
+        let state = handle.state();
         (
-            handle.state().approval_policy,
-            handle.state().sandbox_policy,
+            state.approval_policy,
+            state.sandbox_policy,
+            state.mode.clone(),
         )
     };
     let tool_id = pm_protocol::ToolId::new();
@@ -3846,6 +4203,83 @@ async fn handle_file_patch(server: &Server, params: FilePatchParams) -> anyhow::
             "sandbox_policy": sandbox_policy,
         }));
     }
+
+    let rel_path = pm_core::modes::relative_path_under_root(&thread_root, Path::new(&params.path));
+    let catalog = thread_rt.mode_catalog(&thread_root).await;
+    let mode = match catalog.mode(&mode_name) {
+        Some(mode) => mode,
+        None => {
+            let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
+            let decision = pm_core::modes::Decision::Deny;
+
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                    tool_id,
+                    turn_id: params.turn_id,
+                    tool: "file/patch".to_string(),
+                    params: Some(approval_params),
+                })
+                .await?;
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: pm_protocol::ToolStatus::Denied,
+                    error: Some("unknown mode".to_string()),
+                    result: Some(serde_json::json!({
+                        "mode": mode_name,
+                        "decision": decision,
+                        "available": available,
+                        "load_error": catalog.load_error.clone(),
+                    })),
+                })
+                .await?;
+            return Ok(serde_json::json!({
+                "tool_id": tool_id,
+                "denied": true,
+                "mode": mode_name,
+                "decision": decision,
+                "available": available,
+                "load_error": catalog.load_error.clone(),
+            }));
+        }
+    };
+
+    let base_decision = match rel_path.as_ref() {
+        Ok(rel) => mode.permissions.edit.decision_for_path(rel),
+        Err(_) => pm_core::modes::Decision::Deny,
+    };
+    let effective_decision = match mode.tool_overrides.get("file/patch").copied() {
+        Some(override_decision) => base_decision.combine(override_decision),
+        None => base_decision,
+    };
+    if effective_decision == pm_core::modes::Decision::Deny {
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                tool_id,
+                turn_id: params.turn_id,
+                tool: "file/patch".to_string(),
+                params: Some(approval_params),
+            })
+            .await?;
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                tool_id,
+                status: pm_protocol::ToolStatus::Denied,
+                error: Some("mode denies file/patch".to_string()),
+                result: Some(serde_json::json!({
+                    "mode": mode_name,
+                    "decision": effective_decision,
+                })),
+            })
+            .await?;
+        return Ok(serde_json::json!({
+            "tool_id": tool_id,
+            "denied": true,
+            "mode": mode_name,
+            "decision": effective_decision,
+        }));
+    }
+
     if approval_policy == pm_protocol::ApprovalPolicy::Manual {
         match params.approval_id {
             Some(approval_id) => {
@@ -4040,11 +4474,13 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
         .unwrap_or(4 * 1024 * 1024)
         .min(16 * 1024 * 1024);
 
-    let (approval_policy, sandbox_policy) = {
+    let (approval_policy, sandbox_policy, mode_name) = {
         let handle = thread_rt.handle.lock().await;
+        let state = handle.state();
         (
-            handle.state().approval_policy,
-            handle.state().sandbox_policy,
+            state.approval_policy,
+            state.sandbox_policy,
+            state.mode.clone(),
         )
     };
     let tool_id = pm_protocol::ToolId::new();
@@ -4079,6 +4515,83 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
             "sandbox_policy": sandbox_policy,
         }));
     }
+
+    let rel_path = pm_core::modes::relative_path_under_root(&thread_root, Path::new(&params.path));
+    let catalog = thread_rt.mode_catalog(&thread_root).await;
+    let mode = match catalog.mode(&mode_name) {
+        Some(mode) => mode,
+        None => {
+            let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
+            let decision = pm_core::modes::Decision::Deny;
+
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                    tool_id,
+                    turn_id: params.turn_id,
+                    tool: "file/edit".to_string(),
+                    params: Some(approval_params),
+                })
+                .await?;
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: pm_protocol::ToolStatus::Denied,
+                    error: Some("unknown mode".to_string()),
+                    result: Some(serde_json::json!({
+                        "mode": mode_name,
+                        "decision": decision,
+                        "available": available,
+                        "load_error": catalog.load_error.clone(),
+                    })),
+                })
+                .await?;
+            return Ok(serde_json::json!({
+                "tool_id": tool_id,
+                "denied": true,
+                "mode": mode_name,
+                "decision": decision,
+                "available": available,
+                "load_error": catalog.load_error.clone(),
+            }));
+        }
+    };
+
+    let base_decision = match rel_path.as_ref() {
+        Ok(rel) => mode.permissions.edit.decision_for_path(rel),
+        Err(_) => pm_core::modes::Decision::Deny,
+    };
+    let effective_decision = match mode.tool_overrides.get("file/edit").copied() {
+        Some(override_decision) => base_decision.combine(override_decision),
+        None => base_decision,
+    };
+    if effective_decision == pm_core::modes::Decision::Deny {
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                tool_id,
+                turn_id: params.turn_id,
+                tool: "file/edit".to_string(),
+                params: Some(approval_params),
+            })
+            .await?;
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                tool_id,
+                status: pm_protocol::ToolStatus::Denied,
+                error: Some("mode denies file/edit".to_string()),
+                result: Some(serde_json::json!({
+                    "mode": mode_name,
+                    "decision": effective_decision,
+                })),
+            })
+            .await?;
+        return Ok(serde_json::json!({
+            "tool_id": tool_id,
+            "denied": true,
+            "mode": mode_name,
+            "decision": effective_decision,
+        }));
+    }
+
     if approval_policy == pm_protocol::ApprovalPolicy::Manual {
         match params.approval_id {
             Some(approval_id) => {
@@ -4255,11 +4768,13 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
 async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow::Result<Value> {
     let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
 
-    let (approval_policy, sandbox_policy) = {
+    let (approval_policy, sandbox_policy, mode_name) = {
         let handle = thread_rt.handle.lock().await;
+        let state = handle.state();
         (
-            handle.state().approval_policy,
-            handle.state().sandbox_policy,
+            state.approval_policy,
+            state.sandbox_policy,
+            state.mode.clone(),
         )
     };
     let tool_id = pm_protocol::ToolId::new();
@@ -4293,6 +4808,83 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
             "sandbox_policy": sandbox_policy,
         }));
     }
+
+    let rel_path = pm_core::modes::relative_path_under_root(&thread_root, Path::new(&params.path));
+    let catalog = thread_rt.mode_catalog(&thread_root).await;
+    let mode = match catalog.mode(&mode_name) {
+        Some(mode) => mode,
+        None => {
+            let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
+            let decision = pm_core::modes::Decision::Deny;
+
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                    tool_id,
+                    turn_id: params.turn_id,
+                    tool: "file/delete".to_string(),
+                    params: Some(approval_params),
+                })
+                .await?;
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: pm_protocol::ToolStatus::Denied,
+                    error: Some("unknown mode".to_string()),
+                    result: Some(serde_json::json!({
+                        "mode": mode_name,
+                        "decision": decision,
+                        "available": available,
+                        "load_error": catalog.load_error.clone(),
+                    })),
+                })
+                .await?;
+            return Ok(serde_json::json!({
+                "tool_id": tool_id,
+                "denied": true,
+                "mode": mode_name,
+                "decision": decision,
+                "available": available,
+                "load_error": catalog.load_error.clone(),
+            }));
+        }
+    };
+
+    let base_decision = match rel_path.as_ref() {
+        Ok(rel) => mode.permissions.edit.decision_for_path(rel),
+        Err(_) => pm_core::modes::Decision::Deny,
+    };
+    let effective_decision = match mode.tool_overrides.get("file/delete").copied() {
+        Some(override_decision) => base_decision.combine(override_decision),
+        None => base_decision,
+    };
+    if effective_decision == pm_core::modes::Decision::Deny {
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                tool_id,
+                turn_id: params.turn_id,
+                tool: "file/delete".to_string(),
+                params: Some(approval_params),
+            })
+            .await?;
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                tool_id,
+                status: pm_protocol::ToolStatus::Denied,
+                error: Some("mode denies file/delete".to_string()),
+                result: Some(serde_json::json!({
+                    "mode": mode_name,
+                    "decision": effective_decision,
+                })),
+            })
+            .await?;
+        return Ok(serde_json::json!({
+            "tool_id": tool_id,
+            "denied": true,
+            "mode": mode_name,
+            "decision": effective_decision,
+        }));
+    }
+
     if approval_policy == pm_protocol::ApprovalPolicy::Manual {
         match params.approval_id {
             Some(approval_id) => {
@@ -4446,11 +5038,13 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
 async fn handle_fs_mkdir(server: &Server, params: FsMkdirParams) -> anyhow::Result<Value> {
     let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
 
-    let (approval_policy, sandbox_policy) = {
+    let (approval_policy, sandbox_policy, mode_name) = {
         let handle = thread_rt.handle.lock().await;
+        let state = handle.state();
         (
-            handle.state().approval_policy,
-            handle.state().sandbox_policy,
+            state.approval_policy,
+            state.sandbox_policy,
+            state.mode.clone(),
         )
     };
     let tool_id = pm_protocol::ToolId::new();
@@ -4484,6 +5078,83 @@ async fn handle_fs_mkdir(server: &Server, params: FsMkdirParams) -> anyhow::Resu
             "sandbox_policy": sandbox_policy,
         }));
     }
+
+    let rel_path = pm_core::modes::relative_path_under_root(&thread_root, Path::new(&params.path));
+    let catalog = thread_rt.mode_catalog(&thread_root).await;
+    let mode = match catalog.mode(&mode_name) {
+        Some(mode) => mode,
+        None => {
+            let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
+            let decision = pm_core::modes::Decision::Deny;
+
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                    tool_id,
+                    turn_id: params.turn_id,
+                    tool: "fs/mkdir".to_string(),
+                    params: Some(approval_params),
+                })
+                .await?;
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: pm_protocol::ToolStatus::Denied,
+                    error: Some("unknown mode".to_string()),
+                    result: Some(serde_json::json!({
+                        "mode": mode_name,
+                        "decision": decision,
+                        "available": available,
+                        "load_error": catalog.load_error.clone(),
+                    })),
+                })
+                .await?;
+            return Ok(serde_json::json!({
+                "tool_id": tool_id,
+                "denied": true,
+                "mode": mode_name,
+                "decision": decision,
+                "available": available,
+                "load_error": catalog.load_error.clone(),
+            }));
+        }
+    };
+
+    let base_decision = match rel_path.as_ref() {
+        Ok(rel) => mode.permissions.edit.decision_for_path(rel),
+        Err(_) => pm_core::modes::Decision::Deny,
+    };
+    let effective_decision = match mode.tool_overrides.get("fs/mkdir").copied() {
+        Some(override_decision) => base_decision.combine(override_decision),
+        None => base_decision,
+    };
+    if effective_decision == pm_core::modes::Decision::Deny {
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                tool_id,
+                turn_id: params.turn_id,
+                tool: "fs/mkdir".to_string(),
+                params: Some(approval_params),
+            })
+            .await?;
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                tool_id,
+                status: pm_protocol::ToolStatus::Denied,
+                error: Some("mode denies fs/mkdir".to_string()),
+                result: Some(serde_json::json!({
+                    "mode": mode_name,
+                    "decision": effective_decision,
+                })),
+            })
+            .await?;
+        return Ok(serde_json::json!({
+            "tool_id": tool_id,
+            "denied": true,
+            "mode": mode_name,
+            "decision": effective_decision,
+        }));
+    }
+
     if approval_policy == pm_protocol::ApprovalPolicy::Manual {
         match params.approval_id {
             Some(approval_id) => {
@@ -5124,11 +5795,13 @@ async fn handle_process_start(
     }
 
     let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
-    let (approval_policy, sandbox_policy) = {
+    let (approval_policy, sandbox_policy, mode_name) = {
         let handle = thread_rt.handle.lock().await;
+        let state = handle.state();
         (
-            handle.state().approval_policy,
-            handle.state().sandbox_policy,
+            state.approval_policy,
+            state.sandbox_policy,
+            state.mode.clone(),
         )
     };
 
@@ -5165,6 +5838,86 @@ async fn handle_process_start(
         return Ok(serde_json::json!({
             "denied": true,
             "sandbox_policy": sandbox_policy,
+        }));
+    }
+
+    let catalog = thread_rt.mode_catalog(&thread_root).await;
+    let mode = match catalog.mode(&mode_name) {
+        Some(mode) => mode,
+        None => {
+            let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
+            let decision = pm_core::modes::Decision::Deny;
+            let tool_id = pm_protocol::ToolId::new();
+
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                    tool_id,
+                    turn_id: params.turn_id,
+                    tool: "process/start".to_string(),
+                    params: Some(serde_json::json!({
+                        "argv": params.argv,
+                        "cwd": cwd_str,
+                    })),
+                })
+                .await?;
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: pm_protocol::ToolStatus::Denied,
+                    error: Some("unknown mode".to_string()),
+                    result: Some(serde_json::json!({
+                        "mode": mode_name,
+                        "decision": decision,
+                        "available": available,
+                        "load_error": catalog.load_error.clone(),
+                    })),
+                })
+                .await?;
+            return Ok(serde_json::json!({
+                "tool_id": tool_id,
+                "denied": true,
+                "mode": mode_name,
+                "decision": decision,
+                "available": available,
+                "load_error": catalog.load_error.clone(),
+            }));
+        }
+    };
+
+    let base_decision = mode.permissions.command;
+    let effective_mode_decision = match mode.tool_overrides.get("process/start").copied() {
+        Some(override_decision) => base_decision.combine(override_decision),
+        None => base_decision,
+    };
+    if effective_mode_decision == pm_core::modes::Decision::Deny {
+        let tool_id = pm_protocol::ToolId::new();
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                tool_id,
+                turn_id: params.turn_id,
+                tool: "process/start".to_string(),
+                params: Some(serde_json::json!({
+                    "argv": params.argv,
+                    "cwd": cwd_str,
+                })),
+            })
+            .await?;
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                tool_id,
+                status: pm_protocol::ToolStatus::Denied,
+                error: Some("mode denies process/start".to_string()),
+                result: Some(serde_json::json!({
+                    "mode": mode_name,
+                    "decision": effective_mode_decision,
+                })),
+            })
+            .await?;
+        return Ok(serde_json::json!({
+            "tool_id": tool_id,
+            "denied": true,
+            "mode": mode_name,
+            "decision": effective_mode_decision,
         }));
     }
 

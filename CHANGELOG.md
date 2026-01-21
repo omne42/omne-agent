@@ -13,6 +13,7 @@
 - 新增 Agent GUI 爆发期产品调研：`docs/research/onecode.md`、`docs/research/superset.md`、`docs/research/aion-ui.md`。
 - 新增 `v0.2.0` 功能对齐与 TODO 汇总：`docs/v0.2.0_parity.md`。
 - 新增 Mode（角色权限边界）规范：`docs/modes.md`（配置发现顺序、`deny/prompt/allow` 语义、`prompt+auto_approve` 的落盘审计规则）。
+- `pm-core`/`pm-app-server`：落地 ModeCatalog（`.codepm/modes.yaml` / `CODE_PM_MODES_FILE`），并在 `file/*` 与 `process/start` 工具入口强制执行 `mode` 的 `deny` 边界（未知 mode 也会拒绝并返回可用列表）。
 - 更新仓库级 `AGENTS.md`：补齐 `crates/*` 结构、Rust gates 与 `pm*` 入口说明。
 - 新增 `pm-jsonrpc`：最小 JSON-RPC over stdio client，用于驱动 `pm-app-server`；并支持接收/转发 JSON-RPC notifications（用于 `item/delta` 等流式事件）。
 - 新增 `pm-app-server-protocol`：导出 app-server 协议的 TypeScript types 与 JSON Schema；`pm-app-server generate-ts --out <dir>` / `pm-app-server generate-json-schema --out <dir>` 可生成对应产物。

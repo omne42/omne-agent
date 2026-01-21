@@ -1,6 +1,7 @@
 pub mod domain;
 pub mod events;
 pub mod hooks;
+pub mod modes;
 pub mod orchestrator;
 pub mod paths;
 pub mod redaction;

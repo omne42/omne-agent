@@ -9,6 +9,7 @@
 ## 1) 术语
 
 - **Mode**：一个命名角色（例如 `architect/coder/reviewer/builder`），定义该角色允许使用的能力边界。
+- **Role（角色）**：人类语义上的职责（Architect/Coder/Reviewer/Builder…）；在系统里以 `mode=<name>` 落盘并生效。
 - **Capability（能力组）**：对工具能力的稳定抽象（例如 `read/edit/command/process/artifact/browser/subagent`）。
 - **Decision**：权限判定结果：`allow | prompt | deny`
   - `deny`：硬拒绝（无论 approval policy 如何都不可执行）。
@@ -16,6 +17,18 @@
   - `allow`：Mode 不拦截（后续仍受 `sandbox/execpolicy/approval policy` 约束）。
 
 合并语义固定为：`deny > prompt > allow`。
+
+### 1.1 Capability → tool 映射（v0.2.0 口径）
+
+> 这是“规范”和“实现”交汇的地方：Capability 是稳定抽象，tool/method 是实现细节；但需要一张表避免讨论跑偏。
+
+- `read`：`file/read`、`file/glob`、`file/grep`
+- `edit`：`file/write`、`file/patch`、`file/edit`、`file/delete`、`fs/mkdir`
+- `command`：`process/start`
+- `process.inspect`：`process/inspect`、`process/tail`、`process/follow`（只读 attach）
+- `process.kill`：`process/interrupt`、`process/kill`
+- `artifact`：`artifact/write`、`artifact/list`、`artifact/read`、`artifact/delete`
+- `browser`：`web/*`（未来）
 
 ---
 
@@ -36,6 +49,12 @@
 6. 内置默认 modes（兜底）
 
 > 注意：`.code_pm/` 是运行时目录（threads/artifacts/state），不承载 project config。
+>
+> `CODE_PM_MODES_FILE`：
+>
+> - 支持绝对路径。
+> - 相对路径按 **thread cwd（workspace root）** 解析（不是按当前进程 cwd）。
+> - 配置文件在 v0.2.0 默认 **按 thread 运行时加载并缓存**；如果你修改了 modes 文件，需要重启 `pm-app-server`（或让 thread 重新加载）才会生效。
 
 ---
 
@@ -125,6 +144,8 @@ modes:
           decision: deny
 ```
 
+> JSON 也是 YAML 的子集：如果你更喜欢 JSON 语法，可以写成 JSON 但仍保存为 `.yaml`，或用 `CODE_PM_MODES_FILE` 指向 `.json`。
+
 ---
 
 ## 6) 内置默认 modes（最小集）
@@ -143,3 +164,13 @@ v0.2.0 内置最小模式（作为没有 project config 时的兜底）：
 - `prompt_strict`/`escalate`：即使 auto_approve 也必须停下来的人类确认（单独的 decision，不要污染 `prompt`）。
 - per-tool 参数约束（例如 `file/write` 限制路径/大小，`process/start` 限制 cwd/env）。
 - 全量的 config layering 与 explain（回答“为什么现在生效的是这个 mode/这个决策”）。
+
+---
+
+## 8) v0.2.0 MVP：已强制执行的边界（实现状态）
+
+> 只写“已经做到了什么”，避免文档把自己写成梦想清单。
+
+- `file/*` 与 `fs/mkdir`：当 `mode` 的 `edit` 对目标路径判定为 `deny` 时，工具调用会被拒绝并落盘 `ToolStatus=Denied`。
+- `process/start`：当 `mode` 的 `command=deny` 时，工具调用会被拒绝并落盘 `ToolStatus=Denied`（后续仍会叠加 `sandbox/execpolicy/approval`）。
+- `file/read|glob|grep`：当 `mode.read=deny` 或目标路径命中默认 deny globs（如 `.code_pm/**`、`.git/**`）时会被拒绝。
