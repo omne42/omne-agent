@@ -1,0 +1,16 @@
+[package]
+name = "pm"
+edition.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+pm-jsonrpc = { path = "../pm-jsonrpc" }
+pm-protocol = { path = "../pm-protocol" }
+serde.workspace = true
+serde_json.workspace = true
+time.workspace = true
+tokio.workspace = true
+tracing-subscriber.workspace = true

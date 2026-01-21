@@ -12,10 +12,12 @@
 - 新增 vNext 目标态“RTS 风格使用流程”文档：`docs/rts_workflow.md`。
 - 新增 Agent GUI 爆发期产品调研：`docs/research/onecode.md`、`docs/research/superset.md`、`docs/research/aion-ui.md`。
 - 新增 `v0.2.0` 功能对齐与 TODO 汇总：`docs/v0.2.0_parity.md`。
+- 新增 `pm-jsonrpc`：最小 JSON-RPC over stdio client，用于驱动 `pm-app-server`。
 - 新增 `pm-protocol`/`pm-eventlog`：为 v0.2.0 落地 Thread/Turn 事件类型与 append-only JSONL event log（thread_id 一致性校验、`seq` 连续、`since_seq` 断点续读、尾部半行自动截断，并提供 `ThreadState` 纯事件派生）。
 - 新增 `pm-execpolicy`：对齐 Codex `prefix_rule` 子集的执行策略引擎（Starlark 语法 + `match/not_match` 例子校验），并提供 `pm-execpolicy check --rules ... <cmd...>` 输出匹配结果 JSON。
 - 新增 `pm-openai`：最小 OpenAI Responses API 客户端与类型（用于 v0.2.0 的 Responses-first agent loop）。
 - 新增 `pm-app-server`：最小 JSON-RPC over stdio 控制面（`initialize` + `thread/*` + `turn/*`），用于验证 v0.2.0 的 thread/turn/interrupt 与落盘回放。
+- 新增 `pm` CLI：作为 `pm-app-server` 的人类可用客户端，支持 `ask/watch --bell`、`thread/*`、`approval/*`、`process/*`（只读查看 + kill），并在 `ask` 中支持 Ctrl-C 触发 `turn/interrupt`。
 - `pm-app-server` 新增 `initialized`（握手确认）与 `thread/loaded`（列出当前已加载 threads）。
 - `pm-app-server` 新增 `thread/list_meta`：批量返回 threads 的派生状态（支持 `include_archived`），减少 UI/CLI 人肉遍历与重复读取 event log。
 - `pm-app-server` 新增 Responses-first agent loop：`turn/start` 会调用 OpenAI Responses API 执行 tool calling（阻塞等待 approval 决策并复跑同一 tool call），并将 assistant 输出落盘为 `AssistantMessage` 事件以支持 resume。
