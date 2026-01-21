@@ -95,7 +95,7 @@
 - `pm-core::sandbox`/`pm-app-server`：`sandbox_policy=danger_full_access` 现在会使用 unrestricted 路径解析（允许绝对路径与系统 symlink，如 macOS `/tmp`），不再误报 “escapes root”。
 - Rust workspace：修复 `cargo clippy -- -D warnings` 下的告警（`pm-jsonrpc` 忽略无 `id` 的 stdout 行、`pm-protocol` 的 id newtype 实现 `Default`、`pm-eventlog` lockfile 显式 `truncate(false)`、以及 `pm-app-server` 若干 clippy cleanups）。
 - `thread/list_meta`：派生 `attention_state` 时现在会考虑 pending approvals 与 running processes（`pm inbox --watch --bell` 能正确提示 `need_approval`）。
-- `thread/list_meta`/`thread/attention`：后台进程以非零 exit code 退出时会派生 `attention_state=failed`（并在 `thread/attention` 返回 `failed_processes` 列表），避免后台失败静默。
+- `thread/list_meta`/`thread/attention`：后台进程以非零 exit code 退出时会派生 `attention_state=failed`（失败优先于 `running`），并在新 turn 开始时清空历史失败集合（避免一次失败导致 thread 永久处于 `failed`）；`pm watch --bell` 也会在 `ProcessExited` 失败时触发提醒。
 - `pm-app-server approvals`：当同类操作被 `remember=true` 记住为 `deny` 时，`file/write|patch|edit|delete`、`fs/mkdir`、`process/start` 现在会返回结构化 `denied` 结果并写入 `ToolStatus=Denied`（不再走内部 error 路径）。
 - `pm-core threads resume`：现在会修复 “ToolStarted 没有对应 ToolCompleted” 的中间态，自动补写 `ToolStatus=Cancelled`（避免崩溃/中断后留下悬空 tool）。
 

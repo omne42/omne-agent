@@ -1800,10 +1800,10 @@ async fn handle_thread_attention(
 
     let attention_state = if !pending_approvals.is_empty() {
         "need_approval"
-    } else if active_turn_id.is_some() || !running_processes.is_empty() {
-        "running"
     } else if !failed_processes.is_empty() {
         "failed"
+    } else if active_turn_id.is_some() || !running_processes.is_empty() {
+        "running"
     } else if paused {
         "paused"
     } else if archived {
@@ -1867,10 +1867,10 @@ async fn handle_thread_list_meta(
             "archived"
         } else if !state.pending_approvals.is_empty() {
             "need_approval"
-        } else if state.active_turn_id.is_some() || !state.running_processes.is_empty() {
-            "running"
         } else if !state.failed_processes.is_empty() {
             "failed"
+        } else if state.active_turn_id.is_some() || !state.running_processes.is_empty() {
+            "running"
         } else if state.paused {
             "paused"
         } else {

@@ -1016,7 +1016,9 @@ async fn run_watch(app: &mut App, args: WatchArgs) -> anyhow::Result<()> {
 
         let mut state_update: Option<&'static str> = None;
         for event in &resp.events {
-            state_update = state_update.or_else(|| attention_state_update(event));
+            if let Some(state) = attention_state_update(event) {
+                state_update = Some(state);
+            }
             if args.json {
                 println!("{}", serde_json::to_string(event)?);
             } else {
@@ -1317,6 +1319,10 @@ fn attention_state_update(event: &ThreadEvent) -> Option<&'static str> {
             TurnStatus::Stuck => Some("stuck"),
         },
         pm_protocol::ThreadEventKind::ProcessStarted { .. } => Some("running"),
+        pm_protocol::ThreadEventKind::ProcessExited { exit_code, .. } => match exit_code {
+            Some(code) if *code != 0 => Some("failed"),
+            _ => None,
+        },
         _ => None,
     }
 }

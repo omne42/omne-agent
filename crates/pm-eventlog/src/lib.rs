@@ -321,6 +321,7 @@ impl ThreadState {
                 }
                 self.active_turn_id = Some(*turn_id);
                 self.active_turn_interrupt_requested = false;
+                self.failed_processes.clear();
             }
             ThreadEventKind::TurnInterruptRequested { turn_id, .. } => {
                 if self.active_turn_id != Some(*turn_id) {
@@ -453,6 +454,78 @@ mod tests {
             })
             .await?;
         assert_eq!(e.seq.0, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn turn_started_clears_failed_processes() -> anyhow::Result<()> {
+        let thread_id = ThreadId::new();
+        let mut state = ThreadState::new(thread_id);
+
+        fn apply(
+            state: &mut ThreadState,
+            thread_id: ThreadId,
+            seq: &mut u64,
+            kind: ThreadEventKind,
+        ) -> anyhow::Result<()> {
+            let event = ThreadEvent {
+                seq: EventSeq(*seq),
+                timestamp: OffsetDateTime::now_utc(),
+                thread_id,
+                kind,
+            };
+            *seq += 1;
+            state.apply(&event)?;
+            Ok(())
+        }
+
+        let process_id = ProcessId::new();
+        let mut seq = 1u64;
+
+        apply(
+            &mut state,
+            thread_id,
+            &mut seq,
+            ThreadEventKind::ThreadCreated {
+                cwd: "/tmp".to_string(),
+            },
+        )?;
+        apply(
+            &mut state,
+            thread_id,
+            &mut seq,
+            ThreadEventKind::ProcessStarted {
+                process_id,
+                turn_id: None,
+                argv: vec!["false".to_string()],
+                cwd: "/tmp".to_string(),
+                stdout_path: "stdout.log".to_string(),
+                stderr_path: "stderr.log".to_string(),
+            },
+        )?;
+        apply(
+            &mut state,
+            thread_id,
+            &mut seq,
+            ThreadEventKind::ProcessExited {
+                process_id,
+                exit_code: Some(1),
+                reason: None,
+            },
+        )?;
+        assert!(state.failed_processes.contains(&process_id));
+
+        apply(
+            &mut state,
+            thread_id,
+            &mut seq,
+            ThreadEventKind::TurnStarted {
+                turn_id: TurnId::new(),
+                input: "hello".to_string(),
+            },
+        )?;
+        assert!(state.failed_processes.is_empty());
+
         Ok(())
     }
 }
