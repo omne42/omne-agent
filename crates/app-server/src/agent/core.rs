@@ -122,6 +122,20 @@ pub async fn run_agent_turn(
         1,
         MAX_MAX_PARALLEL_TOOL_CALLS,
     );
+    let response_format = match std::env::var("CODE_PM_AGENT_RESPONSE_FORMAT_JSON") {
+        Ok(raw) => {
+            let raw = raw.trim();
+            if raw.is_empty() {
+                None
+            } else {
+                Some(
+                    serde_json::from_str::<Value>(raw)
+                        .context("parse CODE_PM_AGENT_RESPONSE_FORMAT_JSON")?,
+                )
+            }
+        }
+        Err(_) => None,
+    };
 
     let mut instructions = DEFAULT_INSTRUCTIONS.to_string();
 
@@ -177,6 +191,7 @@ pub async fn run_agent_turn(
             input: &input_items,
             tools: &tools,
             tool_choice: "auto",
+            response_format: response_format.as_ref(),
             parallel_tool_calls,
             store: false,
             stream: true,

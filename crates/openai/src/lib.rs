@@ -48,6 +48,8 @@ pub struct ResponsesApiRequest<'a> {
     pub input: &'a [ResponseItem],
     pub tools: &'a [Value],
     pub tool_choice: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_format: Option<&'a Value>,
     pub parallel_tool_calls: bool,
     pub store: bool,
     pub stream: bool,
@@ -630,5 +632,54 @@ mod tests {
         assert_eq!(limits.tokens.limit, Some(1000));
         assert_eq!(limits.tokens.remaining, Some(900));
         assert_eq!(limits.tokens.reset.as_deref(), Some("2s"));
+    }
+
+    #[test]
+    fn request_serializes_response_format_when_set() {
+        let input: Vec<ResponseItem> = Vec::new();
+        let tools: Vec<Value> = Vec::new();
+        let response_format = serde_json::json!({
+            "type": "json_schema",
+            "json_schema": {
+                "name": "unit_test",
+                "schema": { "type": "object" },
+                "strict": true
+            }
+        });
+
+        let req = ResponsesApiRequest {
+            model: "gpt-4.1",
+            instructions: "hi",
+            input: &input,
+            tools: &tools,
+            tool_choice: "auto",
+            response_format: Some(&response_format),
+            parallel_tool_calls: false,
+            store: false,
+            stream: true,
+        };
+
+        let value = serde_json::to_value(&req).expect("serialize request");
+        assert_eq!(value.get("response_format"), Some(&response_format));
+    }
+
+    #[test]
+    fn request_skips_response_format_when_none() {
+        let input: Vec<ResponseItem> = Vec::new();
+        let tools: Vec<Value> = Vec::new();
+        let req = ResponsesApiRequest {
+            model: "gpt-4.1",
+            instructions: "hi",
+            input: &input,
+            tools: &tools,
+            tool_choice: "auto",
+            response_format: None,
+            parallel_tool_calls: false,
+            store: false,
+            stream: true,
+        };
+
+        let value = serde_json::to_value(&req).expect("serialize request");
+        assert!(value.get("response_format").is_none());
     }
 }
