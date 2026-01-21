@@ -9,6 +9,7 @@ anyhow.workspace = true
 clap.workspace = true
 diffy.workspace = true
 globset.workspace = true
+nix.workspace = true
 pm-core = { path = "../pm-core" }
 pm-execpolicy = { path = "../pm-execpolicy" }
 pm-app-server-protocol = { path = "../pm-app-server-protocol" }

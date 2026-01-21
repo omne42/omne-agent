@@ -256,6 +256,11 @@ enum ProcessCommand {
         #[arg(long, default_value_t = 200)]
         poll_ms: u64,
     },
+    Interrupt {
+        process_id: ProcessId,
+        #[arg(long)]
+        reason: Option<String>,
+    },
     Kill {
         process_id: ProcessId,
         #[arg(long)]
@@ -565,6 +570,9 @@ async fn main() -> anyhow::Result<()> {
                     poll_ms,
                 )
                 .await?;
+            }
+            ProcessCommand::Interrupt { process_id, reason } => {
+                app.process_interrupt(process_id, reason).await?;
             }
             ProcessCommand::Kill { process_id, reason } => {
                 app.process_kill(process_id, reason).await?;
@@ -907,6 +915,15 @@ fn render_event_to<W: std::io::Write>(
             process_id, argv, ..
         } => {
             let _ = writeln!(writer, "[{ts}] process started {process_id} argv={argv:?}");
+        }
+        pm_protocol::ThreadEventKind::ProcessInterruptRequested {
+            process_id, reason, ..
+        } => {
+            let _ = writeln!(
+                writer,
+                "[{ts}] process interrupt requested {process_id} reason={}",
+                reason.as_deref().unwrap_or("")
+            );
         }
         pm_protocol::ThreadEventKind::ProcessKillRequested {
             process_id, reason, ..
@@ -1508,6 +1525,14 @@ fn render_event(event: &ThreadEvent) {
         } => {
             println!("[{ts}] process started {process_id} argv={argv:?}");
         }
+        pm_protocol::ThreadEventKind::ProcessInterruptRequested {
+            process_id, reason, ..
+        } => {
+            println!(
+                "[{ts}] process interrupt requested {process_id} reason={}",
+                reason.as_deref().unwrap_or("")
+            );
+        }
         pm_protocol::ThreadEventKind::ProcessKillRequested {
             process_id, reason, ..
         } => {
@@ -1945,6 +1970,23 @@ impl App {
         let _ = self
             .rpc(
                 "process/kill",
+                serde_json::json!({
+                    "process_id": process_id,
+                    "reason": reason,
+                }),
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn process_interrupt(
+        &mut self,
+        process_id: ProcessId,
+        reason: Option<String>,
+    ) -> anyhow::Result<()> {
+        let _ = self
+            .rpc(
+                "process/interrupt",
                 serde_json::json!({
                     "process_id": process_id,
                     "reason": reason,

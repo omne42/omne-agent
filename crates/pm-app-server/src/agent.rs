@@ -430,6 +430,10 @@ fn format_event_for_context(kind: &ThreadEventKind) -> Option<String> {
                 .unwrap_or_else(|| "-".to_string()),
             json_one_line(&serde_json::json!(argv), 2000),
         )),
+        ThreadEventKind::ProcessInterruptRequested { process_id, reason } => Some(format!(
+            "[process/interrupt_requested] process_id={process_id} reason={}",
+            reason.as_deref().unwrap_or("")
+        )),
         ThreadEventKind::ProcessKillRequested { process_id, reason } => Some(format!(
             "[process/kill_requested] process_id={process_id} reason={}",
             reason.as_deref().unwrap_or("")

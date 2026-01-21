@@ -205,6 +205,11 @@ pub(crate) fn redact_thread_event_kind(kind: &mut ThreadEventKind) {
             redact_argv(argv);
             *cwd = redact_text(cwd);
         }
+        ThreadEventKind::ProcessInterruptRequested { reason, .. } => {
+            if let Some(reason) = reason {
+                *reason = redact_text(reason);
+            }
+        }
         ThreadEventKind::ProcessKillRequested { reason, .. } => {
             if let Some(reason) = reason {
                 *reason = redact_text(reason);

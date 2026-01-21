@@ -237,6 +237,7 @@ struct ProcessEntry {
 }
 
 enum ProcessCommand {
+    Interrupt { reason: Option<String> },
     Kill { reason: Option<String> },
 }
 
@@ -608,6 +609,13 @@ struct ProcessListParams {
 
 #[derive(Debug, Deserialize)]
 struct ProcessKillParams {
+    process_id: ProcessId,
+    #[serde(default)]
+    reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProcessInterruptParams {
     process_id: ProcessId,
     #[serde(default)]
     reason: Option<String>,
@@ -1444,6 +1452,38 @@ async fn main() -> anyhow::Result<()> {
                     Some(serde_json::json!({ "error": err.to_string() })),
                 ),
             },
+            "process/interrupt" => {
+                match serde_json::from_value::<ProcessInterruptParams>(request.params) {
+                    Ok(params) => {
+                        let entry = {
+                            let entries = server.processes.lock().await;
+                            entries.get(&params.process_id).cloned()
+                        };
+                        if let Some(entry) = entry {
+                            let _ = entry
+                                .cmd_tx
+                                .send(ProcessCommand::Interrupt {
+                                    reason: params.reason,
+                                })
+                                .await;
+                            JsonRpcResponse::ok(id, serde_json::json!({ "ok": true }))
+                        } else {
+                            JsonRpcResponse::err(
+                                id,
+                                JSONRPC_INTERNAL_ERROR,
+                                format!("process not found: {}", params.process_id),
+                                None,
+                            )
+                        }
+                    }
+                    Err(err) => JsonRpcResponse::err(
+                        id,
+                        JSONRPC_INVALID_PARAMS,
+                        "invalid params",
+                        Some(serde_json::json!({ "error": err.to_string() })),
+                    ),
+                }
+            }
             "process/tail" => match serde_json::from_value::<ProcessTailParams>(request.params) {
                 Ok(params) => match handle_process_tail(&server, params).await {
                     Ok(result) => JsonRpcResponse::ok(id, result),
@@ -2464,6 +2504,7 @@ async fn handle_thread_fork(server: &Server, params: ThreadForkParams) -> anyhow
             pm_protocol::ThreadEventKind::ToolStarted { .. }
             | pm_protocol::ThreadEventKind::ToolCompleted { .. }
             | pm_protocol::ThreadEventKind::ProcessStarted { .. }
+            | pm_protocol::ThreadEventKind::ProcessInterruptRequested { .. }
             | pm_protocol::ThreadEventKind::ProcessKillRequested { .. }
             | pm_protocol::ThreadEventKind::ProcessExited { .. } => {}
         }
@@ -4894,6 +4935,11 @@ async fn handle_process_list(
                         },
                     );
                 }
+                pm_protocol::ThreadEventKind::ProcessInterruptRequested { process_id, .. } => {
+                    if let Some(info) = derived.get_mut(&process_id) {
+                        info.last_update_at = ts;
+                    }
+                }
                 pm_protocol::ThreadEventKind::ProcessKillRequested { process_id, .. } => {
                     if let Some(info) = derived.get_mut(&process_id) {
                         info.last_update_at = ts;
@@ -5293,6 +5339,28 @@ async fn run_process_actor(
     stderr_task: Option<tokio::task::JoinHandle<anyhow::Result<()>>>,
     info: Arc<tokio::sync::Mutex<ProcessInfo>>,
 ) {
+    fn try_send_interrupt(child: &tokio::process::Child) -> anyhow::Result<()> {
+        #[cfg(unix)]
+        {
+            use nix::sys::signal::{Signal, kill};
+            use nix::unistd::Pid;
+
+            let Some(pid) = child.id() else {
+                anyhow::bail!("process has no pid");
+            };
+            kill(Pid::from_raw(pid as i32), Signal::SIGINT)
+                .with_context(|| format!("send SIGINT to pid {pid}"))?;
+            Ok(())
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = child;
+            anyhow::bail!("process interrupt is not supported on this platform")
+        }
+    }
+
+    let mut interrupt_reason: Option<String> = None;
+    let mut interrupt_logged = false;
     let mut kill_reason: Option<String> = None;
     let mut kill_logged = false;
 
@@ -5301,6 +5369,23 @@ async fn run_process_actor(
             cmd = cmd_rx.recv() => {
                 let Some(cmd) = cmd else { /* sender dropped */ return; };
                 match cmd {
+                    ProcessCommand::Interrupt { reason } => {
+                        if interrupt_reason.is_none() {
+                            interrupt_reason = reason;
+                        }
+                        if !interrupt_logged {
+                            let _ = thread_rt
+                                .append_event(pm_protocol::ThreadEventKind::ProcessInterruptRequested {
+                                    process_id,
+                                    reason: interrupt_reason.clone(),
+                                })
+                                .await;
+                            interrupt_logged = true;
+                        }
+                        if try_send_interrupt(&child).is_err() {
+                            let _ = child.start_kill();
+                        }
+                    }
                     ProcessCommand::Kill { reason } => {
                         if kill_reason.is_none() {
                             kill_reason = reason;
@@ -5333,7 +5418,7 @@ async fn run_process_actor(
                     .append_event(pm_protocol::ThreadEventKind::ProcessExited {
                         process_id,
                         exit_code,
-                        reason: kill_reason.clone(),
+                        reason: kill_reason.clone().or_else(|| interrupt_reason.clone()),
                     })
                     .await;
 

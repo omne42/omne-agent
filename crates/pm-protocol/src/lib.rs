@@ -425,6 +425,12 @@ pub enum ThreadEventKind {
         stderr_path: String,
     },
 
+    ProcessInterruptRequested {
+        process_id: ProcessId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+
     ProcessKillRequested {
         process_id: ProcessId,
         #[serde(default, skip_serializing_if = "Option::is_none")]
