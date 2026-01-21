@@ -54,7 +54,7 @@
 >
 > - 支持绝对路径。
 > - 相对路径按 **thread cwd（workspace root）** 解析（不是按当前进程 cwd）。
-> - 配置文件在 v0.2.0 默认 **按 thread 运行时加载并缓存**；如果你修改了 modes 文件，需要重启 `pm-app-server`（或让 thread 重新加载）才会生效。
+> - v0.2.0 默认按需从磁盘加载 modes 文件：修改后会在下一次相关调用（例如 `thread/configure` 校验或工具执行）生效，无需重启。
 
 ---
 

@@ -314,6 +314,8 @@ pub struct ProcessPermissions {
 #[derive(Debug, Clone)]
 pub struct EditPermissions {
     pub decision: Decision,
+    pub allow_globs: Vec<String>,
+    pub deny_globs: Vec<String>,
     allow: Option<GlobSet>,
     deny: GlobSet,
 }
@@ -332,6 +334,8 @@ impl EditPermissions {
         let deny = compile_globset(&deny_globs)?;
         Ok(Self {
             decision,
+            allow_globs,
+            deny_globs,
             allow,
             deny,
         })

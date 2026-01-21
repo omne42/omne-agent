@@ -245,7 +245,6 @@ struct ThreadRuntime {
     handle: tokio::sync::Mutex<pm_core::ThreadHandle>,
     active_turn: tokio::sync::Mutex<Option<ActiveTurn>>,
     out_tx: mpsc::UnboundedSender<String>,
-    mode_catalog: tokio::sync::OnceCell<pm_core::modes::ModeCatalog>,
 }
 
 impl ThreadRuntime {
@@ -254,15 +253,7 @@ impl ThreadRuntime {
             handle: tokio::sync::Mutex::new(handle),
             active_turn: tokio::sync::Mutex::new(None),
             out_tx,
-            mode_catalog: tokio::sync::OnceCell::new(),
         }
-    }
-
-    async fn mode_catalog(&self, thread_root: &Path) -> &pm_core::modes::ModeCatalog {
-        let root = thread_root.to_path_buf();
-        self.mode_catalog
-            .get_or_init(|| async move { pm_core::modes::ModeCatalog::load(&root).await })
-            .await
     }
 
     fn emit_notification<T>(&self, method: &'static str, params: &T)
@@ -2367,7 +2358,7 @@ async fn handle_thread_configure(
         .map(|m| m.trim().to_string())
         .filter(|m| !m.is_empty());
     if let Some(mode) = mode.as_deref() {
-        let catalog = rt.mode_catalog(&thread_root).await;
+        let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
         if catalog.mode(mode).is_none() {
             let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
             anyhow::bail!("unknown mode: {mode} (available: {available})");
@@ -2406,6 +2397,16 @@ async fn handle_thread_config_explain(
         .read_events_since(params.thread_id, EventSeq::ZERO)
         .await?
         .ok_or_else(|| anyhow::anyhow!("thread not found: {}", params.thread_id))?;
+
+    let thread_cwd = events
+        .iter()
+        .find_map(|event| match &event.kind {
+            pm_protocol::ThreadEventKind::ThreadCreated { cwd, .. } => Some(cwd.clone()),
+            _ => None,
+        })
+        .ok_or_else(|| anyhow::anyhow!("thread cwd is missing: {}", params.thread_id))?;
+    let thread_root = pm_core::resolve_dir(Path::new(&thread_cwd), Path::new(".")).await?;
+    let mode_catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
 
     let default_model = "gpt-4.1".to_string();
     let default_openai_base_url = "https://api.openai.com".to_string();
@@ -2481,6 +2482,42 @@ async fn handle_thread_config_explain(
         }
     }
 
+    let (mode_catalog_source, mode_catalog_path) = match &mode_catalog.source {
+        pm_core::modes::ModeCatalogSource::Builtin => ("builtin", None),
+        pm_core::modes::ModeCatalogSource::Env(path) => ("env", Some(path.display().to_string())),
+        pm_core::modes::ModeCatalogSource::Project(path) => {
+            ("project", Some(path.display().to_string()))
+        }
+    };
+    let available_modes = mode_catalog
+        .mode_names()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    let effective_mode_name = effective_mode.clone();
+    let effective_mode_def = mode_catalog.mode(&effective_mode).map(|mode| {
+        serde_json::json!({
+            "name": effective_mode_name,
+            "description": mode.description.as_str(),
+            "permissions": {
+                "read": mode.permissions.read,
+                "edit": {
+                    "decision": mode.permissions.edit.decision,
+                    "allow_globs": &mode.permissions.edit.allow_globs,
+                    "deny_globs": &mode.permissions.edit.deny_globs,
+                },
+                "command": mode.permissions.command,
+                "process": {
+                    "inspect": mode.permissions.process.inspect,
+                    "kill": mode.permissions.process.kill,
+                    "interact": mode.permissions.process.interact,
+                },
+                "artifact": mode.permissions.artifact,
+                "browser": mode.permissions.browser,
+            },
+            "tool_overrides": &mode.tool_overrides,
+        })
+    });
+
     Ok(serde_json::json!({
         "thread_id": params.thread_id,
         "effective": {
@@ -2490,6 +2527,13 @@ async fn handle_thread_config_explain(
             "model": effective_model,
             "openai_base_url": effective_openai_base_url,
         },
+        "mode_catalog": {
+            "source": mode_catalog_source,
+            "path": mode_catalog_path,
+            "load_error": mode_catalog.load_error,
+            "modes": available_modes,
+        },
+        "effective_mode_def": effective_mode_def,
         "layers": layers,
     }))
 }
@@ -3289,7 +3333,7 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
     let tool_id = pm_protocol::ToolId::new();
 
     let rel_path = pm_core::modes::relative_path_under_root(&thread_root, Path::new(&params.path));
-    let catalog = thread_rt.mode_catalog(&thread_root).await;
+    let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {
         Some(mode) => mode,
         None => {
@@ -3474,7 +3518,7 @@ async fn handle_file_glob(server: &Server, params: FileGlobParams) -> anyhow::Re
         let handle = thread_rt.handle.lock().await;
         handle.state().mode.clone()
     };
-    let catalog = thread_rt.mode_catalog(&thread_root).await;
+    let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {
         Some(mode) => mode,
         None => {
@@ -3664,7 +3708,7 @@ async fn handle_file_grep(server: &Server, params: FileGrepParams) -> anyhow::Re
         let handle = thread_rt.handle.lock().await;
         handle.state().mode.clone()
     };
-    let catalog = thread_rt.mode_catalog(&thread_root).await;
+    let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {
         Some(mode) => mode,
         None => {
@@ -3946,7 +3990,7 @@ async fn handle_file_write(server: &Server, params: FileWriteParams) -> anyhow::
     }
 
     let rel_path = pm_core::modes::relative_path_under_root(&thread_root, Path::new(&params.path));
-    let catalog = thread_rt.mode_catalog(&thread_root).await;
+    let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {
         Some(mode) => mode,
         None => {
@@ -4205,7 +4249,7 @@ async fn handle_file_patch(server: &Server, params: FilePatchParams) -> anyhow::
     }
 
     let rel_path = pm_core::modes::relative_path_under_root(&thread_root, Path::new(&params.path));
-    let catalog = thread_rt.mode_catalog(&thread_root).await;
+    let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {
         Some(mode) => mode,
         None => {
@@ -4517,7 +4561,7 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
     }
 
     let rel_path = pm_core::modes::relative_path_under_root(&thread_root, Path::new(&params.path));
-    let catalog = thread_rt.mode_catalog(&thread_root).await;
+    let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {
         Some(mode) => mode,
         None => {
@@ -4810,7 +4854,7 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
     }
 
     let rel_path = pm_core::modes::relative_path_under_root(&thread_root, Path::new(&params.path));
-    let catalog = thread_rt.mode_catalog(&thread_root).await;
+    let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {
         Some(mode) => mode,
         None => {
@@ -5080,7 +5124,7 @@ async fn handle_fs_mkdir(server: &Server, params: FsMkdirParams) -> anyhow::Resu
     }
 
     let rel_path = pm_core::modes::relative_path_under_root(&thread_root, Path::new(&params.path));
-    let catalog = thread_rt.mode_catalog(&thread_root).await;
+    let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {
         Some(mode) => mode,
         None => {
@@ -5841,7 +5885,7 @@ async fn handle_process_start(
         }));
     }
 
-    let catalog = thread_rt.mode_catalog(&thread_root).await;
+    let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {
         Some(mode) => mode,
         None => {
