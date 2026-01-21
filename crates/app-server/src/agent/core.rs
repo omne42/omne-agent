@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
+use futures_util::stream::{self, StreamExt};
 use pm_protocol::{ApprovalDecision, ApprovalId, EventSeq, ThreadEventKind, TurnId};
 use serde::Deserialize;
 use serde_json::Value;
@@ -13,11 +14,13 @@ use tokio_util::sync::CancellationToken;
 const DEFAULT_MODEL: &str = "gpt-4.1";
 const DEFAULT_MAX_AGENT_STEPS: usize = 24;
 const DEFAULT_MAX_TOOL_CALLS: usize = 128;
+const DEFAULT_MAX_PARALLEL_TOOL_CALLS: usize = 8;
 const DEFAULT_MAX_TURN_SECONDS: u64 = 10 * 60;
 const DEFAULT_MAX_OPENAI_REQUEST_SECONDS: u64 = 120;
 
 const MAX_MAX_AGENT_STEPS: usize = 10_000;
 const MAX_MAX_TOOL_CALLS: usize = 10_000;
+const MAX_MAX_PARALLEL_TOOL_CALLS: usize = 128;
 const MAX_MAX_TURN_SECONDS: u64 = 24 * 60 * 60;
 const MAX_MAX_OPENAI_REQUEST_SECONDS: u64 = 60 * 60;
 
@@ -102,6 +105,13 @@ pub async fn run_agent_turn(
         1,
         MAX_MAX_OPENAI_REQUEST_SECONDS,
     ));
+    let parallel_tool_calls = parse_env_bool("CODE_PM_AGENT_PARALLEL_TOOL_CALLS", false);
+    let max_parallel_tool_calls = parse_env_usize(
+        "CODE_PM_AGENT_MAX_PARALLEL_TOOL_CALLS",
+        DEFAULT_MAX_PARALLEL_TOOL_CALLS,
+        1,
+        MAX_MAX_PARALLEL_TOOL_CALLS,
+    );
 
     let mut instructions = DEFAULT_INSTRUCTIONS.to_string();
 
@@ -156,7 +166,7 @@ pub async fn run_agent_turn(
             input: &input_items,
             tools: &tools,
             tool_choice: "auto",
-            parallel_tool_calls: false,
+            parallel_tool_calls,
             store: false,
             stream: true,
         };
@@ -284,48 +294,123 @@ pub async fn run_agent_turn(
             break;
         }
 
-        for (tool_name, arguments, call_id) in function_calls {
-            tool_calls_total += 1;
-            if tool_calls_total > max_tool_calls {
+        let can_parallelize_read_only = parallel_tool_calls
+            && function_calls.len() > 1
+            && function_calls
+                .iter()
+                .all(|(tool_name, _, _)| tool_is_read_only(tool_name));
+
+        if can_parallelize_read_only {
+            let batch_size = function_calls.len();
+            if tool_calls_total + batch_size > max_tool_calls {
                 return Err(AgentTurnError::BudgetExceeded {
                     budget: "tool_calls",
                 }
                 .into());
             }
-            let args_json: Value = match serde_json::from_str(&arguments) {
-                Ok(v) => v,
-                Err(err) => {
-                    let output = serde_json::json!({
-                        "error": "invalid tool arguments",
-                        "details": err.to_string(),
-                        "arguments": arguments,
-                    });
-                    input_items.push(pm_openai::ResponseItem::FunctionCallOutput {
-                        call_id,
-                        output: serde_json::to_string(&output)?,
-                    });
-                    continue;
+            tool_calls_total += batch_size;
+
+            let mut outputs = vec![None::<pm_openai::ResponseItem>; batch_size];
+            let mut calls = Vec::new();
+
+            for (idx, (tool_name, arguments, call_id)) in function_calls.into_iter().enumerate() {
+                let args_json: Value = match serde_json::from_str(&arguments) {
+                    Ok(v) => v,
+                    Err(err) => {
+                        let output = serde_json::json!({
+                            "error": "invalid tool arguments",
+                            "details": err.to_string(),
+                            "arguments": arguments,
+                        });
+                        outputs[idx] = Some(pm_openai::ResponseItem::FunctionCallOutput {
+                            call_id,
+                            output: serde_json::to_string(&output)?,
+                        });
+                        continue;
+                    }
+                };
+                calls.push((idx, tool_name, args_json, call_id));
+            }
+
+            let results = stream::iter(calls)
+                .map(|(idx, tool_name, args_json, call_id)| {
+                    let server = server.clone();
+                    let cancel = cancel.clone();
+                    async move {
+                        let output_value = run_tool_call(
+                            &server,
+                            thread_id,
+                            Some(turn_id),
+                            &tool_name,
+                            args_json,
+                            cancel,
+                        )
+                        .await;
+                        (idx, call_id, output_value)
+                    }
+                })
+                .buffer_unordered(max_parallel_tool_calls)
+                .collect::<Vec<_>>()
+                .await;
+
+            for (idx, call_id, output_value) in results {
+                let output_value = match output_value {
+                    Ok(v) => v,
+                    Err(err) => serde_json::json!({ "error": err.to_string() }),
+                };
+                outputs[idx] = Some(pm_openai::ResponseItem::FunctionCallOutput {
+                    call_id,
+                    output: serde_json::to_string(&output_value)?,
+                });
+            }
+
+            for output in outputs.into_iter().flatten() {
+                input_items.push(output);
+            }
+        } else {
+            for (tool_name, arguments, call_id) in function_calls {
+                tool_calls_total += 1;
+                if tool_calls_total > max_tool_calls {
+                    return Err(AgentTurnError::BudgetExceeded {
+                        budget: "tool_calls",
+                    }
+                    .into());
                 }
-            };
+                let args_json: Value = match serde_json::from_str(&arguments) {
+                    Ok(v) => v,
+                    Err(err) => {
+                        let output = serde_json::json!({
+                            "error": "invalid tool arguments",
+                            "details": err.to_string(),
+                            "arguments": arguments,
+                        });
+                        input_items.push(pm_openai::ResponseItem::FunctionCallOutput {
+                            call_id,
+                            output: serde_json::to_string(&output)?,
+                        });
+                        continue;
+                    }
+                };
 
-            let output_value = run_tool_call(
-                &server,
-                thread_id,
-                Some(turn_id),
-                &tool_name,
-                args_json,
-                cancel.clone(),
-            )
-            .await;
-            let output_value = match output_value {
-                Ok(v) => v,
-                Err(err) => serde_json::json!({ "error": err.to_string() }),
-            };
+                let output_value = run_tool_call(
+                    &server,
+                    thread_id,
+                    Some(turn_id),
+                    &tool_name,
+                    args_json,
+                    cancel.clone(),
+                )
+                .await;
+                let output_value = match output_value {
+                    Ok(v) => v,
+                    Err(err) => serde_json::json!({ "error": err.to_string() }),
+                };
 
-            input_items.push(pm_openai::ResponseItem::FunctionCallOutput {
-                call_id,
-                output: serde_json::to_string(&output_value)?,
-            });
+                input_items.push(pm_openai::ResponseItem::FunctionCallOutput {
+                    call_id,
+                    output: serde_json::to_string(&output_value)?,
+                });
+            }
         }
     }
 
@@ -480,6 +565,37 @@ fn parse_env_u64(key: &str, default: u64, min: u64, max: u64) -> u64 {
         .and_then(|value| value.trim().parse::<u64>().ok())
         .map(|value| value.clamp(min, max))
         .unwrap_or(default)
+}
+
+fn parse_bool_value(value: &str) -> Option<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "y" | "on" => Some(true),
+        "0" | "false" | "no" | "n" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+fn parse_env_bool(key: &str, default: bool) -> bool {
+    std::env::var(key)
+        .ok()
+        .and_then(|value| parse_bool_value(&value))
+        .unwrap_or(default)
+}
+
+fn tool_is_read_only(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        "file_read"
+            | "file_glob"
+            | "file_grep"
+            | "process_inspect"
+            | "process_tail"
+            | "process_follow"
+            | "artifact_list"
+            | "artifact_read"
+            | "thread_state"
+            | "thread_events"
+    )
 }
 
 async fn build_conversation(
@@ -706,4 +822,51 @@ fn extract_assistant_text(items: &[pm_openai::ResponseItem]) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tool_parallelism_tests {
+    use super::*;
+
+    #[test]
+    fn parse_bool_value_accepts_common_values() {
+        assert_eq!(parse_bool_value("1"), Some(true));
+        assert_eq!(parse_bool_value("true"), Some(true));
+        assert_eq!(parse_bool_value("YES"), Some(true));
+        assert_eq!(parse_bool_value("on"), Some(true));
+
+        assert_eq!(parse_bool_value("0"), Some(false));
+        assert_eq!(parse_bool_value("false"), Some(false));
+        assert_eq!(parse_bool_value("No"), Some(false));
+        assert_eq!(parse_bool_value("off"), Some(false));
+
+        assert_eq!(parse_bool_value("maybe"), None);
+        assert_eq!(parse_bool_value(""), None);
+    }
+
+    #[test]
+    fn tool_is_read_only_is_conservative() {
+        assert!(tool_is_read_only("file_read"));
+        assert!(tool_is_read_only("file_glob"));
+        assert!(tool_is_read_only("file_grep"));
+        assert!(tool_is_read_only("process_inspect"));
+        assert!(tool_is_read_only("process_tail"));
+        assert!(tool_is_read_only("process_follow"));
+        assert!(tool_is_read_only("artifact_list"));
+        assert!(tool_is_read_only("artifact_read"));
+        assert!(tool_is_read_only("thread_state"));
+        assert!(tool_is_read_only("thread_events"));
+
+        assert!(!tool_is_read_only("file_write"));
+        assert!(!tool_is_read_only("file_patch"));
+        assert!(!tool_is_read_only("file_edit"));
+        assert!(!tool_is_read_only("file_delete"));
+        assert!(!tool_is_read_only("fs_mkdir"));
+        assert!(!tool_is_read_only("process_start"));
+        assert!(!tool_is_read_only("process_kill"));
+        assert!(!tool_is_read_only("artifact_write"));
+        assert!(!tool_is_read_only("artifact_delete"));
+        assert!(!tool_is_read_only("thread_hook_run"));
+        assert!(!tool_is_read_only("agent_spawn"));
+    }
 }

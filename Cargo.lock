@@ -1466,6 +1466,7 @@ dependencies = [
  "anyhow",
  "clap",
  "diffy",
+ "futures-util",
  "globset",
  "nix 0.29.0",
  "pm-app-server-protocol",
