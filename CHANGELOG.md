@@ -18,6 +18,7 @@
 - `pm-protocol`/`pm-eventlog`：新增 thread `pause/unpause` 事件（`ThreadPaused/ThreadUnpaused`）与派生状态字段（`paused*`）。
 - 新增 `pm-execpolicy`：对齐 Codex `prefix_rule` 子集的执行策略引擎（Starlark 语法 + `match/not_match` 例子校验），并提供 `pm-execpolicy check --rules ... <cmd...>` 输出匹配结果 JSON。
 - 新增 `pm-openai`：最小 OpenAI Responses API 客户端与类型（用于 v0.2.0 的 Responses-first agent loop）。
+- `pm-openai`：新增 Responses SSE 流式解析与 `Client::create_response_stream`（`response.output_text.delta`/`response.output_item.done`/`response.completed`），为 `item/delta` 与更强可观测性打底。
 - 新增 `pm-app-server`：最小 JSON-RPC over stdio 控制面（`initialize` + `thread/*` + `turn/*`），用于验证 v0.2.0 的 thread/turn/interrupt 与落盘回放。
 - 新增 `pm` CLI：作为 `pm-app-server` 的人类可用客户端，支持 `ask/watch --bell`、`thread/*`、`approval/*`、`process/*`（只读查看 + kill），并在 `ask` 中支持 Ctrl-C 触发 `turn/interrupt`。
 - `pm` CLI 新增 `inbox`：跨 thread 的 RTS 收件箱视图（可 `--watch` + `--bell` 去重提醒），用于快速发现 `need_approval/failed/running`。
