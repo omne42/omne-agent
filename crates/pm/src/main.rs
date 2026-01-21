@@ -893,7 +893,7 @@ async fn run_inbox(app: &mut App, args: InboxArgs) -> anyhow::Result<()> {
         if args.bell {
             for (thread_id, thread) in &current {
                 let state = thread.attention_state.as_str();
-                if !matches!(state, "need_approval" | "failed") {
+                if !matches!(state, "need_approval" | "failed" | "stuck") {
                     bell_state.entry(*thread_id).or_insert((None, None)).0 =
                         Some(thread.attention_state.clone());
                     continue;
@@ -1076,6 +1076,7 @@ fn attention_state_update(event: &ThreadEvent) -> Option<&'static str> {
             TurnStatus::Interrupted => Some("interrupted"),
             TurnStatus::Failed => Some("failed"),
             TurnStatus::Cancelled => Some("cancelled"),
+            TurnStatus::Stuck => Some("stuck"),
         },
         pm_protocol::ThreadEventKind::ProcessStarted { .. } => Some("running"),
         _ => None,
@@ -1088,7 +1089,7 @@ fn maybe_bell(
     last_state: &mut Option<&'static str>,
     last_bell_at: &mut Option<Instant>,
 ) -> anyhow::Result<()> {
-    let should_notify = matches!(state, "need_approval" | "failed");
+    let should_notify = matches!(state, "need_approval" | "failed" | "stuck");
     if !should_notify {
         *last_state = Some(state);
         return Ok(());

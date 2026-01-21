@@ -266,7 +266,10 @@ impl ThreadRuntime {
             result = agent_fut => {
                 match result {
                     Ok(_completion) => (TurnStatus::Completed, None),
-                    Err(err) => (TurnStatus::Failed, Some(err.to_string())),
+                    Err(err) => {
+                        let status = classify_agent_turn_error(&err);
+                        (status, Some(err.to_string()))
+                    }
                 }
             },
         };
@@ -286,6 +289,19 @@ impl ThreadRuntime {
             *active = None;
         }
     }
+}
+
+fn classify_agent_turn_error(err: &anyhow::Error) -> TurnStatus {
+    for cause in err.chain() {
+        if let Some(agent_err) = cause.downcast_ref::<agent::AgentTurnError>() {
+            return match agent_err {
+                agent::AgentTurnError::Cancelled => TurnStatus::Interrupted,
+                agent::AgentTurnError::BudgetExceeded { .. }
+                | agent::AgentTurnError::OpenAiRequestTimedOut => TurnStatus::Stuck,
+            };
+        }
+    }
+    TurnStatus::Failed
 }
 
 struct ActiveTurn {
@@ -1574,6 +1590,7 @@ async fn handle_thread_attention(
             Some(pm_protocol::TurnStatus::Interrupted) => "interrupted",
             Some(pm_protocol::TurnStatus::Failed) => "failed",
             Some(pm_protocol::TurnStatus::Cancelled) => "cancelled",
+            Some(pm_protocol::TurnStatus::Stuck) => "stuck",
             None => "idle",
         }
     };
@@ -1628,6 +1645,7 @@ async fn handle_thread_list_meta(
                 Some(pm_protocol::TurnStatus::Interrupted) => "interrupted",
                 Some(pm_protocol::TurnStatus::Failed) => "failed",
                 Some(pm_protocol::TurnStatus::Cancelled) => "cancelled",
+                Some(pm_protocol::TurnStatus::Stuck) => "stuck",
                 None => "idle",
             }
         };

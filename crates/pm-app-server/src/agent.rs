@@ -5,6 +5,7 @@ use anyhow::Context;
 use pm_protocol::{ApprovalDecision, ApprovalId, EventSeq, ThreadEventKind, TurnId};
 use serde::Deserialize;
 use serde_json::Value;
+use thiserror::Error;
 use time::format_description::well_known::Rfc3339;
 use tokio_util::sync::CancellationToken;
 
@@ -23,6 +24,16 @@ You are a coding agent.
 - Processes are non-interactive: you can only start/inspect/tail/follow/kill them.
 - Prefer small, reviewable changes; run checks/tests when relevant.
 "#;
+
+#[derive(Debug, Error)]
+pub enum AgentTurnError {
+    #[error("cancelled")]
+    Cancelled,
+    #[error("budget exceeded: {budget}")]
+    BudgetExceeded { budget: &'static str },
+    #[error("openai request timed out")]
+    OpenAiRequestTimedOut,
+}
 
 pub async fn run_agent_turn(
     server: Arc<super::Server>,
@@ -73,10 +84,13 @@ pub async fn run_agent_turn(
 
     for _step in 0..MAX_AGENT_STEPS {
         if cancel.is_cancelled() {
-            anyhow::bail!("turn cancelled");
+            return Err(AgentTurnError::Cancelled.into());
         }
         if started_at.elapsed() > Duration::from_secs(MAX_TURN_SECONDS) {
-            anyhow::bail!("turn time budget exceeded (max_seconds={MAX_TURN_SECONDS})");
+            return Err(AgentTurnError::BudgetExceeded {
+                budget: "turn_seconds",
+            }
+            .into());
         }
 
         let req = pm_openai::ResponsesApiRequest {
@@ -90,12 +104,15 @@ pub async fn run_agent_turn(
             stream: false,
         };
 
-        let resp = tokio::time::timeout(
+        let resp = match tokio::time::timeout(
             Duration::from_secs(MAX_OPENAI_REQUEST_SECONDS),
             openai.create_response(&req),
         )
         .await
-        .context("openai response timed out")??;
+        {
+            Ok(result) => result?,
+            Err(_) => return Err(AgentTurnError::OpenAiRequestTimedOut.into()),
+        };
         last_response_id = resp.id.clone();
         last_usage = resp.usage.clone();
 
@@ -122,7 +139,10 @@ pub async fn run_agent_turn(
         for (tool_name, arguments, call_id) in function_calls {
             tool_calls_total += 1;
             if tool_calls_total > MAX_TOOL_CALLS {
-                anyhow::bail!("tool call budget exceeded (max_tool_calls={MAX_TOOL_CALLS})");
+                return Err(AgentTurnError::BudgetExceeded {
+                    budget: "tool_calls",
+                }
+                .into());
             }
             let args_json: Value = match serde_json::from_str(&arguments) {
                 Ok(v) => v,
@@ -162,7 +182,7 @@ pub async fn run_agent_turn(
     }
 
     if !finished {
-        anyhow::bail!("agent step budget exceeded (max_steps={MAX_AGENT_STEPS})");
+        return Err(AgentTurnError::BudgetExceeded { budget: "steps" }.into());
     }
 
     if !last_text.is_empty() {
@@ -676,7 +696,7 @@ async fn run_tool_call(
 
     for attempt in 0..3usize {
         if cancel.is_cancelled() {
-            anyhow::bail!("cancelled");
+            return Err(AgentTurnError::Cancelled.into());
         }
 
         let output = run_tool_call_once(
@@ -694,7 +714,10 @@ async fn run_tool_call(
         };
 
         if attempt >= 2 {
-            anyhow::bail!("too many approval cycles for tool {tool_name}");
+            return Err(AgentTurnError::BudgetExceeded {
+                budget: "approval_cycles",
+            }
+            .into());
         }
 
         let outcome =
@@ -715,7 +738,7 @@ async fn run_tool_call(
         }
     }
 
-    anyhow::bail!("too many attempts for tool {tool_name}");
+    Err(AgentTurnError::BudgetExceeded { budget: "retries" }.into())
 }
 
 async fn run_tool_call_once(

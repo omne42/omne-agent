@@ -174,6 +174,7 @@ pub enum TurnStatus {
     Interrupted,
     Failed,
     Cancelled,
+    Stuck,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
