@@ -69,7 +69,7 @@
 - **mode gate**：按能力组/路径规则/per-tool override 做第一层硬裁决（`deny/prompt/allow`）。
 - **sandbox**：路径与可写根等硬边界（例如 `read-only/workspace-write`）。
 - **execpolicy**：命令前缀规则（allow/prompt/forbidden）。
-- execpolicy 规范与用法见：`docs/execpolicy.md`（v0.2.0 通过 app-server 启动参数全局注入）。
+- execpolicy 规范与用法见：`docs/execpolicy.md`（v0.2.0 支持 global `--execpolicy-rules` + per-mode `command.execpolicy_rules`）。
 - **approval handling**：当需要审批时（来源可能是 mode 或 execpolicy），由 `ApprovalPolicy` 决定停/自动决策。
 
 合并规则：任一层 `deny` 即 deny；否则任一层 `prompt` 即 prompt；否则 allow。
@@ -104,7 +104,7 @@ v0.2.0 MVP 已支持字段：
 
 - `read: { decision }`
 - `edit: { decision, allow_globs?: [string], deny_globs?: [string] }`
-- `command: { decision }`
+- `command: { decision, execpolicy_rules?: [string] }`
 - `process: { inspect: {decision}, kill: {decision}, interact: {decision} }`
 - `artifact: { decision }`
 - `browser: { decision }`（字段已支持；`web/*` 工具属于未来扩展）
@@ -112,7 +112,7 @@ v0.2.0 MVP 已支持字段：
 
 未来扩展（TODO；v0.2.0 未实现）：
 
-- `command.execpolicy_rules`：per-mode execpolicy 覆盖（当前 execpolicy 通过 `pm-app-server --execpolicy-rules` 全局注入；TODO 草案见 `docs/execpolicy.md`）
+- `execpolicy_rules`：per-thread execpolicy 覆盖（TODO 草案见 `docs/execpolicy.md`）
 - `subagent: { spawn: { decision, allowed_modes?: [string] } }`：fan-out / 子 agent 权限边界
 
 约束：

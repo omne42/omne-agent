@@ -84,9 +84,11 @@ prefix_rule(
 
 ---
 
-## 3) 如何加载（v0.2.0：全局注入）
+## 3) 如何加载（v0.2.0：global + per-mode）
 
-ExecPolicy 目前由 app-server 启动参数全局注入：
+### 3.1 global（启动参数）
+
+ExecPolicy 可以由 app-server 启动参数全局注入：
 
 - app-server：`pm-app-server --execpolicy-rules <PATH> [--execpolicy-rules <PATH> ...]`
 - `pm` CLI：同名参数透传给 app-server：`pm --execpolicy-rules <PATH> ...`
@@ -96,7 +98,14 @@ fail-closed（写死）：
 - 任何 `--execpolicy-rules` 文件缺失/不可读/解析失败：app-server 应直接启动失败（不要静默忽略或回退到“空规则”）。
   - 空规则意味着“全部命令都走 `prompt`”，在 `ApprovalPolicy=auto_approve` 下等价于 allow-all。
 
-注意：v0.2.0 **不支持 per-mode/per-thread 的 execpolicy 文件列表**（这是 `docs/modes.md` 里的 TODO）。
+### 3.2 per-mode（`modes.yaml`）
+
+v0.2.0 支持为某个 mode 单独配置额外的规则文件列表：
+
+- 配置位置：`./.codepm/modes.yaml` → `modes.<name>.permissions.command.execpolicy_rules: [<path>...]`
+- 路径解析：绝对路径按原样使用；相对路径按 **thread cwd（workspace root）** 解析（并通过 path boundary 校验，避免 `..`/symlink 逃逸）
+- 合并顺序（写死）：`global rules（启动参数） → mode rules`
+- fail-closed（写死）：mode 指定的 rules 文件缺失/不可读/解析失败时，该次 `process/start` 必须直接拒绝并返回可诊断错误（不要静默忽略该层）
 
 ---
 
@@ -116,19 +125,22 @@ cargo run -p pm -- --execpolicy-rules /path/to/policy.rules thread start --json
 
 ---
 
-## 5) TODO：per-mode / per-thread execpolicy rules（规格草案）
+## 5) per-mode / per-thread execpolicy rules
 
 问题：全局 `--execpolicy-rules` 很容易“要么过宽要么过窄”。不同 mode（architect/coder/reviewer/builder）需要不同的命令白名单与提示策略。
 
-最小规格（TODO，不强做）：
+实现状态：
 
-- **per-mode**：在 `./.codepm/modes.yaml` 里允许为某个 mode 增加 `command.execpolicy_rules: [<path>...]`。
-  - 路径解析：绝对路径按原样使用；相对路径按 **thread cwd（workspace root）** 解析（与 `docs/modes.md` 保持一致）。
+- **per-mode**：已实现（见上文 3.2）。
+- **per-thread**：TODO（未来通过 `thread/configure` 写入 thread config 事件实现）。
+
+规格草案（per-thread 仍未落地）：
+
 - **per-thread**：允许 thread config 增加 `execpolicy_rules: [<path>...]`（例如通过 `thread/configure` 写入 `ThreadConfigUpdated`），用于：
   - 临时补充 allowlist（让某些命令免审批）
   - 或临时收紧（强制 `prompt/forbidden`）
   - 路径解析同上（按 thread cwd 解析相对路径）。
-- **合并顺序（写死）**：`global rules（启动参数） → mode rules → thread override（如有）`
+- **合并顺序（写死）**：`global rules（启动参数） → mode rules → thread override（如有，TODO）`
   - 决策合并仍为 `forbidden > prompt > allow`。
   - 语义提醒（写死，避免误会）：规则是“并集叠加”。
     - 任一层命中 `forbidden` ⇒ 最终 `forbidden`（无法被其它层的 `allow` 抵消）。

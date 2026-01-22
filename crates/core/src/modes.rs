@@ -214,6 +214,7 @@ impl ModeCatalog {
 pub struct ModeDef {
     pub description: String,
     pub permissions: ModePermissions,
+    pub command_execpolicy_rules: Vec<String>,
     pub tool_overrides: BTreeMap<String, Decision>,
 }
 
@@ -222,11 +223,18 @@ impl ModeDef {
         Self {
             description: description.to_string(),
             permissions,
+            command_execpolicy_rules: Vec::new(),
             tool_overrides: BTreeMap::new(),
         }
     }
 
     fn try_from_raw(name: &str, raw: RawModeDef) -> anyhow::Result<Self> {
+        let command_execpolicy_rules = raw
+            .permissions
+            .command
+            .as_ref()
+            .map(|command| command.execpolicy_rules.clone())
+            .unwrap_or_default();
         let permissions = ModePermissions::try_from_raw(name, raw.permissions)?;
         let tool_overrides = raw
             .tool_overrides
@@ -239,6 +247,7 @@ impl ModeDef {
         Ok(Self {
             description: raw.description.unwrap_or_default(),
             permissions,
+            command_execpolicy_rules,
             tool_overrides,
         })
     }
@@ -262,7 +271,11 @@ impl ModePermissions {
         } else {
             EditPermissions::new(Decision::Deny, Vec::new(), Vec::new())?
         };
-        let command = raw.command.map(|v| v.decision).unwrap_or(Decision::Deny);
+        let command = raw
+            .command
+            .as_ref()
+            .map(|v| v.decision)
+            .unwrap_or(Decision::Deny);
 
         let process = if let Some(process) = raw.process {
             let inspect = process
@@ -475,7 +488,7 @@ struct RawPermissions {
     #[serde(default)]
     edit: Option<RawEdit>,
     #[serde(default)]
-    command: Option<RawDecision>,
+    command: Option<RawCommand>,
     #[serde(default)]
     process: Option<RawProcess>,
     #[serde(default)]
@@ -487,6 +500,13 @@ struct RawPermissions {
 #[derive(Debug, Deserialize)]
 struct RawDecision {
     decision: Decision,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawCommand {
+    decision: Decision,
+    #[serde(default)]
+    execpolicy_rules: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -540,7 +560,9 @@ modes:
         decision: prompt
         allow_globs: ["docs/**"]
         deny_globs: [".git/**"]
-      command: { decision: deny }
+      command:
+        decision: deny
+        execpolicy_rules: ["rules/mode.rules"]
       process:
         inspect: { decision: deny }
         kill: { decision: deny }
@@ -556,6 +578,10 @@ modes:
         assert!(catalog.mode("coder").is_some());
         let docs_only = catalog.mode("docs-only").expect("custom mode present");
         assert_eq!(docs_only.permissions.command, Decision::Deny);
+        assert_eq!(
+            docs_only.command_execpolicy_rules,
+            vec!["rules/mode.rules".to_string()]
+        );
         let decision = docs_only
             .permissions
             .edit
