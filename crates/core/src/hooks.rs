@@ -141,7 +141,7 @@ mod tests {
 
     async fn setup() -> anyhow::Result<TestContext> {
         let tmp = tempfile::tempdir()?;
-        let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
+        let pm_paths = PmPaths::new(tmp.path().join(".codepm_data"));
 
         let repo = RepositoryName::sanitize("repo");
         let session_id = SessionId::new();

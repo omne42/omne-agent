@@ -11,13 +11,14 @@
 - 新增 Agent-first 重新开发流程文档：`docs/development_process.md`。
 - 新增 vNext 目标态“RTS 风格使用流程”文档：`docs/rts_workflow.md`。
 - 新增 v0.2.x 文档索引与 v0.2.0 口径补充（approval/attention/event model/runtime/execpolicy 等，详见 `docs/README.md`）。
+- 新增项目级数据根与运行时目录约定文档：`docs/codepm_data.md`、`docs/runtime_layout.md`，并补齐 daemon/TUI 设计草案：`docs/daemon.md`、`docs/tui.md`。
 - 补齐 Subagents/Fan-out 文档：加入 Codex/OpenCode/Claude Code/Antigravity 对照、v0.2.x 务实 DoD 与 A/B/C 选型建议（`docs/subagents.md`）。
 - 新增 Agent GUI 爆发期产品调研：`docs/research/onecode.md`、`docs/research/superset.md`、`docs/research/aion-ui.md`。
 - 新增 `v0.2.0` 功能对齐与 TODO 汇总：`docs/v0.2.0_parity.md`。
 - 新增 Mode（角色权限边界）规范：`docs/modes.md`（配置发现顺序、`deny/prompt/allow` 语义、`prompt+auto_approve` 的落盘审计规则）。
-- `pm-core`/`pm-app-server`：落地 ModeCatalog（`.codepm/modes.yaml` / `CODE_PM_MODES_FILE`），并在 `file/*` 与 `process/start` 工具入口强制执行 `mode` 的 `deny` 边界（未知 mode 也会拒绝并返回可用列表）。
+- `pm-core`/`pm-app-server`：落地 ModeCatalog（`.codepm_data/spec/modes.yaml` / `CODE_PM_MODES_FILE`），并在 `file/*` 与 `process/start` 工具入口强制执行 `mode` 的 `deny` 边界（未知 mode 也会拒绝并返回可用列表）。
 - `pm-core`/`pm-app-server`：新增 `subagent.spawn` 权限边界，并在 `agent_spawn` 入口强制执行（默认子 thread `sandbox_policy=read_only` + `mode=reviewer`，并支持 `CODE_PM_MAX_CONCURRENT_SUBAGENTS` 并发上限，超限拒绝并返回原因）。
-- `pm-app-server`：支持 per-mode execpolicy rules（`.codepm/modes.yaml` 的 `permissions.command.execpolicy_rules`），并在 `process/start` 入口 fail-closed 执行（加载失败即拒绝）。
+- `pm-app-server`：支持 per-mode execpolicy rules（`.codepm_data/spec/modes.yaml` 的 `permissions.command.execpolicy_rules`），并在 `process/start` 入口 fail-closed 执行（加载失败即拒绝）。
 - `pm-app-server thread/config-explain`：追加 mode 可解释性（mode catalog 来源/路径/加载错误、可用 modes、当前 mode 的权限摘要与 glob 列表）。
 - 更新仓库级 `AGENTS.md`：补齐 `crates/*` 结构、Rust gates 与 `pm*` 入口说明。
 - 新增 `pm-jsonrpc`：最小 JSON-RPC over stdio client，用于驱动 `pm-app-server`；并支持接收/转发 JSON-RPC notifications（用于 `item/delta` 等流式事件）。
@@ -31,6 +32,7 @@
 - `pm-openai`：SSE 事件强类型化：`TokenUsage`/`RateLimits`/`ApiError`，并支持 `response.failed` → `ResponseEvent::Failed`；`pm-app-server` agent loop 会消费 typed usage 并把 failed 作为错误返回。
 - 新增 `pm-app-server`：最小 JSON-RPC over stdio 控制面（`initialize` + `thread/*` + `turn/*`），用于验证 v0.2.0 的 thread/turn/interrupt 与落盘回放。
 - 新增 `pm` CLI：作为 `pm-app-server` 的人类可用客户端，支持 `ask/watch --bell`、`thread/*`、`approval/*`、`process/*`（只读查看 + interrupt/kill），并在 `ask` 中支持 Ctrl-C 触发 `turn/interrupt`。
+- `pm` CLI 新增 `pm init`：初始化 `./.codepm_data/`（创建目录、生成 `config.toml`、可选 `.env` 模板与 `spec/`，并写入 `.codepm_data/.gitignore`）。
 - `pm` CLI 新增 `exec`：非交互执行单次 turn（CI/脚本友好），支持 `--json` 输出摘要与 `--on-approval fail|approve|deny` 策略。
 - `pm` CLI 新增交互式 REPL：直接运行 `pm`（或 `pm repl`）进入对话/执行环境，支持 `/help` 等指令。
 - `pm ask`：消费 `pm-app-server` 的 `item/delta` notifications 并实时输出 assistant 文本流（仅作为 UI 优化；最终仍以 `AssistantMessage` 落盘为准）。
@@ -43,7 +45,7 @@
 - `pm-app-server`：user artifacts 支持 bounded history（`CODE_PM_ARTIFACT_HISTORY_MAX_VERSIONS`；覆盖写入时保存旧内容到 `artifacts/user/history/<artifact_id>/v####.md`，并自动保留最近 N 个旧版本；见 `docs/artifacts.md`）。
 - `pm-app-server`/`pm`：新增 `thread/diff`（安全模式 `git diff --no-ext-diff --no-textconv`）生成 diff user artifact（`artifact_type="diff"`）；CLI: `pm thread diff <thread_id>`。
 - `pm` CLI 新增 `pm thread spawn`：对 `thread/fork + turn/start` 的便捷封装（可选覆盖 model/openai_base_url），用于并行出发后台 turns。
-- `pm-app-server` 新增 `thread/hook_run`：读取 `<thread root>/.codepm/workspace.{yaml,yml}` 并按 `setup/run/archive` 启动对应 hook 命令（复用 `process/start` 的 mode/execpolicy/approvals）；`pm` CLI 增加 `pm thread hook-run <thread_id> <setup|run|archive>` 用于触发。
+- `pm-app-server` 新增 `thread/hook_run`：读取 `<thread root>/.codepm_data/spec/workspace.{yaml,yml}` 并按 `setup/run/archive` 启动对应 hook 命令（复用 `process/start` 的 mode/execpolicy/approvals）；`pm` CLI 增加 `pm thread hook-run <thread_id> <setup|run|archive>` 用于触发。
 - `pm-app-server` agent loop：新增 `thread_hook_run` tool，允许 agent 直接触发当前 thread 的 workspace hooks（同样复用 mode/execpolicy/approvals）。
 - `pm` CLI 新增可解释性与状态查询：`pm thread state`、`pm thread config-explain`、`pm thread loaded`。
 - `pm`/`pm-app-server`：thread 配置新增 `mode`（角色/权限边界）字段；`pm ask/exec/thread configure --mode <name>` 可设置；`thread/state`/`thread/config-explain` 会返回当前生效的 `mode`。
@@ -56,6 +58,7 @@
 - `pm-app-server` 新增 Responses-first agent loop：`turn/start` 会调用 OpenAI Responses API 执行 tool calling（阻塞等待 approval 决策并复跑同一 tool call），并将 assistant 输出落盘为 `AssistantMessage` 事件以支持 resume。
 - `pm-app-server` agent loop：会读取 `<thread cwd>/AGENTS.md` 并追加到 instructions（写入前自动脱敏），让项目级规范从第一天就能约束 agent。
 - `pm-app-server` agent loop：支持 instructions layering（base/user/project）与按需加载 skills（`$skill` → `SKILL.md`），并提供 `CODE_PM_USER_INSTRUCTIONS_FILE`/`CODE_PM_SKILLS_DIR`。
+- `pm-app-server`：支持项目级 OpenAI 配置覆盖（默认关闭）：当 `.codepm_data/config.toml` 的 `[project_config].enabled=true` 时，从 `.codepm_data/config.toml` + `.codepm_data/.env` 加载 `base_url/model/api_key` 覆盖。
 - `pm-app-server` agent loop：构建对话上下文时会把 tool/approval/process/turn-status 事件注入 history（resume 更接近 Codex 语义，减少重复执行与“失忆”）。
 - 新增 `pm-core::threads`：`ThreadStore` + `ThreadHandle`，基于 JSONL event log 实现 thread 创建/列举/resume（resume 会修复未完成 turn/进程并落盘）。
 - 新增 `pm-core::sandbox`：rooted path 解析与边界校验（拒绝 `..` 穿越与 symlink 逃逸）。
@@ -84,6 +87,8 @@
 - `pm-app-server agent loop`：新增 `agent_spawn`（fork + 启动子 agent turn）与 `thread_state`/`thread_events`（fan-in 读状态与事件）。
 
 ### Changed
+- `pm`/`pm-app-server`：`pm_root` 默认目录改为 `./.codepm_data/`（可用 `--pm-root` 或 `CODE_PM_ROOT` 覆盖）。
+- （breaking）project spec 目录固定为 `./.codepm_data/spec/`（modes/workspace hooks/skills 等），不再支持 legacy `.codepm/`/`.code_pm/` 路径。
 - 重写 `docs/implementation_plan.md`：以 Agent CLI（tool/sandbox/approvals + 事件流）为核心基建，Git 降级为交付适配层，并明确 RTS 控制面最小能力集。
 - 更新 `docs/development_process.md`：补齐 RTS 风格交互要求（attention/inbox、pause/interrupt/step），并把 workspace hooks（setup/run/archive）与 artifacts/preview 明确进里程碑。
 - `docs/workflow.md` 标注为 `v0.1.1` legacy，`docs/start.md` 增加 vNext 文档导航。
@@ -152,6 +157,7 @@
 ### Security
 - `pm-core::threads`：落盘事件前自动脱敏（Turn input/argv/approval params/tool results 等），避免 secrets 进入 event log；`pm-app-server process/tail`/`process/follow` 返回内容也会脱敏展示。
 - `pm-app-server`：`process/start` 默认从子进程环境中移除常见 provider key（`OPENAI_API_KEY` 等），降低“任意命令读取/回显密钥”的泄露面。
+- `pm-app-server`：`file/*` 默认硬拒绝 `.env` 的读取与写入（write/patch/edit/delete），并在 `file/glob`/`file/grep` 扫描时跳过 `.codepm_data/{tmp,threads,data,repos,locks,logs}/`。
 
 ## [0.1.1] - 2026-01-20
 

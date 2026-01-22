@@ -21,7 +21,7 @@ mod thread_manage_tests {
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = build_test_server(tmp.path().join(".code_pm"));
+        let server = build_test_server(tmp.path().join(".codepm_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -45,7 +45,7 @@ mod thread_manage_tests {
     async fn thread_hook_run_starts_process_from_config() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");
-        let config_dir = repo_dir.join(".codepm");
+        let config_dir = repo_dir.join(".codepm_data").join("spec");
         tokio::fs::create_dir_all(&config_dir).await?;
 
         tokio::fs::write(
@@ -57,7 +57,7 @@ hooks:
         )
         .await?;
 
-        let server = build_test_server(tmp.path().join(".code_pm"));
+        let server = build_test_server(tmp.path().join(".codepm_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);

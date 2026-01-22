@@ -238,7 +238,7 @@ mod tests {
     #[tokio::test]
     async fn append_redacts_sensitive_tokens() -> anyhow::Result<()> {
         let dir = tempfile::tempdir()?;
-        let store = ThreadStore::new(PmPaths::new(dir.path().join(".code_pm")));
+        let store = ThreadStore::new(PmPaths::new(dir.path().join(".codepm_data")));
 
         let mut thread = store.create_thread(PathBuf::from("/tmp")).await?;
         let thread_id = thread.thread_id();
@@ -271,7 +271,7 @@ mod tests {
     #[tokio::test]
     async fn resume_repairs_incomplete_turn() -> anyhow::Result<()> {
         let dir = tempfile::tempdir()?;
-        let store = ThreadStore::new(PmPaths::new(dir.path().join(".code_pm")));
+        let store = ThreadStore::new(PmPaths::new(dir.path().join(".codepm_data")));
 
         let mut thread = store.create_thread(PathBuf::from("/tmp")).await?;
         let thread_id = thread.thread_id();

@@ -47,6 +47,32 @@ async fn handle_file_write(server: &Server, params: FileWriteParams) -> anyhow::
     }
 
     let rel_path = pm_core::modes::relative_path_under_root(&thread_root, Path::new(&params.path));
+    if let Ok(rel) = rel_path.as_ref()
+        && rel_path_is_secret(rel)
+    {
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                tool_id,
+                turn_id: params.turn_id,
+                tool: "file/write".to_string(),
+                params: Some(approval_params),
+            })
+            .await?;
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                tool_id,
+                status: pm_protocol::ToolStatus::Denied,
+                error: Some("refusing to write secrets file (.env)".to_string()),
+                result: Some(serde_json::json!({
+                    "reason": "secrets file is always denied",
+                })),
+            })
+            .await?;
+        return Ok(serde_json::json!({
+            "tool_id": tool_id,
+            "denied": true,
+        }));
+    }
     let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {
         Some(mode) => mode,
@@ -291,6 +317,32 @@ async fn handle_file_patch(server: &Server, params: FilePatchParams) -> anyhow::
     }
 
     let rel_path = pm_core::modes::relative_path_under_root(&thread_root, Path::new(&params.path));
+    if let Ok(rel) = rel_path.as_ref()
+        && rel_path_is_secret(rel)
+    {
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                tool_id,
+                turn_id: params.turn_id,
+                tool: "file/patch".to_string(),
+                params: Some(approval_params),
+            })
+            .await?;
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                tool_id,
+                status: pm_protocol::ToolStatus::Denied,
+                error: Some("refusing to patch secrets file (.env)".to_string()),
+                result: Some(serde_json::json!({
+                    "reason": "secrets file is always denied",
+                })),
+            })
+            .await?;
+        return Ok(serde_json::json!({
+            "tool_id": tool_id,
+            "denied": true,
+        }));
+    }
     let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {
         Some(mode) => mode,

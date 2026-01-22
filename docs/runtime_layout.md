@@ -1,17 +1,17 @@
-# 运行时目录结构（`.code_pm/`）（v0.2.0 口径）
+# 运行时目录结构（`pm_root` = `./.codepm_data/`）（v0.2.0 口径）
 
 > 目标：让用户/工具在 30 秒内定位：事件落盘在哪、process log 在哪、user artifact 在哪。
 >
-> `.code_pm/` 是**运行时数据目录**（threads/artifacts/state）。项目可提交配置放在 `./.codepm/`（注意有无下划线）。
+> `pm_root` 默认是 `./.codepm_data/`：运行时数据（threads/artifacts）+ 项目级配置（`.codepm_data/config.toml`、`.codepm_data/spec/`）。
 
 ---
 
 ## 0) pm_root 的选择（写死）
 
-`pm_root` 是 `.code_pm/` 的根目录：
+`pm_root` 是 `.codepm_data/` 的根目录：
 
-- 直接运行 app-server（`pm-app-server`）：默认 `$(pwd)/.code_pm`
-- 通过 `pm` CLI：默认会显式传 `--pm-root`（优先级：CLI flag > env `CODE_PM_ROOT` > `$(pwd)/.code_pm`）
+- 直接运行 app-server（`pm-app-server`）：默认 `$(pwd)/.codepm_data`
+- 通过 `pm` CLI：默认会显式传 `--pm-root`（优先级：CLI flag > env `CODE_PM_ROOT` > `$(pwd)/.codepm_data`）
 - 覆盖方式：
   - CLI：`pm-app-server --pm-root <path>`
   - env：`CODE_PM_ROOT=<path>`

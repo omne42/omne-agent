@@ -13,8 +13,8 @@ fn command_uses_network(argv: &[String]) -> bool {
     }
 
     match name.as_str() {
-        "curl" | "wget" | "ssh" | "scp" | "sftp" | "ftp" | "telnet" | "nc" | "ncat"
-        | "netcat" | "gh" => true,
+        "curl" | "wget" | "ssh" | "scp" | "sftp" | "ftp" | "telnet" | "nc" | "ncat" | "netcat"
+        | "gh" => true,
         "git" => argv
             .get(1)
             .map(|subcommand| {
@@ -199,42 +199,43 @@ async fn handle_process_start(
     let exec_matches = if mode.command_execpolicy_rules.is_empty() {
         server.exec_policy.matches_for_command(&params.argv, None)
     } else {
-        let mode_exec_policy = match load_mode_exec_policy(&thread_root, &mode.command_execpolicy_rules).await {
-            Ok(policy) => policy,
-            Err(err) => {
-                let tool_id = pm_protocol::ToolId::new();
-                thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ToolStarted {
-                        tool_id,
-                        turn_id: params.turn_id,
-                        tool: "process/start".to_string(),
-                        params: Some(serde_json::json!({
-                            "argv": params.argv.clone(),
-                            "cwd": cwd_str,
-                        })),
-                    })
-                    .await?;
-                thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
-                        tool_id,
-                        status: pm_protocol::ToolStatus::Denied,
-                        error: Some("failed to load mode execpolicy rules".to_string()),
-                        result: Some(serde_json::json!({
-                            "mode": mode_name,
-                            "rules": mode.command_execpolicy_rules.clone(),
-                            "error": err.to_string(),
-                        })),
-                    })
-                    .await?;
-                return Ok(serde_json::json!({
-                    "tool_id": tool_id,
-                    "denied": true,
-                    "mode": mode_name,
-                    "error": "failed to load mode execpolicy rules",
-                    "details": err.to_string(),
-                }));
-            }
-        };
+        let mode_exec_policy =
+            match load_mode_exec_policy(&thread_root, &mode.command_execpolicy_rules).await {
+                Ok(policy) => policy,
+                Err(err) => {
+                    let tool_id = pm_protocol::ToolId::new();
+                    thread_rt
+                        .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                            tool_id,
+                            turn_id: params.turn_id,
+                            tool: "process/start".to_string(),
+                            params: Some(serde_json::json!({
+                                "argv": params.argv.clone(),
+                                "cwd": cwd_str,
+                            })),
+                        })
+                        .await?;
+                    thread_rt
+                        .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                            tool_id,
+                            status: pm_protocol::ToolStatus::Denied,
+                            error: Some("failed to load mode execpolicy rules".to_string()),
+                            result: Some(serde_json::json!({
+                                "mode": mode_name,
+                                "rules": mode.command_execpolicy_rules.clone(),
+                                "error": err.to_string(),
+                            })),
+                        })
+                        .await?;
+                    return Ok(serde_json::json!({
+                        "tool_id": tool_id,
+                        "denied": true,
+                        "mode": mode_name,
+                        "error": "failed to load mode execpolicy rules",
+                        "details": err.to_string(),
+                    }));
+                }
+            };
 
         let combined = merge_exec_policies(&server.exec_policy, &mode_exec_policy);
         combined.matches_for_command(&params.argv, None)
@@ -296,9 +297,8 @@ async fn handle_process_start(
         "argv": params.argv.clone(),
         "cwd": cwd_str.clone(),
     });
-    let needs_approval =
-        effective_mode_decision == pm_core::modes::Decision::Prompt
-            || effective_exec_decision == ExecDecision::Prompt;
+    let needs_approval = effective_mode_decision == pm_core::modes::Decision::Prompt
+        || effective_exec_decision == ExecDecision::Prompt;
     if needs_approval {
         match gate_approval(
             server,
@@ -325,16 +325,16 @@ async fn handle_process_start(
                         params: Some(approval_params),
                     })
                     .await?;
-                    thread_rt
-                        .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
-                            tool_id,
-                            status: pm_protocol::ToolStatus::Denied,
-                            error: Some(approval_denied_error(remembered).to_string()),
-                            result: Some(serde_json::json!({
-                                "approval_policy": approval_policy,
-                            })),
-                        })
-                        .await?;
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                        tool_id,
+                        status: pm_protocol::ToolStatus::Denied,
+                        error: Some(approval_denied_error(remembered).to_string()),
+                        result: Some(serde_json::json!({
+                            "approval_policy": approval_policy,
+                        })),
+                    })
+                    .await?;
                 return Ok(serde_json::json!({
                     "tool_id": tool_id,
                     "denied": true,
@@ -474,11 +474,16 @@ async fn resolve_execpolicy_rule_paths(
     Ok(out)
 }
 
-async fn load_mode_exec_policy(thread_root: &Path, rules: &[String]) -> anyhow::Result<pm_execpolicy::Policy> {
+async fn load_mode_exec_policy(
+    thread_root: &Path,
+    rules: &[String],
+) -> anyhow::Result<pm_execpolicy::Policy> {
     let rule_paths = resolve_execpolicy_rule_paths(thread_root, rules).await?;
-    let policy = tokio::task::spawn_blocking(move || pm_execpolicy::execpolicycheck::load_policies(&rule_paths))
-        .await
-        .context("join mode execpolicy load task")??;
+    let policy = tokio::task::spawn_blocking(move || {
+        pm_execpolicy::execpolicycheck::load_policies(&rule_paths)
+    })
+    .await
+    .context("join mode execpolicy load task")??;
     Ok(policy)
 }
 
@@ -524,14 +529,14 @@ mod process_start_tests {
     }
 
     #[tokio::test]
-    async fn process_start_denies_network_commands_when_network_access_is_denied() -> anyhow::Result<()>
-    {
+    async fn process_start_denies_network_commands_when_network_access_is_denied()
+    -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
         write_executable_sh(repo_dir.join("curl").as_path(), "#!/bin/sh\nexit 0\n").await?;
 
-        let server = build_test_server(tmp.path().join(".code_pm"));
+        let server = build_test_server(tmp.path().join(".codepm_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -556,14 +561,14 @@ mod process_start_tests {
     }
 
     #[tokio::test]
-    async fn process_start_allows_network_commands_when_network_access_is_allowed() -> anyhow::Result<()>
-    {
+    async fn process_start_allows_network_commands_when_network_access_is_allowed()
+    -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
         write_executable_sh(repo_dir.join("curl").as_path(), "#!/bin/sh\nexit 0\n").await?;
 
-        let server = build_test_server(tmp.path().join(".code_pm"));
+        let server = build_test_server(tmp.path().join(".codepm_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -630,10 +635,10 @@ mod process_start_tests {
     async fn process_start_applies_mode_execpolicy_rules() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");
-        tokio::fs::create_dir_all(repo_dir.join(".codepm")).await?;
+        tokio::fs::create_dir_all(repo_dir.join(".codepm_data/spec")).await?;
         tokio::fs::create_dir_all(repo_dir.join("rules")).await?;
         tokio::fs::write(
-            repo_dir.join(".codepm/modes.yaml"),
+            repo_dir.join(".codepm_data/spec/modes.yaml"),
             r#"
 version: 1
 modes:
@@ -657,7 +662,7 @@ prefix_rule(
         )
         .await?;
 
-        let server = build_test_server(tmp.path().join(".code_pm"));
+        let server = build_test_server(tmp.path().join(".codepm_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -700,9 +705,9 @@ prefix_rule(
     async fn process_start_denies_when_mode_execpolicy_rules_missing() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");
-        tokio::fs::create_dir_all(repo_dir.join(".codepm")).await?;
+        tokio::fs::create_dir_all(repo_dir.join(".codepm_data/spec")).await?;
         tokio::fs::write(
-            repo_dir.join(".codepm/modes.yaml"),
+            repo_dir.join(".codepm_data/spec/modes.yaml"),
             r#"
 version: 1
 modes:
@@ -716,7 +721,7 @@ modes:
         )
         .await?;
 
-        let server = build_test_server(tmp.path().join(".code_pm"));
+        let server = build_test_server(tmp.path().join(".codepm_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -753,11 +758,13 @@ modes:
             result["error"].as_str(),
             Some("failed to load mode execpolicy rules")
         );
-        assert!(!result["details"]
-            .as_str()
-            .unwrap_or_default()
-            .trim()
-            .is_empty());
+        assert!(
+            !result["details"]
+                .as_str()
+                .unwrap_or_default()
+                .trim()
+                .is_empty()
+        );
         assert!(server.processes.lock().await.is_empty());
 
         Ok(())

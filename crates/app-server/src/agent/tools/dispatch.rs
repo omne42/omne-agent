@@ -822,7 +822,7 @@ mod agent_spawn_guard_tests {
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = build_test_server(tmp.path().join(".code_pm"));
+        let server = build_test_server(tmp.path().join(".codepm_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -851,7 +851,7 @@ mod agent_spawn_guard_tests {
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = build_test_server(tmp.path().join(".code_pm"));
+        let server = build_test_server(tmp.path().join(".codepm_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -880,7 +880,7 @@ mod agent_spawn_guard_tests {
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = build_test_server(tmp.path().join(".code_pm"));
+        let server = build_test_server(tmp.path().join(".codepm_data"));
         let mut parent = server.thread_store.create_thread(repo_dir.clone()).await?;
         let thread_id = parent.thread_id();
 

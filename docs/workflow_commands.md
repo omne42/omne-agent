@@ -27,7 +27,7 @@
 
 Project config（可提交/可 review）：
 
-- v1 **只支持**：`./.codepm/commands/<name>.md`（不做 fallback/模糊搜索；找不到即报错）
+- v1 **只支持**：`./.codepm_data/spec/commands/<name>.md`（不做 fallback/模糊搜索；找不到即报错）
 
 CLI 形态（未来实现，占位）：
 
@@ -122,7 +122,7 @@ inputs:
 
 ## 5) 验收（未来实现时）
 
-- `pm command list` 能发现 `./.codepm/commands/*.md`，并显示 `name/mode/version`。
+- `pm command list` 能发现 `./.codepm_data/spec/commands/*.md`，并显示 `name/mode/version`。
 - `pm command run <name>` 必须把最终生效的 `mode/allowed_tools` 记录到 thread config（可解释性见 `thread/config/explain`）。
 - `context` 步骤必须全部事件化（`ProcessStarted/Exited`），且输出可从 artifacts 定位（不塞进事件）。
 - fail-closed：任一 context step exit code 不在 `ok_exit_codes` 内时必须终止执行，且错误原因可在事件/日志中定位。

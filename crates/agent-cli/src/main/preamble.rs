@@ -19,7 +19,7 @@ use tracing_subscriber::EnvFilter;
 #[command(name = "pm")]
 #[command(about = "CodePM v0.2.0 agent CLI (drives pm-app-server)", long_about = None)]
 struct Cli {
-    /// Override `.code_pm` root directory.
+    /// Override project data root directory (default: `./.codepm_data/`).
     #[arg(long, global = true)]
     pm_root: Option<PathBuf>,
 
@@ -38,6 +38,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Initialize `./.codepm_data/` in the current project.
+    Init(InitArgs),
     /// Start an interactive REPL.
     Repl,
     Thread {
@@ -60,6 +62,25 @@ enum Command {
         #[command(subcommand)]
         command: ArtifactCommand,
     },
+}
+
+#[derive(clap::Args)]
+struct InitArgs {
+    /// Target directory to initialize (defaults to current working directory).
+    #[arg(long)]
+    dir: Option<PathBuf>,
+
+    /// Overwrite existing files when present.
+    #[arg(long, default_value_t = false)]
+    force: bool,
+
+    /// Skip interactive prompts and use defaults.
+    #[arg(long, default_value_t = false)]
+    yes: bool,
+
+    /// Enable project config by default (`.codepm_data/config.toml`).
+    #[arg(long, default_value_t = false)]
+    enable_project_config: bool,
 }
 
 #[derive(Subcommand)]

@@ -4,13 +4,18 @@ async fn main() -> anyhow::Result<()> {
         .with_env_filter(EnvFilter::from_default_env())
         .init();
 
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
+    if let Some(Command::Init(args)) = cli.command.take() {
+        return run_init(args).await;
+    }
+
     let mut app = App::connect(&cli).await?;
 
     match cli.command {
         None | Some(Command::Repl) => {
             run_repl(&mut app).await?;
         }
+        Some(Command::Init(_)) => unreachable!("handled before App::connect"),
         Some(Command::Thread { command }) => match command {
             ThreadCommand::Start { cwd, json } => {
                 let cwd = cwd.map(|p| p.display().to_string());

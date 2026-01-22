@@ -24,14 +24,12 @@
 
 Project config（可提交/可 review）：
 
-- **Canonical**：`./.codepm/hooks.yaml`
-- **Fallback**：`./codepm.hooks.yaml`
+- **Canonical**：`./.codepm_data/spec/hooks.yaml`
 
-发现顺序（v1 建议写死，避免 env 注入未 review 的脚本）：
+发现顺序（v1 建议写死，避免隐式执行未 review 的脚本）：
 
-1. `./.codepm/hooks.yaml`
-2. `./codepm.hooks.yaml`
-3. 内置默认（无 hooks）
+1. `./.codepm_data/spec/hooks.yaml`
+2. 内置默认（无 hooks）
 
 fail-closed（写死）：
 
@@ -115,7 +113,7 @@ hooks:
       emit_additional_context: true
   pre_tool_use:
     - when_tools: ["process/start", "file/write", "file/patch", "file/edit"]
-      argv: ["python3", ".codepm/hooks/security_reminder.py"]
+      argv: ["python3", ".codepm_data/spec/hooks/security_reminder.py"]
       ok_exit_codes: [0]
       emit_additional_context: true
   stop:

@@ -43,8 +43,8 @@ pm thread configure <thread_id> \
 
 建议的 preset 文件位置：
 
-- Canonical：`./.codepm/presets/<name>.yaml`
-- Default：`./.codepm/preset.yaml`（可选；作为“项目默认 preset”）
+- Canonical：`./.codepm_data/spec/presets/<name>.yaml`
+- Default：`./.codepm_data/spec/preset.yaml`（可选；作为“项目默认 preset”）
 
 v1 建议（写死）：
 
@@ -53,8 +53,9 @@ v1 建议（写死）：
   - 人类显式 `pm preset import ...`（或等价 API）把 preset 物化为一次 `ThreadConfigUpdated`。
   - 人类显式 `pm preset export ...` 从当前 thread 导出一个可 review 的文件。
 - 信任边界（写死）：
-  - v1 只允许从 `./.codepm/` 下加载 preset（可提交/可 review）。
-  - 不从 `.code_pm/`（运行时目录）加载；不从 env/网络/任意绝对路径隐式加载。
+  - v1 只允许从 `./.codepm_data/spec/` 下加载 preset（可提交/可 review）。
+  - 不从 env/网络/任意绝对路径隐式加载。
+  - 不从 `.codepm_data/{tmp,threads,data,repos,locks,logs}/` 这类运行时目录加载。
 
 建议的发现/覆盖顺序（从低到高，越后越强）：
 
@@ -103,7 +104,7 @@ thread_config:
 
 可选字段（TODO，先别承诺实现）：
 
-- `execpolicy_rules`: `["./.codepm/execpolicy/*.yaml", ...]`
+- `execpolicy_rules`: `["./.codepm_data/spec/execpolicy/*.yaml", ...]`
   - 备注：execpolicy 目前是 **app-server 全局启动参数**（`pm --execpolicy-rules <path>`），不是 thread 配置；preset 里最多作为“启动建议/提示”，导入到已运行的 app-server 不应静默生效。
 
 硬规则（再次强调）：
@@ -112,8 +113,8 @@ thread_config:
 
 ### 2.2 目录与可提交性
 
-- preset 属于“项目可提交配置”，建议放在 `./.codepm/`（见 `docs/runtime_layout.md`）。
-- `.code_pm/` 是运行时数据目录，不承载可迁移 preset。
+- preset 属于“项目可提交配置”，建议放在 `./.codepm_data/spec/`（见 `docs/runtime_layout.md`）。
+- `.codepm_data/` 下只有 `spec/` 承载可迁移 preset；其它子目录都是运行时数据，不承载 preset。
 
 ---
 
@@ -161,6 +162,6 @@ thread_config:
 
 ## 5) DoD（未来实现的可验证清单）
 
-- `pm preset export --thread <id> --out .codepm/presets/x.yaml` 生成的文件里不包含任何 token 形态（例如 `rg -n \"sk-\" .codepm/presets/x.yaml` 命中为 0）。
-- `pm preset import --thread <id> --file .codepm/presets/x.yaml` 后，`pm thread config-explain <id> --json` 的 `effective` 与 preset 对齐。
+- `pm preset export --thread <id> --out .codepm_data/spec/presets/x.yaml` 生成的文件里不包含任何 token 形态（例如 `rg -n \"sk-\" .codepm_data/spec/presets/x.yaml` 命中为 0）。
+- `pm preset import --thread <id> --file .codepm_data/spec/presets/x.yaml` 后，`pm thread config-explain <id> --json` 的 `effective` 与 preset 对齐。
 - （如果实现了独立层）`thread/config/explain.layers` 能看到 `preset` 来源与元信息（name/hash）。

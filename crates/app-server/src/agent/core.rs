@@ -1,8 +1,9 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
+use crate::project_config::ProjectOpenAiOverrides;
 use futures_util::stream::{self, StreamExt};
 use pm_protocol::{ApprovalDecision, ApprovalId, EventSeq, ThreadEventKind, TurnId};
 use serde::Deserialize;
@@ -64,10 +65,20 @@ pub async fn run_agent_turn(
         )
     };
 
-    let api_key = std::env::var("OPENAI_API_KEY")
-        .or_else(|_| std::env::var("CODE_PM_OPENAI_API_KEY"))
-        .context("OPENAI_API_KEY is required")?;
+    let project_overrides = if let Some(thread_cwd) = thread_cwd.as_deref() {
+        let thread_root = pm_core::resolve_dir(Path::new(thread_cwd), Path::new(".")).await?;
+        crate::project_config::load_project_openai_overrides(&thread_root).await
+    } else {
+        ProjectOpenAiOverrides::default()
+    };
+
+    let api_key = project_overrides
+        .api_key
+        .or_else(|| std::env::var("OPENAI_API_KEY").ok())
+        .or_else(|| std::env::var("CODE_PM_OPENAI_API_KEY").ok())
+        .context("OPENAI_API_KEY is required (or enable project config and set .codepm_data/.env)")?;
     let model = thread_model
+        .or(project_overrides.model)
         .or_else(|| {
             std::env::var("CODE_PM_OPENAI_MODEL")
                 .ok()
@@ -75,6 +86,7 @@ pub async fn run_agent_turn(
         })
         .unwrap_or_else(|| DEFAULT_MODEL.to_string());
     let base_url = thread_openai_base_url
+        .or(project_overrides.base_url)
         .or_else(|| {
             std::env::var("CODE_PM_OPENAI_BASE_URL")
                 .ok()
@@ -482,7 +494,7 @@ fn resolve_user_instructions_path() -> Option<PathBuf> {
     }
 
     let home = home_dir()?;
-    Some(home.join(".codepm").join("AGENTS.md"))
+    Some(home.join(".codepm_data").join("AGENTS.md"))
 }
 
 fn home_dir() -> Option<PathBuf> {
@@ -566,11 +578,11 @@ async fn load_skill(name: &str, thread_root: PathBuf) -> anyhow::Result<Option<(
         }
     }
 
-    roots.push(thread_root.join(".codepm").join("skills"));
+    roots.push(thread_root.join(".codepm_data").join("spec").join("skills"));
     roots.push(thread_root.join(".codex").join("skills"));
 
     if let Some(home) = home_dir() {
-        roots.push(home.join(".codepm").join("skills"));
+        roots.push(home.join(".codepm_data").join("spec").join("skills"));
     }
 
     let candidates = [name.to_string(), name.to_ascii_lowercase()];

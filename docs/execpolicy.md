@@ -102,7 +102,7 @@ fail-closed（写死）：
 
 v0.2.0 支持为某个 mode 单独配置额外的规则文件列表：
 
-- 配置位置：`./.codepm/modes.yaml` → `modes.<name>.permissions.command.execpolicy_rules: [<path>...]`
+- 配置位置：`./.codepm_data/spec/modes.yaml` → `modes.<name>.permissions.command.execpolicy_rules: [<path>...]`
 - 路径解析：绝对路径按原样使用；相对路径按 **thread cwd（workspace root）** 解析（并通过 path boundary 校验，避免 `..`/symlink 逃逸）
 - 合并顺序（写死）：`global rules（启动参数） → mode rules`
 - fail-closed（写死）：mode 指定的 rules 文件缺失/不可读/解析失败时，该次 `process/start` 必须直接拒绝并返回可诊断错误（不要静默忽略该层）

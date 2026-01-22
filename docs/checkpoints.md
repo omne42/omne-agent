@@ -94,11 +94,14 @@
 
 快照只覆盖 thread `cwd` 下的工作区文件树，并遵守以下硬约束：
 
-- 必须排除运行时目录：`.code_pm/**`（以及兼容旧目录 `.codex_pm/**`）。
+- 必须排除运行时目录：
+  - `.codepm_data/tmp/**`、`.codepm_data/threads/**`
+  - `.codepm_data/data/**`、`.codepm_data/repos/**`
+  - `.codepm_data/locks/**`、`.codepm_data/logs/**`
 - 必须排除 `.git/**`（避免体积与凭据/配置问题；不把 git 当正确性前提）。
 - 必须避免“把大目录打进快照”：
   - `target/**`、`node_modules/**`、`example/**`（与仓库约定一致：`example/` 不作为依赖）
-- secrets 默认禁入（保守；避免把明文塞进 `.code_pm`）：
+- secrets 默认禁入（保守；避免把明文塞进 repo/运行时目录）：
   - `.env`、`.env.*`、`*.pem`、`*.key`、`.ssh/**`、`.aws/**`、`.kube/**`
 - 不跟随 symlink 逃逸：对 snapshot/restore 的路径遍历必须拒绝 `..` 与 symlink escape（口径与 `docs/runtime_layout.md`/`docs/redaction.md` 保持一致）。
 
@@ -150,16 +153,19 @@ restore 是破坏性操作，最小约束建议写死：
 - snapshot_ref: ...
 
 ## Restore plan (best-effort)
+
 - create: ...
 - modify: ...
 - delete: ...
 
 ## Boundary
+
 - ignored_globs: [...]
 - size_limits: { max_file_bytes: ..., max_total_bytes: ... }
 - excluded: { symlink_count: ..., oversize_count: ... }
 
 ## Next steps
+
 - pm process list --thread <thread_id>
 - pm process kill <process_id>
 - pm checkpoint restore <thread_id> <checkpoint_id>
@@ -177,7 +183,7 @@ restore 是破坏性操作，最小约束建议写死：
 
 无论哪种实现，都必须：
 
-- 受 sandbox/mode 控制（不能把 `.code_pm/**` 当可回滚对象）。
+- 受 sandbox/mode 控制（不能把 `.codepm_data/{tmp,threads,data,repos,locks,logs}/**` 当可回滚对象）。
 - 有磁盘占用可观测（应复用 `docs/runtime_layout.md` 的 disk warning/report 思路）。
 
 ---

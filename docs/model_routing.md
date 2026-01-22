@@ -80,15 +80,13 @@ pm thread config-explain <thread_id> --json
 
 ### 3.2 配置文件位置（建议写死）
 
-约定：Router 属于 project config（`./.codepm/`），不是运行时数据（`.code_pm/`）。
+约定：Router 属于项目可提交 spec（`./.codepm_data/spec/`）；运行时数据位于 `.codepm_data/{tmp,threads,...}`，不参与发现/解析。
 
 发现顺序（高 → 低）建议写死：
 
 1. env：`CODE_PM_ROUTER_FILE`（绝对或相对路径；相对路径按 thread cwd 解析）
-2. `./.codepm/router.yaml`（推荐）
-3. `./.codepm/router.json`（可选）
-4. `./codepm.router.yaml`（fallback，可选）
-5. `./codepm.router.json`（fallback，可选）
+2. `./.codepm_data/spec/router.yaml`（推荐）
+3. `./.codepm_data/spec/router.json`（可选）
 
 若 env 指向的文件不存在或解析失败：建议直接报错（fail-closed），避免“以为生效但其实没生效”。
 
@@ -204,5 +202,5 @@ keyword_rules:
 
 - “切 long-context” 与 “compact/summary” 可以先只做一个。
 - 如果两者都实现，建议优先级写死为：
-  1) 有 long-context model 且命中阈值 → 路由到 long-context
-  2) 否则 → 触发 compact/summary（规格草案见 `docs/budgets.md`）
+  1. 有 long-context model 且命中阈值 → 路由到 long-context
+  2. 否则 → 触发 compact/summary（规格草案见 `docs/budgets.md`）

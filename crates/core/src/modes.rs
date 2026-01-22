@@ -96,6 +96,15 @@ impl ModeCatalog {
             ".git/**".to_string(),
             ".code_pm/**".to_string(),
             ".codepm/**".to_string(),
+            "**/.env".to_string(),
+            ".codepm_data/config.toml".to_string(),
+            ".codepm_data/spec/**".to_string(),
+            ".codepm_data/tmp/**".to_string(),
+            ".codepm_data/threads/**".to_string(),
+            ".codepm_data/locks/**".to_string(),
+            ".codepm_data/logs/**".to_string(),
+            ".codepm_data/data/**".to_string(),
+            ".codepm_data/repos/**".to_string(),
         ];
 
         modes.insert(
@@ -499,14 +508,14 @@ fn select_config_path(thread_root: &Path) -> Option<(ConfigSource, PathBuf)> {
         return Some((ConfigSource::Env, path));
     }
 
-    let project = thread_root.join(".codepm").join("modes.yaml");
-    if project.exists() {
-        return Some((ConfigSource::Project, project));
+    let spec_dir = thread_root.join(".codepm_data").join("spec");
+    let yaml = spec_dir.join("modes.yaml");
+    if yaml.exists() {
+        return Some((ConfigSource::Project, yaml));
     }
-
-    let fallback = thread_root.join("codepm.modes.yaml");
-    if fallback.exists() {
-        return Some((ConfigSource::Project, fallback));
+    let yml = spec_dir.join("modes.yml");
+    if yml.exists() {
+        return Some((ConfigSource::Project, yml));
     }
 
     None
@@ -646,9 +655,9 @@ mod tests {
     async fn loads_project_modes_yaml_and_merges() -> anyhow::Result<()> {
         let dir = tempfile::tempdir()?;
         let root = dir.path();
-        tokio::fs::create_dir_all(root.join(".codepm")).await?;
+        tokio::fs::create_dir_all(root.join(".codepm_data/spec")).await?;
         tokio::fs::write(
-            root.join(".codepm/modes.yaml"),
+            root.join(".codepm_data/spec/modes.yaml"),
             r#"
 version: 1
 modes:

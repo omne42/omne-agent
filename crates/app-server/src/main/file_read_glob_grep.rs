@@ -19,6 +19,32 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
     });
 
     let rel_path = pm_core::modes::relative_path_under_root(&thread_root, Path::new(&params.path));
+    if let Ok(rel) = rel_path.as_ref()
+        && rel_path_is_secret(rel)
+    {
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                tool_id,
+                turn_id: params.turn_id,
+                tool: "file/read".to_string(),
+                params: Some(approval_params.clone()),
+            })
+            .await?;
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                tool_id,
+                status: pm_protocol::ToolStatus::Denied,
+                error: Some("refusing to read secrets file (.env)".to_string()),
+                result: Some(serde_json::json!({
+                    "reason": "secrets file is always denied",
+                })),
+            })
+            .await?;
+        return Ok(serde_json::json!({
+            "tool_id": tool_id,
+            "denied": true,
+        }));
+    }
     let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {
         Some(mode) => mode,
@@ -225,6 +251,10 @@ const DEFAULT_IGNORED_DIRS: &[&str] = &[
     "example",
 ];
 
+fn rel_path_is_secret(rel_path: &Path) -> bool {
+    rel_path.file_name() == Some(std::ffi::OsStr::new(".env"))
+}
+
 fn should_walk_entry(entry: &walkdir::DirEntry) -> bool {
     if entry.depth() == 0 {
         return true;
@@ -232,8 +262,33 @@ fn should_walk_entry(entry: &walkdir::DirEntry) -> bool {
     if !entry.file_type().is_dir() {
         return true;
     }
-    let name = entry.file_name().to_string_lossy();
-    !DEFAULT_IGNORED_DIRS.iter().any(|dir| *dir == name)
+    let name = entry.file_name();
+    if DEFAULT_IGNORED_DIRS
+        .iter()
+        .any(|dir| name == std::ffi::OsStr::new(*dir))
+    {
+        return false;
+    }
+
+    if (name == std::ffi::OsStr::new("tmp")
+        || name == std::ffi::OsStr::new("threads")
+        || name == std::ffi::OsStr::new("locks")
+        || name == std::ffi::OsStr::new("logs")
+        || name == std::ffi::OsStr::new("data")
+        || name == std::ffi::OsStr::new("repos"))
+        && entry
+            .path()
+            .parent()
+            .and_then(|p| p.file_name())
+            .is_some_and(|parent| {
+                parent == std::ffi::OsStr::new(".codepm_data")
+                    || parent == std::ffi::OsStr::new("codepm_data")
+            })
+    {
+        return false;
+    }
+
+    true
 }
 
 async fn handle_file_glob(server: &Server, params: FileGlobParams) -> anyhow::Result<Value> {
@@ -401,6 +456,9 @@ async fn handle_file_glob(server: &Server, params: FileGlobParams) -> anyhow::Re
                 continue;
             }
             let rel = entry.path().strip_prefix(&root).unwrap_or(entry.path());
+            if rel_path_is_secret(rel) {
+                continue;
+            }
             if matcher.is_match(rel) {
                 paths.push(rel.to_string_lossy().to_string());
                 if paths.len() >= max_results {
@@ -658,6 +716,9 @@ async fn handle_file_grep(server: &Server, params: FileGrepParams) -> anyhow::Re
                     break;
                 }
                 let rel = entry.path().strip_prefix(&root).unwrap_or(entry.path());
+                if rel_path_is_secret(rel) {
+                    continue;
+                }
                 if let Some(ref matcher) = include_matcher {
                     if !matcher.is_match(rel) {
                         continue;

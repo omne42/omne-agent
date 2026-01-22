@@ -53,7 +53,7 @@ mod thread_diff_tests {
 
         tokio::fs::write(&file_path, "hello\nworld\n").await?;
 
-        let server = build_test_server(tmp.path().join(".code_pm"));
+        let server = build_test_server(tmp.path().join(".codepm_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);

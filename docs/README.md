@@ -13,7 +13,8 @@
 ## 2) 运行时与协议（v0.2.0 已实现为主）
 
 - `docs/thread_event_model.md`：Thread/Turn/Item 与 JSONL 回放口径
-- `docs/runtime_layout.md`：`.code_pm/` 目录结构与“从 ID 定位到文件”
+- `docs/codepm_data.md`：`./.codepm_data/` 目录约定（项目配置 + 运行时数据）
+- `docs/runtime_layout.md`：`pm_root`（默认 `./.codepm_data/`）目录结构与“从 ID 定位到文件”
 - `docs/modes.md`：Mode（角色权限边界）与合并语义
 - `docs/approvals.md`：Approvals 事件模型与 policy（含 Escalate TODO）
 - `docs/execpolicy.md`：ExecPolicy（`process/start` 命令前缀规则）
@@ -23,10 +24,12 @@
 - `docs/notifications.md`：通知与 bell（含 stale process TODO）
 - `docs/budgets.md`：Budgets/timeout → `Stuck`（含 loop/summary TODO）
 - `docs/tool_parallelism.md`：read-only tool 并发口径
-- `docs/workspace_hooks.md`：Workspace hooks（`.codepm/workspace.yaml`）
+- `docs/workspace_hooks.md`：Workspace hooks（`.codepm_data/spec/workspace.yaml`）
 
 ## 3) 目标态/未实现规格（TODO 草案）
 
+- `docs/tui.md`：TUI（薄客户端；v0.2.0 P0）
+- `docs/daemon.md`：Daemon（常驻 server）vs 每次启动子进程（取舍与约束）
 - `docs/checkpoints.md`：checkpoint/rollback（turn 级回滚）
 - `docs/hooks.md`：hooks（SessionStart/PreToolUse/PostToolUse/Stop）
 - `docs/workflow_commands.md`：Workflow/Commands（Markdown + frontmatter）
@@ -67,5 +70,4 @@ $ rg "<keyword>" crates
 
 配置目录约定：
 
-- `./.codepm/`：项目可提交配置（modes/workspace/hooks/presets/…）
-- `./.code_pm/`：运行时数据目录（threads/artifacts/state；不要提交）
+- `./.codepm_data/`：项目级数据根（运行时 threads/artifacts；项目级覆盖配置 `config.toml` + secrets `.env`；项目 spec 在 `.codepm_data/spec/`）

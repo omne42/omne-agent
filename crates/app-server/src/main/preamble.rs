@@ -58,7 +58,11 @@ fn process_idle_window() -> Option<Duration> {
         .ok()
         .and_then(|value| value.trim().parse::<u64>().ok())
         .unwrap_or(DEFAULT_PROCESS_IDLE_WINDOW_SECONDS);
-    if value == 0 { None } else { Some(Duration::from_secs(value)) }
+    if value == 0 {
+        None
+    } else {
+        Some(Duration::from_secs(value))
+    }
 }
 
 fn thread_disk_warning_threshold_bytes() -> Option<u64> {
@@ -100,7 +104,7 @@ struct Args {
     #[command(subcommand)]
     command: Option<CliCommand>,
 
-    /// Override `.code_pm` root directory.
+    /// Override project data root directory (default: `./.codepm_data/`).
     #[arg(long)]
     pm_root: Option<PathBuf>,
 
@@ -434,14 +438,13 @@ impl ThreadRuntime {
         drop(handle);
 
         if matches!(status, TurnStatus::Stuck) {
-            if let Err(err) =
-                maybe_write_stuck_report(
-                    server.as_ref(),
-                    thread_id,
-                    turn_id,
-                    reason_for_report.as_deref(),
-                )
-                    .await
+            if let Err(err) = maybe_write_stuck_report(
+                server.as_ref(),
+                thread_id,
+                turn_id,
+                reason_for_report.as_deref(),
+            )
+            .await
             {
                 tracing::debug!(
                     thread_id = %thread_id,

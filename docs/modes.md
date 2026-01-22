@@ -36,19 +36,19 @@
 
 ### 2.1 Project config（仓库内，可提交/可 review）
 
-- **Canonical**：`./.codepm/modes.yaml`
-- **Fallback**：`./codepm.modes.yaml`
+- **Canonical**：`./.codepm_data/spec/modes.yaml`
+- **Fallback**：`./.codepm_data/spec/modes.yml`
 
 ### 2.2 发现顺序（高 → 低）
 
 1. CLI 显式参数（未来实现，例如 `pm thread config set --modes <path>` 或 `pm --modes <path>`）
 2. env：`CODE_PM_MODES_FILE`
-3. `./.codepm/modes.yaml`
-4. `./codepm.modes.yaml`
+3. `./.codepm_data/spec/modes.yaml`
+4. `./.codepm_data/spec/modes.yml`
 5. user/global（可选；默认可不启用）
 6. 内置默认 modes（兜底）
 
-> 注意：`.code_pm/` 是运行时目录（threads/artifacts/state），不承载 project config。
+> 注意：`./.codepm_data/` 同时承载运行时数据（threads/artifacts）与项目 spec（`.codepm_data/spec/*`）。secrets 放在 `.codepm_data/.env`，且默认禁止被 file tools 读取。
 >
 > `CODE_PM_MODES_FILE`：
 >
@@ -118,7 +118,7 @@ v0.2.0 MVP 已支持字段：
 约束：
 
 - `process.interact` **必须为** `deny`（只读 attach，不做 stdin/PTY）。
-- `edit.allow_globs/deny_globs` 为相对 workspace root 的 glob；建议默认把 `.code_pm/**`、`.git/**`、`.codepm/**` 放入 `deny_globs`，避免 agent 自举修改边界/运行时数据。
+- `edit.allow_globs/deny_globs` 为相对 workspace root 的 glob；建议默认把 `.git/**`、`.codepm_data/{config.toml,spec,tmp,data,repos,threads,locks,logs}/**`、`**/.env` 放入 `deny_globs`，避免 agent 自举修改边界/运行时数据或读取 secrets。
 
 ### 5.4 示例（节选）
 
@@ -132,7 +132,19 @@ modes:
       edit:
         decision: prompt
         allow_globs: ["**"]
-        deny_globs: [".git/**", ".code_pm/**", ".codepm/**"]
+        deny_globs:
+          [
+            ".git/**",
+            ".codepm_data/config.toml",
+            ".codepm_data/spec/**",
+            ".codepm_data/tmp/**",
+            ".codepm_data/data/**",
+            ".codepm_data/repos/**",
+            ".codepm_data/threads/**",
+            ".codepm_data/locks/**",
+            ".codepm_data/logs/**",
+            "**/.env",
+          ]
       command:
         decision: prompt
       process:
@@ -174,4 +186,4 @@ v0.2.0 内置最小模式（作为没有 project config 时的兜底）：
 
 - `file/*` 与 `fs/mkdir`：当 `mode` 的 `edit` 对目标路径判定为 `deny` 时，工具调用会被拒绝并落盘 `ToolStatus=Denied`。
 - `process/start`：当 `mode` 的 `command=deny` 时，工具调用会被拒绝并落盘 `ToolStatus=Denied`（后续仍会叠加 `sandbox/execpolicy/approval`）。
-- `file/read|glob|grep`：当 `mode.read=deny` 或目标路径命中默认 deny globs（如 `.code_pm/**`、`.git/**`）时会被拒绝。
+- `file/read|glob|grep`：当 `mode.read=deny` 或目标路径命中默认 deny globs（如 `.git/**`、`.codepm_data/threads/**`）时会被拒绝；`.env` 永远拒绝（避免 secrets 入上下文）。

@@ -28,7 +28,7 @@ async fn main() -> anyhow::Result<()> {
     let pm_root = args
         .pm_root
         .or_else(|| std::env::var_os("CODE_PM_ROOT").map(PathBuf::from))
-        .unwrap_or_else(|| cwd.join(".code_pm"));
+        .unwrap_or_else(|| cwd.join(".codepm_data"));
 
     let exec_policy = if args.execpolicy_rules.is_empty() {
         pm_execpolicy::Policy::empty()

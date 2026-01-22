@@ -41,15 +41,13 @@ MCP 属于“执行外部二进制 + 任意 side-effect”的高风险能力，v
 
 Project config（可提交/可 review）：
 
-- **Canonical**：`./.codepm/mcp.json`
-- **Fallback**：`./codepm.mcp.json`
+- **Canonical**：`./.codepm_data/spec/mcp.json`
 
 发现顺序建议与 `docs/modes.md`/`docs/model_routing.md` 保持一致（高 → 低）：
 
 1. env：`CODE_PM_MCP_FILE`（绝对或相对路径；相对路径按 thread cwd（workspace root）解析）
-2. `./.codepm/mcp.json`
-3. `./codepm.mcp.json`
-4. 内置默认（空配置：不启用任何 server）
+2. `./.codepm_data/spec/mcp.json`
+3. 内置默认（空配置：不启用任何 server）
 
 fail-closed（写死）：
 
@@ -158,7 +156,7 @@ fail-closed（写死）：
 
 MCP client：
 
-- 指定 `./.codepm/mcp.json` 后，`pm` 能列出 servers 与 tools（至少 list tools/resources）。
+- 指定 `./.codepm_data/spec/mcp.json` 后，`pm` 能列出 servers 与 tools（至少 list tools/resources）。
 - 调用 `mcp/call` 时必须产生审批事件（`ApprovalRequested`），且可在 `pm inbox` 中看到阻塞。
 - MCP server 进程 stdout/stderr 必须落盘并可 `process/tail`。
 

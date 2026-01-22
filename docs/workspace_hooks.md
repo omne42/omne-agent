@@ -10,10 +10,10 @@
 
 在 thread cwd（workspace root）下的项目配置目录：
 
-- `./.codepm/workspace.yaml`
-- `./.codepm/workspace.yml`
+- `./.codepm_data/spec/workspace.yaml`
+- `./.codepm_data/spec/workspace.yml`
 
-> 注意：这是项目配置（可提交）。运行时数据目录是 `.code_pm/`（不要混用）。
+> 注意：这是项目配置（可提交）。运行时数据根目录也是 `./.codepm_data/`；不要把 hooks 配置写进 `threads/`、`tmp/` 等运行时目录。
 
 ---
 
@@ -69,6 +69,6 @@ workspace hook 最终会走 `process/start`：
 # 在当前 repo 启动一个 thread（cwd=repo root），从输出里复制 thread_id
 pm thread start --cwd . --json
 
-# 运行 setup hook（需要你已经创建 .codepm/workspace.yaml）
+# 运行 setup hook（需要你已经创建 `.codepm_data/spec/workspace.yaml`）
 pm thread hook-run <thread_id> setup --json
 ```

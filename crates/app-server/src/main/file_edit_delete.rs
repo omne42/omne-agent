@@ -57,6 +57,32 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
     }
 
     let rel_path = pm_core::modes::relative_path_under_root(&thread_root, Path::new(&params.path));
+    if let Ok(rel) = rel_path.as_ref()
+        && rel_path_is_secret(rel)
+    {
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                tool_id,
+                turn_id: params.turn_id,
+                tool: "file/edit".to_string(),
+                params: Some(approval_params),
+            })
+            .await?;
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                tool_id,
+                status: pm_protocol::ToolStatus::Denied,
+                error: Some("refusing to edit secrets file (.env)".to_string()),
+                result: Some(serde_json::json!({
+                    "reason": "secrets file is always denied",
+                })),
+            })
+            .await?;
+        return Ok(serde_json::json!({
+            "tool_id": tool_id,
+            "denied": true,
+        }));
+    }
     let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {
         Some(mode) => mode,
@@ -335,6 +361,32 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
     }
 
     let rel_path = pm_core::modes::relative_path_under_root(&thread_root, Path::new(&params.path));
+    if let Ok(rel) = rel_path.as_ref()
+        && rel_path_is_secret(rel)
+    {
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                tool_id,
+                turn_id: params.turn_id,
+                tool: "file/delete".to_string(),
+                params: Some(approval_params),
+            })
+            .await?;
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                tool_id,
+                status: pm_protocol::ToolStatus::Denied,
+                error: Some("refusing to delete secrets file (.env)".to_string()),
+                result: Some(serde_json::json!({
+                    "reason": "secrets file is always denied",
+                })),
+            })
+            .await?;
+        return Ok(serde_json::json!({
+            "tool_id": tool_id,
+            "denied": true,
+        }));
+    }
     let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {
         Some(mode) => mode,

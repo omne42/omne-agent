@@ -154,6 +154,37 @@ async fn handle_thread_config_explain(
         }));
     }
 
+    let project = crate::project_config::load_project_config(&thread_root).await;
+    if project.enabled {
+        if let Some(model) = project.openai.model {
+            effective_model = model;
+        }
+        if let Some(openai_base_url) = project.openai.base_url {
+            effective_openai_base_url = openai_base_url;
+        }
+        layers.push(serde_json::json!({
+            "source": "project",
+            "enabled": true,
+            "config_toml_path": project.config_toml_path.display().to_string(),
+            "config_toml_present": project.config_toml_present,
+            "env_path": project.env_path.display().to_string(),
+            "env_present": project.env_present,
+            "load_error": project.load_error,
+            "model": effective_model,
+            "openai_base_url": effective_openai_base_url,
+        }));
+    } else if project.config_toml_present || project.load_error.is_some() {
+        layers.push(serde_json::json!({
+            "source": "project",
+            "enabled": false,
+            "config_toml_path": project.config_toml_path.display().to_string(),
+            "config_toml_present": project.config_toml_present,
+            "env_path": project.env_path.display().to_string(),
+            "env_present": project.env_present,
+            "load_error": project.load_error,
+        }));
+    }
+
     for event in events {
         if let pm_protocol::ThreadEventKind::ThreadConfigUpdated {
             approval_policy,

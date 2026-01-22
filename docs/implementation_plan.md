@@ -31,6 +31,7 @@
 7. **交付通道（先不绑定 git）**：默认 `patch-only`（产出可应用 patch + artifacts），git 分支交付放后面。
 8. **中间态 artifacts（必须）**：stdout/stderr/plan/diff/test progress 必须边产出边落盘，并能随时查询/预览。
 9. **进程可观测（必须）**：后台命令与多子 agent 的运行态必须可随时 inspect/attach/kill（事件化、可审计）。
+10. **交互式 TUI（薄客户端）**：`pm tui` 作为 app-server client，统一 watch/inbox/approval/process/artifact（见 `docs/tui.md`）。
 
 ### 1.2 暂缓（明确后做）
 
@@ -157,7 +158,7 @@ Attention/Inbox（派生视图）：
 
 v0.2.0 现状：
 
-- 已提供最小执行入口：`.codepm/workspace.yaml` + `thread/hook_run setup|run|archive`（见 `docs/workspace_hooks.md`）。
+- 已提供最小执行入口：`.codepm_data/spec/workspace.yaml` + `thread/hook_run setup|run|archive`（见 `docs/workspace_hooks.md`）。
 - 自动触发（创建后自动 setup / archive 时自动 teardown）仍是 TODO（需要调度层编排）。
 
 参考实现方向：

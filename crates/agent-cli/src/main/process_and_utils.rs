@@ -182,7 +182,7 @@ impl App {
             .pm_root
             .clone()
             .or_else(|| std::env::var_os("CODE_PM_ROOT").map(PathBuf::from))
-            .unwrap_or_else(|| cwd.join(".code_pm"));
+            .unwrap_or_else(|| cwd.join(".codepm_data"));
 
         let server = cli.app_server.clone().unwrap_or_else(|| {
             default_app_server_path().unwrap_or_else(|| PathBuf::from("pm-app-server"))

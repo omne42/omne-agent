@@ -23,8 +23,7 @@
   - `docs/research/`: 上游快照仓库的设计分析（索引见 `docs/research/README.md`）
 - `example/`: 上游仓库的本地快照，仅供参考；已被 `.gitignore` 忽略（不要在 PR 中修改，也不要将其作为 CI 依赖）
 - `githooks/`: 提交前质量门槛（Conventional Commits + changelog 绑定 + Rust gates）
-- `.codepm/`: 项目级配置目录（可提交/可 review；例如 `modes.yaml`、execpolicy rules 等）
-- `.code_pm/`: 运行时数据目录（本地状态/threads/artifacts；不要提交）
+- `.codepm_data/`: 项目级数据根（运行时数据 + 可提交 spec/config；不要提交 `.env` 与运行时子目录）
 
 ## 构建、测试与开发命令
 
@@ -76,7 +75,7 @@
 
 ## Agent 专用说明
 
-- 优先使用 `rg` 搜索；除非必要，避免扫描 `example/`/`target/`/`.code_pm/`（如 `rg -g'!example/**' -g'!target/**' -g'!.code_pm/**' "<keyword>"`）。
+- 优先使用 `rg` 搜索；除非必要，避免扫描 `example/`/`target/`/`.codepm_data/`（如 `rg -g'!example/**' -g'!target/**' -g'!.codepm_data/**' "<keyword>"`）。
 - 保持改动聚焦；除非明确要求，不要更新/改写上游快照内容。
 
 ## 角色定义

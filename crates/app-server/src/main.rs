@@ -2,6 +2,7 @@
 // Follow-up refactors can convert these into proper modules.
 
 mod agent;
+mod project_config;
 
 include!("main/preamble.rs");
 include!("main/app.rs");
