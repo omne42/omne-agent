@@ -264,6 +264,26 @@ fn user_artifact_paths(
     )
 }
 
+fn user_artifact_history_dir_for_thread(
+    server: &Server,
+    thread_id: ThreadId,
+    artifact_id: ArtifactId,
+) -> PathBuf {
+    user_artifacts_dir_for_thread(server, thread_id)
+        .join("history")
+        .join(artifact_id.to_string())
+}
+
+fn user_artifact_history_path(
+    server: &Server,
+    thread_id: ThreadId,
+    artifact_id: ArtifactId,
+    version: u32,
+) -> PathBuf {
+    user_artifact_history_dir_for_thread(server, thread_id, artifact_id)
+        .join(format!("v{version:04}.md"))
+}
+
 async fn read_artifact_metadata(path: &Path) -> anyhow::Result<ArtifactMetadata> {
     let bytes = tokio::fs::read(path)
         .await

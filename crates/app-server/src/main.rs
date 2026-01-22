@@ -15,3 +15,6 @@ include!("main/fs.rs");
 include!("main/artifact.rs");
 include!("main/process_control.rs");
 include!("main/process_stream.rs");
+
+#[cfg(test)]
+include!("main/artifact_history_tests.rs");

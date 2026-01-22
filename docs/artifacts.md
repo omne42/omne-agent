@@ -51,7 +51,7 @@ v0.2.0 user artifact 采用：
 - `artifact/write`：
   - 若未指定 `artifact_id`：生成新 ID，`created=true`，`version=1`。
   - 若指定 `artifact_id` 且已存在：覆盖 `*.md` 内容，`version += 1`，保留 `created_at`，更新 `updated_at`。
-- v0.2.0 **没有 bounded history**：不会保留旧版本内容（只有 version 号递增）。
+- bounded history 默认关闭：不会保留旧版本内容（只有 version 号递增）；可用 `CODE_PM_ARTIFACT_HISTORY_MAX_VERSIONS` 启用（见 §4）。
 
 补充：
 
@@ -158,15 +158,19 @@ app-server 默认推断规则（写入/覆盖 artifact 时填充 `preview`）：
 
 ---
 
-## 4) TODO：bounded history（保留旧版本）
+## 4) bounded history（保留旧版本；已实现）
 
 目标：
 
 - 保留最近 N 个版本内容（避免“覆盖后找不回”），但不能让磁盘无限增长。
 
-最小建议（TODO，不强做）：
+配置项：
 
-### 4.1 路径布局（建议写死）
+- `CODE_PM_ARTIFACT_HISTORY_MAX_VERSIONS`：
+  - `0` = 关闭（默认）
+  - `N>0` = 保留最近 N 个旧版本
+
+### 4.1 路径布局（写死）
 
 建议把历史版本收进一个单独目录（避免把 `artifacts/user/` 撒满各种 `.v0007.md`）：
 
@@ -178,24 +182,21 @@ app-server 默认推断规则（写入/覆盖 artifact 时填充 `preview`）：
 ...
 ```
 
-### 4.2 行为与保留策略（最小可实现）
+### 4.2 行为与保留策略（已实现）
 
-当 `artifact/write` 覆盖一个已存在的 `artifact_id` 时：
+当 `artifact/write` 覆盖一个已存在的 `artifact_id` 且 bounded history 开启时：
 
-1. 若 bounded history 关闭：保持 v0.2.0 行为（直接覆盖，只递增 `version`）。
-2. 若 bounded history 开启：
-   - 在覆盖前，把旧内容复制到 `history/<artifact_id>/v{old_version:04}.md`。
-   - 仅保留最近 `N` 个历史版本（不包含当前最新版本）；超出则删除最老的。
+- 在覆盖前，把旧内容复制到 `history/<artifact_id>/v{old_version:04}.md`。
+- 写入成功后，仅保留最近 `N` 个历史版本（不包含当前最新版本）；超出则删除最老的。
+- `artifact/delete` 会级联删除 `history/<artifact_id>/`（避免“以为删了但旧版本还在”）。
 
-建议配置项（TODO）：
+补充：
 
-- `CODE_PM_ARTIFACT_HISTORY_MAX_VERSIONS`：
-  - `0` = 关闭（默认）
-  - `N>0` = 保留最近 N 个旧版本
+- 当发生清理时，`artifact/write` 的 tool result 会包含 `history.pruned_versions`（随事件落盘，可审计）。
 
 ### 4.3 清理的可审计性（别悄悄删）
 
-当发生历史版本清理时，建议生成一份 user artifact：
+当发生历史版本清理时，未来可以生成一份 user artifact（TODO）：
 
 - `artifact_type="artifact_prune_report"`
 - `summary`：例如 `pruned artifact history: <artifact_id> (kept N)`
@@ -215,9 +216,8 @@ pm artifact read <thread_id> <artifact_id> --version 2
 
 ---
 
-## 5) 验收（未来实现时）
+## 5) 验收（已实现）
 
 - 开启 `CODE_PM_ARTIFACT_HISTORY_MAX_VERSIONS=2`：
   - 连续写入同一 `artifact_id` 3 次后，`history/<artifact_id>/` 下最多只保留 2 个旧版本文件。
-  - `pm artifact read --version <n>` 能读到对应版本内容（或明确返回 not found）。
-- 清理发生时必须生成 `artifact_prune_report`（可从 `pm artifact list` 找到并可读）。
+- 执行 `pm artifact delete <thread_id> <artifact_id>` 后，`history/<artifact_id>/` 会被级联删除。
