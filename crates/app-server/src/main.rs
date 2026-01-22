@@ -10,6 +10,7 @@ include!("main/thread_observe.rs");
 include!("main/thread_manage.rs");
 include!("main/approval.rs");
 include!("main/file_read_glob_grep.rs");
+include!("main/repo_index_search.rs");
 include!("main/file_write_patch.rs");
 include!("main/file_edit_delete.rs");
 include!("main/fs.rs");
@@ -22,3 +23,6 @@ include!("main/artifact_history_tests.rs");
 
 #[cfg(test)]
 include!("main/thread_diff_tests.rs");
+
+#[cfg(test)]
+include!("main/repo_index_search_tests.rs");

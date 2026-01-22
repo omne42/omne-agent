@@ -436,6 +436,55 @@ pub struct FileGrepParams {
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
+pub struct RepoSearchParams {
+    pub thread_id: pm_protocol::ThreadId,
+    #[serde(default)]
+    #[ts(optional)]
+    pub turn_id: Option<pm_protocol::TurnId>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub approval_id: Option<pm_protocol::ApprovalId>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub root: Option<FileRoot>,
+    pub query: String,
+    #[serde(default)]
+    pub is_regex: bool,
+    #[serde(default)]
+    #[ts(optional)]
+    pub include_glob: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub max_matches: Option<usize>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub max_bytes_per_file: Option<u64>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub max_files: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
+pub struct RepoIndexParams {
+    pub thread_id: pm_protocol::ThreadId,
+    #[serde(default)]
+    #[ts(optional)]
+    pub turn_id: Option<pm_protocol::TurnId>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub approval_id: Option<pm_protocol::ApprovalId>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub root: Option<FileRoot>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub include_glob: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub max_files: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
 pub struct FileWriteParams {
     pub thread_id: pm_protocol::ThreadId,
     #[serde(default)]
@@ -820,6 +869,18 @@ pub enum ClientRequest {
         #[serde(rename = "id")]
         request_id: RequestId,
         params: FileGrepParams,
+    },
+    #[serde(rename = "repo/search")]
+    RepoSearch {
+        #[serde(rename = "id")]
+        request_id: RequestId,
+        params: RepoSearchParams,
+    },
+    #[serde(rename = "repo/index")]
+    RepoIndex {
+        #[serde(rename = "id")]
+        request_id: RequestId,
+        params: RepoIndexParams,
     },
     #[serde(rename = "file/write")]
     FileWrite {

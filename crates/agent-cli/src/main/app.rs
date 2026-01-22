@@ -20,6 +20,56 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Command::Init(_)) => unreachable!("handled before App::connect"),
         Some(Command::Reference { .. }) => unreachable!("handled before App::connect"),
+        Some(Command::Repo { command }) => match command {
+            RepoCommand::Search {
+                thread_id,
+                query,
+                regex,
+                include_glob,
+                max_matches,
+                max_bytes_per_file,
+                max_files,
+                root,
+                approval_id,
+                json,
+            } => {
+                let root = root.map(|root| root.as_str().to_string());
+                let result = app
+                    .repo_search(RepoSearchRequest {
+                        thread_id,
+                        query,
+                        is_regex: regex,
+                        include_glob,
+                        max_matches,
+                        max_bytes_per_file,
+                        max_files,
+                        root,
+                        approval_id,
+                    })
+                    .await?;
+                print_json_or_pretty(json, &result)?;
+            }
+            RepoCommand::Index {
+                thread_id,
+                include_glob,
+                max_files,
+                root,
+                approval_id,
+                json,
+            } => {
+                let root = root.map(|root| root.as_str().to_string());
+                let result = app
+                    .repo_index(RepoIndexRequest {
+                        thread_id,
+                        include_glob,
+                        max_files,
+                        root,
+                        approval_id,
+                    })
+                    .await?;
+                print_json_or_pretty(json, &result)?;
+            }
+        },
         Some(Command::Thread { command }) => match command {
             ThreadCommand::Start { cwd, json } => {
                 let cwd = cwd.map(|p| p.display().to_string());

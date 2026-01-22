@@ -2,7 +2,7 @@
 
 > 目标：让“我怎么定位到这些文件/这些匹配结果”变成可回放、可引用的产物（artifact），而不是一次性的 tool 输出。
 >
-> 现状：v0.2.0 已有 `file/glob`、`file/grep`、`file/read`（工具化、事件化），但**搜索结果本体不会自动写成 artifact**。
+> 现状：v0.2.0 已有 `file/glob`、`file/grep`、`file/read`（工具化、事件化）。其中 `file/grep` 的“匹配列表”不会自动写入 artifact（事件里只留摘要），但 `repo/search`/`repo/index` 已可一键产物化。
 
 ---
 
@@ -62,7 +62,9 @@
 - `provenance`：
   - `thread_id` 必填
   - `turn_id` 建议填
-  - `tool_id` 建议填为那次 `file/grep` 的 `tool_id`（`file/grep` RPC 响应会返回）
+  - `tool_id`：
+    - 若使用 `repo/search`：填 `repo/search` 的 `tool_id`
+    - 若手工组合 `file/grep + artifact/write`：填那次 `file/grep` 的 `tool_id`
 
 ### 2.2 内容结构（写死最小模板）
 
@@ -77,11 +79,11 @@ Markdown 内容建议固定结构（方便人看/脚本解析）：
 
 ---
 
-## 3) TODO：薄封装工具（repo/index + repo/search）
+## 3) 薄封装工具（repo/index + repo/search）（已实现）
 
 > 目标：把“搜索→产物”收敛成单一 tool call，便于测试、审计与复用（避免 prompt 里拼装）。
 
-### 3.1 `repo/search`（TODO）
+### 3.1 `repo/search`（已实现）
 
 行为：
 
@@ -89,7 +91,7 @@ Markdown 内容建议固定结构（方便人看/脚本解析）：
 - 直接写入一个 search artifact（见上文模板），并返回 `artifact_id`。
 - `ToolCompleted.result` 只返回摘要 + `artifact_id`（避免把结果塞进事件）。
 
-### 3.2 `repo/index`（TODO）
+### 3.2 `repo/index`（已实现）
 
 最小行为：
 
@@ -99,7 +101,7 @@ Markdown 内容建议固定结构（方便人看/脚本解析）：
 
 ---
 
-## 4) 验收（未来实现时）
+## 4) 验收（已实现）
 
 ### 4.1 现状可做（不新增协议）
 
@@ -108,12 +110,12 @@ Markdown 内容建议固定结构（方便人看/脚本解析）：
 - `pm artifact list/read/delete` 能对 `repo_search` 产物进行管理（见 `docs/artifacts.md`）。
 - 产物 metadata 的 provenance 能定位到 thread/turn/tool（见 `pm_protocol::ArtifactProvenance`）。
 
-### 4.2 薄封装落地后（新增工具/CLI）
+### 4.2 薄封装落地后（工具/CLI）
 
 （占位 CLI）：
 
 ```bash
-pm repo search <thread_id> --query "TODO" --include-glob "crates/**" --max-matches 50 --json
+pm repo search <thread_id> "TODO" --include-glob "crates/**" --max-matches 50 --json
 pm repo index <thread_id> --include-glob "**/*" --max-files 20000 --json
 ```
 

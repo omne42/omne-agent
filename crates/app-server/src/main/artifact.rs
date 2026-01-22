@@ -158,116 +158,18 @@ async fn handle_artifact_write(
         })
         .await?;
 
-    let outcome: anyhow::Result<(Value, Value)> = async move {
-        let artifact_id = params.artifact_id.unwrap_or_default();
-        let (content_path, metadata_path) =
-            user_artifact_paths(server, params.thread_id, artifact_id);
-
-        let now = OffsetDateTime::now_utc();
-        let (created_at, version, created, previous_version) = match tokio::fs::metadata(&metadata_path).await {
-            Ok(_) => {
-                let meta = read_artifact_metadata(&metadata_path).await?;
-                (
-                    meta.created_at,
-                    meta.version.saturating_add(1),
-                    false,
-                    Some(meta.version),
-                )
-            }
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => (now, 1, true, None),
-            Err(err) => return Err(err).with_context(|| format!("stat {}", metadata_path.display())),
-        };
-
-        let history_max_versions = artifact_history_max_versions();
-        let mut history_snapshot_version = None;
-        let mut history_pruned_versions = Vec::new();
-        let mut history_prune_error = None;
-        let updating_existing = previous_version.is_some();
-
-        if history_max_versions > 0 {
-            if let Some(prev_version) = previous_version {
-                if snapshot_user_artifact_version(
-                    server,
-                    params.thread_id,
-                    artifact_id,
-                    &content_path,
-                    prev_version,
-                )
-                .await?
-                {
-                    history_snapshot_version = Some(prev_version);
-                }
-            }
-        }
-
-        let text = pm_core::redact_text(&params.text);
-        let bytes = text.as_bytes().to_vec();
-        write_file_atomic(&content_path, &bytes).await?;
-
-        let preview = Some(infer_artifact_preview(params.artifact_type.as_str()));
-        let meta = ArtifactMetadata {
-            artifact_id,
+    let outcome = write_user_artifact(
+        server,
+        UserArtifactWriteRequest {
+            tool_id,
+            thread_id: params.thread_id,
+            turn_id: params.turn_id,
+            artifact_id: params.artifact_id,
             artifact_type: params.artifact_type,
             summary: params.summary,
-            preview,
-            created_at,
-            updated_at: now,
-            version,
-            content_path: content_path.display().to_string(),
-            size_bytes: bytes.len() as u64,
-            provenance: Some(ArtifactProvenance {
-                thread_id: params.thread_id,
-                turn_id: params.turn_id,
-                tool_id: Some(tool_id),
-                process_id: None,
-            }),
-        };
-
-        let meta_bytes = serde_json::to_vec_pretty(&meta).context("serialize artifact metadata")?;
-        write_file_atomic(&metadata_path, &meta_bytes).await?;
-
-        if history_max_versions > 0 && updating_existing {
-            match prune_user_artifact_history(server, params.thread_id, artifact_id, history_max_versions).await {
-                Ok(versions) => history_pruned_versions = versions,
-                Err(err) => history_prune_error = Some(err.to_string()),
-            }
-        }
-
-        let mut completed = serde_json::json!({
-            "artifact_id": artifact_id,
-            "created": created,
-            "content_path": content_path.display().to_string(),
-            "metadata_path": metadata_path.display().to_string(),
-            "version": version,
-            "size_bytes": bytes.len(),
-        });
-
-        let mut response = serde_json::json!({
-            "tool_id": tool_id,
-            "artifact_id": artifact_id,
-            "created": created,
-            "content_path": content_path.display().to_string(),
-            "metadata_path": metadata_path.display().to_string(),
-            "metadata": meta,
-        });
-
-        if history_max_versions > 0 && updating_existing {
-            let history = serde_json::json!({
-                "max_versions": history_max_versions,
-                "snapshotted_version": history_snapshot_version,
-                "pruned_versions": history_pruned_versions,
-                "prune_error": history_prune_error,
-            });
-            if let Some(obj) = completed.as_object_mut() {
-                obj.insert("history".to_string(), history.clone());
-            }
-            if let Some(obj) = response.as_object_mut() {
-                obj.insert("history".to_string(), history);
-            }
-        }
-
-        Ok((response, completed))
-    }
+            text: params.text,
+        },
+    )
     .await;
 
     match outcome {
@@ -294,6 +196,141 @@ async fn handle_artifact_write(
             Err(err)
         }
     }
+}
+
+struct UserArtifactWriteRequest {
+    tool_id: pm_protocol::ToolId,
+    thread_id: ThreadId,
+    turn_id: Option<TurnId>,
+    artifact_id: Option<ArtifactId>,
+    artifact_type: String,
+    summary: String,
+    text: String,
+}
+
+async fn write_user_artifact(
+    server: &Server,
+    req: UserArtifactWriteRequest,
+) -> anyhow::Result<(Value, Value)> {
+    let UserArtifactWriteRequest {
+        tool_id,
+        thread_id,
+        turn_id,
+        artifact_id,
+        artifact_type,
+        summary,
+        text,
+    } = req;
+
+    let artifact_id = artifact_id.unwrap_or_default();
+    let (content_path, metadata_path) = user_artifact_paths(server, thread_id, artifact_id);
+
+    let now = OffsetDateTime::now_utc();
+    let (created_at, version, created, previous_version) =
+        match tokio::fs::metadata(&metadata_path).await {
+            Ok(_) => {
+                let meta = read_artifact_metadata(&metadata_path).await?;
+                (
+                    meta.created_at,
+                    meta.version.saturating_add(1),
+                    false,
+                    Some(meta.version),
+                )
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => (now, 1, true, None),
+            Err(err) => return Err(err).with_context(|| format!("stat {}", metadata_path.display())),
+        };
+
+    let history_max_versions = artifact_history_max_versions();
+    let mut history_snapshot_version = None;
+    let mut history_pruned_versions = Vec::new();
+    let mut history_prune_error = None;
+    let updating_existing = previous_version.is_some();
+
+    if history_max_versions > 0 {
+        if let Some(prev_version) = previous_version {
+            if snapshot_user_artifact_version(
+                server,
+                thread_id,
+                artifact_id,
+                &content_path,
+                prev_version,
+            )
+            .await?
+            {
+                history_snapshot_version = Some(prev_version);
+            }
+        }
+    }
+
+    let text = pm_core::redact_text(&text);
+    let bytes = text.as_bytes().to_vec();
+    write_file_atomic(&content_path, &bytes).await?;
+
+    let preview = Some(infer_artifact_preview(artifact_type.as_str()));
+    let meta = ArtifactMetadata {
+        artifact_id,
+        artifact_type,
+        summary,
+        preview,
+        created_at,
+        updated_at: now,
+        version,
+        content_path: content_path.display().to_string(),
+        size_bytes: bytes.len() as u64,
+        provenance: Some(ArtifactProvenance {
+            thread_id,
+            turn_id,
+            tool_id: Some(tool_id),
+            process_id: None,
+        }),
+    };
+
+    let meta_bytes = serde_json::to_vec_pretty(&meta).context("serialize artifact metadata")?;
+    write_file_atomic(&metadata_path, &meta_bytes).await?;
+
+    if history_max_versions > 0 && updating_existing {
+        match prune_user_artifact_history(server, thread_id, artifact_id, history_max_versions).await
+        {
+            Ok(versions) => history_pruned_versions = versions,
+            Err(err) => history_prune_error = Some(err.to_string()),
+        }
+    }
+
+    let mut completed = serde_json::json!({
+        "artifact_id": artifact_id,
+        "created": created,
+        "content_path": content_path.display().to_string(),
+        "metadata_path": metadata_path.display().to_string(),
+        "version": version,
+        "size_bytes": bytes.len(),
+    });
+
+    let mut response = serde_json::json!({
+        "tool_id": tool_id,
+        "artifact_id": artifact_id,
+        "created": created,
+        "content_path": content_path.display().to_string(),
+        "metadata_path": metadata_path.display().to_string(),
+        "metadata": meta,
+    });
+
+    if history_max_versions > 0 && updating_existing {
+        let history = serde_json::json!({
+            "max_versions": history_max_versions,
+            "snapshotted_version": history_snapshot_version,
+            "pruned_versions": history_pruned_versions,
+            "prune_error": history_prune_error,
+        });
+        if let Some(obj) = completed.as_object_mut() {
+            obj.insert("history".to_string(), history.clone());
+        }
+        if let Some(obj) = response.as_object_mut() {
+            obj.insert("history".to_string(), history);
+        }
+    }
+
+    Ok((response, completed))
 }
 
 fn infer_artifact_preview(artifact_type: &str) -> pm_protocol::ArtifactPreview {

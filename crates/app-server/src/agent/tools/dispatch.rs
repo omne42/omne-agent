@@ -174,6 +174,40 @@ async fn run_tool_call_once(
             )
             .await
         }
+        "repo_search" => {
+            let args: RepoSearchArgs = serde_json::from_value(args)?;
+            super::handle_repo_search(
+                server,
+                super::RepoSearchParams {
+                    thread_id,
+                    turn_id,
+                    approval_id,
+                    root: args.root,
+                    query: args.query,
+                    is_regex: args.is_regex,
+                    include_glob: args.include_glob,
+                    max_matches: args.max_matches,
+                    max_bytes_per_file: args.max_bytes_per_file,
+                    max_files: args.max_files,
+                },
+            )
+            .await
+        }
+        "repo_index" => {
+            let args: RepoIndexArgs = serde_json::from_value(args)?;
+            super::handle_repo_index(
+                server,
+                super::RepoIndexParams {
+                    thread_id,
+                    turn_id,
+                    approval_id,
+                    root: args.root,
+                    include_glob: args.include_glob,
+                    max_files: args.max_files,
+                },
+            )
+            .await
+        }
         "file_write" => {
             let args: FileWriteArgs = serde_json::from_value(args)?;
             super::handle_file_write(

@@ -3,6 +3,7 @@ include!("app/thread.rs");
 include!("app/turn.rs");
 include!("app/process.rs");
 include!("app/file.rs");
+include!("app/repo.rs");
 include!("app/fs.rs");
 include!("app/artifact.rs");
 include!("app/approval.rs");

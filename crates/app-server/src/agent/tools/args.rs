@@ -30,6 +30,33 @@ struct FileGrepArgs {
 }
 
 #[derive(Debug, Deserialize)]
+struct RepoSearchArgs {
+    #[serde(default)]
+    root: Option<crate::FileRoot>,
+    query: String,
+    #[serde(default)]
+    is_regex: bool,
+    #[serde(default)]
+    include_glob: Option<String>,
+    #[serde(default)]
+    max_matches: Option<usize>,
+    #[serde(default)]
+    max_bytes_per_file: Option<u64>,
+    #[serde(default)]
+    max_files: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RepoIndexArgs {
+    #[serde(default)]
+    root: Option<crate::FileRoot>,
+    #[serde(default)]
+    include_glob: Option<String>,
+    #[serde(default)]
+    max_files: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
 struct FileWriteArgs {
     path: String,
     text: String,

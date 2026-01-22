@@ -45,6 +45,38 @@ fn build_tools() -> Vec<Value> {
             }),
         ),
         pm_openai::tool_function(
+            "repo_search",
+            "Search text across the repo and write a user-facing artifact (repo_search).",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "root": { "type": "string", "enum": ["workspace", "reference"] },
+                    "query": { "type": "string" },
+                    "is_regex": { "type": "boolean" },
+                    "include_glob": { "type": "string" },
+                    "max_matches": { "type": "integer", "minimum": 1 },
+                    "max_bytes_per_file": { "type": "integer", "minimum": 1 },
+                    "max_files": { "type": "integer", "minimum": 1 },
+                },
+                "required": ["query"],
+                "additionalProperties": false,
+            }),
+        ),
+        pm_openai::tool_function(
+            "repo_index",
+            "Generate a lightweight repo index artifact (repo_index).",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "root": { "type": "string", "enum": ["workspace", "reference"] },
+                    "include_glob": { "type": "string" },
+                    "max_files": { "type": "integer", "minimum": 1 },
+                },
+                "required": [],
+                "additionalProperties": false,
+            }),
+        ),
+        pm_openai::tool_function(
             "file_write",
             "Write a UTF-8 text file (overwrites).",
             serde_json::json!({

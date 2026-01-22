@@ -175,6 +175,26 @@ struct App {
     notifications: Option<tokio::sync::mpsc::UnboundedReceiver<pm_jsonrpc::Notification>>,
 }
 
+struct RepoSearchRequest {
+    thread_id: ThreadId,
+    query: String,
+    is_regex: bool,
+    include_glob: Option<String>,
+    max_matches: Option<usize>,
+    max_bytes_per_file: Option<u64>,
+    max_files: Option<usize>,
+    root: Option<String>,
+    approval_id: Option<ApprovalId>,
+}
+
+struct RepoIndexRequest {
+    thread_id: ThreadId,
+    include_glob: Option<String>,
+    max_files: Option<usize>,
+    root: Option<String>,
+    approval_id: Option<ApprovalId>,
+}
+
 impl App {
     async fn connect(cli: &Cli) -> anyhow::Result<Self> {
         let cwd = std::env::current_dir()?;
@@ -729,6 +749,44 @@ impl App {
             .await?;
         ensure_approval_and_denial_handled("process/interrupt", &v)?;
         Ok(())
+    }
+
+    async fn repo_search(&mut self, req: RepoSearchRequest) -> anyhow::Result<Value> {
+        let v = self
+            .rpc(
+                "repo/search",
+                serde_json::json!({
+                    "thread_id": req.thread_id,
+                    "approval_id": req.approval_id,
+                    "root": req.root,
+                    "query": req.query,
+                    "is_regex": req.is_regex,
+                    "include_glob": req.include_glob,
+                    "max_matches": req.max_matches,
+                    "max_bytes_per_file": req.max_bytes_per_file,
+                    "max_files": req.max_files,
+                }),
+            )
+            .await?;
+        ensure_approval_and_denial_handled("repo/search", &v)?;
+        Ok(v)
+    }
+
+    async fn repo_index(&mut self, req: RepoIndexRequest) -> anyhow::Result<Value> {
+        let v = self
+            .rpc(
+                "repo/index",
+                serde_json::json!({
+                    "thread_id": req.thread_id,
+                    "approval_id": req.approval_id,
+                    "root": req.root,
+                    "include_glob": req.include_glob,
+                    "max_files": req.max_files,
+                }),
+            )
+            .await?;
+        ensure_approval_and_denial_handled("repo/index", &v)?;
+        Ok(v)
     }
 
     async fn artifact_list(

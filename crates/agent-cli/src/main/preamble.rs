@@ -44,6 +44,10 @@ enum Command {
         #[command(subcommand)]
         command: ReferenceCommand,
     },
+    Repo {
+        #[command(subcommand)]
+        command: RepoCommand,
+    },
     /// Start an interactive REPL.
     Repl,
     Thread {
@@ -87,6 +91,59 @@ enum ReferenceCommand {
     /// Show the currently installed reference repo (if any).
     Status {
         /// Output JSON instead of human-readable text.
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+#[value(rename_all = "snake_case")]
+enum RepoRoot {
+    Workspace,
+    Reference,
+}
+
+impl RepoRoot {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Workspace => "workspace",
+            Self::Reference => "reference",
+        }
+    }
+}
+
+#[derive(Subcommand)]
+enum RepoCommand {
+    Search {
+        thread_id: ThreadId,
+        query: String,
+        #[arg(long, default_value_t = false)]
+        regex: bool,
+        #[arg(long)]
+        include_glob: Option<String>,
+        #[arg(long)]
+        max_matches: Option<usize>,
+        #[arg(long)]
+        max_bytes_per_file: Option<u64>,
+        #[arg(long)]
+        max_files: Option<usize>,
+        #[arg(long)]
+        root: Option<RepoRoot>,
+        #[arg(long)]
+        approval_id: Option<ApprovalId>,
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    Index {
+        thread_id: ThreadId,
+        #[arg(long)]
+        include_glob: Option<String>,
+        #[arg(long)]
+        max_files: Option<usize>,
+        #[arg(long)]
+        root: Option<RepoRoot>,
+        #[arg(long)]
+        approval_id: Option<ApprovalId>,
         #[arg(long, default_value_t = false)]
         json: bool,
     },
