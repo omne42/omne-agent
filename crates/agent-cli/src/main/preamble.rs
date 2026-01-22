@@ -52,6 +52,8 @@ enum Command {
         #[command(subcommand)]
         command: RepoCommand,
     },
+    /// Start a full-screen TUI (thin client over JSON-RPC).
+    Tui(TuiArgs),
     /// Start an interactive REPL.
     Repl,
     Thread {
@@ -74,6 +76,17 @@ enum Command {
         #[command(subcommand)]
         command: ArtifactCommand,
     },
+}
+
+#[derive(clap::Args)]
+struct TuiArgs {
+    /// Open an existing thread directly (skips thread picker).
+    #[arg(long)]
+    thread_id: Option<ThreadId>,
+
+    /// Include archived threads in the picker.
+    #[arg(long, default_value_t = false)]
+    include_archived: bool,
 }
 
 #[derive(Subcommand)]

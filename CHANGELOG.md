@@ -38,6 +38,7 @@
 - `pm-app-server`/`pm`：新增 `thread/models`（`GET /models` + provider whitelist）与 `pm thread models`，用于发现当前 provider 的可用模型。
 - 新增 `pm-app-server`：最小 JSON-RPC over stdio 控制面（`initialize` + `thread/*` + `turn/*`），用于验证 v0.2.0 的 thread/turn/interrupt 与落盘回放。
 - 新增 `pm` CLI：作为 `pm-app-server` 的人类可用客户端，支持 `ask/watch --bell`、`thread/*`、`approval/*`、`process/*`（只读查看 + interrupt/kill），并在 `ask` 中支持 Ctrl-C 触发 `turn/interrupt`。
+- `pm` CLI：新增 `pm tui`（Ratatui thin client）：thread picker + transcript + 输入 + `item/delta` 流式，并添加渲染 snapshot tests（TestBackend）。
 - `pm` CLI：新增 preset 导入/导出：`pm preset export/import`（无 secrets；导入仅允许 `<pm_root>/spec/` 下的文件）。
 - `pm` CLI 新增 `pm init`：初始化 `./.codepm_data/`（创建目录、生成 `config.toml`、可选 `.env` 模板与 `spec/`，并写入 `.codepm_data/.gitignore`）。
 - `pm-app-server`：新增 unix socket daemon 模式：`--listen <pm_root>/daemon.sock`（允许多 client attach；client 断线可重连）。

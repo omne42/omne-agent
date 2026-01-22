@@ -73,6 +73,9 @@ async fn main() -> anyhow::Result<()> {
                 print_json_or_pretty(json, &result)?;
             }
         },
+        Some(Command::Tui(args)) => {
+            run_tui(&mut app, args).await?;
+        }
         Some(Command::Thread { command }) => match command {
             ThreadCommand::Start { cwd, json } => {
                 let cwd = cwd.map(|p| p.display().to_string());

@@ -1,6 +1,8 @@
 # TUI（Terminal UI）：v0.2.0 P0 规格（薄客户端）
 
 > 结论先行：TUI 不是“另一套 core”，只是 `pm-app-server`（JSON-RPC 事件流）的一个投影。**唯一真相**仍然是 `Thread/Turn/Item` 落盘事件与可重放语义。
+>
+> v0.2.0 现状：已落地最小 `pm tui`（thread picker + transcript + 输入 + `item/delta` 流式）；Approvals/Process/Artifacts 的 UI 仍是 TODO。
 
 ## 1) v0.2.0 P0 目标与边界
 
