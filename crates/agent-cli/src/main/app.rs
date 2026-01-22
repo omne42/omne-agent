@@ -8,7 +8,10 @@ async fn main() -> anyhow::Result<()> {
     let mut app = App::connect(&cli).await?;
 
     match cli.command {
-        Command::Thread { command } => match command {
+        None | Some(Command::Repl) => {
+            run_repl(&mut app).await?;
+        }
+        Some(Command::Thread { command }) => match command {
             ThreadCommand::Start { cwd, json } => {
                 let cwd = cwd.map(|p| p.display().to_string());
                 let result = app.thread_start(cwd).await?;
@@ -145,20 +148,20 @@ async fn main() -> anyhow::Result<()> {
                 app.thread_configure(args).await?;
             }
         },
-        Command::Inbox(args) => {
+        Some(Command::Inbox(args)) => {
             run_inbox(&mut app, args).await?;
         }
-        Command::Ask(args) => {
+        Some(Command::Ask(args)) => {
             run_ask(&mut app, args).await?;
         }
-        Command::Exec(args) => {
+        Some(Command::Exec(args)) => {
             let code = run_exec(&mut app, args).await?;
             std::process::exit(code);
         }
-        Command::Watch(args) => {
+        Some(Command::Watch(args)) => {
             run_watch(&mut app, args).await?;
         }
-        Command::Approval { command } => match command {
+        Some(Command::Approval { command }) => match command {
             ApprovalCommand::List {
                 thread_id,
                 include_decided,
@@ -186,7 +189,7 @@ async fn main() -> anyhow::Result<()> {
                     .await?;
             }
         },
-        Command::Process { command } => match command {
+        Some(Command::Process { command }) => match command {
             ProcessCommand::List { thread_id, json } => {
                 let result = app.process_list(thread_id).await?;
                 print_json_or_pretty(json, &result)?;
@@ -248,7 +251,7 @@ async fn main() -> anyhow::Result<()> {
                 app.process_kill(process_id, reason, approval_id).await?;
             }
         },
-        Command::Artifact { command } => match command {
+        Some(Command::Artifact { command }) => match command {
             ArtifactCommand::List {
                 thread_id,
                 approval_id,

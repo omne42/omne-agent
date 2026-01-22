@@ -31,12 +31,15 @@ struct Cli {
     #[arg(long = "execpolicy-rules", value_name = "PATH", global = true)]
     execpolicy_rules: Vec<PathBuf>,
 
+    /// When omitted, starts an interactive REPL.
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
 }
 
 #[derive(Subcommand)]
 enum Command {
+    /// Start an interactive REPL.
+    Repl,
     Thread {
         #[command(subcommand)]
         command: ThreadCommand,

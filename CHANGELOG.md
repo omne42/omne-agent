@@ -32,6 +32,7 @@
 - 新增 `pm-app-server`：最小 JSON-RPC over stdio 控制面（`initialize` + `thread/*` + `turn/*`），用于验证 v0.2.0 的 thread/turn/interrupt 与落盘回放。
 - 新增 `pm` CLI：作为 `pm-app-server` 的人类可用客户端，支持 `ask/watch --bell`、`thread/*`、`approval/*`、`process/*`（只读查看 + interrupt/kill），并在 `ask` 中支持 Ctrl-C 触发 `turn/interrupt`。
 - `pm` CLI 新增 `exec`：非交互执行单次 turn（CI/脚本友好），支持 `--json` 输出摘要与 `--on-approval fail|approve|deny` 策略。
+- `pm` CLI 新增交互式 REPL：直接运行 `pm`（或 `pm repl`）进入对话/执行环境，支持 `/help` 等指令。
 - `pm ask`：消费 `pm-app-server` 的 `item/delta` notifications 并实时输出 assistant 文本流（仅作为 UI 优化；最终仍以 `AssistantMessage` 落盘为准）。
 - `pm` CLI 新增 `inbox`：跨 thread 的 RTS 收件箱视图（可 `--watch` + `--bell` 去重提醒），用于快速发现 `need_approval/failed/running`。
 - `pm inbox --details`：现在会显示 `failed_processes` 摘要（数量 + 部分 id），便于快速定位后台失败。

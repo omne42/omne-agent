@@ -51,6 +51,11 @@
 ```bash
 $ cargo run -p pm -- --help
 $ cargo run -p pm-app-server -- --help
+
+# 交互式对话/执行环境（REPL）
+$ cargo run -p pm
+# 或显式：
+$ cargo run -p pm -- repl
 ```
 
 快速搜索：
