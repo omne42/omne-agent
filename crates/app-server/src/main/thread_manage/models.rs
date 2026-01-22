@@ -1,0 +1,124 @@
+async fn handle_thread_models(server: &Server, params: ThreadModelsParams) -> anyhow::Result<Value> {
+    let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
+    let (thread_model, thread_openai_base_url) = {
+        let handle = thread_rt.handle.lock().await;
+        let state = handle.state();
+        (state.model.clone(), state.openai_base_url.clone())
+    };
+
+    let project = crate::project_config::load_project_openai_overrides(&thread_root).await;
+
+    let provider = project
+        .provider
+        .or_else(|| {
+            std::env::var("CODE_PM_OPENAI_PROVIDER")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+        })
+        .unwrap_or_else(|| "openai-codex-apikey".to_string());
+
+    let builtin_provider_config = builtin_openai_provider_config(&provider);
+    let provider_overrides = project.providers.get(&provider);
+    if builtin_provider_config.is_none() && provider_overrides.is_none() {
+        anyhow::bail!(
+            "unknown openai provider: {provider} (expected: openai-codex-apikey, openai-auth-command; or define [openai.providers.{provider}] in project config)"
+        );
+    }
+
+    let mut provider_config = builtin_provider_config.unwrap_or_default();
+    if let Some(overrides) = provider_overrides {
+        provider_config = merge_provider_config(provider_config, overrides);
+    }
+
+    let base_url = thread_openai_base_url
+        .or(project.base_url)
+        .or_else(|| {
+            std::env::var("CODE_PM_OPENAI_BASE_URL")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+        })
+        .or(provider_config.base_url.clone())
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("openai provider {provider} is missing base_url"))?;
+
+    let current_model = thread_model
+        .or(project.model)
+        .or_else(|| {
+            std::env::var("CODE_PM_OPENAI_MODEL")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+        })
+        .or(provider_config.default_model.clone())
+        .unwrap_or_else(|| "gpt-4.1".to_string());
+
+    let provider_for_listing = ditto_llm::ProviderConfig {
+        base_url: Some(base_url.clone()),
+        default_model: provider_config.default_model,
+        model_whitelist: provider_config.model_whitelist.clone(),
+        auth: provider_config.auth,
+    };
+
+    let env = ditto_llm::Env {
+        dotenv: project.dotenv,
+    };
+    let models = ditto_llm::list_available_models(&provider_for_listing, &env)
+        .await
+        .context("list /models")?;
+
+    Ok(serde_json::json!({
+        "provider": provider,
+        "base_url": base_url,
+        "current_model": current_model,
+        "default_model": provider_for_listing.default_model,
+        "model_whitelist": provider_for_listing.model_whitelist,
+        "models": models,
+    }))
+}
+
+fn builtin_openai_provider_config(provider: &str) -> Option<ditto_llm::ProviderConfig> {
+    match provider {
+        "openai-codex-apikey" => Some(ditto_llm::ProviderConfig {
+            base_url: Some("https://api.openai.com/v1".to_string()),
+            default_model: None,
+            model_whitelist: Vec::new(),
+            auth: Some(ditto_llm::ProviderAuth::ApiKeyEnv { keys: Vec::new() }),
+        }),
+        "openai-auth-command" => Some(ditto_llm::ProviderConfig {
+            base_url: Some("https://api.openai.com/v1".to_string()),
+            default_model: None,
+            model_whitelist: Vec::new(),
+            auth: Some(ditto_llm::ProviderAuth::Command { command: Vec::new() }),
+        }),
+        _ => None,
+    }
+}
+
+fn merge_provider_config(
+    mut base: ditto_llm::ProviderConfig,
+    overrides: &ditto_llm::ProviderConfig,
+) -> ditto_llm::ProviderConfig {
+    if let Some(base_url) = overrides
+        .base_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        base.base_url = Some(base_url.to_string());
+    }
+    if let Some(default_model) = overrides
+        .default_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        base.default_model = Some(default_model.to_string());
+    }
+    if !overrides.model_whitelist.is_empty() {
+        base.model_whitelist = ditto_llm::normalize_string_list(overrides.model_whitelist.clone());
+    }
+    if let Some(auth) = overrides.auth.clone() {
+        base.auth = Some(auth);
+    }
+    base
+}
+

@@ -630,6 +630,11 @@ struct ThreadConfigExplainParams {
 }
 
 #[derive(Debug, Deserialize)]
+struct ThreadModelsParams {
+    thread_id: ThreadId,
+}
+
+#[derive(Debug, Deserialize)]
 struct ThreadEventsParams {
     thread_id: ThreadId,
     #[serde(default)]

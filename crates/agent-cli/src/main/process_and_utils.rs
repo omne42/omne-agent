@@ -485,6 +485,11 @@ impl App {
         .await
     }
 
+    async fn thread_models(&mut self, thread_id: ThreadId) -> anyhow::Result<Value> {
+        self.rpc("thread/models", serde_json::json!({ "thread_id": thread_id }))
+            .await
+    }
+
     async fn thread_configure(&mut self, args: ThreadConfigureArgs) -> anyhow::Result<()> {
         let approval_policy: Option<ApprovalPolicy> = args.approval_policy.map(Into::into);
         let sandbox_policy: Option<SandboxPolicy> = args.sandbox_policy.map(Into::into);

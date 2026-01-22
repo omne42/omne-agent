@@ -1,4 +1,5 @@
 include!("thread_manage/config.rs");
+include!("thread_manage/models.rs");
 include!("thread_manage/hooks.rs");
 include!("thread_manage/fork.rs");
 include!("thread_manage/archive.rs");

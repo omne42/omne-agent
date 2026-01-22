@@ -149,6 +149,10 @@ async fn main() -> anyhow::Result<()> {
                 let result = app.thread_config_explain(thread_id).await?;
                 print_json_or_pretty(json, &result)?;
             }
+            ThreadCommand::Models { thread_id, json } => {
+                let result = app.thread_models(thread_id).await?;
+                print_json_or_pretty(json, &result)?;
+            }
             ThreadCommand::Configure(args) => {
                 app.thread_configure(args).await?;
             }

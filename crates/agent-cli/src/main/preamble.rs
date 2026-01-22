@@ -220,6 +220,11 @@ enum ThreadCommand {
         #[arg(long, default_value_t = false)]
         json: bool,
     },
+    Models {
+        thread_id: ThreadId,
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
     Configure(ThreadConfigureArgs),
 }
 

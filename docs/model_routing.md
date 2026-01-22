@@ -60,20 +60,26 @@
 
 `thread/config/explain` 用于解释一个 thread 的有效配置来自哪里，返回：
 
-- `effective`：最终生效值（approval/sandbox/mode/model/base_url 等）
+- `effective`：最终生效值（approval/sandbox/mode/openai_provider/model/base_url 等）
 - `layers`：分层来源（`default` → `env` → `thread`）
 - `mode_catalog` + `effective_mode_def`：当前 mode 的定义与来源（builtin/env/project）
 
 `layers` 的重要边界（避免误读）：
 
-- `default` layer 是一个完整快照（包含 approval/sandbox/mode/model/base_url 等）。
-- `env` layer 目前只覆盖 `model/openai_base_url`（不是完整快照）。
+- `default` layer 是一个完整快照（包含 approval/sandbox/mode/openai_provider/model/base_url 等）。
+- `env` layer 目前只覆盖 `openai_provider/model/openai_base_url`（不是完整快照）。
 - `thread` layer 不是单条记录：每次出现 `ThreadConfigUpdated` 事件都会追加一条 layer（包含 `seq/timestamp` + 当时的有效快照）。
 
 ### 2.2 CLI（可复制）
 
 ```bash
 pm thread config-explain <thread_id> --json
+```
+
+列出 provider 可用模型（`GET /models` + provider allowlist）：
+
+```bash
+pm thread models <thread_id> --json
 ```
 
 实现对照：

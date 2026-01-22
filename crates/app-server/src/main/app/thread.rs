@@ -260,6 +260,13 @@ async fn handle_thread_request(
             },
             Err(err) => invalid_params(id, err),
         },
+        "thread/models" => match serde_json::from_value::<ThreadModelsParams>(params) {
+            Ok(params) => match handle_thread_models(server, params).await {
+                Ok(result) => JsonRpcResponse::ok(id, result),
+                Err(err) => JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None),
+            },
+            Err(err) => invalid_params(id, err),
+        },
         _ => {
             let _ = params;
             method_not_found(id, method)

@@ -198,9 +198,8 @@ impl OpenAiCompatibleClient {
 
         let status = response.status();
         if !status.is_success() {
-            let text = response.text().await.unwrap_or_default();
             return Err(DittoError::InvalidResponse(format!(
-                "GET /models failed ({status}): {text}"
+                "GET /models failed ({status})"
             )));
         }
 

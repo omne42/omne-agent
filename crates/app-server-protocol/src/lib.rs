@@ -218,6 +218,11 @@ pub struct ThreadConfigExplainParams {
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
+pub struct ThreadModelsParams {
+    pub thread_id: pm_protocol::ThreadId,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
 pub struct ThreadEventsParams {
     pub thread_id: pm_protocol::ThreadId,
     #[serde(default)]
@@ -721,6 +726,12 @@ pub enum ClientRequest {
         #[serde(rename = "id")]
         request_id: RequestId,
         params: ThreadConfigExplainParams,
+    },
+    #[serde(rename = "thread/models")]
+    ThreadModels {
+        #[serde(rename = "id")]
+        request_id: RequestId,
+        params: ThreadModelsParams,
     },
     #[serde(rename = "turn/start")]
     TurnStart {
