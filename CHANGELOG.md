@@ -90,6 +90,7 @@
 - `pm-app-server` agent loop：支持 token budget（`CODE_PM_AGENT_MAX_TOTAL_TOKENS`；超限标记为 `stuck`）。
 - 更新 `docs/research/README.md`：补齐新增调研条目并调整落地方向表述。
 - 更新 `docs/v0.2.0_parity.md`：同步 `item/* notifications` 与通知去重/节流的落地状态（`pm watch|inbox --debounce-ms`）。
+- 更新 `docs/v0.2.0_parity.md`：补齐 “Item 覆盖” 勾选状态（见 `docs/thread_event_model.md`）。
 - `githooks/pre-commit`：强制每次提交同时包含 `CHANGELOG.md` 与实际变更（禁止 changelog-only / non-changelog commit）。
 - `pm-app-server agent loop`：增加最小长任务预算（`max_steps`/`max_tool_calls`/`max_turn_seconds` + 单次 OpenAI 请求超时）；超限会使 turn 失败并写入失败原因，避免无限循环烧钱/卡死。
 - v0.2.0 方向明确：git/workspace 使用 `/tmp`/worktree 等目录隔离，不把 Docker/容器当作实现前提（但不禁止 agent 自己运行 Docker）；实现文档中移除/替换相关表述。
