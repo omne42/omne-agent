@@ -20,6 +20,9 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Command::Init(_)) => unreachable!("handled before App::connect"),
         Some(Command::Reference { .. }) => unreachable!("handled before App::connect"),
+        Some(Command::Preset { ref command }) => {
+            run_preset(&cli, &mut app, command.clone()).await?;
+        }
         Some(Command::Repo { command }) => match command {
             RepoCommand::Search {
                 thread_id,

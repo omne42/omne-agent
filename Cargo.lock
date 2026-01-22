@@ -1468,6 +1468,7 @@ dependencies = [
  "pm-protocol",
  "serde",
  "serde_json",
+ "serde_yaml",
  "time",
  "tokio",
  "tracing-subscriber",

@@ -8,32 +8,41 @@
 
 ## 0) v0.2.0 现状：已有原语（可手工达成）
 
-v0.2.0 还没有 `preset import/export` 的一等命令，但你已经可以用现有 API 拼出“准 preset”工作流：
+v0.2.0 已提供最小的 `pm preset` import/export（无 secrets；通过 `thread/config-explain` + `thread/configure` 落盘 `ThreadConfigUpdated`）。
 
-### 0.1 导出（手工）
+### 0.1 导出（export）
+
+```bash
+pm preset export <thread_id> --out .codepm_data/spec/presets/coder-default.yaml
+```
+
+可选元信息：
+
+```bash
+pm preset export <thread_id> \
+  --out .codepm_data/spec/presets/coder-default.yaml \
+  --name coder-default \
+  --description "safe defaults for this repo"
+```
+
+### 0.2 导入（import）
+
+```bash
+pm preset import <thread_id> --file .codepm_data/spec/presets/coder-default.yaml
+```
+
+约束：
+
+- `import` 默认只允许从 `<pm_root>/spec/` 下加载（可提交/可 review）；`pm_root` 默认是 `<cwd>/.codepm_data`，可用 `--pm-root` 覆盖。
+- preset 文件严格 allowlist（`deny_unknown_fields`），未知字段直接报错。
+- preset 文件不包含任何 secrets；密钥只来自运行环境（见 `docs/redaction.md`）。
+
+### 0.3 仍可手工（调试/兜底）
 
 ```bash
 pm thread config-explain <thread_id> --json
+pm thread configure <thread_id> --help
 ```
-
-关注输出里的 `effective` 字段：它就是“当前 thread 生效配置”的最小可迁移子集。
-
-### 0.2 导入（手工）
-
-把上面的 `effective` 手工映射成 `thread/configure`：
-
-```bash
-pm thread configure <thread_id> \
-  --approval-policy auto_approve \
-  --sandbox-policy workspace_write \
-  --sandbox-network-access deny \
-  --sandbox-writable-roots . \
-  --mode coder \
-  --model gpt-4.1 \
-  --openai-base-url https://api.openai.com/v1
-```
-
-这会落盘 `ThreadConfigUpdated` 事件，并在下次 turn 生效（可回放、可解释）。
 
 ---
 
@@ -160,8 +169,8 @@ thread_config:
 
 ---
 
-## 5) DoD（未来实现的可验证清单）
+## 5) DoD（v0.2.0 最小实现）
 
-- `pm preset export --thread <id> --out .codepm_data/spec/presets/x.yaml` 生成的文件里不包含任何 token 形态（例如 `rg -n \"sk-\" .codepm_data/spec/presets/x.yaml` 命中为 0）。
-- `pm preset import --thread <id> --file .codepm_data/spec/presets/x.yaml` 后，`pm thread config-explain <id> --json` 的 `effective` 与 preset 对齐。
+- `pm preset export <id> --out .codepm_data/spec/presets/x.yaml` 生成的文件里不包含任何 token 形态（例如 `rg -n \"sk-\" .codepm_data/spec/presets/x.yaml` 命中为 0）。
+- `pm preset import <id> --file .codepm_data/spec/presets/x.yaml` 后，`pm thread config-explain <id> --json` 的 `effective` 与 preset 对齐。
 - （如果实现了独立层）`thread/config/explain.layers` 能看到 `preset` 来源与元信息（name/hash）。

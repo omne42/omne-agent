@@ -44,6 +44,10 @@ enum Command {
         #[command(subcommand)]
         command: ReferenceCommand,
     },
+    Preset {
+        #[command(subcommand)]
+        command: PresetCommand,
+    },
     Repo {
         #[command(subcommand)]
         command: RepoCommand,
@@ -91,6 +95,30 @@ enum ReferenceCommand {
     /// Show the currently installed reference repo (if any).
     Status {
         /// Output JSON instead of human-readable text.
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Clone)]
+enum PresetCommand {
+    /// Export the effective thread config as a preset file (no secrets).
+    Export {
+        thread_id: ThreadId,
+        #[arg(long)]
+        out: PathBuf,
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(long)]
+        description: Option<String>,
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    /// Import a preset file and apply it via `thread/configure`.
+    Import {
+        thread_id: ThreadId,
+        #[arg(long)]
+        file: PathBuf,
         #[arg(long, default_value_t = false)]
         json: bool,
     },
