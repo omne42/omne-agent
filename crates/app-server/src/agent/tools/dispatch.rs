@@ -801,13 +801,13 @@ mod agent_spawn_guard_tests {
     use std::collections::HashMap;
     use std::path::PathBuf;
     use std::sync::Arc;
-    use tokio::sync::mpsc;
+    use tokio::sync::broadcast;
 
     fn build_test_server(pm_root: PathBuf) -> super::super::Server {
-        let (out_tx, _out_rx) = mpsc::unbounded_channel::<String>();
+        let (notify_tx, _notify_rx) = broadcast::channel::<String>(16);
         super::super::Server {
             cwd: pm_root.clone(),
-            out_tx,
+            notify_tx,
             thread_store: super::super::ThreadStore::new(super::super::PmPaths::new(pm_root)),
             threads: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             processes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),

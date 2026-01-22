@@ -188,15 +188,21 @@ impl App {
             default_app_server_path().unwrap_or_else(|| PathBuf::from("pm-app-server"))
         });
 
-        let mut argv: Vec<OsString> = Vec::new();
-        argv.push("--pm-root".into());
-        argv.push(pm_root.into_os_string());
-        for path in &cli.execpolicy_rules {
-            argv.push("--execpolicy-rules".into());
-            argv.push(path.clone().into_os_string());
-        }
+        let socket_path = pm_root.join("daemon.sock");
 
-        let mut rpc = pm_jsonrpc::Client::spawn(server, argv).await?;
+        let mut rpc = match pm_jsonrpc::Client::connect_unix(&socket_path).await {
+            Ok(client) => client,
+            Err(_) => {
+                let mut argv: Vec<OsString> = Vec::new();
+                argv.push("--pm-root".into());
+                argv.push(pm_root.into_os_string());
+                for path in &cli.execpolicy_rules {
+                    argv.push("--execpolicy-rules".into());
+                    argv.push(path.clone().into_os_string());
+                }
+                pm_jsonrpc::Client::spawn(server, argv).await?
+            }
+        };
         let _ = rpc.request("initialize", serde_json::json!({})).await?;
         let _ = rpc.request("initialized", serde_json::json!({})).await?;
         let notifications = rpc.take_notifications();

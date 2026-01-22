@@ -33,6 +33,8 @@
 - 新增 `pm-app-server`：最小 JSON-RPC over stdio 控制面（`initialize` + `thread/*` + `turn/*`），用于验证 v0.2.0 的 thread/turn/interrupt 与落盘回放。
 - 新增 `pm` CLI：作为 `pm-app-server` 的人类可用客户端，支持 `ask/watch --bell`、`thread/*`、`approval/*`、`process/*`（只读查看 + interrupt/kill），并在 `ask` 中支持 Ctrl-C 触发 `turn/interrupt`。
 - `pm` CLI 新增 `pm init`：初始化 `./.codepm_data/`（创建目录、生成 `config.toml`、可选 `.env` 模板与 `spec/`，并写入 `.codepm_data/.gitignore`）。
+- `pm-app-server`：新增 unix socket daemon 模式：`--listen <pm_root>/daemon.sock`（允许多 client attach；client 断线可重连）。
+- `pm` CLI：默认优先连接 `<pm_root>/daemon.sock`，失败 fallback 到 spawn `pm-app-server`（保持 JSON-RPC 语义不变）。
 - `pm-app-server`：支持 `.codepm_data/config_local.toml`（gitignore）作为本机项目配置；当其存在时会优先于 `.codepm_data/config.toml` 被加载。
 - `pm init`：新增 `--create-config-local`（交互模式也可选），用于生成 `.codepm_data/config_local.toml` 模板。
 - 仓库内提交 `./.codepm_data/config.toml` 与 `./.codepm_data/.gitignore` 作为默认模板（由 `pm init --yes` 生成；`.codepm_data/.gitignore` 会忽略 `config_local.toml` 与 `.env`）。

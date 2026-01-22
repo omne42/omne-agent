@@ -19,6 +19,7 @@
     config_local.toml
     .env
     .gitignore
+    daemon.sock
     spec/
     tmp/
     data/
@@ -41,6 +42,7 @@
 - `config_local.toml`：本机/本用户的项目级配置（gitignore）。当它存在时，会优先于 `config.toml` 被加载。
 - `.env`：项目级 secrets（例如 `OPENAI_API_KEY`）。**永远不提交**，且必须在 file tools 层默认拒绝读取。
 - `.gitignore`：只忽略运行时/secret；不忽略 `config.toml` 与 `spec/`（便于提交/review）。
+- `daemon.sock`：本机 daemon 的 unix socket（`pm-app-server --listen`）。运行时文件，**永远不提交**。
 - `spec/`：项目可提交 spec（modes/workflow/hooks/router…）。具体文件名按后续 spec 定稿。
 - `tmp/`：本项目的临时目录（可随时删；不作为正确性前提）。
 - `data/`：运行时数据（预留；例如 session/索引/派生视图缓存；不提交）。
@@ -90,5 +92,5 @@ CODE_PM_OPENAI_MODEL=gpt-4.1
 
 只忽略运行时/secret：
 
-- 忽略：`.codepm_data/tmp/`、`.codepm_data/data/`、`.codepm_data/repos/`、`.codepm_data/threads/`、`.codepm_data/locks/`、`.codepm_data/logs/`、`.codepm_data/config_local.toml`、`.codepm_data/.env`
+- 忽略：`.codepm_data/tmp/`、`.codepm_data/data/`、`.codepm_data/repos/`、`.codepm_data/threads/`、`.codepm_data/locks/`、`.codepm_data/logs/`、`.codepm_data/daemon.sock`、`.codepm_data/config_local.toml`、`.codepm_data/.env`
 - 不忽略：`.codepm_data/config.toml`、`.codepm_data/spec/`

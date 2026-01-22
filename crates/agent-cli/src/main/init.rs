@@ -84,6 +84,7 @@ async fn write_codepm_gitignore(codepm_data_dir: &Path) -> anyhow::Result<()> {
         "threads/",
         "locks/",
         "logs/",
+        "daemon.sock",
         "",
         "# Local overrides (do not commit)",
         "config_local.toml",

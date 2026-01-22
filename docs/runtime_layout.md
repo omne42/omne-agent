@@ -18,6 +18,16 @@
 
 ---
 
+## 0.1) daemon socket（可选）
+
+当使用 daemon 模式（unix socket）时：
+
+- socket：`<pm_root>/daemon.sock`
+- 启动：`pm-app-server --pm-root <pm_root> --listen <pm_root>/daemon.sock`
+- `pm` CLI：默认会尝试连接该 socket；失败则 fallback 到 spawn `pm-app-server`（保持 JSON-RPC 语义不变）。
+
+---
+
 ## 1) threads 与事件日志（append-only）
 
 每个 thread 一个目录：

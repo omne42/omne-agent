@@ -22,7 +22,7 @@ use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::process::Command;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
 use walkdir::WalkDir;
@@ -108,6 +108,10 @@ struct Args {
     #[arg(long)]
     pm_root: Option<PathBuf>,
 
+    /// Listen on a Unix socket instead of stdio (daemon mode).
+    #[arg(long, value_name = "PATH")]
+    listen: Option<PathBuf>,
+
     /// Paths to execpolicy rule files to evaluate (repeatable).
     #[arg(long = "execpolicy-rules", value_name = "PATH")]
     execpolicy_rules: Vec<PathBuf>,
@@ -192,7 +196,7 @@ struct DiskWarningState {
 #[derive(Clone)]
 struct Server {
     cwd: PathBuf,
-    out_tx: mpsc::UnboundedSender<String>,
+    notify_tx: broadcast::Sender<String>,
     thread_store: ThreadStore,
     threads: Arc<tokio::sync::Mutex<HashMap<ThreadId, Arc<ThreadRuntime>>>>,
     processes: Arc<tokio::sync::Mutex<HashMap<ProcessId, ProcessEntry>>>,
@@ -213,7 +217,7 @@ impl Server {
             .await?
             .ok_or_else(|| anyhow::anyhow!("thread not found: {thread_id}"))?;
 
-        let rt = Arc::new(ThreadRuntime::new(handle, self.out_tx.clone()));
+        let rt = Arc::new(ThreadRuntime::new(handle, self.notify_tx.clone()));
         threads.insert(thread_id, rt.clone());
         Ok(rt)
     }
@@ -256,15 +260,15 @@ enum ProcessCommand {
 struct ThreadRuntime {
     handle: tokio::sync::Mutex<pm_core::ThreadHandle>,
     active_turn: tokio::sync::Mutex<Option<ActiveTurn>>,
-    out_tx: mpsc::UnboundedSender<String>,
+    notify_tx: broadcast::Sender<String>,
 }
 
 impl ThreadRuntime {
-    fn new(handle: pm_core::ThreadHandle, out_tx: mpsc::UnboundedSender<String>) -> Self {
+    fn new(handle: pm_core::ThreadHandle, notify_tx: broadcast::Sender<String>) -> Self {
         Self {
             handle: tokio::sync::Mutex::new(handle),
             active_turn: tokio::sync::Mutex::new(None),
-            out_tx,
+            notify_tx,
         }
     }
 
@@ -278,7 +282,7 @@ impl ThreadRuntime {
             "params": params,
         });
         if let Ok(line) = serde_json::to_string(&payload) {
-            let _ = self.out_tx.send(line);
+            let _ = self.notify_tx.send(line);
         }
     }
 

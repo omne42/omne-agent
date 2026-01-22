@@ -67,3 +67,14 @@
 - 继续以 `pm-app-server`（JSON-RPC + 事件流）为唯一控制面。
 - `pm` client 优先连接本机 socket（daemon 模式），失败再 fallback 到“spawn 子进程（stdio）”。
 - daemon 内部以 `pm_root`（项目的 `.codepm_data/`）为命名空间，ThreadStore/locks 都按 root 分区。
+
+落地口径（v0.2.0 现状）：
+
+- unix socket 路径：`<pm_root>/daemon.sock`
+- 启动（前台常驻）：
+
+```bash
+$ pm-app-server --pm-root ./.codepm_data --listen ./.codepm_data/daemon.sock
+```
+
+- 客户端：`pm` 会默认尝试连接 `daemon.sock`；连接失败则退回到“每次 spawn 一个 `pm-app-server`”的行为（保持 JSON-RPC 语义不变）。
