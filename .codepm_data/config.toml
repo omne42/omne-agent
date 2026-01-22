@@ -1,0 +1,12 @@
+# CodePM project config (v0.2.x)
+#
+# This file is safe to commit. Secrets belong in `.codepm_data/.env` (gitignored).
+#
+# When disabled, CodePM ignores project-level overrides from `config.toml` and `.env`.
+
+[project_config]
+enabled = false
+
+[openai]
+# base_url = "https://api.openai.com"
+# model = "gpt-4.1"

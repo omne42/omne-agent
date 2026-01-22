@@ -1,0 +1,11 @@
+# CodePM runtime (do not commit)
+tmp/
+data/
+repos/
+threads/
+locks/
+logs/
+
+# Secrets (do not commit)
+.env
+
