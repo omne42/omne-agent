@@ -529,6 +529,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "ditto-llm"
+version = "0.1.1"
+dependencies = [
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "toml",
+]
+
+[[package]]
 name = "dupe"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1466,6 +1479,7 @@ dependencies = [
  "anyhow",
  "clap",
  "diffy",
+ "ditto-llm",
  "futures-util",
  "globset",
  "nix 0.29.0",

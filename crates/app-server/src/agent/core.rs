@@ -5,6 +5,7 @@ use std::time::Duration;
 use anyhow::Context;
 use crate::project_config::ProjectOpenAiOverrides;
 use futures_util::stream::{self, StreamExt};
+use ditto_llm::ThinkingIntensity;
 use pm_protocol::{ApprovalDecision, ApprovalId, EventSeq, ThreadEventKind, TurnId};
 use serde::Deserialize;
 use serde_json::Value;
@@ -67,7 +68,7 @@ pub async fn run_agent_turn(
         )
     };
 
-    let project_overrides = if let Some(thread_cwd) = thread_cwd.as_deref() {
+    let mut project_overrides = if let Some(thread_cwd) = thread_cwd.as_deref() {
         let thread_root = pm_core::resolve_dir(Path::new(thread_cwd), Path::new(".")).await?;
         crate::project_config::load_project_openai_overrides(&thread_root).await
     } else {
@@ -82,14 +83,41 @@ pub async fn run_agent_turn(
                 .filter(|s| !s.trim().is_empty())
         })
         .unwrap_or_else(|| DEFAULT_OPENAI_PROVIDER.to_string());
+
+    let builtin_provider_config = builtin_openai_provider_config(&provider);
+    let provider_overrides = project_overrides.providers.get(&provider);
+    if builtin_provider_config.is_none() && provider_overrides.is_none() {
+        anyhow::bail!(
+            "unknown openai provider: {provider} (expected: openai-codex-apikey, openai-auth-command; or define [openai.providers.{provider}] in project config)"
+        );
+    }
+
+    let mut provider_config = builtin_provider_config.unwrap_or_default();
+    if let Some(overrides) = provider_overrides {
+        provider_config = merge_provider_config(provider_config, overrides);
+    }
+
     let model = thread_model
-        .or(project_overrides.model)
+        .or(project_overrides.model.clone())
         .or_else(|| {
             std::env::var("CODE_PM_OPENAI_MODEL")
                 .ok()
                 .filter(|s| !s.trim().is_empty())
         })
+        .or(provider_config.default_model.clone())
         .unwrap_or_else(|| DEFAULT_MODEL.to_string());
+
+    if !provider_config.model_whitelist.is_empty()
+        && !provider_config
+            .model_whitelist
+            .iter()
+            .any(|allowed| allowed.trim() == model)
+    {
+        anyhow::bail!(
+            "model not allowed by provider whitelist: provider={provider} model={model}"
+        );
+    }
+
     let base_url = thread_openai_base_url
         .or(project_overrides.base_url)
         .or_else(|| {
@@ -97,55 +125,20 @@ pub async fn run_agent_turn(
                 .ok()
                 .filter(|s| !s.trim().is_empty())
         })
-        .unwrap_or_else(|| DEFAULT_OPENAI_BASE_URL.to_string());
+        .or(provider_config.base_url.clone())
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("openai provider {provider} is missing base_url"))?;
 
-    let api_key = match provider.as_str() {
-        "openai-codex-apikey" => project_overrides
-            .api_key
-            .or_else(|| std::env::var("OPENAI_API_KEY").ok())
-            .or_else(|| std::env::var("CODE_PM_OPENAI_API_KEY").ok())
-            .context(
-                "OPENAI_API_KEY is required (or enable project config and set .codepm_data/.env)",
-            )?,
-        "openai-auth-command" => {
-            let Some(auth_command) = project_overrides.auth_command.as_ref() else {
-                anyhow::bail!("openai provider openai-auth-command requires [openai.auth_command].command");
-            };
-            let (program, args) = auth_command.command.split_first().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "openai provider openai-auth-command requires non-empty [openai.auth_command].command"
-                )
-            })?;
-            let output = tokio::process::Command::new(program)
-                .args(args)
-                .output()
-                .await
-                .with_context(|| format!("run openai auth command: {program}"))?;
-            if !output.status.success() {
-                anyhow::bail!("openai auth command failed with status {}", output.status);
-            }
-
-            #[derive(Deserialize)]
-            struct AuthCommandOutput {
-                #[serde(default)]
-                api_key: Option<String>,
-                #[serde(default)]
-                token: Option<String>,
-            }
-
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let parsed = serde_json::from_str::<AuthCommandOutput>(stdout.trim())
-                .context("parse openai auth command json")?;
-            parsed
-                .api_key
-                .or(parsed.token)
-                .filter(|s| !s.trim().is_empty())
-                .ok_or_else(|| anyhow::anyhow!("openai auth command json missing api_key"))?
-        }
-        other => anyhow::bail!(
-            "unknown openai provider: {other} (expected: openai-codex-apikey, openai-auth-command)"
-        ),
+    let env = ditto_llm::Env {
+        dotenv: std::mem::take(&mut project_overrides.dotenv),
     };
+    let auth = provider_config
+        .auth
+        .clone()
+        .unwrap_or(ditto_llm::ProviderAuth::ApiKeyEnv { keys: Vec::new() });
+    let api_key = ditto_llm::resolve_auth_token(&auth, &env)
+        .await
+        .context("resolve openai auth token")?;
 
     let openai = pm_openai::Client::new_with_base_url(api_key, base_url)?;
     let tools = build_tools();
@@ -239,11 +232,16 @@ pub async fn run_agent_turn(
     let mut finished = false;
     let started_at = tokio::time::Instant::now();
 
-    let reasoning_effort = project_overrides
-        .model_reasoning_effort
-        .get(&model)
-        .copied()
-        .or_else(|| project_overrides.model_reasoning_effort.get("*").copied());
+    let reasoning_effort = match ditto_llm::select_model_config(&project_overrides.models, &model)
+        .map(|cfg| cfg.thinking)
+        .unwrap_or_default()
+    {
+        ThinkingIntensity::Unsupported => None,
+        ThinkingIntensity::Small => Some(pm_openai::ReasoningEffort::Low),
+        ThinkingIntensity::Medium => Some(pm_openai::ReasoningEffort::Medium),
+        ThinkingIntensity::High => Some(pm_openai::ReasoningEffort::High),
+        ThinkingIntensity::XHigh => Some(pm_openai::ReasoningEffort::XHigh),
+    };
 
     for _step in 0..max_agent_steps {
         if cancel.is_cancelled() {
@@ -555,6 +553,54 @@ fn resolve_user_instructions_path() -> Option<PathBuf> {
 
     let home = home_dir()?;
     Some(home.join(".codepm_data").join("AGENTS.md"))
+}
+
+fn builtin_openai_provider_config(provider: &str) -> Option<ditto_llm::ProviderConfig> {
+    match provider {
+        "openai-codex-apikey" => Some(ditto_llm::ProviderConfig {
+            base_url: Some(DEFAULT_OPENAI_BASE_URL.to_string()),
+            default_model: None,
+            model_whitelist: Vec::new(),
+            auth: Some(ditto_llm::ProviderAuth::ApiKeyEnv { keys: Vec::new() }),
+        }),
+        "openai-auth-command" => Some(ditto_llm::ProviderConfig {
+            base_url: Some(DEFAULT_OPENAI_BASE_URL.to_string()),
+            default_model: None,
+            model_whitelist: Vec::new(),
+            auth: Some(ditto_llm::ProviderAuth::Command { command: Vec::new() }),
+        }),
+        _ => None,
+    }
+}
+
+fn merge_provider_config(
+    mut base: ditto_llm::ProviderConfig,
+    overrides: &ditto_llm::ProviderConfig,
+) -> ditto_llm::ProviderConfig {
+    if let Some(base_url) = overrides
+        .base_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        base.base_url = Some(base_url.to_string());
+    }
+    if let Some(default_model) = overrides
+        .default_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        base.default_model = Some(default_model.to_string());
+    }
+    if !overrides.model_whitelist.is_empty() {
+        base.model_whitelist =
+            ditto_llm::normalize_string_list(overrides.model_whitelist.clone());
+    }
+    if let Some(auth) = overrides.auth.clone() {
+        base.auth = Some(auth);
+    }
+    base
 }
 
 fn home_dir() -> Option<PathBuf> {

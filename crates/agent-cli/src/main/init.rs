@@ -148,16 +148,37 @@ async fn write_codepm_config_toml(
 enabled = {enabled}
 
 [openai]
-# provider = "openai-codex-apikey"
-# base_url = "https://api.openai.com/v1"
-# model = "gpt-4.1"
-# # Per-model overrides (supports: low/medium/high/xhigh)
-# # model_reasoning_effort = {{ "codex-mini-latest" = "low" }}
+# provider = "openai-codex-apikey" # selects a profile under [openai.providers]
+# model = "gpt-4.1"                # default model for this project
 #
-# # Auth plugin (Node-friendly): command must print JSON: {{"api_key":"..."}}
+# # Provider profiles: auth/base_url/model whitelist live here.
+# # (Secrets belong in `.codepm_data/.env`.)
+# #
+# # [openai.providers.openai-codex-apikey]
+# # base_url = "https://api.openai.com/v1"
+# # # optional: provider-default model (used when thread/env/project model is unset)
+# # # default_model = "gpt-4.1"
+# # # optional: enforce a model allowlist
+# # # model_whitelist = ["gpt-4.1", "gpt-4o-mini"]
+# # [openai.providers.openai-codex-apikey.auth]
+# # type = "api_key_env"
+# # # optional: override env keys (default: ["OPENAI_API_KEY","CODE_PM_OPENAI_API_KEY"])
+# # # keys = ["OPENAI_API_KEY"]
+# #
+# # Auth plugin (Node-friendly): command must print JSON: {{"api_key":"..."}} or {{"token":"..."}}
 # # provider = "openai-auth-command"
-# # [openai.auth_command]
+# # [openai.providers.openai-auth-command]
+# # base_url = "https://api.openai.com/v1"
+# # [openai.providers.openai-auth-command.auth]
+# # type = "command"
 # # command = ["node", "./.codepm_data/openai-auth.mjs"]
+#
+# # Per-model thinking intensity (defaults to medium):
+# # supported: unsupported/small/medium/high/xhigh
+# # [openai.models."*"]
+# # thinking = "medium"
+# # [openai.models."codex-mini-latest"]
+# # thinking = "xhigh"
 "#
     );
 
@@ -192,16 +213,37 @@ async fn write_codepm_config_local_toml(
 enabled = {enabled}
 
 [openai]
-# provider = "openai-codex-apikey"
-# base_url = "https://api.openai.com/v1"
-# model = "gpt-4.1"
-# # Per-model overrides (supports: low/medium/high/xhigh)
-# # model_reasoning_effort = {{ "codex-mini-latest" = "low" }}
+# provider = "openai-codex-apikey" # selects a profile under [openai.providers]
+# model = "gpt-4.1"                # default model for this project
 #
-# # Auth plugin (Node-friendly): command must print JSON: {{"api_key":"..."}}
+# # Provider profiles: auth/base_url/model whitelist live here.
+# # (Secrets belong in `.codepm_data/.env`.)
+# #
+# # [openai.providers.openai-codex-apikey]
+# # base_url = "https://api.openai.com/v1"
+# # # optional: provider-default model (used when thread/env/project model is unset)
+# # # default_model = "gpt-4.1"
+# # # optional: enforce a model allowlist
+# # # model_whitelist = ["gpt-4.1", "gpt-4o-mini"]
+# # [openai.providers.openai-codex-apikey.auth]
+# # type = "api_key_env"
+# # # optional: override env keys (default: ["OPENAI_API_KEY","CODE_PM_OPENAI_API_KEY"])
+# # # keys = ["OPENAI_API_KEY"]
+# #
+# # Auth plugin (Node-friendly): command must print JSON: {{"api_key":"..."}} or {{"token":"..."}}
 # # provider = "openai-auth-command"
-# # [openai.auth_command]
+# # [openai.providers.openai-auth-command]
+# # base_url = "https://api.openai.com/v1"
+# # [openai.providers.openai-auth-command.auth]
+# # type = "command"
 # # command = ["node", "./.codepm_data/openai-auth.mjs"]
+#
+# # Per-model thinking intensity (defaults to medium):
+# # supported: unsupported/small/medium/high/xhigh
+# # [openai.models."*"]
+# # thinking = "medium"
+# # [openai.models."codex-mini-latest"]
+# # thinking = "xhigh"
 "#
     );
 

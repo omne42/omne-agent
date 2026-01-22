@@ -68,6 +68,29 @@ enabled = false
 - `enabled=false`：忽略所选 config 文件中除开关本身以外的字段；同时忽略 `.codepm_data/.env`。
 - `enabled=true`：允许用 config 文件 + `.env` 覆盖 base_url/model 等配置（secrets 只来自 `.env`）。
 
+OpenAI 配置示例（provider/profile + model-level thinking）：
+
+```toml
+[openai]
+provider = "openai-codex-apikey"
+model = "gpt-4.1"
+
+[openai.providers.openai-codex-apikey]
+base_url = "https://api.openai.com/v1"
+# 可选：限制可用模型（用于 allowlist；可结合 provider 的 /models 做发现）
+model_whitelist = ["gpt-4.1", "gpt-4o-mini"]
+
+[openai.providers.openai-codex-apikey.auth]
+type = "api_key_env" # 默认读取 OPENAI_API_KEY / CODE_PM_OPENAI_API_KEY
+
+# 模型级思考强度（默认 medium）：
+# unsupported/small/medium/high/xhigh
+[openai.models."*"]
+thinking = "medium"
+[openai.models."codex-mini-latest"]
+thinking = "xhigh"
+```
+
 ---
 
 ## 3) `.env`：只放 secrets（建议键名）

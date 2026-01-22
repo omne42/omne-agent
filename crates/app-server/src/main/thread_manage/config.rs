@@ -113,6 +113,7 @@ async fn handle_thread_config_explain(
     let mode_catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
 
     let default_model = "gpt-4.1".to_string();
+    let default_openai_provider = "openai-codex-apikey".to_string();
     let default_openai_base_url = "https://api.openai.com/v1".to_string();
     let default_mode = "coder".to_string();
 
@@ -121,6 +122,7 @@ async fn handle_thread_config_explain(
     let mut effective_sandbox_writable_roots = Vec::<String>::new();
     let mut effective_sandbox_network_access = pm_protocol::SandboxNetworkAccess::Deny;
     let mut effective_mode = default_mode.clone();
+    let mut effective_openai_provider = default_openai_provider.clone();
     let mut effective_model = default_model.clone();
     let mut effective_openai_base_url = default_openai_base_url.clone();
     let mut layers = vec![serde_json::json!({
@@ -130,25 +132,33 @@ async fn handle_thread_config_explain(
         "sandbox_writable_roots": effective_sandbox_writable_roots,
         "sandbox_network_access": effective_sandbox_network_access,
         "mode": effective_mode,
+        "openai_provider": effective_openai_provider,
         "model": effective_model,
         "openai_base_url": effective_openai_base_url,
     })];
 
+    let env_provider = std::env::var("CODE_PM_OPENAI_PROVIDER")
+        .ok()
+        .filter(|s| !s.trim().is_empty());
     let env_model = std::env::var("CODE_PM_OPENAI_MODEL")
         .ok()
         .filter(|s| !s.trim().is_empty());
     let env_openai_base_url = std::env::var("CODE_PM_OPENAI_BASE_URL")
         .ok()
         .filter(|s| !s.trim().is_empty());
-    if env_model.is_some() || env_openai_base_url.is_some() {
-        if let Some(model) = env_model {
-            effective_model = model;
+    if env_provider.is_some() || env_model.is_some() || env_openai_base_url.is_some() {
+        if let Some(provider) = env_provider.as_deref() {
+            effective_openai_provider = provider.to_string();
         }
-        if let Some(openai_base_url) = env_openai_base_url {
-            effective_openai_base_url = openai_base_url;
+        if let Some(model) = env_model.as_deref() {
+            effective_model = model.to_string();
+        }
+        if let Some(openai_base_url) = env_openai_base_url.as_deref() {
+            effective_openai_base_url = openai_base_url.to_string();
         }
         layers.push(serde_json::json!({
             "source": "env",
+            "openai_provider": effective_openai_provider,
             "model": effective_model,
             "openai_base_url": effective_openai_base_url,
         }));
@@ -156,11 +166,29 @@ async fn handle_thread_config_explain(
 
     let project = crate::project_config::load_project_config(&thread_root).await;
     if project.enabled {
-        if let Some(model) = project.openai.model {
-            effective_model = model;
+        if let Some(provider) = project.openai.provider.as_deref() {
+            effective_openai_provider = provider.to_string();
         }
-        if let Some(openai_base_url) = project.openai.base_url {
-            effective_openai_base_url = openai_base_url;
+        if let Some(model) = project.openai.model.as_deref() {
+            effective_model = model.to_string();
+        }
+        if let Some(openai_base_url) = project.openai.base_url.as_deref() {
+            effective_openai_base_url = openai_base_url.to_string();
+        } else if env_openai_base_url.is_none() {
+            if let Some(provider_base_url) = project
+                .openai
+                .providers
+                .get(&effective_openai_provider)
+                .and_then(|provider| provider.base_url.clone())
+                .or_else(|| match effective_openai_provider.as_str() {
+                    "openai-codex-apikey" | "openai-auth-command" => {
+                        Some(default_openai_base_url.clone())
+                    }
+                    _ => None,
+                })
+            {
+                effective_openai_base_url = provider_base_url;
+            }
         }
         layers.push(serde_json::json!({
             "source": "project",
@@ -171,6 +199,7 @@ async fn handle_thread_config_explain(
             "env_path": project.env_path.display().to_string(),
             "env_present": project.env_present,
             "load_error": project.load_error,
+            "openai_provider": effective_openai_provider,
             "model": effective_model,
             "openai_base_url": effective_openai_base_url,
         }));
@@ -227,6 +256,7 @@ async fn handle_thread_config_explain(
                 "sandbox_writable_roots": effective_sandbox_writable_roots,
                 "sandbox_network_access": effective_sandbox_network_access,
                 "mode": effective_mode,
+                "openai_provider": effective_openai_provider,
                 "model": effective_model,
                 "openai_base_url": effective_openai_base_url,
             }));

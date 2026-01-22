@@ -23,15 +23,27 @@
 
 ### 1.1 生效顺序（写死）
 
-当前 turn 的 `model/openai_base_url` 生效顺序为：
+`provider` 的生效顺序（用于派生 base_url/auth/default_model）：
+
+1. project config（当 `project_config.enabled=true`）：`openai.provider`
+2. env：`CODE_PM_OPENAI_PROVIDER`
+3. default：`openai-codex-apikey`
+
+当前 turn 的 `model` 生效顺序为：
 
 1. thread config（来自 `ThreadConfigUpdated` 事件）
-2. env：
-   - `CODE_PM_OPENAI_MODEL`
-   - `CODE_PM_OPENAI_BASE_URL`
-3. default：
-   - `model="gpt-4.1"`
-   - `openai_base_url="https://api.openai.com/v1"`
+2. project config（当 `project_config.enabled=true`）：`openai.model`
+3. env：`CODE_PM_OPENAI_MODEL`
+4. provider default（当存在）：`openai.providers.<provider>.default_model`
+5. default：`model="gpt-4.1"`
+
+当前 turn 的 `openai_base_url` 生效顺序为：
+
+1. thread config（来自 `ThreadConfigUpdated` 事件）
+2. project config（当 `project_config.enabled=true`）：`openai.base_url`（legacy；建议迁移到 provider profile）
+3. env：`CODE_PM_OPENAI_BASE_URL`
+4. provider base_url：`openai.providers.<provider>.base_url`（或 builtin default）
+5. default：`openai_base_url="https://api.openai.com/v1"`
 
 > 注意：实现中 default 在多个位置硬编码；未来如果改默认值，必须同步，避免 explain 与实际漂移。
 

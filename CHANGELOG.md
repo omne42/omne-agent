@@ -32,6 +32,7 @@
 - `pm-openai`/`pm-app-server`：新增 `response_format` 支持（JSON schema），默认关闭，可通过 `CODE_PM_AGENT_RESPONSE_FORMAT_JSON` 启用。
 - `pm-openai`：SSE 事件强类型化：`TokenUsage`/`RateLimits`/`ApiError`，并支持 `response.failed` → `ResponseEvent::Failed`；`pm-app-server` agent loop 会消费 typed usage 并把 failed 作为错误返回。
 - `pm-app-server`：新增 OpenAI provider 选择（`openai.provider` / `CODE_PM_OPENAI_PROVIDER`），首个 provider `openai-codex-apikey`；并支持 `openai-auth-command`（运行外部命令返回 `{ "api_key": "..." }`，便于 Node 插件化 auth）。
+- 新增 `ditto-llm`：以 provider profile 为中心的 `auth/base_url/model whitelist` 配置与 OpenAI-compatible `/models` 发现；并支持 model-level `thinking`（`unsupported/small/medium/high/xhigh`，默认 `medium`），`pm-app-server` 用其派生 `reasoning.effort`。
 - 新增 `pm-app-server`：最小 JSON-RPC over stdio 控制面（`initialize` + `thread/*` + `turn/*`），用于验证 v0.2.0 的 thread/turn/interrupt 与落盘回放。
 - 新增 `pm` CLI：作为 `pm-app-server` 的人类可用客户端，支持 `ask/watch --bell`、`thread/*`、`approval/*`、`process/*`（只读查看 + interrupt/kill），并在 `ask` 中支持 Ctrl-C 触发 `turn/interrupt`。
 - `pm` CLI 新增 `pm init`：初始化 `./.codepm_data/`（创建目录、生成 `config.toml`、可选 `.env` 模板与 `spec/`，并写入 `.codepm_data/.gitignore`）。

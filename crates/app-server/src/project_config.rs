@@ -1,21 +1,17 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use ditto_llm::{ModelConfig, ProviderConfig, ThinkingIntensity};
 use serde::Deserialize;
 
 #[derive(Default)]
 pub struct ProjectOpenAiOverrides {
     pub provider: Option<String>,
-    pub api_key: Option<String>,
     pub base_url: Option<String>,
     pub model: Option<String>,
-    pub model_reasoning_effort: BTreeMap<String, pm_openai::ReasoningEffort>,
-    pub auth_command: Option<OpenAiAuthCommand>,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct OpenAiAuthCommand {
-    pub command: Vec<String>,
+    pub providers: BTreeMap<String, ProviderConfig>,
+    pub models: BTreeMap<String, ModelConfig>,
+    pub dotenv: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -69,7 +65,11 @@ struct ProjectOpenAiSection {
     #[serde(default)]
     model: Option<String>,
     #[serde(default)]
-    model_reasoning_effort: BTreeMap<String, pm_openai::ReasoningEffort>,
+    providers: BTreeMap<String, ProviderConfig>,
+    #[serde(default)]
+    models: BTreeMap<String, ModelConfig>,
+    #[serde(default)]
+    model_reasoning_effort: BTreeMap<String, ThinkingIntensity>,
     #[serde(default)]
     auth_command: Option<ProjectOpenAiAuthCommandSection>,
 }
@@ -82,22 +82,21 @@ struct ProjectOpenAiAuthCommandSection {
 
 #[derive(Default)]
 struct DotenvOpenAiOverrides {
-    openai_api_key: Option<String>,
-    code_pm_openai_api_key: Option<String>,
     provider: Option<String>,
     base_url: Option<String>,
     model: Option<String>,
+    dotenv: BTreeMap<String, String>,
 }
 
 impl DotenvOpenAiOverrides {
     fn into_project_overrides(self) -> ProjectOpenAiOverrides {
         ProjectOpenAiOverrides {
             provider: self.provider,
-            api_key: self.openai_api_key.or(self.code_pm_openai_api_key),
             base_url: self.base_url,
             model: self.model,
-            model_reasoning_effort: BTreeMap::new(),
-            auth_command: None,
+            providers: BTreeMap::new(),
+            models: BTreeMap::new(),
+            dotenv: self.dotenv,
         }
     }
 }
@@ -115,44 +114,11 @@ fn clean_string_opt(value: Option<String>) -> Option<String> {
 
 fn parse_dotenv_openai(contents: &str) -> DotenvOpenAiOverrides {
     let mut out = DotenvOpenAiOverrides::default();
+    out.dotenv = ditto_llm::parse_dotenv(contents);
 
-    for raw_line in contents.lines() {
-        let line = raw_line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-
-        let line = line.strip_prefix("export ").unwrap_or(line).trim();
-        let Some((raw_key, raw_value)) = line.split_once('=') else {
-            continue;
-        };
-        let key = raw_key.trim();
-        if key.is_empty() {
-            continue;
-        }
-
-        let mut value = raw_value.trim().to_string();
-        if let Some(stripped) = value
-            .strip_prefix('"')
-            .and_then(|v| v.strip_suffix('"'))
-            .or_else(|| value.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')))
-        {
-            value = stripped.to_string();
-        }
-
-        if value.trim().is_empty() {
-            continue;
-        }
-
-        match key {
-            "OPENAI_API_KEY" => out.openai_api_key = Some(value),
-            "CODE_PM_OPENAI_API_KEY" => out.code_pm_openai_api_key = Some(value),
-            "CODE_PM_OPENAI_PROVIDER" => out.provider = Some(value),
-            "CODE_PM_OPENAI_BASE_URL" => out.base_url = Some(value),
-            "CODE_PM_OPENAI_MODEL" => out.model = Some(value),
-            _ => {}
-        }
-    }
+    out.provider = out.dotenv.get("CODE_PM_OPENAI_PROVIDER").cloned();
+    out.base_url = out.dotenv.get("CODE_PM_OPENAI_BASE_URL").cloned();
+    out.model = out.dotenv.get("CODE_PM_OPENAI_MODEL").cloned();
 
     out
 }
@@ -213,9 +179,11 @@ pub async fn load_project_config(thread_root: &Path) -> LoadedProjectConfig {
     let mut config_openai_provider: Option<String> = None;
     let mut config_openai_base_url: Option<String> = None;
     let mut config_openai_model: Option<String> = None;
-    let mut config_openai_model_reasoning_effort: BTreeMap<String, pm_openai::ReasoningEffort> =
+    let mut config_openai_providers: BTreeMap<String, ProviderConfig> = BTreeMap::new();
+    let mut config_openai_models: BTreeMap<String, ModelConfig> = BTreeMap::new();
+    let mut config_openai_model_reasoning_effort: BTreeMap<String, ThinkingIntensity> =
         BTreeMap::new();
-    let mut config_openai_auth_command: Option<OpenAiAuthCommand> = None;
+    let mut config_openai_auth_command: Option<Vec<String>> = None;
 
     if let Some(raw) = config_raw {
         match toml::from_str::<ProjectConfigToml>(&raw) {
@@ -224,6 +192,8 @@ pub async fn load_project_config(thread_root: &Path) -> LoadedProjectConfig {
                 config_openai_provider = clean_string_opt(parsed.openai.provider);
                 config_openai_base_url = clean_string_opt(parsed.openai.base_url);
                 config_openai_model = clean_string_opt(parsed.openai.model);
+                config_openai_providers = parsed.openai.providers;
+                config_openai_models = parsed.openai.models;
                 for (k, v) in parsed.openai.model_reasoning_effort {
                     let key = k.trim().to_string();
                     if !key.is_empty() {
@@ -240,7 +210,7 @@ pub async fn load_project_config(thread_root: &Path) -> LoadedProjectConfig {
                     if command.is_empty() {
                         None
                     } else {
-                        Some(OpenAiAuthCommand { command })
+                        Some(command)
                     }
                 });
             }
@@ -286,14 +256,32 @@ pub async fn load_project_config(thread_root: &Path) -> LoadedProjectConfig {
         .unwrap_or_default()
         .into_project_overrides();
 
-    let openai = ProjectOpenAiOverrides {
+    let mut openai = ProjectOpenAiOverrides {
         provider: clean_string_opt(dotenv_openai.provider).or(config_openai_provider),
-        api_key: dotenv_openai.api_key,
         base_url: clean_string_opt(dotenv_openai.base_url).or(config_openai_base_url),
         model: clean_string_opt(dotenv_openai.model).or(config_openai_model),
-        model_reasoning_effort: config_openai_model_reasoning_effort,
-        auth_command: config_openai_auth_command,
+        providers: config_openai_providers,
+        models: config_openai_models,
+        dotenv: dotenv_openai.dotenv,
     };
+
+    for (k, v) in config_openai_model_reasoning_effort {
+        openai
+            .models
+            .entry(k)
+            .or_insert_with(|| ModelConfig { thinking: v });
+    }
+
+    if let Some(command) = config_openai_auth_command {
+        let provider = openai.provider.as_deref().unwrap_or("openai-auth-command");
+        if provider == "openai-auth-command" {
+            openai
+                .providers
+                .entry(provider.to_string())
+                .or_default()
+                .auth = Some(ditto_llm::ProviderAuth::Command { command });
+        }
+    }
 
     LoadedProjectConfig {
         enabled,
@@ -332,7 +320,7 @@ enabled = true
 provider = "openai-auth-command"
 base_url = "https://example.com/v9"
 model = "codex-mini-latest"
-model_reasoning_effort = { "*" = "low", "codex-mini-latest" = "xhigh" }
+model_reasoning_effort = { "*" = "small", "codex-mini-latest" = "xhigh" }
 
 [openai.auth_command]
 command = ["node", "script.mjs"]
@@ -352,23 +340,27 @@ command = ["node", "script.mjs"]
         );
         assert_eq!(loaded.openai.model.as_deref(), Some("codex-mini-latest"));
         assert_eq!(
-            loaded.openai.model_reasoning_effort.get("*").copied(),
-            Some(pm_openai::ReasoningEffort::Low)
+            loaded.openai.models.get("*").map(|c| c.thinking),
+            Some(ThinkingIntensity::Small)
         );
         assert_eq!(
             loaded
                 .openai
-                .model_reasoning_effort
+                .models
                 .get("codex-mini-latest")
-                .copied(),
-            Some(pm_openai::ReasoningEffort::XHigh)
+                .map(|c| c.thinking),
+            Some(ThinkingIntensity::XHigh)
         );
         assert_eq!(
             loaded
                 .openai
-                .auth_command
-                .as_ref()
-                .map(|c| c.command.clone()),
+                .providers
+                .get("openai-auth-command")
+                .and_then(|p| p.auth.as_ref())
+                .and_then(|auth| match auth {
+                    ditto_llm::ProviderAuth::Command { command } => Some(command.clone()),
+                    _ => None,
+                }),
             Some(vec!["node".to_string(), "script.mjs".to_string()])
         );
         Ok(())
