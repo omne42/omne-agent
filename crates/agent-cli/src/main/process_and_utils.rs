@@ -66,6 +66,19 @@ fn render_event(event: &ThreadEvent) {
             println!("[{ts}] turn started {turn_id}");
             println!("user: {input}");
         }
+        pm_protocol::ThreadEventKind::ModelRouted {
+            turn_id,
+            selected_model,
+            rule_source,
+            reason,
+            rule_id,
+        } => {
+            println!(
+                "[{ts}] model routed {turn_id} model={selected_model} source={rule_source:?} rule_id={} reason={}",
+                rule_id.as_deref().unwrap_or(""),
+                reason.as_deref().unwrap_or("")
+            );
+        }
         pm_protocol::ThreadEventKind::TurnInterruptRequested { turn_id, reason } => {
             println!(
                 "[{ts}] turn interrupt requested {turn_id} reason={}",

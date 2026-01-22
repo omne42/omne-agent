@@ -13,8 +13,8 @@
 
 非目标（v0.2.0）：
 
-- 多 provider 抽象与 capability flags（仍是 TODO，见 `docs/v0.2.0_parity.md`）。
-- role/keyword/subagent 的自动路由（仍是 TODO）。
+- 多 provider 抽象仍是 TODO（capability flags 已有最小实现；见 `docs/v0.2.0_parity.md`）。
+- role/keyword/subagent 的自动路由（MVP 已实现；见下文 Router）。
 - 自动升降级、fallback、长上下文阈值切换（仍是 TODO）。
 
 ---
@@ -50,7 +50,7 @@
 ### 1.2 落盘（可回放）
 
 - 每次 assistant 输出会落盘 `AssistantMessage { model: Option<String>, response_id, token_usage? }`。
-- v0.2.0 **不会**落盘 `reason/rule_source`（因为还没有 Router），这在 `docs/v0.2.0_parity.md` 里是 TODO。
+- 每个 turn 会落盘一次 `ModelRouted { selected_model, rule_source, reason?, rule_id? }`，用于回答“这次用哪个模型、为什么”。（实现对照：`pm_protocol::ThreadEventKind::ModelRouted`）
 
 ---
 
@@ -88,9 +88,9 @@ pm thread models <thread_id> --json
 
 ---
 
-## 3) TODO：Router（role/keyword/subagent）最小规格草案
+## 3) Router（role/keyword/subagent）（MVP 已实现）
 
-> 目标态定义在 `docs/v0.2.0_parity.md`。这里给一个“可实现的最小规格”，避免未来实现跑偏。
+> 目标态定义在 `docs/v0.2.0_parity.md`。这里给当前实现口径与后续扩展点，避免漂移。
 
 ### 3.1 路由优先级链（已定，写死）
 
@@ -104,9 +104,9 @@ pm thread models <thread_id> --json
 
 1. env：`CODE_PM_ROUTER_FILE`（绝对或相对路径；相对路径按 thread cwd 解析）
 2. `./.codepm_data/spec/router.yaml`（推荐）
-3. `./.codepm_data/spec/router.json`（可选）
+3. `./.codepm_data/spec/router.json`（可选；也支持 `router.yml`）
 
-若 env 指向的文件不存在或解析失败：建议直接报错（fail-closed），避免“以为生效但其实没生效”。
+若 env 指向的文件不存在，或 Router 文件解析失败：直接报错（fail-closed），避免“以为生效但其实没生效”。
 
 ### 3.3 最小配置结构（草案）
 
@@ -156,17 +156,16 @@ project_override: null
 
 ### 3.4 “可解释性落盘”（关键，别留到最后）
 
-每个 turn 必须记录一次路由决策（TODO）：
+每个 turn 必须记录一次路由决策（已实现：`ModelRouted` 事件）：
 
 - `selected_model`
 - `rule_source`：`subagent|project_override|keyword_rule|role_default|global_default`
 - `reason`（可选但强烈建议）
 - `rule_id`（可选；便于审计）
 
-落盘位置建议二选一（都行，但必须稳定）：
+落盘位置（已实现）：
 
-1. 新事件：`ModelRouted { turn_id, selected_model, rule_source, reason?, rule_id? }`
-2. 扩展 `TurnStarted`：新增 `routing` 字段（避免事件爆炸，但会扩协议）
+- 新事件：`ModelRouted { turn_id, selected_model, rule_source, reason?, rule_id? }`
 
 `rule_source="global_default"` 的口径（建议写死）：
 

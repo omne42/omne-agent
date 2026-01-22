@@ -57,20 +57,25 @@ pub async fn run_agent_turn(
     input: String,
     cancel: CancellationToken,
 ) -> anyhow::Result<()> {
-    let (thread_id, thread_model, thread_openai_base_url, thread_cwd) = {
+    let (thread_id, thread_mode, thread_model, thread_openai_base_url, thread_cwd) = {
         let handle = thread_rt.handle.lock().await;
         let state = handle.state();
         (
             handle.thread_id(),
+            state.mode.clone(),
             state.model.clone(),
             state.openai_base_url.clone(),
             state.cwd.clone(),
         )
     };
 
-    let mut project_overrides = if let Some(thread_cwd) = thread_cwd.as_deref() {
-        let thread_root = pm_core::resolve_dir(Path::new(thread_cwd), Path::new(".")).await?;
-        crate::project_config::load_project_openai_overrides(&thread_root).await
+    let thread_root = match thread_cwd.as_deref() {
+        Some(thread_cwd) => Some(pm_core::resolve_dir(Path::new(thread_cwd), Path::new(".")).await?),
+        None => None,
+    };
+
+    let mut project_overrides = if let Some(thread_root) = thread_root.as_deref() {
+        crate::project_config::load_project_openai_overrides(thread_root).await
     } else {
         ProjectOpenAiOverrides::default()
     };
@@ -97,7 +102,8 @@ pub async fn run_agent_turn(
         provider_config = merge_provider_config(provider_config, overrides);
     }
 
-    let model = thread_model
+    let forced_model = thread_model.is_some();
+    let global_default_model = thread_model
         .or(project_overrides.model.clone())
         .or_else(|| {
             std::env::var("CODE_PM_OPENAI_MODEL")
@@ -106,6 +112,24 @@ pub async fn run_agent_turn(
         })
         .or(provider_config.default_model.clone())
         .unwrap_or_else(|| DEFAULT_MODEL.to_string());
+
+    let router_config = match thread_root.as_deref() {
+        Some(thread_root) => pm_core::router::load_router_config(thread_root).await?,
+        None => None,
+    };
+    let routed = pm_core::router::route_model(
+        router_config.as_ref().map(|loaded| &loaded.config),
+        Some(thread_mode.as_str()),
+        &input,
+        &global_default_model,
+        forced_model,
+    );
+    let pm_core::router::ModelRouteDecision {
+        selected_model: model,
+        rule_source,
+        reason,
+        rule_id,
+    } = routed;
 
     if !provider_config.model_whitelist.is_empty()
         && !provider_config
@@ -117,6 +141,16 @@ pub async fn run_agent_turn(
             "model not allowed by provider whitelist: provider={provider} model={model}"
         );
     }
+
+    let _ = thread_rt
+        .append_event(ThreadEventKind::ModelRouted {
+            turn_id,
+            selected_model: model.clone(),
+            rule_source,
+            reason,
+            rule_id,
+        })
+        .await;
 
     let base_url = thread_openai_base_url
         .or(project_overrides.base_url)

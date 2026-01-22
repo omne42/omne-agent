@@ -272,6 +272,16 @@ pub enum SandboxNetworkAccess {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
+pub enum ModelRoutingRuleSource {
+    Subagent,
+    ProjectOverride,
+    KeywordRule,
+    RoleDefault,
+    GlobalDefault,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
 pub enum ApprovalDecision {
     Approved,
     Denied,
@@ -372,6 +382,16 @@ pub enum ThreadEventKind {
     TurnStarted {
         turn_id: TurnId,
         input: String,
+    },
+
+    ModelRouted {
+        turn_id: TurnId,
+        selected_model: String,
+        rule_source: ModelRoutingRuleSource,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rule_id: Option<String>,
     },
 
     TurnInterruptRequested {

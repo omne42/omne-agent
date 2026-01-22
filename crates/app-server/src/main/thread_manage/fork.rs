@@ -33,6 +33,7 @@ async fn handle_thread_fork(server: &Server, params: ThreadForkParams) -> anyhow
                 forked.append(kind).await?;
             }
             pm_protocol::ThreadEventKind::TurnStarted { turn_id, .. } if active_turn_id == Some(turn_id) => {}
+            pm_protocol::ThreadEventKind::ModelRouted { turn_id, .. } if active_turn_id == Some(turn_id) => {}
             pm_protocol::ThreadEventKind::TurnInterruptRequested { turn_id, .. }
                 if active_turn_id == Some(turn_id) => {}
             pm_protocol::ThreadEventKind::TurnCompleted { turn_id, .. } if active_turn_id == Some(turn_id) => {}
@@ -41,6 +42,7 @@ async fn handle_thread_fork(server: &Server, params: ThreadForkParams) -> anyhow
             pm_protocol::ThreadEventKind::AssistantMessage { turn_id: Some(turn_id), .. }
                 if active_turn_id == Some(turn_id) => {}
             kind @ pm_protocol::ThreadEventKind::TurnStarted { .. }
+            | kind @ pm_protocol::ThreadEventKind::ModelRouted { .. }
             | kind @ pm_protocol::ThreadEventKind::TurnInterruptRequested { .. }
             | kind @ pm_protocol::ThreadEventKind::TurnCompleted { .. }
             | kind @ pm_protocol::ThreadEventKind::ApprovalRequested { .. }

@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -64,6 +65,90 @@ pub struct ProviderConfig {
     pub model_whitelist: Vec<String>,
     #[serde(default)]
     pub auth: Option<ProviderAuth>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ProviderCapabilities {
+    #[serde(default)]
+    pub tools: bool,
+    #[serde(default)]
+    pub vision: bool,
+    #[serde(default)]
+    pub reasoning: bool,
+    #[serde(default)]
+    pub json_schema: bool,
+    #[serde(default)]
+    pub streaming: bool,
+}
+
+impl ProviderCapabilities {
+    pub fn openai_responses() -> Self {
+        Self {
+            tools: true,
+            vision: true,
+            reasoning: true,
+            json_schema: true,
+            streaming: true,
+        }
+    }
+}
+
+#[async_trait]
+pub trait Provider: Send + Sync {
+    fn name(&self) -> &str;
+    fn capabilities(&self) -> ProviderCapabilities;
+
+    async fn list_models(&self) -> Result<Vec<String>>;
+}
+
+pub struct OpenAiProvider {
+    name: String,
+    base_url: String,
+    bearer_token: String,
+    model_whitelist: Vec<String>,
+    capabilities: ProviderCapabilities,
+}
+
+impl OpenAiProvider {
+    pub async fn from_config(
+        name: impl Into<String>,
+        config: &ProviderConfig,
+        env: &Env,
+    ) -> Result<Self> {
+        let base_url = config.base_url.as_deref().ok_or_else(|| {
+            DittoError::InvalidResponse("provider base_url is missing".to_string())
+        })?;
+        let auth = config
+            .auth
+            .clone()
+            .unwrap_or(ProviderAuth::ApiKeyEnv { keys: Vec::new() });
+        let bearer_token = resolve_auth_token(&auth, env).await?;
+
+        Ok(Self {
+            name: name.into(),
+            base_url: base_url.to_string(),
+            bearer_token,
+            model_whitelist: config.model_whitelist.clone(),
+            capabilities: ProviderCapabilities::openai_responses(),
+        })
+    }
+}
+
+#[async_trait]
+impl Provider for OpenAiProvider {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn capabilities(&self) -> ProviderCapabilities {
+        self.capabilities
+    }
+
+    async fn list_models(&self) -> Result<Vec<String>> {
+        let client = OpenAiCompatibleClient::new(self.bearer_token.clone(), self.base_url.clone())?;
+        let models = client.list_models().await?;
+        Ok(filter_models_whitelist(models, &self.model_whitelist))
+    }
 }
 
 #[derive(Debug, Clone, Default)]

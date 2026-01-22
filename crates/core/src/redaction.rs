@@ -155,6 +155,20 @@ pub(crate) fn redact_thread_event_kind(kind: &mut ThreadEventKind) {
         ThreadEventKind::TurnStarted { input, .. } => {
             *input = redact_text(input);
         }
+        ThreadEventKind::ModelRouted {
+            selected_model,
+            reason,
+            rule_id,
+            ..
+        } => {
+            *selected_model = redact_text(selected_model);
+            if let Some(reason) = reason {
+                *reason = redact_text(reason);
+            }
+            if let Some(rule_id) = rule_id {
+                *rule_id = redact_text(rule_id);
+            }
+        }
         ThreadEventKind::TurnInterruptRequested { reason, .. } => {
             if let Some(reason) = reason {
                 *reason = redact_text(reason);

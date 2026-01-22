@@ -61,7 +61,15 @@ async fn handle_thread_models(server: &Server, params: ThreadModelsParams) -> an
     let env = ditto_llm::Env {
         dotenv: project.dotenv,
     };
-    let models = ditto_llm::list_available_models(&provider_for_listing, &env)
+    let provider_client = ditto_llm::OpenAiProvider::from_config(
+        provider.clone(),
+        &provider_for_listing,
+        &env,
+    )
+    .await
+    .context("build provider client")?;
+    let capabilities = ditto_llm::Provider::capabilities(&provider_client);
+    let models = ditto_llm::Provider::list_models(&provider_client)
         .await
         .context("list /models")?;
 
@@ -71,6 +79,7 @@ async fn handle_thread_models(server: &Server, params: ThreadModelsParams) -> an
         "current_model": current_model,
         "default_model": provider_for_listing.default_model,
         "model_whitelist": provider_for_listing.model_whitelist,
+        "capabilities": capabilities,
         "models": models,
     }))
 }
@@ -121,4 +130,3 @@ fn merge_provider_config(
     }
     base
 }
-
