@@ -239,6 +239,13 @@ async fn handle_thread_request(
             },
             Err(err) => invalid_params(id, err),
         },
+        "thread/patch" => match serde_json::from_value::<ThreadPatchParams>(params) {
+            Ok(params) => match handle_thread_patch(server, params).await {
+                Ok(result) => JsonRpcResponse::ok(id, result),
+                Err(err) => JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None),
+            },
+            Err(err) => invalid_params(id, err),
+        },
         "thread/hook_run" => match serde_json::from_value::<ThreadHookRunParams>(params) {
             Ok(params) => match handle_thread_hook_run(server, params).await {
                 Ok(result) => JsonRpcResponse::ok(id, result),

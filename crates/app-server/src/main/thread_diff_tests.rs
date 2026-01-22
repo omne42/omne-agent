@@ -99,4 +99,70 @@ mod thread_diff_tests {
         assert!(text.contains("+world"));
         Ok(())
     }
+
+    #[tokio::test]
+    async fn thread_patch_writes_patch_artifact() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        run_git(&repo_dir, &["init"]).await?;
+        run_git(&repo_dir, &["config", "user.email", "test@example.com"]).await?;
+        run_git(&repo_dir, &["config", "user.name", "Test User"]).await?;
+
+        let file_path = repo_dir.join("hello.txt");
+        tokio::fs::write(&file_path, "hello\n").await?;
+        run_git(&repo_dir, &["add", "hello.txt"]).await?;
+        run_git(&repo_dir, &["commit", "-m", "init"]).await?;
+
+        tokio::fs::write(&file_path, "hello\nworld\n").await?;
+
+        let server = build_test_server(tmp.path().join(".codepm_data"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let patch = handle_thread_patch(
+            &server,
+            ThreadPatchParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                max_bytes: None,
+                wait_seconds: Some(10),
+            },
+        )
+        .await?;
+
+        let artifact_id: ArtifactId = serde_json::from_value(
+            patch["artifact"]["artifact_id"].clone(),
+        )
+        .context("parse artifact_id")?;
+
+        let read = handle_artifact_read(
+            &server,
+            ArtifactReadParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                artifact_id,
+                max_bytes: None,
+            },
+        )
+        .await?;
+
+        let meta: ArtifactMetadata = serde_json::from_value(read["metadata"].clone())?;
+        assert_eq!(meta.artifact_type, "patch");
+        assert_eq!(
+            meta.preview.as_ref().map(|p| p.kind),
+            Some(pm_protocol::ArtifactPreviewKind::PatchUnified)
+        );
+
+        let text = read["text"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing text"))?;
+        assert!(text.contains("diff --git a/hello.txt b/hello.txt"));
+        assert!(text.contains("+world"));
+        Ok(())
+    }
 }

@@ -157,6 +157,18 @@ async fn main() -> anyhow::Result<()> {
                     .await?;
                 print_json_or_pretty(json, &result)?;
             }
+            ThreadCommand::Patch {
+                thread_id,
+                approval_id,
+                max_bytes,
+                wait_seconds,
+                json,
+            } => {
+                let result = app
+                    .thread_patch(thread_id, approval_id, max_bytes, wait_seconds)
+                    .await?;
+                print_json_or_pretty(json, &result)?;
+            }
             ThreadCommand::HookRun {
                 thread_id,
                 hook,

@@ -72,6 +72,12 @@ pm artifact delete <thread_id> <artifact_id>
 pm thread diff <thread_id> --max-bytes 4194304 --wait-seconds 30
 ```
 
+生成 patch artifact（`git diff --binary`，写入 user artifact `artifact_type="patch"`）：
+
+```bash
+pm thread patch <thread_id> --max-bytes 4194304 --wait-seconds 30
+```
+
 ---
 
 ## 2) process artifacts（stdout/stderr）

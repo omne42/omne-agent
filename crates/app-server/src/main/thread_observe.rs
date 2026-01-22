@@ -790,12 +790,27 @@ const MAX_THREAD_DIFF_WAIT_SECONDS: u64 = 10 * 60;
 const THREAD_DIFF_POLL_INTERVAL_MS: u64 = 50;
 const THREAD_DIFF_MAX_STDERR_BYTES: u64 = 32 * 1024;
 
-async fn handle_thread_diff(server: &Server, params: ThreadDiffParams) -> anyhow::Result<Value> {
-    let max_bytes = params
+struct ThreadGitSnapshotSpec {
+    thread_id: ThreadId,
+    turn_id: Option<TurnId>,
+    approval_id: Option<pm_protocol::ApprovalId>,
+    max_bytes: Option<u64>,
+    wait_seconds: Option<u64>,
+    argv: Vec<String>,
+    artifact_type: &'static str,
+    summary_clean: &'static str,
+    summary_dirty: &'static str,
+}
+
+async fn handle_thread_git_snapshot(
+    server: &Server,
+    spec: ThreadGitSnapshotSpec,
+) -> anyhow::Result<Value> {
+    let max_bytes = spec
         .max_bytes
         .unwrap_or(DEFAULT_THREAD_DIFF_MAX_BYTES)
         .min(MAX_THREAD_DIFF_MAX_BYTES);
-    let wait_seconds = params
+    let wait_seconds = spec
         .wait_seconds
         .unwrap_or(DEFAULT_THREAD_DIFF_WAIT_SECONDS)
         .min(MAX_THREAD_DIFF_WAIT_SECONDS);
@@ -803,17 +818,10 @@ async fn handle_thread_diff(server: &Server, params: ThreadDiffParams) -> anyhow
     let process = handle_process_start(
         server,
         ProcessStartParams {
-            thread_id: params.thread_id,
-            turn_id: params.turn_id,
-            approval_id: params.approval_id,
-            argv: vec![
-                "git".to_string(),
-                "--no-pager".to_string(),
-                "diff".to_string(),
-                "--no-ext-diff".to_string(),
-                "--no-textconv".to_string(),
-                "--no-color".to_string(),
-            ],
+            thread_id: spec.thread_id,
+            turn_id: spec.turn_id,
+            approval_id: spec.approval_id,
+            argv: spec.argv,
             cwd: None,
         },
     )
@@ -857,7 +865,7 @@ async fn handle_thread_diff(server: &Server, params: ThreadDiffParams) -> anyhow
         Ok(info) => info?,
         Err(_) => {
             return Ok(serde_json::json!({
-                "thread_id": params.thread_id,
+                "thread_id": spec.thread_id,
                 "process_id": process_id,
                 "stdout_path": stdout_path,
                 "stderr_path": stderr_path,
@@ -876,7 +884,8 @@ async fn handle_thread_diff(server: &Server, params: ThreadDiffParams) -> anyhow
         let stderr_text = String::from_utf8_lossy(&stderr_bytes).trim().to_string();
         let stderr_suffix = if stderr_truncated { " (truncated)" } else { "" };
         anyhow::bail!(
-            "git diff failed (process_id={}, exit_code={:?}): {}{}",
+            "{} failed (process_id={}, exit_code={:?}): {}{}",
+            spec.summary_dirty,
             process_id,
             info.exit_code,
             stderr_text,
@@ -888,9 +897,9 @@ async fn handle_thread_diff(server: &Server, params: ThreadDiffParams) -> anyhow
     let diff_text = String::from_utf8_lossy(&diff_bytes).to_string();
 
     let mut summary = if diff_text.trim().is_empty() {
-        "git diff (clean)".to_string()
+        spec.summary_clean.to_string()
     } else {
-        "git diff".to_string()
+        spec.summary_dirty.to_string()
     };
     if truncated {
         summary.push_str(" (truncated)");
@@ -899,11 +908,11 @@ async fn handle_thread_diff(server: &Server, params: ThreadDiffParams) -> anyhow
     let artifact = handle_artifact_write(
         server,
         ArtifactWriteParams {
-            thread_id: params.thread_id,
-            turn_id: params.turn_id,
+            thread_id: spec.thread_id,
+            turn_id: spec.turn_id,
             approval_id: None,
             artifact_id: None,
-            artifact_type: "diff".to_string(),
+            artifact_type: spec.artifact_type.to_string(),
             summary,
             text: diff_text,
         },
@@ -915,7 +924,7 @@ async fn handle_thread_diff(server: &Server, params: ThreadDiffParams) -> anyhow
     }
 
     Ok(serde_json::json!({
-        "thread_id": params.thread_id,
+        "thread_id": spec.thread_id,
         "process_id": process_id,
         "stdout_path": stdout_path,
         "stderr_path": stderr_path,
@@ -924,6 +933,58 @@ async fn handle_thread_diff(server: &Server, params: ThreadDiffParams) -> anyhow
         "max_bytes": max_bytes,
         "artifact": artifact,
     }))
+}
+
+async fn handle_thread_diff(server: &Server, params: ThreadDiffParams) -> anyhow::Result<Value> {
+    handle_thread_git_snapshot(
+        server,
+        ThreadGitSnapshotSpec {
+            thread_id: params.thread_id,
+            turn_id: params.turn_id,
+            approval_id: params.approval_id,
+            max_bytes: params.max_bytes,
+            wait_seconds: params.wait_seconds,
+            argv: vec![
+                "git".to_string(),
+                "--no-pager".to_string(),
+                "diff".to_string(),
+                "--no-ext-diff".to_string(),
+                "--no-textconv".to_string(),
+                "--no-color".to_string(),
+            ],
+            artifact_type: "diff",
+            summary_clean: "git diff (clean)",
+            summary_dirty: "git diff",
+        },
+    )
+    .await
+}
+
+async fn handle_thread_patch(server: &Server, params: ThreadPatchParams) -> anyhow::Result<Value> {
+    handle_thread_git_snapshot(
+        server,
+        ThreadGitSnapshotSpec {
+            thread_id: params.thread_id,
+            turn_id: params.turn_id,
+            approval_id: params.approval_id,
+            max_bytes: params.max_bytes,
+            wait_seconds: params.wait_seconds,
+            argv: vec![
+                "git".to_string(),
+                "--no-pager".to_string(),
+                "diff".to_string(),
+                "--no-ext-diff".to_string(),
+                "--no-textconv".to_string(),
+                "--no-color".to_string(),
+                "--binary".to_string(),
+                "--patch".to_string(),
+            ],
+            artifact_type: "patch",
+            summary_clean: "git patch (clean)",
+            summary_dirty: "git patch",
+        },
+    )
+    .await
 }
 
 async fn read_rotating_log_prefix(base_path: &Path, max_bytes: u64) -> anyhow::Result<(Vec<u8>, bool)> {

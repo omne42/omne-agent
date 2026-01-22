@@ -287,6 +287,17 @@ enum ThreadCommand {
         #[arg(long, default_value_t = false)]
         json: bool,
     },
+    Patch {
+        thread_id: ThreadId,
+        #[arg(long)]
+        approval_id: Option<ApprovalId>,
+        #[arg(long)]
+        max_bytes: Option<u64>,
+        #[arg(long)]
+        wait_seconds: Option<u64>,
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
     HookRun {
         thread_id: ThreadId,
         hook: CliWorkspaceHookName,

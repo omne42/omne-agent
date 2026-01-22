@@ -56,6 +56,7 @@
 - `pm-protocol`/`pm-app-server`：artifact metadata 新增可选 `preview`（`kind/language/title`），并在 `artifact/write` 时按 `artifact_type` 自动填充（用于 diff/patch/html/code/log 的预览渲染提示；见 `docs/artifacts.md`）。
 - `pm-app-server`：user artifacts 支持 bounded history（`CODE_PM_ARTIFACT_HISTORY_MAX_VERSIONS`；覆盖写入时保存旧内容到 `artifacts/user/history/<artifact_id>/v####.md`，并自动保留最近 N 个旧版本；见 `docs/artifacts.md`）。
 - `pm-app-server`/`pm`：新增 `thread/diff`（安全模式 `git diff --no-ext-diff --no-textconv`）生成 diff user artifact（`artifact_type="diff"`）；CLI: `pm thread diff <thread_id>`。
+- `pm-app-server`/`pm`：新增 `thread/patch`（安全模式 `git diff --binary --patch --no-ext-diff --no-textconv`）生成 patch user artifact（`artifact_type="patch"`）；CLI: `pm thread patch <thread_id>`。
 - `pm` CLI 新增 `pm thread spawn`：对 `thread/fork + turn/start` 的便捷封装（可选覆盖 model/openai_base_url），用于并行出发后台 turns。
 - `pm-app-server` 新增 `thread/hook_run`：读取 `<thread root>/.codepm_data/spec/workspace.{yaml,yml}` 并按 `setup/run/archive` 启动对应 hook 命令（复用 `process/start` 的 mode/execpolicy/approvals）；`pm` CLI 增加 `pm thread hook-run <thread_id> <setup|run|archive>` 用于触发。
 - `pm-app-server` agent loop：新增 `thread_hook_run` tool，允许 agent 直接触发当前 thread 的 workspace hooks（同样复用 mode/execpolicy/approvals）。

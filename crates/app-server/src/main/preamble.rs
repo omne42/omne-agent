@@ -587,6 +587,19 @@ struct ThreadDiffParams {
     wait_seconds: Option<u64>,
 }
 
+#[derive(Debug, Deserialize)]
+struct ThreadPatchParams {
+    thread_id: ThreadId,
+    #[serde(default)]
+    turn_id: Option<TurnId>,
+    #[serde(default)]
+    approval_id: Option<pm_protocol::ApprovalId>,
+    #[serde(default)]
+    max_bytes: Option<u64>,
+    #[serde(default)]
+    wait_seconds: Option<u64>,
+}
+
 #[derive(Debug, Deserialize, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
 enum WorkspaceHookName {

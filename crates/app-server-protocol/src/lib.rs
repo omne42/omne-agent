@@ -166,6 +166,23 @@ pub struct ThreadDiffParams {
     pub wait_seconds: Option<u64>,
 }
 
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
+pub struct ThreadPatchParams {
+    pub thread_id: pm_protocol::ThreadId,
+    #[serde(default)]
+    #[ts(optional)]
+    pub turn_id: Option<pm_protocol::TurnId>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub approval_id: Option<pm_protocol::ApprovalId>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub max_bytes: Option<u64>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub wait_seconds: Option<u64>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkspaceHookName {
@@ -773,6 +790,18 @@ pub enum ClientRequest {
         #[serde(rename = "id")]
         request_id: RequestId,
         params: ThreadDiskReportParams,
+    },
+    #[serde(rename = "thread/diff")]
+    ThreadDiff {
+        #[serde(rename = "id")]
+        request_id: RequestId,
+        params: ThreadDiffParams,
+    },
+    #[serde(rename = "thread/patch")]
+    ThreadPatch {
+        #[serde(rename = "id")]
+        request_id: RequestId,
+        params: ThreadPatchParams,
     },
     #[serde(rename = "thread/hook_run")]
     ThreadHookRun {
