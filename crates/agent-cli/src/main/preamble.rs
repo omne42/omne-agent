@@ -81,6 +81,10 @@ struct InitArgs {
     /// Enable project config by default (`.codepm_data/config.toml`).
     #[arg(long, default_value_t = false)]
     enable_project_config: bool,
+
+    /// Create `.codepm_data/config_local.toml` template (gitignored).
+    #[arg(long, default_value_t = false)]
+    create_config_local: bool,
 }
 
 #[derive(Subcommand)]

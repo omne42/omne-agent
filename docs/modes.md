@@ -118,7 +118,7 @@ v0.2.0 MVP 已支持字段：
 约束：
 
 - `process.interact` **必须为** `deny`（只读 attach，不做 stdin/PTY）。
-- `edit.allow_globs/deny_globs` 为相对 workspace root 的 glob；建议默认把 `.git/**`、`.codepm_data/{config.toml,spec,tmp,data,repos,threads,locks,logs}/**`、`**/.env` 放入 `deny_globs`，避免 agent 自举修改边界/运行时数据或读取 secrets。
+- `edit.allow_globs/deny_globs` 为相对 workspace root 的 glob；建议默认把 `.git/**`、`.codepm_data/config.toml`、`.codepm_data/config_local.toml`、`.codepm_data/spec/**`、`.codepm_data/{tmp,data,repos,threads,locks,logs}/**`、`**/.env` 放入 `deny_globs`，避免 agent 自举修改边界/运行时数据或读取 secrets。
 
 ### 5.4 示例（节选）
 
@@ -136,6 +136,7 @@ modes:
           [
             ".git/**",
             ".codepm_data/config.toml",
+            ".codepm_data/config_local.toml",
             ".codepm_data/spec/**",
             ".codepm_data/tmp/**",
             ".codepm_data/data/**",

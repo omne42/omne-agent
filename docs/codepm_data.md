@@ -16,6 +16,7 @@
 <project_root>/
   .codepm_data/
     config.toml
+    config_local.toml
     .env
     .gitignore
     spec/
@@ -37,6 +38,7 @@
 说明：
 
 - `config.toml`：项目级配置（**默认不生效**；见下文开关）。
+- `config_local.toml`：本机/本用户的项目级配置（gitignore）。当它存在时，会优先于 `config.toml` 被加载。
 - `.env`：项目级 secrets（例如 `OPENAI_API_KEY`）。**永远不提交**，且必须在 file tools 层默认拒绝读取。
 - `.gitignore`：只忽略运行时/secret；不忽略 `config.toml` 与 `spec/`（便于提交/review）。
 - `spec/`：项目可提交 spec（modes/workflow/hooks/router…）。具体文件名按后续 spec 定稿。
@@ -60,8 +62,9 @@ enabled = false
 
 约定：
 
-- `enabled=false`：忽略 `.codepm_data/config.toml` 除开关本身以外的字段；同时忽略 `.codepm_data/.env`。
-- `enabled=true`：允许用 `config.toml` + `.env` 覆盖项目内的 base_url/model 等配置（secrets 只来自 `.env`）。
+- 加载顺序：优先读取 `.codepm_data/config_local.toml`；不存在时读取 `.codepm_data/config.toml`。
+- `enabled=false`：忽略所选 config 文件中除开关本身以外的字段；同时忽略 `.codepm_data/.env`。
+- `enabled=true`：允许用 config 文件 + `.env` 覆盖 base_url/model 等配置（secrets 只来自 `.env`）。
 
 ---
 
@@ -87,5 +90,5 @@ CODE_PM_OPENAI_MODEL=gpt-4.1
 
 只忽略运行时/secret：
 
-- 忽略：`.codepm_data/tmp/`、`.codepm_data/data/`、`.codepm_data/repos/`、`.codepm_data/threads/`、`.codepm_data/locks/`、`.codepm_data/logs/`、`.codepm_data/.env`
+- 忽略：`.codepm_data/tmp/`、`.codepm_data/data/`、`.codepm_data/repos/`、`.codepm_data/threads/`、`.codepm_data/locks/`、`.codepm_data/logs/`、`.codepm_data/config_local.toml`、`.codepm_data/.env`
 - 不忽略：`.codepm_data/config.toml`、`.codepm_data/spec/`

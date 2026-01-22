@@ -97,6 +97,7 @@ impl ModeCatalog {
             ".code_pm/**".to_string(),
             ".codepm/**".to_string(),
             "**/.env".to_string(),
+            ".codepm_data/config_local.toml".to_string(),
             ".codepm_data/config.toml".to_string(),
             ".codepm_data/spec/**".to_string(),
             ".codepm_data/tmp/**".to_string(),

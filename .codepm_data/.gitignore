@@ -6,6 +6,8 @@ threads/
 locks/
 logs/
 
+# Local overrides (do not commit)
+config_local.toml
+
 # Secrets (do not commit)
 .env
-

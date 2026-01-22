@@ -1,6 +1,7 @@
 # CodePM project config (v0.2.x)
 #
 # This file is safe to commit. Secrets belong in `.codepm_data/.env` (gitignored).
+# For per-machine overrides, use `.codepm_data/config_local.toml` (gitignored).
 #
 # When disabled, CodePM ignores project-level overrides from `config.toml` and `.env`.
 

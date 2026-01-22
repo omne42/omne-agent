@@ -10,6 +10,7 @@ async fn run_init(args: InitArgs) -> anyhow::Result<()> {
         !args.yes && std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
 
     let mut enable_project_config = args.enable_project_config;
+    let mut create_config_local = args.create_config_local;
     let mut create_env = true;
     let mut create_spec_dir = true;
 
@@ -19,6 +20,10 @@ async fn run_init(args: InitArgs) -> anyhow::Result<()> {
         enable_project_config = prompt_yes_no(
             "Enable project config now? (recommended: no by default)",
             enable_project_config,
+        )?;
+        create_config_local = prompt_yes_no(
+            "Create .codepm_data/config_local.toml template? (recommended: only when needed)",
+            create_config_local,
         )?;
         create_env = prompt_yes_no("Create .codepm_data/.env template?", create_env)?;
         create_spec_dir = prompt_yes_no("Create .codepm_data/spec/ directory?", create_spec_dir)?;
@@ -39,6 +44,9 @@ async fn run_init(args: InitArgs) -> anyhow::Result<()> {
 
     write_codepm_gitignore(&codepm_data_dir).await?;
     write_codepm_config_toml(&codepm_data_dir, enable_project_config, args.force).await?;
+    if create_config_local {
+        write_codepm_config_local_toml(&codepm_data_dir, enable_project_config, args.force).await?;
+    }
     if create_env {
         write_codepm_env_template(&codepm_data_dir, args.force).await?;
     }
@@ -76,6 +84,9 @@ async fn write_codepm_gitignore(codepm_data_dir: &Path) -> anyhow::Result<()> {
         "threads/",
         "locks/",
         "logs/",
+        "",
+        "# Local overrides (do not commit)",
+        "config_local.toml",
         "",
         "# Secrets (do not commit)",
         ".env",
@@ -128,8 +139,45 @@ async fn write_codepm_config_toml(
         r#"# CodePM project config (v0.2.x)
 #
 # This file is safe to commit. Secrets belong in `.codepm_data/.env` (gitignored).
+# For per-machine overrides, use `.codepm_data/config_local.toml` (gitignored).
 #
 # When disabled, CodePM ignores project-level overrides from `config.toml` and `.env`.
+
+[project_config]
+enabled = {enabled}
+
+[openai]
+# base_url = "https://api.openai.com"
+# model = "gpt-4.1"
+"#
+    );
+
+    tokio::fs::write(&path, contents).await?;
+    Ok(())
+}
+
+async fn write_codepm_config_local_toml(
+    codepm_data_dir: &Path,
+    enable_project_config: bool,
+    force: bool,
+) -> anyhow::Result<()> {
+    let path = codepm_data_dir.join("config_local.toml");
+    if !force && tokio::fs::try_exists(&path).await? {
+        return Ok(());
+    }
+
+    let enabled = if enable_project_config {
+        "true"
+    } else {
+        "false"
+    };
+    let contents = format!(
+        r#"# CodePM local project config (v0.2.x)
+#
+# This file is gitignored and should not be committed.
+# When present, CodePM uses it instead of `.codepm_data/config.toml`.
+#
+# When disabled, CodePM ignores project-level overrides from `config_local.toml` and `.env`.
 
 [project_config]
 enabled = {enabled}

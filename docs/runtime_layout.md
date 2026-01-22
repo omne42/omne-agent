@@ -2,7 +2,7 @@
 
 > 目标：让用户/工具在 30 秒内定位：事件落盘在哪、process log 在哪、user artifact 在哪。
 >
-> `pm_root` 默认是 `./.codepm_data/`：运行时数据（threads/artifacts）+ 项目级配置（`.codepm_data/config.toml`、`.codepm_data/spec/`）。
+> `pm_root` 默认是 `./.codepm_data/`：运行时数据（threads/artifacts）+ 项目级配置（`.codepm_data/config.toml`、`.codepm_data/config_local.toml`、`.codepm_data/.env`、`.codepm_data/spec/`）。
 
 ---
 

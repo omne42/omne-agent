@@ -9,10 +9,28 @@ pub struct ProjectOpenAiOverrides {
     pub model: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum ProjectConfigSource {
+    /// `.codepm_data/config_local.toml` (gitignored)
+    Local,
+    /// `.codepm_data/config.toml` (commit-safe)
+    Shared,
+}
+
+impl ProjectConfigSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Local => "local",
+            Self::Shared => "shared",
+        }
+    }
+}
+
 pub struct LoadedProjectConfig {
     pub enabled: bool,
-    pub config_toml_path: PathBuf,
-    pub config_toml_present: bool,
+    pub config_path: PathBuf,
+    pub config_source: ProjectConfigSource,
+    pub config_present: bool,
     pub env_path: PathBuf,
     pub env_present: bool,
     pub load_error: Option<String>,
@@ -115,18 +133,53 @@ fn parse_dotenv_openai(contents: &str) -> DotenvOpenAiOverrides {
 
 pub async fn load_project_config(thread_root: &Path) -> LoadedProjectConfig {
     let codepm_data_dir = thread_root.join(".codepm_data");
+    let config_local_toml_path = codepm_data_dir.join("config_local.toml");
     let config_toml_path = codepm_data_dir.join("config.toml");
     let env_path = codepm_data_dir.join(".env");
 
     let mut load_error: Option<String> = None;
 
-    let (config_toml_present, config_toml_raw) =
-        match tokio::fs::read_to_string(&config_toml_path).await {
-            Ok(raw) => (true, Some(raw)),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => (false, None),
+    let (config_source, config_path, config_present, config_raw) =
+        match tokio::fs::read_to_string(&config_local_toml_path).await {
+            Ok(raw) => (
+                ProjectConfigSource::Local,
+                config_local_toml_path.clone(),
+                true,
+                Some(raw),
+            ),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                match tokio::fs::read_to_string(&config_toml_path).await {
+                    Ok(raw) => (
+                        ProjectConfigSource::Shared,
+                        config_toml_path.clone(),
+                        true,
+                        Some(raw),
+                    ),
+                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => (
+                        ProjectConfigSource::Shared,
+                        config_toml_path.clone(),
+                        false,
+                        None,
+                    ),
+                    Err(err) => {
+                        load_error = Some(format!("read {}: {err}", config_toml_path.display()));
+                        (
+                            ProjectConfigSource::Shared,
+                            config_toml_path.clone(),
+                            true,
+                            None,
+                        )
+                    }
+                }
+            }
             Err(err) => {
-                load_error = Some(format!("read {}: {err}", config_toml_path.display()));
-                (true, None)
+                load_error = Some(format!("read {}: {err}", config_local_toml_path.display()));
+                (
+                    ProjectConfigSource::Local,
+                    config_local_toml_path.clone(),
+                    true,
+                    None,
+                )
             }
         };
 
@@ -134,7 +187,7 @@ pub async fn load_project_config(thread_root: &Path) -> LoadedProjectConfig {
     let mut config_openai_base_url: Option<String> = None;
     let mut config_openai_model: Option<String> = None;
 
-    if let Some(raw) = config_toml_raw {
+    if let Some(raw) = config_raw {
         match toml::from_str::<ProjectConfigToml>(&raw) {
             Ok(parsed) => {
                 enabled = parsed.project_config.enabled;
@@ -142,7 +195,7 @@ pub async fn load_project_config(thread_root: &Path) -> LoadedProjectConfig {
                 config_openai_model = clean_string_opt(parsed.openai.model);
             }
             Err(err) => {
-                let msg = format!("parse {}: {err}", config_toml_path.display());
+                let msg = format!("parse {}: {err}", config_path.display());
                 load_error = Some(match load_error {
                     Some(existing) => format!("{existing}; {msg}"),
                     None => msg,
@@ -154,8 +207,9 @@ pub async fn load_project_config(thread_root: &Path) -> LoadedProjectConfig {
     if !enabled {
         return LoadedProjectConfig {
             enabled,
-            config_toml_path,
-            config_toml_present,
+            config_path,
+            config_source,
+            config_present,
             env_path,
             env_present: false,
             load_error,
@@ -190,8 +244,9 @@ pub async fn load_project_config(thread_root: &Path) -> LoadedProjectConfig {
 
     LoadedProjectConfig {
         enabled,
-        config_toml_path,
-        config_toml_present,
+        config_path,
+        config_source,
+        config_present,
         env_path,
         env_present,
         load_error,
