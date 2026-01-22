@@ -39,6 +39,7 @@ v0.2.0 user artifact 采用：
 - `artifact_id`：稳定 ID
 - `artifact_type`：字符串（类型标签，用于 UI/脚本过滤）
 - `summary`：一行摘要（用于列表）
+- `preview`：可选渲染提示（见 §3）
 - `created_at/updated_at`：RFC3339
 - `version`：单调递增（从 1 开始）
 - `content_path`：`*.md` 绝对路径（字符串）
@@ -84,39 +85,56 @@ pm artifact delete <thread_id> <artifact_id>
 
 ---
 
-## 3) Preview types（TODO：协议层）
+## 3) Preview types（已实现：协议层）
 
 现状：
 
-- v0.2.0 只把 `artifact_type` 当字符串标签使用；UI/工具可以按类型筛选，但缺少“预览类型”的强类型协议。
+- `artifact_type` 仍是字符串标签（用途/产品语义）。
+- metadata 新增可选字段 `preview`（渲染提示），用于 UI/工具选择合适的预览方式。
 
-最小建议（TODO，不强做）：
+协议类型：
 
-- 在协议层为 `artifact_type` 建议一组惯例值（仍允许自定义）：
-  - `markdown`（默认）
-  - `plan`
-  - `disk_report`
-  - `repo_search`
-  - `diff` / `patch`（内容格式建议 unified）
-  - `test_report`
-  - `log_excerpt`
-  - `stuck_report`
-  - `rollback_report`
-  - `hook_context`
-  - `mcp_result`
-  - `fan_out_result`
-  - `fan_in_summary`
-  - `artifact_prune_report`
-- 后续如果要做强类型 preview，优先在 metadata 里增加一个可选字段，而不是把内容塞回事件：
-  - 最小 schema（建议写死）：
-    - `preview: { kind: "markdown"|"diff_unified"|"patch_unified"|"code"|"html"|"log", language?: string, title?: string }`
-  - 兼容规则（建议写死）：
-    - 未知 `preview.kind` 必须降级为纯文本显示（不要报错，也不要静默丢失内容）。
-    - markdown 渲染必须是“安全子集”（禁用/转义原始 HTML），避免内容注入。
+- `pm_protocol::ArtifactPreviewKind`：
+  - `markdown` / `diff_unified` / `patch_unified` / `code` / `html` / `log`
+- `pm_protocol::ArtifactPreview`：
+  - `preview: { kind, language?: string, title?: string }`
+- `pm_protocol::ArtifactMetadata.preview: Option<ArtifactPreview>`（旧的 `*.metadata.json` 可能缺失该字段）
 
-### 3.1 `artifact_type` vs `preview`（TODO：把语义拆干净）
+app-server 默认推断规则（写入/覆盖 artifact 时填充 `preview`）：
 
-建议把这两个维度分离（别混成一坨字符串）：
+- `artifact_type="diff"` → `preview.kind="diff_unified"`
+- `artifact_type="patch"` → `preview.kind="patch_unified"`
+- `artifact_type="html"` → `preview.kind="html"`
+- `artifact_type="code"` → `preview.kind="code"`
+- `artifact_type="log"|"log_excerpt"` → `preview.kind="log"`
+- 其他 → `preview.kind="markdown"`
+
+兼容规则（建议写死）：
+
+- metadata 缺失 `preview` 时：默认按 `markdown` 处理（或按 `artifact_type` 推断）。
+- 未知 `preview.kind` 必须降级为纯文本显示（不要报错，也不要静默丢失内容）。
+- markdown 渲染必须是“安全子集”（禁用/转义原始 HTML），避免内容注入。
+
+`artifact_type` 惯例值（非强制；仍允许自定义）：
+
+- `markdown`（默认）
+- `plan`
+- `disk_report`
+- `repo_search`
+- `diff` / `patch`（内容格式建议 unified）
+- `test_report`
+- `log_excerpt`
+- `stuck_report`
+- `rollback_report`
+- `hook_context`
+- `mcp_result`
+- `fan_out_result`
+- `fan_in_summary`
+- `artifact_prune_report`
+
+### 3.1 `artifact_type` vs `preview`（已实现：语义拆分）
+
+这两个维度要分离（别混成一坨字符串）：
 
 - `artifact_type`：**用途/产品语义**（例如 `stuck_report`、`disk_report`、`plan`、`review`…）
 - `preview`：**渲染提示**（例如 `diff_unified`、`code(rust)`、`html`…）
@@ -126,7 +144,7 @@ pm artifact delete <thread_id> <artifact_id>
 - 用 `artifact_type` 做过滤与列表分组（“这是什么”）
 - 用 `preview.kind` 选择渲染器（“怎么预览”）
 
-最小 metadata 扩展示例（TODO：协议扩展字段）：
+最小 metadata 扩展示例：
 
 ```json
 {

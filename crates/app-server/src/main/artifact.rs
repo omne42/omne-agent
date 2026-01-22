@@ -177,10 +177,12 @@ async fn handle_artifact_write(
         let bytes = text.as_bytes().to_vec();
         write_file_atomic(&content_path, &bytes).await?;
 
+        let preview = Some(infer_artifact_preview(params.artifact_type.as_str()));
         let meta = ArtifactMetadata {
             artifact_id,
             artifact_type: params.artifact_type,
             summary: params.summary,
+            preview,
             created_at,
             updated_at: now,
             version,
@@ -242,6 +244,22 @@ async fn handle_artifact_write(
                 .await?;
             Err(err)
         }
+    }
+}
+
+fn infer_artifact_preview(artifact_type: &str) -> pm_protocol::ArtifactPreview {
+    let kind = match artifact_type {
+        "diff" => pm_protocol::ArtifactPreviewKind::DiffUnified,
+        "patch" => pm_protocol::ArtifactPreviewKind::PatchUnified,
+        "html" => pm_protocol::ArtifactPreviewKind::Html,
+        "code" => pm_protocol::ArtifactPreviewKind::Code,
+        "log" | "log_excerpt" => pm_protocol::ArtifactPreviewKind::Log,
+        _ => pm_protocol::ArtifactPreviewKind::Markdown,
+    };
+    pm_protocol::ArtifactPreview {
+        kind,
+        language: None,
+        title: None,
     }
 }
 

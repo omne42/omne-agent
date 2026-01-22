@@ -288,11 +288,33 @@ pub struct ArtifactProvenance {
     pub process_id: Option<ProcessId>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum ArtifactPreviewKind {
+    Markdown,
+    DiffUnified,
+    PatchUnified,
+    Code,
+    Html,
+    Log,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ArtifactPreview {
+    pub kind: ArtifactPreviewKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, TS)]
 pub struct ArtifactMetadata {
     pub artifact_id: ArtifactId,
     pub artifact_type: String,
     pub summary: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview: Option<ArtifactPreview>,
     #[serde(with = "time::serde::rfc3339")]
     #[schemars(with = "String")]
     #[ts(type = "string")]
