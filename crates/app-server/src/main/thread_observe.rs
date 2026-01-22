@@ -235,6 +235,213 @@ async fn latest_rotating_log_mtime(base_path: &Path) -> anyhow::Result<Option<Of
     Ok(latest)
 }
 
+async fn maybe_write_stuck_report(
+    server: &Server,
+    thread_id: ThreadId,
+    turn_id: TurnId,
+    reason: Option<&str>,
+) -> anyhow::Result<()> {
+    let report = build_stuck_report_markdown(server, thread_id, turn_id, reason).await?;
+    let summary = build_stuck_report_summary(reason);
+
+    let _artifact = handle_artifact_write(
+        server,
+        ArtifactWriteParams {
+            thread_id,
+            turn_id: Some(turn_id),
+            approval_id: None,
+            artifact_id: None,
+            artifact_type: "stuck_report".to_string(),
+            summary,
+            text: report,
+        },
+    )
+    .await?;
+
+    Ok(())
+}
+
+fn build_stuck_report_summary(reason: Option<&str>) -> String {
+    let reason = reason.filter(|s| !s.trim().is_empty()).unwrap_or("unknown");
+    let hint = stuck_budget_env_hint(reason);
+    let reason = truncate_chars(reason, 120);
+    let mut summary = format!("Stuck: {reason}");
+    if let Some(hint) = hint {
+        summary.push_str(&format!(" (consider {hint})"));
+    }
+    summary
+}
+
+fn stuck_budget_env_hint(reason: &str) -> Option<&'static str> {
+    if reason.contains("budget exceeded: steps") {
+        return Some("CODE_PM_AGENT_MAX_STEPS");
+    }
+    if reason.contains("budget exceeded: tool_calls") {
+        return Some("CODE_PM_AGENT_MAX_TOOL_CALLS");
+    }
+    if reason.contains("budget exceeded: turn_seconds") {
+        return Some("CODE_PM_AGENT_MAX_TURN_SECONDS");
+    }
+    if reason.contains("openai request timed out") {
+        return Some("CODE_PM_AGENT_MAX_OPENAI_REQUEST_SECONDS");
+    }
+    if reason.contains("token budget exceeded:") {
+        return Some("CODE_PM_AGENT_MAX_TOTAL_TOKENS");
+    }
+    None
+}
+
+fn truncate_chars(text: &str, max_chars: usize) -> String {
+    if max_chars == 0 {
+        return String::new();
+    }
+    let mut chars = text.chars();
+    let truncated = chars.by_ref().take(max_chars + 1).collect::<String>();
+    if truncated.chars().count() <= max_chars {
+        return truncated;
+    }
+    truncated
+        .chars()
+        .take(max_chars.saturating_sub(3))
+        .collect::<String>()
+        + "..."
+}
+
+async fn build_stuck_report_markdown(
+    server: &Server,
+    thread_id: ThreadId,
+    turn_id: TurnId,
+    reason: Option<&str>,
+) -> anyhow::Result<String> {
+    #[derive(Clone, Debug)]
+    struct ProcessStartInfo {
+        process_id: ProcessId,
+        turn_id: Option<TurnId>,
+        stdout_path: String,
+        stderr_path: String,
+    }
+
+    let events = server
+        .thread_store
+        .read_events_since(thread_id, EventSeq::ZERO)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("thread not found: {thread_id}"))?;
+
+    let mut last_approval_in_turn: Option<(pm_protocol::ApprovalId, String)> = None;
+    let mut last_approval_any: Option<(pm_protocol::ApprovalId, String)> = None;
+    let mut last_tool_in_turn: Option<(pm_protocol::ToolId, String)> = None;
+    let mut last_tool_any: Option<(pm_protocol::ToolId, String)> = None;
+    let mut started_processes = Vec::<ProcessStartInfo>::new();
+    let mut exited = HashSet::<ProcessId>::new();
+
+    for event in &events {
+        match &event.kind {
+            pm_protocol::ThreadEventKind::ApprovalRequested {
+                approval_id,
+                turn_id: ev_turn_id,
+                action,
+                ..
+            } => {
+                last_approval_any = Some((*approval_id, action.clone()));
+                if *ev_turn_id == Some(turn_id) {
+                    last_approval_in_turn = Some((*approval_id, action.clone()));
+                }
+            }
+            pm_protocol::ThreadEventKind::ToolStarted {
+                tool_id,
+                turn_id: ev_turn_id,
+                tool,
+                ..
+            } => {
+                last_tool_any = Some((*tool_id, tool.clone()));
+                if *ev_turn_id == Some(turn_id) {
+                    last_tool_in_turn = Some((*tool_id, tool.clone()));
+                }
+            }
+            pm_protocol::ThreadEventKind::ProcessStarted {
+                process_id,
+                turn_id: ev_turn_id,
+                stdout_path,
+                stderr_path,
+                ..
+            } => {
+                started_processes.push(ProcessStartInfo {
+                    process_id: *process_id,
+                    turn_id: *ev_turn_id,
+                    stdout_path: stdout_path.clone(),
+                    stderr_path: stderr_path.clone(),
+                });
+            }
+            pm_protocol::ThreadEventKind::ProcessExited { process_id, .. } => {
+                exited.insert(*process_id);
+            }
+            _ => {}
+        }
+    }
+
+    let last_approval = last_approval_in_turn.or(last_approval_any);
+    let last_tool = last_tool_in_turn.or(last_tool_any);
+
+    let last_running_process_in_turn = started_processes.iter().rev().find(|p| {
+        p.turn_id == Some(turn_id) && !exited.contains(&p.process_id)
+    });
+    let last_running_process_any = started_processes
+        .iter()
+        .rev()
+        .find(|p| !exited.contains(&p.process_id));
+    let last_process_in_turn = started_processes
+        .iter()
+        .rev()
+        .find(|p| p.turn_id == Some(turn_id));
+    let last_process_any = started_processes.iter().next_back();
+
+    let process = last_running_process_in_turn
+        .or(last_running_process_any)
+        .or(last_process_in_turn)
+        .or(last_process_any);
+
+    let mut md = String::new();
+    md.push_str("# Stuck report\n\n");
+
+    md.push_str("## What happened\n");
+    md.push_str(&format!("- thread_id: {thread_id}\n"));
+    md.push_str(&format!("- turn_id: {turn_id}\n"));
+    md.push_str("- status: stuck\n");
+    md.push_str(&format!(
+        "- reason: {}\n",
+        reason.unwrap_or_default().trim()
+    ));
+
+    md.push_str("\n## Where to look\n");
+    if let Some((approval_id, action)) = &last_approval {
+        md.push_str(&format!(
+            "- last_approval_id: {approval_id} ({})\n",
+            action.trim()
+        ));
+    }
+    if let Some((tool_id, tool)) = &last_tool {
+        md.push_str(&format!("- last_tool: {tool} ({tool_id})\n", tool = tool.trim()));
+    }
+    if let Some(process) = &process {
+        md.push_str(&format!("- last_process_id: {}\n", process.process_id));
+        md.push_str(&format!("- stdout_path: {}\n", process.stdout_path.trim()));
+        md.push_str(&format!("- stderr_path: {}\n", process.stderr_path.trim()));
+    }
+
+    md.push_str("\n## Next actions\n");
+    md.push_str(&format!("- pm thread attention {thread_id}\n"));
+    md.push_str(&format!("- pm approval list {thread_id}\n"));
+    md.push_str(&format!("- pm process list --thread-id {thread_id}\n"));
+    if let Some(process) = &process {
+        md.push_str(&format!("- pm process tail {}\n", process.process_id));
+    }
+    if let Some(hint) = reason.and_then(stuck_budget_env_hint) {
+        md.push_str(&format!("- consider increasing `{hint}`\n"));
+    }
+
+    Ok(md)
+}
+
 async fn handle_thread_list_meta(
     server: &Server,
     params: ThreadListMetaParams,
@@ -728,6 +935,117 @@ mod stale_process_tests {
 
         let stale = compute_stale_processes(&[process], Duration::from_secs(60)).await?;
         assert!(stale.is_empty());
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod stuck_report_tests {
+    use super::*;
+
+    fn build_test_server(pm_root: PathBuf) -> Server {
+        let (out_tx, _out_rx) = mpsc::unbounded_channel::<String>();
+        Server {
+            cwd: pm_root.clone(),
+            out_tx,
+            thread_store: ThreadStore::new(PmPaths::new(pm_root)),
+            threads: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            processes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            disk_warning: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            exec_policy: pm_execpolicy::Policy::empty(),
+        }
+    }
+
+    #[tokio::test]
+    async fn writes_stuck_report_artifact_for_stuck_turn() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = build_test_server(tmp.path().join(".code_pm"));
+        let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let thread_rt = server.get_or_load_thread(thread_id).await?;
+        let turn_id = TurnId::new();
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::TurnStarted {
+                turn_id,
+                input: "test".to_string(),
+            })
+            .await?;
+
+        let approval_id = pm_protocol::ApprovalId::new();
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ApprovalRequested {
+                approval_id,
+                turn_id: Some(turn_id),
+                action: "process/start".to_string(),
+                params: serde_json::json!({}),
+            })
+            .await?;
+
+        let tool_id = pm_protocol::ToolId::new();
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                tool_id,
+                turn_id: Some(turn_id),
+                tool: "process/start".to_string(),
+                params: None,
+            })
+            .await?;
+
+        let process_id = ProcessId::new();
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ProcessStarted {
+                process_id,
+                turn_id: Some(turn_id),
+                argv: vec!["sleep".to_string(), "999".to_string()],
+                cwd: repo_dir.display().to_string(),
+                stdout_path: tmp.path().join("stdout.log").display().to_string(),
+                stderr_path: tmp.path().join("stderr.log").display().to_string(),
+            })
+            .await?;
+
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::TurnCompleted {
+                turn_id,
+                status: TurnStatus::Stuck,
+                reason: Some("budget exceeded: steps".to_string()),
+            })
+            .await?;
+
+        maybe_write_stuck_report(
+            &server,
+            thread_id,
+            turn_id,
+            Some("budget exceeded: steps"),
+        )
+        .await?;
+
+        let value = handle_artifact_list(
+            &server,
+            ArtifactListParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+            },
+        )
+        .await?;
+
+        let artifacts: Vec<ArtifactMetadata> = serde_json::from_value(value["artifacts"].clone())?;
+        let stuck = artifacts
+            .iter()
+            .filter(|meta| meta.artifact_type == "stuck_report")
+            .filter(|meta| {
+                meta.provenance
+                    .as_ref()
+                    .and_then(|p| p.turn_id)
+                    .is_some_and(|id| id == turn_id)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(stuck.len(), 1);
         Ok(())
     }
 }

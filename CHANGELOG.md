@@ -41,6 +41,7 @@
 - `pm` CLI 新增可解释性与状态查询：`pm thread state`、`pm thread config-explain`、`pm thread loaded`。
 - `pm`/`pm-app-server`：thread 配置新增 `mode`（角色/权限边界）字段；`pm ask/exec/thread configure --mode <name>` 可设置；`thread/state`/`thread/config-explain` 会返回当前生效的 `mode`。
 - 新增 `TurnStatus::Stuck`：当 agent 超预算/超时（turn 时长、tool call、OpenAI 请求超时等）时显式标记为 `stuck`，并在 `thread/attention` 与 `pm * --bell` 中可见。
+- `pm-app-server`：当 turn 结束为 `TurnStatus::Stuck` 时自动写入 `artifact_type="stuck_report"`（provenance 关联 `turn_id`），提供“原因/定位/下一步命令”的最小摘要。
 - `pm-app-server` agent loop：新增 `CODE_PM_AGENT_MAX_*` 预算覆盖（steps/tool calls/turn seconds/OpenAI request timeout）。
 - `pm-app-server` 在退出前会尽力终止仍在运行的子进程（避免 CLI 关闭后留下孤儿进程）。
 - `pm-app-server` 新增 `initialized`（握手确认）与 `thread/loaded`（列出当前已加载 threads）。

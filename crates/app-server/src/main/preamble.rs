@@ -396,7 +396,8 @@ impl ThreadRuntime {
         cancel: CancellationToken,
         input: String,
     ) {
-        let agent_fut = agent::run_agent_turn(server, self.clone(), turn_id, input, cancel.clone());
+        let agent_fut =
+            agent::run_agent_turn(server.clone(), self.clone(), turn_id, input, cancel.clone());
 
         let (status, reason) = tokio::select! {
             _ = cancel.cancelled() => {
@@ -416,8 +417,10 @@ impl ThreadRuntime {
                 }
             },
         };
+        let reason_for_report = reason.clone();
 
         let mut handle = self.handle.lock().await;
+        let thread_id = handle.thread_id();
         if let Ok(event) = handle
             .append(pm_protocol::ThreadEventKind::TurnCompleted {
                 turn_id,
@@ -429,6 +432,25 @@ impl ThreadRuntime {
             self.emit_event_notifications(&event);
         }
         drop(handle);
+
+        if matches!(status, TurnStatus::Stuck) {
+            if let Err(err) =
+                maybe_write_stuck_report(
+                    server.as_ref(),
+                    thread_id,
+                    turn_id,
+                    reason_for_report.as_deref(),
+                )
+                    .await
+            {
+                tracing::debug!(
+                    thread_id = %thread_id,
+                    turn_id = %turn_id,
+                    error = %err,
+                    "stuck report write failed"
+                );
+            }
+        }
 
         let mut active = self.active_turn.lock().await;
         if active.as_ref().is_some_and(|a| a.turn_id == turn_id) {
