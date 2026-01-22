@@ -11,14 +11,45 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
         )
     };
 
+    let file_root = params.root.unwrap_or(FileRoot::Workspace);
     let max_bytes = params.max_bytes.unwrap_or(256 * 1024).min(4 * 1024 * 1024);
     let tool_id = pm_protocol::ToolId::new();
     let approval_params = serde_json::json!({
+        "root": file_root.as_str(),
         "path": params.path.clone(),
         "max_bytes": max_bytes,
     });
 
-    let rel_path = pm_core::modes::relative_path_under_root(&thread_root, Path::new(&params.path));
+    let root = match file_root {
+        FileRoot::Workspace => thread_root.clone(),
+        FileRoot::Reference => match resolve_reference_repo_root(&thread_root).await {
+            Ok(root) => root,
+            Err(err) => {
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                        tool_id,
+                        turn_id: params.turn_id,
+                        tool: "file/read".to_string(),
+                        params: Some(approval_params.clone()),
+                    })
+                    .await?;
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                        tool_id,
+                        status: pm_protocol::ToolStatus::Failed,
+                        error: Some(err.to_string()),
+                        result: Some(serde_json::json!({
+                            "root": file_root.as_str(),
+                            "reason": "reference repo is not configured",
+                        })),
+                    })
+                    .await?;
+                return Err(err);
+            }
+        },
+    };
+
+    let rel_path = pm_core::modes::relative_path_under_root(&root, Path::new(&params.path));
     if let Ok(rel) = rel_path.as_ref()
         && rel_path_is_secret(rel)
     {
@@ -180,15 +211,23 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
         .await?;
 
     let outcome: anyhow::Result<(PathBuf, String, bool, usize)> = async {
-        let path = resolve_file_for_sandbox(
-            &thread_root,
-            sandbox_policy,
-            &sandbox_writable_roots,
-            Path::new(&params.path),
-            pm_core::PathAccess::Read,
-            false,
-        )
-        .await?;
+        let path = match file_root {
+            FileRoot::Workspace => {
+                resolve_file_for_sandbox(
+                    &thread_root,
+                    sandbox_policy,
+                    &sandbox_writable_roots,
+                    Path::new(&params.path),
+                    pm_core::PathAccess::Read,
+                    false,
+                )
+                .await?
+            }
+            FileRoot::Reference => {
+                pm_core::resolve_file(&root, Path::new(&params.path), pm_core::PathAccess::Read, false)
+                    .await?
+            }
+        };
 
         let limit = max_bytes + 1;
         let file = tokio::fs::File::open(&path)
@@ -224,6 +263,7 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
             Ok(serde_json::json!({
                 "tool_id": tool_id,
                 "resolved_path": path.display().to_string(),
+                "root": file_root.as_str(),
                 "text": text,
                 "truncated": truncated,
             }))
@@ -275,7 +315,8 @@ fn should_walk_entry(entry: &walkdir::DirEntry) -> bool {
         || name == std::ffi::OsStr::new("locks")
         || name == std::ffi::OsStr::new("logs")
         || name == std::ffi::OsStr::new("data")
-        || name == std::ffi::OsStr::new("repos"))
+        || name == std::ffi::OsStr::new("repos")
+        || name == std::ffi::OsStr::new("reference"))
         && entry
             .path()
             .parent()
@@ -291,12 +332,21 @@ fn should_walk_entry(entry: &walkdir::DirEntry) -> bool {
     true
 }
 
+async fn resolve_reference_repo_root(thread_root: &Path) -> anyhow::Result<PathBuf> {
+    let rel = Path::new(".codepm_data/reference/repo");
+    pm_core::resolve_dir(thread_root, rel)
+        .await
+        .with_context(|| format!("resolve reference repo root {}", thread_root.join(rel).display()))
+}
+
 async fn handle_file_glob(server: &Server, params: FileGlobParams) -> anyhow::Result<Value> {
     let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
 
+    let file_root = params.root.unwrap_or(FileRoot::Workspace);
     let max_results = params.max_results.unwrap_or(2000).min(20_000);
     let tool_id = pm_protocol::ToolId::new();
     let approval_params = serde_json::json!({
+        "root": file_root.as_str(),
         "pattern": params.pattern.clone(),
         "max_results": max_results,
     });
@@ -437,7 +487,26 @@ async fn handle_file_glob(server: &Server, params: FileGlobParams) -> anyhow::Re
         .await?;
 
     let pattern = params.pattern.clone();
-    let root = thread_root.clone();
+    let root = match file_root {
+        FileRoot::Workspace => thread_root.clone(),
+        FileRoot::Reference => match resolve_reference_repo_root(&thread_root).await {
+            Ok(root) => root,
+            Err(err) => {
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                        tool_id,
+                        status: pm_protocol::ToolStatus::Failed,
+                        error: Some(err.to_string()),
+                        result: Some(serde_json::json!({
+                            "root": file_root.as_str(),
+                            "reason": "reference repo is not configured",
+                        })),
+                    })
+                    .await?;
+                return Err(err);
+            }
+        },
+    };
     let outcome = tokio::task::spawn_blocking(move || -> anyhow::Result<(Vec<String>, bool)> {
         let matcher = Glob::new(&pattern)
             .with_context(|| format!("invalid glob pattern: {pattern}"))?
@@ -488,6 +557,7 @@ async fn handle_file_glob(server: &Server, params: FileGlobParams) -> anyhow::Re
                 .await?;
             Ok(serde_json::json!({
                 "tool_id": tool_id,
+                "root": file_root.as_str(),
                 "paths": paths,
                 "truncated": truncated,
             }))
@@ -528,6 +598,7 @@ fn truncate_line(line: &str, max_chars: usize) -> String {
 async fn handle_file_grep(server: &Server, params: FileGrepParams) -> anyhow::Result<Value> {
     let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
 
+    let file_root = params.root.unwrap_or(FileRoot::Workspace);
     let max_matches = params.max_matches.unwrap_or(200).min(2000);
     let max_bytes_per_file = params
         .max_bytes_per_file
@@ -536,6 +607,7 @@ async fn handle_file_grep(server: &Server, params: FileGrepParams) -> anyhow::Re
     let max_files = params.max_files.unwrap_or(20_000).min(200_000);
     let tool_id = pm_protocol::ToolId::new();
     let approval_params = serde_json::json!({
+        "root": file_root.as_str(),
         "query": params.query.clone(),
         "is_regex": params.is_regex,
         "include_glob": params.include_glob.clone(),
@@ -694,7 +766,26 @@ async fn handle_file_grep(server: &Server, params: FileGrepParams) -> anyhow::Re
         None => None,
     };
 
-    let root = thread_root.clone();
+    let root = match file_root {
+        FileRoot::Workspace => thread_root.clone(),
+        FileRoot::Reference => match resolve_reference_repo_root(&thread_root).await {
+            Ok(root) => root,
+            Err(err) => {
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                        tool_id,
+                        status: pm_protocol::ToolStatus::Failed,
+                        error: Some(err.to_string()),
+                        result: Some(serde_json::json!({
+                            "root": file_root.as_str(),
+                            "reason": "reference repo is not configured",
+                        })),
+                    })
+                    .await?;
+                return Err(err);
+            }
+        },
+    };
     let outcome = tokio::task::spawn_blocking(
         move || -> anyhow::Result<(Vec<GrepMatch>, bool, usize, usize, usize)> {
             let mut matches = Vec::new();
@@ -794,6 +885,7 @@ async fn handle_file_grep(server: &Server, params: FileGrepParams) -> anyhow::Re
                 .await?;
             Ok(serde_json::json!({
                 "tool_id": tool_id,
+                "root": file_root.as_str(),
                 "matches": matches,
                 "truncated": truncated,
                 "files_scanned": files_scanned,

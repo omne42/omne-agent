@@ -1,5 +1,7 @@
 #[derive(Debug, Deserialize)]
 struct FileReadArgs {
+    #[serde(default)]
+    root: Option<crate::FileRoot>,
     path: String,
     #[serde(default)]
     max_bytes: Option<u64>,
@@ -7,6 +9,8 @@ struct FileReadArgs {
 
 #[derive(Debug, Deserialize)]
 struct FileGlobArgs {
+    #[serde(default)]
+    root: Option<crate::FileRoot>,
     pattern: String,
     #[serde(default)]
     max_results: Option<usize>,
@@ -14,6 +18,8 @@ struct FileGlobArgs {
 
 #[derive(Debug, Deserialize)]
 struct FileGrepArgs {
+    #[serde(default)]
+    root: Option<crate::FileRoot>,
     query: String,
     #[serde(default)]
     is_regex: bool,

@@ -94,6 +94,8 @@
 - `pm-app-server` 新增 `artifact/*`：`artifact/write`（`.md + .metadata.json` 落盘并自动脱敏）、`artifact/list`、`artifact/read`、`artifact/delete`。
 - `pm-app-server` agent loop tool 覆盖：补齐 `file/edit`、`file/delete`、`process/tail`、`process/follow`、`artifact/list`、`artifact/read`、`artifact/delete`。
 - `pm-app-server agent loop`：新增 `agent_spawn`（fork + 启动子 agent turn）与 `thread_state`/`thread_events`（fan-in 读状态与事件）。
+- `pm-app-server`：`file/read|glob|grep` 支持 `root="reference"`（读取 `.codepm_data/reference/repo` 的只读快照），并确保 workspace 的 `glob/grep` 默认不扫描 `.codepm_data/reference`。
+- `pm` CLI：新增 `pm reference import/status`（导入本地目录为 reference repo；导入时不复制 `.git/`、默认跳过单文件 `> 10MB` 并生成 `manifest.json`），`pm init` 同步创建 `.codepm_data/reference/` 并写入 `.codepm_data/.gitignore`。
 
 ### Changed
 - `pm`/`pm-app-server`：`pm_root` 默认目录改为 `./.codepm_data/`（可用 `--pm-root` 或 `CODE_PM_ROOT` 覆盖）。

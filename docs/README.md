@@ -25,6 +25,7 @@
 - `docs/budgets.md`：Budgets/timeout → `Stuck`（含 loop/summary TODO）
 - `docs/tool_parallelism.md`：read-only tool 并发口径
 - `docs/workspace_hooks.md`：Workspace hooks（`.codepm_data/spec/workspace.yaml`）
+- `docs/reference_repo.md`：Reference repo/snapshot（只读参考；v0.2.0 最小实现）
 
 ## 3) 目标态/未实现规格（TODO 草案）
 
@@ -39,7 +40,6 @@
 - `docs/model_routing.md`：Model routing（Router TODO；现状含 config explain）
 - `docs/presets.md`：Presets（导入/导出 TODO；现状可手工用 `thread/configure` 达成）
 - `docs/mcp.md`：MCP client/server（TODO）
-- `docs/reference_repo.md`：Reference repo/snapshot（只读参考；TODO）
 - `docs/execve_wrapper.md`：execve wrapper（TODO）
 - `docs/os_hardening.md`：OS/process hardening（TODO）
 

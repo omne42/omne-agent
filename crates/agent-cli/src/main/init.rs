@@ -38,6 +38,7 @@ async fn run_init(args: InitArgs) -> anyhow::Result<()> {
     tokio::fs::create_dir_all(codepm_data_dir.join("tmp")).await?;
     tokio::fs::create_dir_all(codepm_data_dir.join("data")).await?;
     tokio::fs::create_dir_all(codepm_data_dir.join("repos")).await?;
+    tokio::fs::create_dir_all(codepm_data_dir.join("reference")).await?;
     tokio::fs::create_dir_all(codepm_data_dir.join("locks")).await?;
     tokio::fs::create_dir_all(codepm_data_dir.join("logs")).await?;
     tokio::fs::create_dir_all(codepm_data_dir.join("threads")).await?;
@@ -81,6 +82,7 @@ async fn write_codepm_gitignore(codepm_data_dir: &Path) -> anyhow::Result<()> {
         "tmp/",
         "data/",
         "repos/",
+        "reference/",
         "threads/",
         "locks/",
         "logs/",

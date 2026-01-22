@@ -2,10 +2,11 @@ fn build_tools() -> Vec<Value> {
     vec![
         pm_openai::tool_function(
             "file_read",
-            "Read a UTF-8 text file from the project.",
+            "Read a UTF-8 text file from the project (or from the reference repo when root=reference).",
             serde_json::json!({
                 "type": "object",
                 "properties": {
+                    "root": { "type": "string", "enum": ["workspace", "reference"] },
                     "path": { "type": "string" },
                     "max_bytes": { "type": "integer", "minimum": 1 },
                 },
@@ -15,10 +16,11 @@ fn build_tools() -> Vec<Value> {
         ),
         pm_openai::tool_function(
             "file_glob",
-            "Find files by glob pattern (e.g. **/*.rs).",
+            "Find files by glob pattern (e.g. **/*.rs). Use root=reference to search the reference repo.",
             serde_json::json!({
                 "type": "object",
                 "properties": {
+                    "root": { "type": "string", "enum": ["workspace", "reference"] },
                     "pattern": { "type": "string" },
                     "max_results": { "type": "integer", "minimum": 1 },
                 },
@@ -28,10 +30,11 @@ fn build_tools() -> Vec<Value> {
         ),
         pm_openai::tool_function(
             "file_grep",
-            "Search text across files.",
+            "Search text across files. Use root=reference to search the reference repo.",
             serde_json::json!({
                 "type": "object",
                 "properties": {
+                    "root": { "type": "string", "enum": ["workspace", "reference"] },
                     "query": { "type": "string" },
                     "is_regex": { "type": "boolean" },
                     "include_glob": { "type": "string" },

@@ -8,6 +8,9 @@ async fn main() -> anyhow::Result<()> {
     if let Some(Command::Init(args)) = cli.command.take() {
         return run_init(args).await;
     }
+    if let Some(Command::Reference { command }) = cli.command.take() {
+        return run_reference(&cli, command).await;
+    }
 
     let mut app = App::connect(&cli).await?;
 
@@ -16,6 +19,7 @@ async fn main() -> anyhow::Result<()> {
             run_repl(&mut app).await?;
         }
         Some(Command::Init(_)) => unreachable!("handled before App::connect"),
+        Some(Command::Reference { .. }) => unreachable!("handled before App::connect"),
         Some(Command::Thread { command }) => match command {
             ThreadCommand::Start { cwd, json } => {
                 let cwd = cwd.map(|p| p.display().to_string());

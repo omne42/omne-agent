@@ -753,6 +753,22 @@ struct ProcessInspectParams {
     max_lines: Option<usize>,
 }
 
+#[derive(Debug, Deserialize, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+enum FileRoot {
+    Workspace,
+    Reference,
+}
+
+impl FileRoot {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Workspace => "workspace",
+            Self::Reference => "reference",
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct FileReadParams {
     thread_id: ThreadId,
@@ -760,6 +776,8 @@ struct FileReadParams {
     turn_id: Option<TurnId>,
     #[serde(default)]
     approval_id: Option<pm_protocol::ApprovalId>,
+    #[serde(default)]
+    root: Option<FileRoot>,
     path: String,
     #[serde(default)]
     max_bytes: Option<u64>,
@@ -772,6 +790,8 @@ struct FileGlobParams {
     turn_id: Option<TurnId>,
     #[serde(default)]
     approval_id: Option<pm_protocol::ApprovalId>,
+    #[serde(default)]
+    root: Option<FileRoot>,
     pattern: String,
     #[serde(default)]
     max_results: Option<usize>,
@@ -784,6 +804,8 @@ struct FileGrepParams {
     turn_id: Option<TurnId>,
     #[serde(default)]
     approval_id: Option<pm_protocol::ApprovalId>,
+    #[serde(default)]
+    root: Option<FileRoot>,
     query: String,
     #[serde(default)]
     is_regex: bool,

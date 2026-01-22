@@ -133,6 +133,7 @@ async fn run_tool_call_once(
                     thread_id,
                     turn_id,
                     approval_id,
+                    root: args.root,
                     path: args.path,
                     max_bytes: args.max_bytes,
                 },
@@ -147,6 +148,7 @@ async fn run_tool_call_once(
                     thread_id,
                     turn_id,
                     approval_id,
+                    root: args.root,
                     pattern: args.pattern,
                     max_results: args.max_results,
                 },
@@ -161,6 +163,7 @@ async fn run_tool_call_once(
                     thread_id,
                     turn_id,
                     approval_id,
+                    root: args.root,
                     query: args.query,
                     is_regex: args.is_regex,
                     include_glob: args.include_glob,
@@ -1037,6 +1040,142 @@ mod agent_spawn_guard_tests {
         assert!(result["denied"].as_bool().unwrap_or(false));
         assert_eq!(result["max_concurrent_subagents"].as_u64().unwrap_or(0), 4);
         assert_eq!(result["active"].as_u64().unwrap_or(0), 4);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod reference_repo_file_tools_tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use tokio::sync::broadcast;
+
+    fn build_test_server(pm_root: PathBuf) -> super::super::Server {
+        let (notify_tx, _notify_rx) = broadcast::channel::<String>(16);
+        super::super::Server {
+            cwd: pm_root.clone(),
+            notify_tx,
+            thread_store: super::super::ThreadStore::new(super::super::PmPaths::new(pm_root)),
+            threads: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            processes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            disk_warning: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            exec_policy: pm_execpolicy::Policy::empty(),
+        }
+    }
+
+    #[tokio::test]
+    async fn file_glob_excludes_codepm_reference_dir_for_workspace_root() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let project_dir = tmp.path().join("project");
+        tokio::fs::create_dir_all(&project_dir).await?;
+
+        tokio::fs::write(project_dir.join("hello.txt"), "hello\n").await?;
+        tokio::fs::create_dir_all(project_dir.join(".codepm_data/reference/repo")).await?;
+        tokio::fs::write(
+            project_dir.join(".codepm_data/reference/repo/ref.txt"),
+            "ref\n",
+        )
+        .await?;
+
+        let server = build_test_server(tmp.path().join("pm_root"));
+        let handle = server.thread_store.create_thread(project_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let result = run_tool_call_once(
+            &server,
+            thread_id,
+            None,
+            "file_glob",
+            serde_json::json!({ "pattern": "**/*.txt" }),
+            None,
+        )
+        .await?;
+
+        let paths = result["paths"].as_array().cloned().unwrap_or_default();
+        assert!(paths.iter().any(|p| p.as_str() == Some("hello.txt")));
+        assert!(
+            !paths
+                .iter()
+                .any(|p| p.as_str().unwrap_or("").contains(".codepm_data/reference/"))
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn file_glob_and_read_can_use_reference_root() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let project_dir = tmp.path().join("project");
+        tokio::fs::create_dir_all(&project_dir).await?;
+
+        tokio::fs::write(project_dir.join("hello.txt"), "hello\n").await?;
+        tokio::fs::create_dir_all(project_dir.join(".codepm_data/reference/repo")).await?;
+        tokio::fs::write(
+            project_dir.join(".codepm_data/reference/repo/ref.txt"),
+            "ref\n",
+        )
+        .await?;
+
+        let server = build_test_server(tmp.path().join("pm_root"));
+        let handle = server.thread_store.create_thread(project_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let glob = run_tool_call_once(
+            &server,
+            thread_id,
+            None,
+            "file_glob",
+            serde_json::json!({ "root": "reference", "pattern": "**/*.txt" }),
+            None,
+        )
+        .await?;
+        let paths = glob["paths"].as_array().cloned().unwrap_or_default();
+        assert!(paths.iter().any(|p| p.as_str() == Some("ref.txt")));
+        assert!(!paths.iter().any(|p| p.as_str() == Some("hello.txt")));
+
+        let read = run_tool_call_once(
+            &server,
+            thread_id,
+            None,
+            "file_read",
+            serde_json::json!({ "root": "reference", "path": "ref.txt" }),
+            None,
+        )
+        .await?;
+        assert_eq!(read["text"].as_str(), Some("ref\n"));
+        assert_eq!(read["root"].as_str(), Some("reference"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn reference_root_fails_closed_when_not_configured() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let project_dir = tmp.path().join("project");
+        tokio::fs::create_dir_all(&project_dir).await?;
+        tokio::fs::write(project_dir.join("hello.txt"), "hello\n").await?;
+
+        let server = build_test_server(tmp.path().join("pm_root"));
+        let handle = server.thread_store.create_thread(project_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let err = run_tool_call_once(
+            &server,
+            thread_id,
+            None,
+            "file_read",
+            serde_json::json!({ "root": "reference", "path": "ref.txt" }),
+            None,
+        )
+        .await
+        .expect_err("expected root=reference to fail when not configured");
+        assert!(
+            err.to_string().contains("reference repo root")
+                || err.to_string().contains(".codepm_data/reference/repo")
+        );
         Ok(())
     }
 }

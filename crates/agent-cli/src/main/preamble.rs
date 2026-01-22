@@ -40,6 +40,10 @@ struct Cli {
 enum Command {
     /// Initialize `./.codepm_data/` in the current project.
     Init(InitArgs),
+    Reference {
+        #[command(subcommand)]
+        command: ReferenceCommand,
+    },
     /// Start an interactive REPL.
     Repl,
     Thread {
@@ -61,6 +65,30 @@ enum Command {
     Artifact {
         #[command(subcommand)]
         command: ArtifactCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum ReferenceCommand {
+    /// Import a local directory as the project's reference repo snapshot.
+    Import {
+        /// Source directory to copy from.
+        from: PathBuf,
+        /// Overwrite any existing reference repo.
+        #[arg(long, default_value_t = false)]
+        force: bool,
+        /// Skip files larger than this (bytes). Default: 10MiB.
+        #[arg(long)]
+        max_file_bytes: Option<u64>,
+        /// Output JSON instead of human-readable text.
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    /// Show the currently installed reference repo (if any).
+    Status {
+        /// Output JSON instead of human-readable text.
+        #[arg(long, default_value_t = false)]
+        json: bool,
     },
 }
 

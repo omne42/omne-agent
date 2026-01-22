@@ -24,6 +24,7 @@
     tmp/
     data/
     repos/
+    reference/
     locks/
     logs/
     threads/
@@ -47,6 +48,7 @@
 - `tmp/`：本项目的临时目录（可随时删；不作为正确性前提）。
 - `data/`：运行时数据（预留；例如 session/索引/派生视图缓存；不提交）。
 - `repos/`：运行时数据（预留；例如 bare repo cache；不提交）。
+- `reference/`：Reference repo/snapshot（只读参考；不提交；见 `docs/reference_repo.md`）。
 - `locks/`：运行时数据（预留；例如跨进程锁；不提交）。
 - `logs/`：运行时数据（预留；不提交）。
 - `threads/`：线程/事件/产物（运行时数据；不提交）。
@@ -116,5 +118,5 @@ CODE_PM_OPENAI_MODEL=gpt-4.1
 
 只忽略运行时/secret：
 
-- 忽略：`.codepm_data/tmp/`、`.codepm_data/data/`、`.codepm_data/repos/`、`.codepm_data/threads/`、`.codepm_data/locks/`、`.codepm_data/logs/`、`.codepm_data/daemon.sock`、`.codepm_data/config_local.toml`、`.codepm_data/.env`
+- 忽略：`.codepm_data/tmp/`、`.codepm_data/data/`、`.codepm_data/repos/`、`.codepm_data/reference/`、`.codepm_data/threads/`、`.codepm_data/locks/`、`.codepm_data/logs/`、`.codepm_data/daemon.sock`、`.codepm_data/config_local.toml`、`.codepm_data/.env`
 - 不忽略：`.codepm_data/config.toml`、`.codepm_data/spec/`

@@ -106,6 +106,7 @@ impl ModeCatalog {
             ".codepm_data/logs/**".to_string(),
             ".codepm_data/data/**".to_string(),
             ".codepm_data/repos/**".to_string(),
+            ".codepm_data/reference/**".to_string(),
         ];
 
         modes.insert(

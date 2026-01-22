@@ -1,8 +1,8 @@
-# Reference Repo / Snapshot（只读参考）（v0.2.0 规格草案）
+# Reference Repo / Snapshot（只读参考）（v0.2.0）
 
 > 目标：给 agent 一个“只读参考仓库”，用于 `file/read|glob|grep` 补充上下文，但**不参与 resume、不参与索引、不参与 patch 交付**。
->
-> 这是 v0.2.0 的 TODO（文档先把边界写死，避免未来实现跑偏）。
+
+当前状态：v0.2.0 已实现最小闭环（显式 `root="reference"`）。
 
 ---
 
@@ -17,7 +17,7 @@
 
 ---
 
-## 1) 最小接口（建议）
+## 1) 最小接口（已实现）
 
 reference repo 只提供两类能力：
 
@@ -26,41 +26,37 @@ reference repo 只提供两类能力：
 
 实现上可以把 reference repo 当成一个额外的只读 root（独立于 thread cwd/workspace root）。
 
-v1 建议（写死）：
+v0.2.0 口径（写死）：
 
-- reference repo 的读取必须是 **显式** 的：调用方必须能区分“读 workspace”还是“读 reference repo”。
-  - 例如（占位两条路线，二选一即可）：
-    1) 在 `file/read|glob|grep` 参数里新增 `root: "workspace"|"reference"`（默认 `workspace`）。
-    2) 新增只读工具 `ref/file_read`、`ref/file_glob`、`ref/file_grep`（与 `docs/tool_parallelism.md` 的 tool id/method 映射口径一致）。
-- 无论哪条路线：unknown root / 未配置 reference repo 时的调用必须 fail-closed（直接报错）。
+- reference repo 的读取必须是 **显式** 的：在 `file/read|glob|grep` 参数里使用 `root: "workspace"|"reference"`（默认 `workspace`）。
+- unknown root / 未配置 reference repo 时：fail-closed（直接报错）。
 
 ---
 
-## 2) 存储位置（建议）
+## 2) 存储位置（已实现）
 
-建议放在运行时目录下，按 project 共享（不是按 thread）：
+按 project 共享（不是按 thread）：
 
 ```
 <pm_root>/
   reference/
-    <name_or_hash>/
-      repo/          # 清理后的工作树（无 .git）
-      manifest.json  # 清理结果（删除了哪些文件、总大小等）
+    repo/          # 清理后的工作树（无 .git）
+    manifest.json  # 清理结果（跳过了哪些文件、总大小等）
 ```
 
 注意：这只是建议布局；关键是“只读 + 不参与 resume/交付”。
 
 ---
 
-## 3) 清理规则（节省空间与避免误用）
+## 3) 清理规则（已实现）
 
 拉取/复制 reference repo 后必须做清理：
 
-- 移除 `.git/`（避免被当作真实 repo/避免后续误用）
-- 删除单文件 `> 10MB`（阈值可配置，但默认 10MB）
+- 移除 `.git/`（导入时不复制）
+- 删除单文件 `> 10MB`（默认 10MB；导入时跳过）
 - 默认排除敏感文件（建议写死与 checkpoint 同口径）：
   - `.env`、`.env.*`、`*.pem`、`*.key`、`.ssh/**`、`.aws/**`、`.kube/**`
-- 生成 `manifest.json`（至少包含：删了哪些路径、删前大小、最终大小、时间戳）
+- 生成 `manifest.json`（至少包含：跳过了哪些路径/原因、最终统计、时间戳）
 
 清理结果应该可被用户查看（例如作为 user artifact 写入一个 markdown 报告），但不强制进入事件历史。
 
@@ -73,7 +69,7 @@ v1 建议（写死）：
 
 ---
 
-## 5) DoD（未来实现时）
+## 5) DoD
 
 - 未配置 reference repo 时：
   - `root="reference"`（或 `ref/*`）的调用必须直接报错，不得隐式回退到 workspace。
@@ -81,3 +77,19 @@ v1 建议（写死）：
   - `file/read|glob|grep` 的 reference 访问始终只读，且受 sandbox 的路径逃逸检查（拒绝 `..` 与 symlink escape）。
   - reference repo 的缺失/损坏不会影响 thread 的 replay/resume（最多让 reference 查询失败）。
   - 如果 reference 内容被注入上下文：必须生成对应的“摘录 artifact”（脱敏），并在后续 turn 的构建中只引用该 artifact（而不是再次读取 reference repo）。
+
+---
+
+## 6) 用法
+
+导入一个本地目录为 reference repo：
+
+```bash
+pm reference import /path/to/repo --force
+```
+
+查看当前 reference repo 状态：
+
+```bash
+pm reference status
+```

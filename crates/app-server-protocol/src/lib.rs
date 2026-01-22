@@ -363,6 +363,13 @@ pub struct ProcessInspectParams {
     pub max_lines: Option<usize>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum FileRoot {
+    Workspace,
+    Reference,
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
 pub struct FileReadParams {
     pub thread_id: pm_protocol::ThreadId,
@@ -372,6 +379,9 @@ pub struct FileReadParams {
     #[serde(default)]
     #[ts(optional)]
     pub approval_id: Option<pm_protocol::ApprovalId>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub root: Option<FileRoot>,
     pub path: String,
     #[serde(default)]
     #[ts(optional)]
@@ -387,6 +397,9 @@ pub struct FileGlobParams {
     #[serde(default)]
     #[ts(optional)]
     pub approval_id: Option<pm_protocol::ApprovalId>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub root: Option<FileRoot>,
     pub pattern: String,
     #[serde(default)]
     #[ts(optional)]
@@ -402,6 +415,9 @@ pub struct FileGrepParams {
     #[serde(default)]
     #[ts(optional)]
     pub approval_id: Option<pm_protocol::ApprovalId>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub root: Option<FileRoot>,
     pub query: String,
     #[serde(default)]
     pub is_regex: bool,
