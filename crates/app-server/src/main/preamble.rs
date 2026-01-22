@@ -38,6 +38,8 @@ const CHILD_PROCESS_ENV_SCRUB_KEYS: &[&str] = &[
 const DEFAULT_PROCESS_LOG_MAX_BYTES_PER_PART: u64 = 8 * 1024 * 1024;
 const MAX_PROCESS_LOG_MAX_BYTES_PER_PART: u64 = 512 * 1024 * 1024;
 
+const DEFAULT_PROCESS_IDLE_WINDOW_SECONDS: u64 = 300;
+
 const DEFAULT_THREAD_DISK_WARNING_BYTES: u64 = 10 * 1024 * 1024 * 1024;
 const DEFAULT_THREAD_DISK_CHECK_DEBOUNCE_MS: u64 = 30_000;
 const DEFAULT_THREAD_DISK_REPORT_DEBOUNCE_MS: u64 = 30 * 60_000;
@@ -49,6 +51,14 @@ fn process_log_max_bytes_per_part() -> u64 {
         .filter(|value| *value > 0)
         .map(|value| value.min(MAX_PROCESS_LOG_MAX_BYTES_PER_PART))
         .unwrap_or(DEFAULT_PROCESS_LOG_MAX_BYTES_PER_PART)
+}
+
+fn process_idle_window() -> Option<Duration> {
+    let value = std::env::var("CODE_PM_PROCESS_IDLE_WINDOW_SECONDS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or(DEFAULT_PROCESS_IDLE_WINDOW_SECONDS);
+    if value == 0 { None } else { Some(Duration::from_secs(value)) }
 }
 
 fn thread_disk_warning_threshold_bytes() -> Option<u64> {

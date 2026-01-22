@@ -51,7 +51,7 @@ Attention 的派生语义与状态集合见：
 
 ---
 
-## 3) TODO：后台进程“需要人接管”提醒
+## 3) 已实现：后台进程“需要人接管”提醒
 
 问题：v0.2.0 的进程模型是非交互（`stdin=null`），因此“等待输入”会表现为**长时间无输出/不退出**。如果不显式提醒，用户会以为系统死了。
 
@@ -77,7 +77,7 @@ Attention 的派生语义与状态集合见：
   - `idle_seconds >= idle_window` → 认为该 process stale
 - 线程级别只要存在任意 stale process，就认为“需要人接管”。
 
-建议配置项（TODO）：
+配置项：
 
 - `CODE_PM_PROCESS_IDLE_WINDOW_SECONDS`：
   - `0` = 禁用

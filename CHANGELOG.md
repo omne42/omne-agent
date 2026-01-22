@@ -32,6 +32,8 @@
 - `pm ask`：消费 `pm-app-server` 的 `item/delta` notifications 并实时输出 assistant 文本流（仅作为 UI 优化；最终仍以 `AssistantMessage` 落盘为准）。
 - `pm` CLI 新增 `inbox`：跨 thread 的 RTS 收件箱视图（可 `--watch` + `--bell` 去重提醒），用于快速发现 `need_approval/failed/running`。
 - `pm inbox --details`：现在会显示 `failed_processes` 摘要（数量 + 部分 id），便于快速定位后台失败。
+- `pm-app-server thread/attention`：新增 `stale_processes`（running process 在 `idle_window` 内无新输出），并支持 `CODE_PM_PROCESS_IDLE_WINDOW_SECONDS` 配置（`0` 禁用；默认 300s）。
+- `pm watch --bell` / `pm inbox --bell`：当 `stale_processes` 从空变非空时响铃提醒（避免后台进程“无输出但不退出”时静默卡住）。
 - `pm` CLI 补齐更多控制面命令：`pm thread fork/archive/unarchive/delete/clear-artifacts/disk-*` 与 `pm artifact list/read/delete`，便于手动清理与审计。
 - `pm` CLI 新增 `pm thread spawn`：对 `thread/fork + turn/start` 的便捷封装（可选覆盖 model/openai_base_url），用于并行出发后台 turns。
 - `pm-app-server` 新增 `thread/hook_run`：读取 `<thread root>/.codepm/workspace.{yaml,yml}` 并按 `setup/run/archive` 启动对应 hook 命令（复用 `process/start` 的 mode/execpolicy/approvals）；`pm` CLI 增加 `pm thread hook-run <thread_id> <setup|run|archive>` 用于触发。

@@ -2,6 +2,8 @@ async fn run_watch(app: &mut App, args: WatchArgs) -> anyhow::Result<()> {
     let mut since_seq = args.since_seq;
     let mut last_state: Option<&'static str> = None;
     let mut last_bell_at: Option<Instant> = None;
+    let mut last_stale_present: Option<bool> = None;
+    let mut last_stale_bell_at: Option<Instant> = None;
     let mut suppress_initial_bell = true;
 
     loop {
@@ -30,6 +32,22 @@ async fn run_watch(app: &mut App, args: WatchArgs) -> anyhow::Result<()> {
         if args.bell && !suppress_initial_bell {
             if let Some(state) = state_update {
                 maybe_bell(state, args.debounce_ms, &mut last_state, &mut last_bell_at)?;
+            }
+        }
+
+        if args.bell {
+            let att = app.thread_attention(args.thread_id).await?;
+            let att: ThreadAttention = serde_json::from_value(att)?;
+            let stale_present = !att.stale_processes.is_empty();
+            if suppress_initial_bell {
+                last_stale_present = Some(stale_present);
+            } else {
+                maybe_bell_stale(
+                    stale_present,
+                    args.debounce_ms,
+                    &mut last_stale_present,
+                    &mut last_stale_bell_at,
+                )?;
             }
         }
         suppress_initial_bell = false;
@@ -86,6 +104,8 @@ struct ThreadAttention {
     #[serde(default)]
     running_processes: Vec<RunningProcess>,
     #[serde(default)]
+    stale_processes: Vec<StaleProcess>,
+    #[serde(default)]
     failed_processes: Vec<ProcessId>,
 }
 
@@ -105,12 +125,27 @@ struct RunningProcess {
     status: Option<String>,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+struct StaleProcess {
+    process_id: ProcessId,
+    #[serde(default)]
+    idle_seconds: u64,
+    #[serde(default)]
+    last_update_at: Option<String>,
+    #[serde(default)]
+    stdout_path: Option<String>,
+    #[serde(default)]
+    stderr_path: Option<String>,
+}
+
 async fn run_inbox(app: &mut App, args: InboxArgs) -> anyhow::Result<()> {
     let poll_interval = Duration::from_millis(args.poll_ms.max(200));
 
     let mut last_snapshot: std::collections::BTreeMap<ThreadId, ThreadMeta> =
         std::collections::BTreeMap::new();
     let mut bell_state: std::collections::HashMap<ThreadId, (Option<String>, Option<Instant>)> =
+        std::collections::HashMap::new();
+    let mut stale_bell_state: std::collections::HashMap<ThreadId, (Option<bool>, Option<Instant>)> =
         std::collections::HashMap::new();
 
     loop {
@@ -139,16 +174,33 @@ async fn run_inbox(app: &mut App, args: InboxArgs) -> anyhow::Result<()> {
                 if !matches!(state, "need_approval" | "failed" | "stuck") {
                     bell_state.entry(*thread_id).or_insert((None, None)).0 =
                         Some(thread.attention_state.clone());
-                    continue;
+                } else {
+                    let entry = bell_state.entry(*thread_id).or_insert((None, None));
+                    maybe_bell_per_thread(
+                        thread_id,
+                        &thread.attention_state,
+                        args.debounce_ms,
+                        &mut entry.0,
+                        &mut entry.1,
+                    )?;
                 }
-                let entry = bell_state.entry(*thread_id).or_insert((None, None));
-                maybe_bell_per_thread(
-                    thread_id,
-                    &thread.attention_state,
-                    args.debounce_ms,
-                    &mut entry.0,
-                    &mut entry.1,
-                )?;
+
+                if state == "running" {
+                    let att = app.thread_attention(*thread_id).await?;
+                    let att: ThreadAttention = serde_json::from_value(att)?;
+                    let stale_present = !att.stale_processes.is_empty();
+                    let entry = stale_bell_state.entry(*thread_id).or_insert((None, None));
+                    maybe_bell_stale_per_thread(
+                        thread_id,
+                        stale_present,
+                        args.debounce_ms,
+                        &mut entry.0,
+                        &mut entry.1,
+                    )?;
+                } else {
+                    stale_bell_state.entry(*thread_id).or_insert((Some(false), None)).0 =
+                        Some(false);
+                }
             }
         }
 
@@ -295,6 +347,24 @@ fn render_thread_details(att: &ThreadAttention) {
             }
         );
     }
+    if !att.stale_processes.is_empty() {
+        let ids = att
+            .stale_processes
+            .iter()
+            .take(3)
+            .map(|p| p.process_id.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        println!(
+            "  stale_processes: {} ({ids}{})",
+            att.stale_processes.len(),
+            if att.stale_processes.len() > 3 {
+                ", ..."
+            } else {
+                ""
+            }
+        );
+    }
 }
 
 fn shorten_path(path: &str, max_len: usize) -> String {
@@ -374,3 +444,56 @@ fn maybe_bell(
     Ok(())
 }
 
+fn maybe_bell_stale(
+    stale_present: bool,
+    debounce_ms: u64,
+    last_stale_present: &mut Option<bool>,
+    last_bell_at: &mut Option<Instant>,
+) -> anyhow::Result<()> {
+    if last_stale_present.is_none() {
+        *last_stale_present = Some(stale_present);
+        return Ok(());
+    }
+
+    if stale_present && last_stale_present == &Some(false) {
+        let now = Instant::now();
+        let debounced = last_bell_at
+            .is_some_and(|t| now.duration_since(t) < Duration::from_millis(debounce_ms));
+        if !debounced {
+            print!("\x07");
+            std::io::stdout().flush().ok();
+            *last_bell_at = Some(now);
+        }
+    }
+
+    *last_stale_present = Some(stale_present);
+    Ok(())
+}
+
+fn maybe_bell_stale_per_thread(
+    thread_id: &ThreadId,
+    stale_present: bool,
+    debounce_ms: u64,
+    last_stale_present: &mut Option<bool>,
+    last_bell_at: &mut Option<Instant>,
+) -> anyhow::Result<()> {
+    if last_stale_present.is_none() {
+        *last_stale_present = Some(stale_present);
+        return Ok(());
+    }
+
+    if stale_present && last_stale_present == &Some(false) {
+        let now = Instant::now();
+        let debounced = last_bell_at
+            .is_some_and(|t| now.duration_since(t) < Duration::from_millis(debounce_ms));
+        if !debounced {
+            eprintln!("attention: {thread_id} -> stale_process");
+            print!("\x07");
+            std::io::stdout().flush().ok();
+            *last_bell_at = Some(now);
+        }
+    }
+
+    *last_stale_present = Some(stale_present);
+    Ok(())
+}

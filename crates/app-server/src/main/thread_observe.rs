@@ -101,8 +101,12 @@ async fn handle_thread_attention(
     let running_processes = processes
         .into_iter()
         .filter(|p| matches!(p.status, ProcessStatus::Running))
-        .map(serde_json::to_value)
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Vec<_>>();
+
+    let stale_processes = match process_idle_window() {
+        Some(idle_window) => compute_stale_processes(&running_processes, idle_window).await?,
+        None => Vec::new(),
+    };
 
     let attention_state = if !pending_approvals.is_empty() {
         "need_approval"
@@ -148,7 +152,87 @@ async fn handle_thread_attention(
         "attention_state": attention_state,
         "pending_approvals": pending_approvals,
         "running_processes": running_processes,
+        "stale_processes": stale_processes,
     }))
+}
+
+#[derive(Debug, Serialize)]
+struct StaleProcessInfo {
+    process_id: ProcessId,
+    idle_seconds: u64,
+    last_update_at: String,
+    stdout_path: String,
+    stderr_path: String,
+}
+
+async fn compute_stale_processes(
+    running_processes: &[ProcessInfo],
+    idle_window: Duration,
+) -> anyhow::Result<Vec<StaleProcessInfo>> {
+    let idle_window_seconds = idle_window.as_secs();
+    if idle_window_seconds == 0 {
+        return Ok(Vec::new());
+    }
+
+    let now = OffsetDateTime::now_utc();
+    let mut stale = Vec::new();
+
+    for process in running_processes {
+        let last_update_at = last_process_output_at(process).await?;
+        let idle_seconds = (now - last_update_at).whole_seconds().max(0) as u64;
+        if idle_seconds < idle_window_seconds {
+            continue;
+        }
+
+        stale.push(StaleProcessInfo {
+            process_id: process.process_id,
+            idle_seconds,
+            last_update_at: last_update_at.format(&Rfc3339)?,
+            stdout_path: process.stdout_path.clone(),
+            stderr_path: process.stderr_path.clone(),
+        });
+    }
+
+    Ok(stale)
+}
+
+async fn last_process_output_at(process: &ProcessInfo) -> anyhow::Result<OffsetDateTime> {
+    let now = OffsetDateTime::now_utc();
+    let started_at = OffsetDateTime::parse(&process.started_at, &Rfc3339).unwrap_or(now);
+
+    let stdout_base = PathBuf::from(&process.stdout_path);
+    let stderr_base = PathBuf::from(&process.stderr_path);
+
+    let stdout_at = latest_rotating_log_mtime(&stdout_base).await?;
+    let stderr_at = latest_rotating_log_mtime(&stderr_base).await?;
+
+    Ok(match (stdout_at, stderr_at) {
+        (Some(stdout_at), Some(stderr_at)) => stdout_at.max(stderr_at),
+        (Some(stdout_at), None) => stdout_at,
+        (None, Some(stderr_at)) => stderr_at,
+        (None, None) => started_at,
+    })
+}
+
+async fn latest_rotating_log_mtime(base_path: &Path) -> anyhow::Result<Option<OffsetDateTime>> {
+    let files = list_rotating_log_files(base_path).await?;
+    let mut latest: Option<OffsetDateTime> = None;
+
+    for file in files {
+        let meta = match tokio::fs::metadata(&file).await {
+            Ok(meta) => meta,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(err) => return Err(err).with_context(|| format!("metadata {}", file.display())),
+        };
+
+        let Ok(modified) = meta.modified() else {
+            continue;
+        };
+        let modified = OffsetDateTime::from(modified);
+        latest = Some(latest.map_or(modified, |prev| prev.max(modified)));
+    }
+
+    Ok(latest)
 }
 
 async fn handle_thread_list_meta(
@@ -581,4 +665,69 @@ async fn maybe_emit_thread_disk_warning(
     .await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod stale_process_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn stale_processes_use_started_at_when_no_logs_exist() -> anyhow::Result<()> {
+        let now = OffsetDateTime::now_utc();
+        let started_at = (now - time::Duration::hours(1)).format(&Rfc3339)?;
+
+        let tmp = tempfile::tempdir()?;
+        let missing_stdout = tmp.path().join("missing_stdout.log");
+        let missing_stderr = tmp.path().join("missing_stderr.log");
+
+        let process = ProcessInfo {
+            process_id: ProcessId::new(),
+            thread_id: ThreadId::new(),
+            turn_id: None,
+            argv: vec!["sleep".to_string(), "999".to_string()],
+            cwd: tmp.path().display().to_string(),
+            started_at: started_at.clone(),
+            status: ProcessStatus::Running,
+            exit_code: None,
+            stdout_path: missing_stdout.display().to_string(),
+            stderr_path: missing_stderr.display().to_string(),
+            last_update_at: started_at.clone(),
+        };
+
+        let stale = compute_stale_processes(&[process], Duration::from_secs(300)).await?;
+        assert_eq!(stale.len(), 1);
+        assert_eq!(stale[0].last_update_at, started_at);
+        assert!(stale[0].idle_seconds >= 3590);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn stale_processes_ignore_running_processes_with_recent_output() -> anyhow::Result<()> {
+        let now = OffsetDateTime::now_utc();
+        let started_at = (now - time::Duration::hours(1)).format(&Rfc3339)?;
+
+        let tmp = tempfile::tempdir()?;
+        let stdout_path = tmp.path().join("stdout.log");
+        let stderr_path = tmp.path().join("stderr.log");
+        tokio::fs::write(&stdout_path, "hello\n").await?;
+        tokio::fs::write(&stderr_path, "world\n").await?;
+
+        let process = ProcessInfo {
+            process_id: ProcessId::new(),
+            thread_id: ThreadId::new(),
+            turn_id: None,
+            argv: vec!["echo".to_string(), "hi".to_string()],
+            cwd: tmp.path().display().to_string(),
+            started_at,
+            status: ProcessStatus::Running,
+            exit_code: None,
+            stdout_path: stdout_path.display().to_string(),
+            stderr_path: stderr_path.display().to_string(),
+            last_update_at: now.format(&Rfc3339)?,
+        };
+
+        let stale = compute_stale_processes(&[process], Duration::from_secs(60)).await?;
+        assert!(stale.is_empty());
+        Ok(())
+    }
 }
