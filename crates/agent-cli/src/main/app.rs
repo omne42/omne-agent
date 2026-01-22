@@ -80,6 +80,18 @@ async fn main() -> anyhow::Result<()> {
                 let result = app.thread_disk_report(thread_id, top_files).await?;
                 print_json_or_pretty(json, &result)?;
             }
+            ThreadCommand::Diff {
+                thread_id,
+                approval_id,
+                max_bytes,
+                wait_seconds,
+                json,
+            } => {
+                let result = app
+                    .thread_diff(thread_id, approval_id, max_bytes, wait_seconds)
+                    .await?;
+                print_json_or_pretty(json, &result)?;
+            }
             ThreadCommand::HookRun {
                 thread_id,
                 hook,

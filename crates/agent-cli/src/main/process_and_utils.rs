@@ -375,6 +375,28 @@ impl App {
         .await
     }
 
+    async fn thread_diff(
+        &mut self,
+        thread_id: ThreadId,
+        approval_id: Option<ApprovalId>,
+        max_bytes: Option<u64>,
+        wait_seconds: Option<u64>,
+    ) -> anyhow::Result<Value> {
+        let v = self
+            .rpc(
+                "thread/diff",
+                serde_json::json!({
+                    "thread_id": thread_id,
+                    "approval_id": approval_id,
+                    "max_bytes": max_bytes,
+                    "wait_seconds": wait_seconds,
+                }),
+            )
+            .await?;
+        ensure_approval_and_denial_handled("thread/diff", &v)?;
+        Ok(v)
+    }
+
     async fn thread_hook_run(
         &mut self,
         thread_id: ThreadId,

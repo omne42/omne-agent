@@ -783,6 +783,200 @@ async fn handle_thread_disk_report(
     }))
 }
 
+const DEFAULT_THREAD_DIFF_MAX_BYTES: u64 = 4 * 1024 * 1024;
+const MAX_THREAD_DIFF_MAX_BYTES: u64 = 64 * 1024 * 1024;
+const DEFAULT_THREAD_DIFF_WAIT_SECONDS: u64 = 30;
+const MAX_THREAD_DIFF_WAIT_SECONDS: u64 = 10 * 60;
+const THREAD_DIFF_POLL_INTERVAL_MS: u64 = 50;
+const THREAD_DIFF_MAX_STDERR_BYTES: u64 = 32 * 1024;
+
+async fn handle_thread_diff(server: &Server, params: ThreadDiffParams) -> anyhow::Result<Value> {
+    let max_bytes = params
+        .max_bytes
+        .unwrap_or(DEFAULT_THREAD_DIFF_MAX_BYTES)
+        .min(MAX_THREAD_DIFF_MAX_BYTES);
+    let wait_seconds = params
+        .wait_seconds
+        .unwrap_or(DEFAULT_THREAD_DIFF_WAIT_SECONDS)
+        .min(MAX_THREAD_DIFF_WAIT_SECONDS);
+
+    let process = handle_process_start(
+        server,
+        ProcessStartParams {
+            thread_id: params.thread_id,
+            turn_id: params.turn_id,
+            approval_id: params.approval_id,
+            argv: vec![
+                "git".to_string(),
+                "--no-pager".to_string(),
+                "diff".to_string(),
+                "--no-ext-diff".to_string(),
+                "--no-textconv".to_string(),
+                "--no-color".to_string(),
+            ],
+            cwd: None,
+        },
+    )
+    .await?;
+
+    if !process.get("process_id").is_some_and(|v| v.is_string()) {
+        return Ok(process);
+    }
+
+    let process_id: ProcessId = serde_json::from_value(process["process_id"].clone())
+        .context("parse process_id")?;
+    let stdout_path = process["stdout_path"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing stdout_path"))?
+        .to_string();
+    let stderr_path = process["stderr_path"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing stderr_path"))?
+        .to_string();
+
+    let entry = {
+        let processes = server.processes.lock().await;
+        processes
+            .get(&process_id)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("process not found: {}", process_id))?
+    };
+
+    let waited = tokio::time::timeout(Duration::from_secs(wait_seconds), async {
+        loop {
+            let info = entry.info.lock().await.clone();
+            if !matches!(info.status, ProcessStatus::Running) {
+                return Ok::<_, anyhow::Error>(info);
+            }
+            tokio::time::sleep(Duration::from_millis(THREAD_DIFF_POLL_INTERVAL_MS)).await;
+        }
+    })
+    .await;
+
+    let info = match waited {
+        Ok(info) => info?,
+        Err(_) => {
+            return Ok(serde_json::json!({
+                "thread_id": params.thread_id,
+                "process_id": process_id,
+                "stdout_path": stdout_path,
+                "stderr_path": stderr_path,
+                "timed_out": true,
+                "wait_seconds": wait_seconds,
+            }));
+        }
+    };
+
+    if info.exit_code != Some(0) {
+        let (stderr_bytes, stderr_truncated) = read_rotating_log_prefix(
+            Path::new(&stderr_path),
+            THREAD_DIFF_MAX_STDERR_BYTES,
+        )
+        .await?;
+        let stderr_text = String::from_utf8_lossy(&stderr_bytes).trim().to_string();
+        let stderr_suffix = if stderr_truncated { " (truncated)" } else { "" };
+        anyhow::bail!(
+            "git diff failed (process_id={}, exit_code={:?}): {}{}",
+            process_id,
+            info.exit_code,
+            stderr_text,
+            stderr_suffix
+        );
+    }
+
+    let (diff_bytes, truncated) = read_rotating_log_prefix(Path::new(&stdout_path), max_bytes).await?;
+    let diff_text = String::from_utf8_lossy(&diff_bytes).to_string();
+
+    let mut summary = if diff_text.trim().is_empty() {
+        "git diff (clean)".to_string()
+    } else {
+        "git diff".to_string()
+    };
+    if truncated {
+        summary.push_str(" (truncated)");
+    }
+
+    let artifact = handle_artifact_write(
+        server,
+        ArtifactWriteParams {
+            thread_id: params.thread_id,
+            turn_id: params.turn_id,
+            approval_id: None,
+            artifact_id: None,
+            artifact_type: "diff".to_string(),
+            summary,
+            text: diff_text,
+        },
+    )
+    .await?;
+
+    if artifact.get("needs_approval").is_some() || artifact.get("denied").is_some() {
+        return Ok(artifact);
+    }
+
+    Ok(serde_json::json!({
+        "thread_id": params.thread_id,
+        "process_id": process_id,
+        "stdout_path": stdout_path,
+        "stderr_path": stderr_path,
+        "exit_code": info.exit_code,
+        "truncated": truncated,
+        "max_bytes": max_bytes,
+        "artifact": artifact,
+    }))
+}
+
+async fn read_rotating_log_prefix(base_path: &Path, max_bytes: u64) -> anyhow::Result<(Vec<u8>, bool)> {
+    let files = list_rotating_log_files(base_path).await?;
+    if files.is_empty() {
+        return Ok((Vec::new(), false));
+    }
+
+    let mut out = Vec::new();
+    let mut remaining = max_bytes as usize;
+    let mut truncated = false;
+
+    for file_path in files {
+        if remaining == 0 {
+            truncated = true;
+            break;
+        }
+
+        let len = match tokio::fs::metadata(&file_path).await {
+            Ok(meta) => usize::try_from(meta.len()).unwrap_or(usize::MAX),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(err) => return Err(err).with_context(|| format!("stat {}", file_path.display())),
+        };
+
+        if len > remaining {
+            truncated = true;
+        }
+
+        let mut file = tokio::fs::File::open(&file_path)
+            .await
+            .with_context(|| format!("open {}", file_path.display()))?;
+        let mut buf = vec![0u8; remaining.min(8192)];
+        while remaining > 0 {
+            let read_len = buf.len().min(remaining);
+            let n = file
+                .read(&mut buf[..read_len])
+                .await
+                .with_context(|| format!("read {}", file_path.display()))?;
+            if n == 0 {
+                break;
+            }
+            out.extend_from_slice(&buf[..n]);
+            remaining = remaining.saturating_sub(n);
+        }
+
+        if truncated {
+            break;
+        }
+    }
+
+    Ok((out, truncated))
+}
+
 async fn maybe_emit_thread_disk_warning(
     server: &Server,
     thread_id: ThreadId,

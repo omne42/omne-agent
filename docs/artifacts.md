@@ -66,6 +66,12 @@ pm artifact read <thread_id> <artifact_id>
 pm artifact delete <thread_id> <artifact_id>
 ```
 
+生成 diff artifact（`git diff`，写入 user artifact `artifact_type="diff"`）：
+
+```bash
+pm thread diff <thread_id> --max-bytes 4194304 --wait-seconds 30
+```
+
 ---
 
 ## 2) process artifacts（stdout/stderr）

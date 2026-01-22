@@ -18,3 +18,6 @@ include!("main/process_stream.rs");
 
 #[cfg(test)]
 include!("main/artifact_history_tests.rs");
+
+#[cfg(test)]
+include!("main/thread_diff_tests.rs");

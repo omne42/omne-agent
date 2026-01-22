@@ -149,6 +149,23 @@ pub struct ThreadDiskReportParams {
     pub top_files: Option<usize>,
 }
 
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
+pub struct ThreadDiffParams {
+    pub thread_id: pm_protocol::ThreadId,
+    #[serde(default)]
+    #[ts(optional)]
+    pub turn_id: Option<pm_protocol::TurnId>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub approval_id: Option<pm_protocol::ApprovalId>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub max_bytes: Option<u64>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub wait_seconds: Option<u64>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkspaceHookName {
