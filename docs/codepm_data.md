@@ -77,7 +77,8 @@ enabled = false
 ```dotenv
 OPENAI_API_KEY=...
 # 可选：
-CODE_PM_OPENAI_BASE_URL=https://api.openai.com
+CODE_PM_OPENAI_PROVIDER=openai-codex-apikey
+CODE_PM_OPENAI_BASE_URL=https://api.openai.com/v1
 CODE_PM_OPENAI_MODEL=gpt-4.1
 ```
 

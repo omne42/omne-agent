@@ -30,7 +30,7 @@ pm thread configure <thread_id> \
   --sandbox-writable-roots . \
   --mode coder \
   --model gpt-4.1 \
-  --openai-base-url https://api.openai.com
+  --openai-base-url https://api.openai.com/v1
 ```
 
 这会落盘 `ThreadConfigUpdated` 事件，并在下次 turn 生效（可回放、可解释）。
@@ -93,7 +93,7 @@ thread_config:
   sandbox_writable_roots: ["."]
   mode: coder
   model: gpt-4.1
-  openai_base_url: https://api.openai.com
+  openai_base_url: https://api.openai.com/v1
 ```
 
 字段与协议类型对齐（snake_case）：

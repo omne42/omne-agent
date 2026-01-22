@@ -113,7 +113,7 @@ async fn handle_thread_config_explain(
     let mode_catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
 
     let default_model = "gpt-4.1".to_string();
-    let default_openai_base_url = "https://api.openai.com".to_string();
+    let default_openai_base_url = "https://api.openai.com/v1".to_string();
     let default_mode = "coder".to_string();
 
     let mut effective_approval_policy = pm_protocol::ApprovalPolicy::AutoApprove;

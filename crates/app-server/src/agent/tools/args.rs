@@ -157,6 +157,10 @@ enum AgentSpawnWorkspaceMode {
 struct AgentSpawnArgs {
     input: String,
     #[serde(default)]
+    task_id: Option<String>,
+    #[serde(default)]
+    expected_artifact_type: Option<String>,
+    #[serde(default)]
     mode: Option<String>,
     #[serde(default)]
     workspace_mode: Option<AgentSpawnWorkspaceMode>,

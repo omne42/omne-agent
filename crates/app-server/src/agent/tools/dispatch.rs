@@ -459,10 +459,24 @@ async fn run_tool_call_once(
             }
 
             let args: AgentSpawnArgs = serde_json::from_value(args)?;
-            let input = args.input.trim();
+            let input = args.input.trim().to_string();
             if input.is_empty() {
                 anyhow::bail!("input must not be empty");
             }
+
+            let task_id = args
+                .task_id
+                .as_deref()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .map(ToString::to_string);
+            let expected_artifact_type = args
+                .expected_artifact_type
+                .as_deref()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .unwrap_or("fan_out_result")
+                .to_string();
 
             let workspace_mode = args
                 .workspace_mode
@@ -479,10 +493,12 @@ async fn run_tool_call_once(
                 .unwrap_or("reviewer")
                 .to_string();
 
-            let input_preview = pm_core::redact_text(&truncate_chars(input, 400));
+            let input_preview = pm_core::redact_text(&truncate_chars(&input, 400));
             let approval_params = serde_json::json!({
                 "input_chars": input.chars().count(),
                 "input_preview": input_preview,
+                "task_id": task_id.clone(),
+                "expected_artifact_type": expected_artifact_type.clone(),
                 "mode": child_mode.clone(),
                 "workspace_mode": workspace_mode_str,
                 "model": args.model.clone(),
@@ -726,10 +742,16 @@ async fn run_tool_call_once(
                 })
                 .await?;
 
-            let outcome: anyhow::Result<(ForkResult, TurnId)> = async {
+            let outcome: anyhow::Result<(
+                ForkResult,
+                TurnId,
+                tokio::sync::broadcast::Receiver<String>,
+            )> = async {
                 let forked = super::handle_thread_fork(server, super::ThreadForkParams { thread_id })
                     .await?;
                 let forked: ForkResult = serde_json::from_value(forked)?;
+
+                let notify_rx = server.notify_tx.subscribe();
 
                 super::handle_thread_configure(
                     server,
@@ -748,14 +770,23 @@ async fn run_tool_call_once(
 
                 let rt = server.get_or_load_thread(forked.thread_id).await?;
                 let server_arc = Arc::new(server.clone());
-                let turn_id = rt.start_turn(server_arc, args.input).await?;
+                let turn_id = rt.start_turn(server_arc, input).await?;
 
-                Ok((forked, turn_id))
+                Ok((forked, turn_id, notify_rx))
             }
             .await;
 
             match outcome {
-                Ok((forked, turn_id)) => {
+                Ok((forked, turn_id, notify_rx)) => {
+                    spawn_fan_out_result_writer(
+                        server.clone(),
+                        notify_rx,
+                        forked.thread_id,
+                        turn_id,
+                        task_id.clone().unwrap_or_else(|| tool_id.to_string()),
+                        expected_artifact_type.clone(),
+                    );
+
                     thread_rt
                         .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
                             tool_id,
@@ -793,6 +824,80 @@ async fn run_tool_call_once(
         }
         _ => anyhow::bail!("unknown tool: {tool_name}"),
     }
+}
+
+fn spawn_fan_out_result_writer(
+    server: super::Server,
+    mut notify_rx: tokio::sync::broadcast::Receiver<String>,
+    thread_id: pm_protocol::ThreadId,
+    turn_id: TurnId,
+    task_id: String,
+    expected_artifact_type: String,
+) {
+    tokio::spawn(async move {
+        loop {
+            match notify_rx.recv().await {
+                Ok(line) => {
+                    let Ok(val) = serde_json::from_str::<Value>(&line) else {
+                        continue;
+                    };
+                    if val.get("method").and_then(Value::as_str) != Some("turn/completed") {
+                        continue;
+                    }
+                    let Some(params) = val.get("params") else {
+                        continue;
+                    };
+                    let Ok(event) = serde_json::from_value::<pm_protocol::ThreadEvent>(params.clone())
+                    else {
+                        continue;
+                    };
+                    if event.thread_id != thread_id {
+                        continue;
+                    }
+                    let pm_protocol::ThreadEventKind::TurnCompleted {
+                        turn_id: completed_turn_id,
+                        status,
+                        reason,
+                    } = event.kind
+                    else {
+                        continue;
+                    };
+                    if completed_turn_id != turn_id {
+                        continue;
+                    }
+
+                    let payload = serde_json::json!({
+                        "task_id": task_id,
+                        "thread_id": thread_id,
+                        "turn_id": turn_id,
+                        "status": status,
+                        "reason": reason,
+                    });
+                    let text = match serde_json::to_string_pretty(&payload) {
+                        Ok(json) => format!("```json\n{json}\n```\n"),
+                        Err(_) => payload.to_string(),
+                    };
+
+                    let _ = super::handle_artifact_write(
+                        &server,
+                        super::ArtifactWriteParams {
+                            thread_id,
+                            turn_id: Some(turn_id),
+                            approval_id: None,
+                            artifact_id: None,
+                            artifact_type: expected_artifact_type,
+                            summary: "fan-out result".to_string(),
+                            text,
+                        },
+                    )
+                    .await;
+                    return;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+            }
+        }
+    });
 }
 
 #[cfg(test)]

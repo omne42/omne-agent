@@ -13,6 +13,8 @@ use time::format_description::well_known::Rfc3339;
 use tokio_util::sync::CancellationToken;
 
 const DEFAULT_MODEL: &str = "gpt-4.1";
+const DEFAULT_OPENAI_PROVIDER: &str = "openai-codex-apikey";
+const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
 const DEFAULT_MAX_AGENT_STEPS: usize = 24;
 const DEFAULT_MAX_TOOL_CALLS: usize = 128;
 const DEFAULT_MAX_PARALLEL_TOOL_CALLS: usize = 8;
@@ -72,11 +74,14 @@ pub async fn run_agent_turn(
         ProjectOpenAiOverrides::default()
     };
 
-    let api_key = project_overrides
-        .api_key
-        .or_else(|| std::env::var("OPENAI_API_KEY").ok())
-        .or_else(|| std::env::var("CODE_PM_OPENAI_API_KEY").ok())
-        .context("OPENAI_API_KEY is required (or enable project config and set .codepm_data/.env)")?;
+    let provider = project_overrides
+        .provider
+        .or_else(|| {
+            std::env::var("CODE_PM_OPENAI_PROVIDER")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+        })
+        .unwrap_or_else(|| DEFAULT_OPENAI_PROVIDER.to_string());
     let model = thread_model
         .or(project_overrides.model)
         .or_else(|| {
@@ -92,7 +97,55 @@ pub async fn run_agent_turn(
                 .ok()
                 .filter(|s| !s.trim().is_empty())
         })
-        .unwrap_or_else(|| "https://api.openai.com".to_string());
+        .unwrap_or_else(|| DEFAULT_OPENAI_BASE_URL.to_string());
+
+    let api_key = match provider.as_str() {
+        "openai-codex-apikey" => project_overrides
+            .api_key
+            .or_else(|| std::env::var("OPENAI_API_KEY").ok())
+            .or_else(|| std::env::var("CODE_PM_OPENAI_API_KEY").ok())
+            .context(
+                "OPENAI_API_KEY is required (or enable project config and set .codepm_data/.env)",
+            )?,
+        "openai-auth-command" => {
+            let Some(auth_command) = project_overrides.auth_command.as_ref() else {
+                anyhow::bail!("openai provider openai-auth-command requires [openai.auth_command].command");
+            };
+            let (program, args) = auth_command.command.split_first().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "openai provider openai-auth-command requires non-empty [openai.auth_command].command"
+                )
+            })?;
+            let output = tokio::process::Command::new(program)
+                .args(args)
+                .output()
+                .await
+                .with_context(|| format!("run openai auth command: {program}"))?;
+            if !output.status.success() {
+                anyhow::bail!("openai auth command failed with status {}", output.status);
+            }
+
+            #[derive(Deserialize)]
+            struct AuthCommandOutput {
+                #[serde(default)]
+                api_key: Option<String>,
+                #[serde(default)]
+                token: Option<String>,
+            }
+
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let parsed = serde_json::from_str::<AuthCommandOutput>(stdout.trim())
+                .context("parse openai auth command json")?;
+            parsed
+                .api_key
+                .or(parsed.token)
+                .filter(|s| !s.trim().is_empty())
+                .ok_or_else(|| anyhow::anyhow!("openai auth command json missing api_key"))?
+        }
+        other => anyhow::bail!(
+            "unknown openai provider: {other} (expected: openai-codex-apikey, openai-auth-command)"
+        ),
+    };
 
     let openai = pm_openai::Client::new_with_base_url(api_key, base_url)?;
     let tools = build_tools();
@@ -186,6 +239,12 @@ pub async fn run_agent_turn(
     let mut finished = false;
     let started_at = tokio::time::Instant::now();
 
+    let reasoning_effort = project_overrides
+        .model_reasoning_effort
+        .get(&model)
+        .copied()
+        .or_else(|| project_overrides.model_reasoning_effort.get("*").copied());
+
     for _step in 0..max_agent_steps {
         if cancel.is_cancelled() {
             return Err(AgentTurnError::Cancelled.into());
@@ -204,6 +263,7 @@ pub async fn run_agent_turn(
             tools: &tools,
             tool_choice: "auto",
             response_format: response_format.as_ref(),
+            reasoning: reasoning_effort.map(|effort| pm_openai::ReasoningConfig { effort }),
             parallel_tool_calls,
             store: false,
             stream: true,

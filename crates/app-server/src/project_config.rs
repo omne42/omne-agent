@@ -1,12 +1,21 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
 #[derive(Default)]
 pub struct ProjectOpenAiOverrides {
+    pub provider: Option<String>,
     pub api_key: Option<String>,
     pub base_url: Option<String>,
     pub model: Option<String>,
+    pub model_reasoning_effort: BTreeMap<String, pm_openai::ReasoningEffort>,
+    pub auth_command: Option<OpenAiAuthCommand>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct OpenAiAuthCommand {
+    pub command: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -54,15 +63,28 @@ struct ProjectConfigSection {
 #[derive(Debug, Default, Deserialize)]
 struct ProjectOpenAiSection {
     #[serde(default)]
+    provider: Option<String>,
+    #[serde(default)]
     base_url: Option<String>,
     #[serde(default)]
     model: Option<String>,
+    #[serde(default)]
+    model_reasoning_effort: BTreeMap<String, pm_openai::ReasoningEffort>,
+    #[serde(default)]
+    auth_command: Option<ProjectOpenAiAuthCommandSection>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ProjectOpenAiAuthCommandSection {
+    #[serde(default)]
+    command: Vec<String>,
 }
 
 #[derive(Default)]
 struct DotenvOpenAiOverrides {
     openai_api_key: Option<String>,
     code_pm_openai_api_key: Option<String>,
+    provider: Option<String>,
     base_url: Option<String>,
     model: Option<String>,
 }
@@ -70,9 +92,12 @@ struct DotenvOpenAiOverrides {
 impl DotenvOpenAiOverrides {
     fn into_project_overrides(self) -> ProjectOpenAiOverrides {
         ProjectOpenAiOverrides {
+            provider: self.provider,
             api_key: self.openai_api_key.or(self.code_pm_openai_api_key),
             base_url: self.base_url,
             model: self.model,
+            model_reasoning_effort: BTreeMap::new(),
+            auth_command: None,
         }
     }
 }
@@ -122,6 +147,7 @@ fn parse_dotenv_openai(contents: &str) -> DotenvOpenAiOverrides {
         match key {
             "OPENAI_API_KEY" => out.openai_api_key = Some(value),
             "CODE_PM_OPENAI_API_KEY" => out.code_pm_openai_api_key = Some(value),
+            "CODE_PM_OPENAI_PROVIDER" => out.provider = Some(value),
             "CODE_PM_OPENAI_BASE_URL" => out.base_url = Some(value),
             "CODE_PM_OPENAI_MODEL" => out.model = Some(value),
             _ => {}
@@ -184,15 +210,39 @@ pub async fn load_project_config(thread_root: &Path) -> LoadedProjectConfig {
         };
 
     let mut enabled = false;
+    let mut config_openai_provider: Option<String> = None;
     let mut config_openai_base_url: Option<String> = None;
     let mut config_openai_model: Option<String> = None;
+    let mut config_openai_model_reasoning_effort: BTreeMap<String, pm_openai::ReasoningEffort> =
+        BTreeMap::new();
+    let mut config_openai_auth_command: Option<OpenAiAuthCommand> = None;
 
     if let Some(raw) = config_raw {
         match toml::from_str::<ProjectConfigToml>(&raw) {
             Ok(parsed) => {
                 enabled = parsed.project_config.enabled;
+                config_openai_provider = clean_string_opt(parsed.openai.provider);
                 config_openai_base_url = clean_string_opt(parsed.openai.base_url);
                 config_openai_model = clean_string_opt(parsed.openai.model);
+                for (k, v) in parsed.openai.model_reasoning_effort {
+                    let key = k.trim().to_string();
+                    if !key.is_empty() {
+                        config_openai_model_reasoning_effort.insert(key, v);
+                    }
+                }
+                config_openai_auth_command = parsed.openai.auth_command.and_then(|section| {
+                    let command = section
+                        .command
+                        .into_iter()
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect::<Vec<_>>();
+                    if command.is_empty() {
+                        None
+                    } else {
+                        Some(OpenAiAuthCommand { command })
+                    }
+                });
             }
             Err(err) => {
                 let msg = format!("parse {}: {err}", config_path.display());
@@ -237,9 +287,12 @@ pub async fn load_project_config(thread_root: &Path) -> LoadedProjectConfig {
         .into_project_overrides();
 
     let openai = ProjectOpenAiOverrides {
+        provider: clean_string_opt(dotenv_openai.provider).or(config_openai_provider),
         api_key: dotenv_openai.api_key,
         base_url: clean_string_opt(dotenv_openai.base_url).or(config_openai_base_url),
         model: clean_string_opt(dotenv_openai.model).or(config_openai_model),
+        model_reasoning_effort: config_openai_model_reasoning_effort,
+        auth_command: config_openai_auth_command,
     };
 
     LoadedProjectConfig {
@@ -256,4 +309,103 @@ pub async fn load_project_config(thread_root: &Path) -> LoadedProjectConfig {
 
 pub async fn load_project_openai_overrides(thread_root: &Path) -> ProjectOpenAiOverrides {
     load_project_config(thread_root).await.openai
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn loads_provider_reasoning_and_auth_command_from_config_toml() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let root = tmp.path();
+        let codepm_data = root.join(".codepm_data");
+        tokio::fs::create_dir_all(&codepm_data).await?;
+
+        tokio::fs::write(
+            codepm_data.join("config.toml"),
+            r#"
+[project_config]
+enabled = true
+
+[openai]
+provider = "openai-auth-command"
+base_url = "https://example.com/v9"
+model = "codex-mini-latest"
+model_reasoning_effort = { "*" = "low", "codex-mini-latest" = "xhigh" }
+
+[openai.auth_command]
+command = ["node", "script.mjs"]
+"#,
+        )
+        .await?;
+
+        let loaded = load_project_config(root).await;
+        assert!(loaded.enabled);
+        assert_eq!(
+            loaded.openai.provider.as_deref(),
+            Some("openai-auth-command")
+        );
+        assert_eq!(
+            loaded.openai.base_url.as_deref(),
+            Some("https://example.com/v9")
+        );
+        assert_eq!(loaded.openai.model.as_deref(), Some("codex-mini-latest"));
+        assert_eq!(
+            loaded.openai.model_reasoning_effort.get("*").copied(),
+            Some(pm_openai::ReasoningEffort::Low)
+        );
+        assert_eq!(
+            loaded
+                .openai
+                .model_reasoning_effort
+                .get("codex-mini-latest")
+                .copied(),
+            Some(pm_openai::ReasoningEffort::XHigh)
+        );
+        assert_eq!(
+            loaded
+                .openai
+                .auth_command
+                .as_ref()
+                .map(|c| c.command.clone()),
+            Some(vec!["node".to_string(), "script.mjs".to_string()])
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn dotenv_provider_overrides_config_provider_when_enabled() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let root = tmp.path();
+        let codepm_data = root.join(".codepm_data");
+        tokio::fs::create_dir_all(&codepm_data).await?;
+
+        tokio::fs::write(
+            codepm_data.join("config.toml"),
+            r#"
+[project_config]
+enabled = true
+
+[openai]
+provider = "openai-codex-apikey"
+"#,
+        )
+        .await?;
+        tokio::fs::write(
+            codepm_data.join(".env"),
+            r#"
+CODE_PM_OPENAI_PROVIDER=openai-auth-command
+"#,
+        )
+        .await?;
+
+        let loaded = load_project_config(root).await;
+        assert!(loaded.enabled);
+        assert_eq!(
+            loaded.openai.provider.as_deref(),
+            Some("openai-auth-command")
+        );
+        Ok(())
+    }
 }

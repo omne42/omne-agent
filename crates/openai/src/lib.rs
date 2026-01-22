@@ -50,9 +50,26 @@ pub struct ResponsesApiRequest<'a> {
     pub tool_choice: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_format: Option<&'a Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<ReasoningConfig>,
     pub parallel_tool_calls: bool,
     pub store: bool,
     pub stream: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningEffort {
+    Low,
+    Medium,
+    High,
+    #[serde(rename = "xhigh")]
+    XHigh,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReasoningConfig {
+    pub effort: ReasoningEffort,
 }
 
 #[derive(Debug, Deserialize)]
@@ -186,7 +203,7 @@ pub struct Client {
 
 impl Client {
     pub fn new(api_key: String) -> anyhow::Result<Self> {
-        Self::new_with_base_url(api_key, "https://api.openai.com".to_string())
+        Self::new_with_base_url(api_key, "https://api.openai.com/v1".to_string())
     }
 
     pub fn new_with_base_url(api_key: String, base_url: String) -> anyhow::Result<Self> {
@@ -201,11 +218,20 @@ impl Client {
         })
     }
 
+    fn responses_url(&self) -> String {
+        let base = self.base_url.trim_end_matches('/');
+        if base.ends_with("/responses") {
+            base.to_string()
+        } else {
+            format!("{base}/responses")
+        }
+    }
+
     pub async fn create_response(
         &self,
         request: &ResponsesApiRequest<'_>,
     ) -> anyhow::Result<ResponsesApiResponse> {
-        let url = format!("{}/v1/responses", self.base_url.trim_end_matches('/'));
+        let url = self.responses_url();
         let response = self
             .http
             .post(url)
@@ -213,7 +239,7 @@ impl Client {
             .json(request)
             .send()
             .await
-            .context("send /v1/responses")?;
+            .context("send /responses")?;
 
         let status = response.status();
         if !status.is_success() {
@@ -224,7 +250,7 @@ impl Client {
         response
             .json::<ResponsesApiResponse>()
             .await
-            .context("parse /v1/responses json")
+            .context("parse /responses json")
     }
 
     pub async fn create_response_stream(
@@ -235,7 +261,7 @@ impl Client {
             anyhow::bail!("stream=true is required for create_response_stream");
         }
 
-        let url = format!("{}/v1/responses", self.base_url.trim_end_matches('/'));
+        let url = self.responses_url();
         let response = self
             .http
             .post(url)
@@ -244,7 +270,7 @@ impl Client {
             .json(request)
             .send()
             .await
-            .context("send /v1/responses (stream)")?;
+            .context("send /responses (stream)")?;
 
         let status = response.status();
         if !status.is_success() {
@@ -654,6 +680,7 @@ mod tests {
             tools: &tools,
             tool_choice: "auto",
             response_format: Some(&response_format),
+            reasoning: None,
             parallel_tool_calls: false,
             store: false,
             stream: true,
@@ -674,6 +701,7 @@ mod tests {
             tools: &tools,
             tool_choice: "auto",
             response_format: None,
+            reasoning: None,
             parallel_tool_calls: false,
             store: false,
             stream: true,

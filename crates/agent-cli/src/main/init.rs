@@ -148,8 +148,16 @@ async fn write_codepm_config_toml(
 enabled = {enabled}
 
 [openai]
-# base_url = "https://api.openai.com"
+# provider = "openai-codex-apikey"
+# base_url = "https://api.openai.com/v1"
 # model = "gpt-4.1"
+# # Per-model overrides (supports: low/medium/high/xhigh)
+# # model_reasoning_effort = {{ "codex-mini-latest" = "low" }}
+#
+# # Auth plugin (Node-friendly): command must print JSON: {{"api_key":"..."}}
+# # provider = "openai-auth-command"
+# # [openai.auth_command]
+# # command = ["node", "./.codepm_data/openai-auth.mjs"]
 "#
     );
 
@@ -184,8 +192,16 @@ async fn write_codepm_config_local_toml(
 enabled = {enabled}
 
 [openai]
-# base_url = "https://api.openai.com"
+# provider = "openai-codex-apikey"
+# base_url = "https://api.openai.com/v1"
 # model = "gpt-4.1"
+# # Per-model overrides (supports: low/medium/high/xhigh)
+# # model_reasoning_effort = {{ "codex-mini-latest" = "low" }}
+#
+# # Auth plugin (Node-friendly): command must print JSON: {{"api_key":"..."}}
+# # provider = "openai-auth-command"
+# # [openai.auth_command]
+# # command = ["node", "./.codepm_data/openai-auth.mjs"]
 "#
     );
 
@@ -203,7 +219,8 @@ async fn write_codepm_env_template(codepm_data_dir: &Path, force: bool) -> anyho
 OPENAI_API_KEY=
 #
 # Optional overrides:
-# CODE_PM_OPENAI_BASE_URL=https://api.openai.com
+# CODE_PM_OPENAI_PROVIDER=openai-codex-apikey
+# CODE_PM_OPENAI_BASE_URL=https://api.openai.com/v1
 # CODE_PM_OPENAI_MODEL=gpt-4.1
 "#;
 

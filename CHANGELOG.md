@@ -28,8 +28,10 @@
 - 新增 `pm-execpolicy`：对齐 Codex `prefix_rule` 子集的执行策略引擎（Starlark 语法 + `match/not_match` 例子校验），并提供 `pm-execpolicy check --rules ... <cmd...>` 输出匹配结果 JSON。
 - 新增 `pm-openai`：最小 OpenAI Responses API 客户端与类型（用于 v0.2.0 的 Responses-first agent loop）。
 - `pm-openai`：新增 Responses SSE 流式解析与 `Client::create_response_stream`（`response.output_text.delta`/`response.output_item.done`/`response.completed`），为 `item/delta` 与更强可观测性打底。
+- `pm-openai`：新增 `reasoning.effort`（`low|medium|high|xhigh`）请求字段支持；`pm-app-server` 可按模型配置下发（见 `openai.model_reasoning_effort`）。
 - `pm-openai`/`pm-app-server`：新增 `response_format` 支持（JSON schema），默认关闭，可通过 `CODE_PM_AGENT_RESPONSE_FORMAT_JSON` 启用。
 - `pm-openai`：SSE 事件强类型化：`TokenUsage`/`RateLimits`/`ApiError`，并支持 `response.failed` → `ResponseEvent::Failed`；`pm-app-server` agent loop 会消费 typed usage 并把 failed 作为错误返回。
+- `pm-app-server`：新增 OpenAI provider 选择（`openai.provider` / `CODE_PM_OPENAI_PROVIDER`），首个 provider `openai-codex-apikey`；并支持 `openai-auth-command`（运行外部命令返回 `{ "api_key": "..." }`，便于 Node 插件化 auth）。
 - 新增 `pm-app-server`：最小 JSON-RPC over stdio 控制面（`initialize` + `thread/*` + `turn/*`），用于验证 v0.2.0 的 thread/turn/interrupt 与落盘回放。
 - 新增 `pm` CLI：作为 `pm-app-server` 的人类可用客户端，支持 `ask/watch --bell`、`thread/*`、`approval/*`、`process/*`（只读查看 + interrupt/kill），并在 `ask` 中支持 Ctrl-C 触发 `turn/interrupt`。
 - `pm` CLI 新增 `pm init`：初始化 `./.codepm_data/`（创建目录、生成 `config.toml`、可选 `.env` 模板与 `spec/`，并写入 `.codepm_data/.gitignore`）。
@@ -101,6 +103,7 @@
 - `pm-app-server process/start`：当 `sandbox_network_access=deny` 时，拒绝明显网络命令（best-effort 防呆；非 OS 级网络沙箱），需要联网可显式配置 `sandbox_network_access=allow`。
 - `pm-app-server` agent loop：支持 read-only tool calls 并发执行与结果聚合（默认关闭；`CODE_PM_AGENT_PARALLEL_TOOL_CALLS=1` 启用，`CODE_PM_AGENT_MAX_PARALLEL_TOOL_CALLS` 限制并发数）。
 - `pm-app-server` agent loop：支持 token budget（`CODE_PM_AGENT_MAX_TOTAL_TOKENS`；超限标记为 `stuck`）。
+- `pm-openai`/`pm-app-server`：OpenAI Responses 请求 URL 改为 `base_url + /responses`（不再固定拼 `/v1/responses`）；默认 `openai_base_url` 统一为 `https://api.openai.com/v1`。
 - 更新 `docs/research/README.md`：补齐新增调研条目并调整落地方向表述。
 - 更新 `docs/v0.2.0_parity.md`：同步 `item/* notifications` 与通知去重/节流的落地状态（`pm watch|inbox --debounce-ms`）。
 - 更新 `docs/v0.2.0_parity.md`：补齐 “Item 覆盖” 勾选状态（见 `docs/thread_event_model.md`）。

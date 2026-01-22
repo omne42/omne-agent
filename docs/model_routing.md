@@ -31,7 +31,7 @@
    - `CODE_PM_OPENAI_BASE_URL`
 3. default：
    - `model="gpt-4.1"`
-   - `openai_base_url="https://api.openai.com"`
+   - `openai_base_url="https://api.openai.com/v1"`
 
 > 注意：实现中 default 在多个位置硬编码；未来如果改默认值，必须同步，避免 explain 与实际漂移。
 
