@@ -16,6 +16,7 @@
 - 新增 `v0.2.0` 功能对齐与 TODO 汇总：`docs/v0.2.0_parity.md`。
 - 新增 Mode（角色权限边界）规范：`docs/modes.md`（配置发现顺序、`deny/prompt/allow` 语义、`prompt+auto_approve` 的落盘审计规则）。
 - `pm-core`/`pm-app-server`：落地 ModeCatalog（`.codepm/modes.yaml` / `CODE_PM_MODES_FILE`），并在 `file/*` 与 `process/start` 工具入口强制执行 `mode` 的 `deny` 边界（未知 mode 也会拒绝并返回可用列表）。
+- `pm-core`/`pm-app-server`：新增 `subagent.spawn` 权限边界，并在 `agent_spawn` 入口强制执行（默认子 thread `sandbox_policy=read_only` + `mode=reviewer`，并支持 `CODE_PM_MAX_CONCURRENT_SUBAGENTS` 并发上限，超限拒绝并返回原因）。
 - `pm-app-server`：支持 per-mode execpolicy rules（`.codepm/modes.yaml` 的 `permissions.command.execpolicy_rules`），并在 `process/start` 入口 fail-closed 执行（加载失败即拒绝）。
 - `pm-app-server thread/config-explain`：追加 mode 可解释性（mode catalog 来源/路径/加载错误、可用 modes、当前 mode 的权限摘要与 glob 列表）。
 - 更新仓库级 `AGENTS.md`：补齐 `crates/*` 结构、Rust gates 与 `pm*` 入口说明。

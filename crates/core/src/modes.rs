@@ -122,6 +122,16 @@ impl ModeCatalog {
                     },
                     artifact: Decision::Allow,
                     browser: Decision::Deny,
+                    subagent: SubagentPermissions {
+                        spawn: SubagentSpawnPermissions {
+                            decision: Decision::Prompt,
+                            allowed_modes: Some(vec![
+                                "architect".to_string(),
+                                "reviewer".to_string(),
+                                "builder".to_string(),
+                            ]),
+                        },
+                    },
                 },
             ),
         );
@@ -146,6 +156,16 @@ impl ModeCatalog {
                     },
                     artifact: Decision::Allow,
                     browser: Decision::Prompt,
+                    subagent: SubagentPermissions {
+                        spawn: SubagentSpawnPermissions {
+                            decision: Decision::Prompt,
+                            allowed_modes: Some(vec![
+                                "architect".to_string(),
+                                "reviewer".to_string(),
+                                "builder".to_string(),
+                            ]),
+                        },
+                    },
                 },
             ),
         );
@@ -170,6 +190,7 @@ impl ModeCatalog {
                     },
                     artifact: Decision::Allow,
                     browser: Decision::Deny,
+                    subagent: SubagentPermissions::default(),
                 },
             ),
         );
@@ -190,6 +211,7 @@ impl ModeCatalog {
                     },
                     artifact: Decision::Allow,
                     browser: Decision::Deny,
+                    subagent: SubagentPermissions::default(),
                 },
             ),
         );
@@ -261,6 +283,7 @@ pub struct ModePermissions {
     pub process: ProcessPermissions,
     pub artifact: Decision,
     pub browser: Decision,
+    pub subagent: SubagentPermissions,
 }
 
 impl ModePermissions {
@@ -305,6 +328,12 @@ impl ModePermissions {
 
         let artifact = raw.artifact.map(|v| v.decision).unwrap_or(Decision::Deny);
         let browser = raw.browser.map(|v| v.decision).unwrap_or(Decision::Deny);
+        let subagent = raw
+            .subagent
+            .map(SubagentPermissions::try_from_raw)
+            .transpose()
+            .with_context(|| format!("mode {mode_name}: parse subagent permissions"))?
+            .unwrap_or_default();
 
         Ok(Self {
             read,
@@ -313,6 +342,7 @@ impl ModePermissions {
             process,
             artifact,
             browser,
+            subagent,
         })
     }
 }
@@ -322,6 +352,61 @@ pub struct ProcessPermissions {
     pub inspect: Decision,
     pub kill: Decision,
     pub interact: Decision,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SubagentPermissions {
+    pub spawn: SubagentSpawnPermissions,
+}
+
+impl SubagentPermissions {
+    fn try_from_raw(raw: RawSubagentPermissions) -> anyhow::Result<Self> {
+        let spawn = raw
+            .spawn
+            .map(SubagentSpawnPermissions::try_from_raw)
+            .transpose()?
+            .unwrap_or_default();
+        Ok(Self { spawn })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SubagentSpawnPermissions {
+    pub decision: Decision,
+    pub allowed_modes: Option<Vec<String>>,
+}
+
+impl Default for SubagentSpawnPermissions {
+    fn default() -> Self {
+        Self {
+            decision: Decision::Deny,
+            allowed_modes: None,
+        }
+    }
+}
+
+impl SubagentSpawnPermissions {
+    fn try_from_raw(raw: RawSubagentSpawn) -> anyhow::Result<Self> {
+        let allowed_modes = raw.allowed_modes.map(|modes| {
+            let mut out = Vec::<String>::new();
+            let mut seen = std::collections::BTreeSet::<String>::new();
+            for mode in modes {
+                let mode = mode.trim();
+                if mode.is_empty() {
+                    continue;
+                }
+                if seen.insert(mode.to_string()) {
+                    out.push(mode.to_string());
+                }
+            }
+            out
+        });
+
+        Ok(Self {
+            decision: raw.decision,
+            allowed_modes,
+        })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -495,6 +580,8 @@ struct RawPermissions {
     artifact: Option<RawDecision>,
     #[serde(default)]
     browser: Option<RawDecision>,
+    #[serde(default)]
+    subagent: Option<RawSubagentPermissions>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -526,6 +613,19 @@ struct RawProcess {
     kill: Option<RawDecision>,
     #[serde(default)]
     interact: Option<RawDecision>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawSubagentPermissions {
+    #[serde(default)]
+    spawn: Option<RawSubagentSpawn>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawSubagentSpawn {
+    decision: Decision,
+    #[serde(default)]
+    allowed_modes: Option<Vec<String>>,
 }
 
 #[cfg(test)]

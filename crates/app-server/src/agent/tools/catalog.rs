@@ -283,6 +283,8 @@ fn build_tools() -> Vec<Value> {
                 "type": "object",
                 "properties": {
                     "input": { "type": "string" },
+                    "mode": { "type": "string" },
+                    "workspace_mode": { "type": "string", "enum": ["read_only", "isolated_write"] },
                     "model": { "type": "string" },
                     "openai_base_url": { "type": "string" },
                 },

@@ -55,6 +55,67 @@ async fn run_tool_call(
     Err(AgentTurnError::BudgetExceeded { budget: "retries" }.into())
 }
 
+async fn active_subagent_threads(
+    server: &super::Server,
+    parent_thread_id: pm_protocol::ThreadId,
+) -> anyhow::Result<Vec<pm_protocol::ThreadId>> {
+    let events = server
+        .thread_store
+        .read_events_since(parent_thread_id, EventSeq::ZERO)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("thread not found: {}", parent_thread_id))?;
+
+    let mut spawned_tool_ids = std::collections::HashSet::<pm_protocol::ToolId>::new();
+    for event in &events {
+        if let pm_protocol::ThreadEventKind::ToolStarted { tool_id, tool, .. } = &event.kind
+            && tool == "subagent/spawn"
+        {
+            spawned_tool_ids.insert(*tool_id);
+        }
+    }
+
+    let mut spawned_threads = std::collections::BTreeSet::<pm_protocol::ThreadId>::new();
+    for event in &events {
+        let pm_protocol::ThreadEventKind::ToolCompleted {
+            tool_id,
+            status,
+            result,
+            ..
+        } = &event.kind
+        else {
+            continue;
+        };
+        if !spawned_tool_ids.contains(tool_id) {
+            continue;
+        }
+        if !matches!(status, pm_protocol::ToolStatus::Completed) {
+            continue;
+        }
+        let Some(thread_id) = result
+            .as_ref()
+            .and_then(|value| value.get("thread_id"))
+            .and_then(|value| value.as_str())
+        else {
+            continue;
+        };
+        if let Ok(thread_id) = thread_id.parse::<pm_protocol::ThreadId>() {
+            spawned_threads.insert(thread_id);
+        }
+    }
+
+    let mut active = Vec::new();
+    for thread_id in spawned_threads {
+        let Some(state) = server.thread_store.read_state(thread_id).await? else {
+            continue;
+        };
+        if state.active_turn_id.is_some() {
+            active.push(thread_id);
+        }
+    }
+
+    Ok(active)
+}
+
 async fn run_tool_call_once(
     server: &super::Server,
     thread_id: pm_protocol::ThreadId,
@@ -398,42 +459,479 @@ async fn run_tool_call_once(
             }
 
             let args: AgentSpawnArgs = serde_json::from_value(args)?;
-            if args.input.trim().is_empty() {
+            let input = args.input.trim();
+            if input.is_empty() {
                 anyhow::bail!("input must not be empty");
             }
 
-            let forked =
-                super::handle_thread_fork(server, super::ThreadForkParams { thread_id }).await?;
-            let forked: ForkResult = serde_json::from_value(forked)?;
+            let workspace_mode = args
+                .workspace_mode
+                .unwrap_or(AgentSpawnWorkspaceMode::ReadOnly);
+            let workspace_mode_str = match workspace_mode {
+                AgentSpawnWorkspaceMode::ReadOnly => "read_only",
+                AgentSpawnWorkspaceMode::IsolatedWrite => "isolated_write",
+            };
+            let child_mode = args
+                .mode
+                .as_deref()
+                .map(|mode| mode.trim())
+                .filter(|mode| !mode.is_empty())
+                .unwrap_or("reviewer")
+                .to_string();
 
-            if args.model.is_some() || args.openai_base_url.is_some() {
+            let input_preview = pm_core::redact_text(&truncate_chars(input, 400));
+            let approval_params = serde_json::json!({
+                "input_chars": input.chars().count(),
+                "input_preview": input_preview,
+                "mode": child_mode.clone(),
+                "workspace_mode": workspace_mode_str,
+                "model": args.model.clone(),
+                "openai_base_url": args.openai_base_url.clone(),
+            });
+
+            let tool_id = pm_protocol::ToolId::new();
+            let (thread_rt, thread_root) = super::load_thread_root(server, thread_id).await?;
+            let (approval_policy, mode_name) = {
+                let handle = thread_rt.handle.lock().await;
+                let state = handle.state();
+                (state.approval_policy, state.mode.clone())
+            };
+
+            let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
+            let Some(mode) = catalog.mode(&mode_name) else {
+                let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
+                let decision = pm_core::modes::Decision::Deny;
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                        tool_id,
+                        turn_id,
+                        tool: "subagent/spawn".to_string(),
+                        params: Some(approval_params),
+                    })
+                    .await?;
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                        tool_id,
+                        status: pm_protocol::ToolStatus::Denied,
+                        error: Some("unknown mode".to_string()),
+                        result: Some(serde_json::json!({
+                            "mode": mode_name,
+                            "decision": decision,
+                            "available": available,
+                            "load_error": catalog.load_error.clone(),
+                        })),
+                    })
+                    .await?;
+                return Ok(serde_json::json!({
+                    "tool_id": tool_id,
+                    "denied": true,
+                    "mode": mode_name,
+                    "decision": decision,
+                    "available": available,
+                    "load_error": catalog.load_error,
+                }));
+            };
+
+            if matches!(workspace_mode, AgentSpawnWorkspaceMode::IsolatedWrite) {
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                        tool_id,
+                        turn_id,
+                        tool: "subagent/spawn".to_string(),
+                        params: Some(approval_params),
+                    })
+                    .await?;
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                        tool_id,
+                        status: pm_protocol::ToolStatus::Denied,
+                        error: Some("workspace_mode=isolated_write is not supported yet".to_string()),
+                        result: Some(serde_json::json!({
+                            "workspace_mode": workspace_mode_str,
+                        })),
+                    })
+                    .await?;
+                return Ok(serde_json::json!({
+                    "tool_id": tool_id,
+                    "denied": true,
+                    "workspace_mode": workspace_mode_str,
+                }));
+            }
+
+            let base_decision = mode.permissions.subagent.spawn.decision;
+            let effective_decision = match mode.tool_overrides.get("subagent/spawn").copied() {
+                Some(override_decision) => base_decision.combine(override_decision),
+                None => base_decision,
+            };
+
+            if effective_decision == pm_core::modes::Decision::Deny {
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                        tool_id,
+                        turn_id,
+                        tool: "subagent/spawn".to_string(),
+                        params: Some(approval_params),
+                    })
+                    .await?;
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                        tool_id,
+                        status: pm_protocol::ToolStatus::Denied,
+                        error: Some("mode denies subagent/spawn".to_string()),
+                        result: Some(serde_json::json!({
+                            "mode": mode_name,
+                            "decision": effective_decision,
+                        })),
+                    })
+                    .await?;
+                return Ok(serde_json::json!({
+                    "tool_id": tool_id,
+                    "denied": true,
+                    "mode": mode_name,
+                    "decision": effective_decision,
+                }));
+            }
+
+            if let Some(allowed) = mode.permissions.subagent.spawn.allowed_modes.as_ref()
+                && !allowed.iter().any(|name| name == &child_mode)
+            {
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                        tool_id,
+                        turn_id,
+                        tool: "subagent/spawn".to_string(),
+                        params: Some(approval_params),
+                    })
+                    .await?;
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                        tool_id,
+                        status: pm_protocol::ToolStatus::Denied,
+                        error: Some("mode forbids spawning this subagent mode".to_string()),
+                        result: Some(serde_json::json!({
+                            "mode": mode_name,
+                            "decision": effective_decision,
+                            "requested_mode": child_mode,
+                            "allowed_modes": allowed,
+                        })),
+                    })
+                    .await?;
+                return Ok(serde_json::json!({
+                    "tool_id": tool_id,
+                    "denied": true,
+                    "mode": mode_name,
+                    "decision": effective_decision,
+                    "allowed_modes": allowed,
+                }));
+            }
+
+            let max_concurrent_subagents =
+                parse_env_usize("CODE_PM_MAX_CONCURRENT_SUBAGENTS", 4, 0, 64);
+            if max_concurrent_subagents > 0 {
+                let active_threads = active_subagent_threads(server, thread_id).await?;
+                if active_threads.len() >= max_concurrent_subagents {
+                    let active = active_threads.len();
+                    let active_thread_ids = active_threads
+                        .iter()
+                        .map(|id| id.to_string())
+                        .collect::<Vec<_>>();
+
+                    thread_rt
+                        .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                            tool_id,
+                            turn_id,
+                            tool: "subagent/spawn".to_string(),
+                            params: Some(approval_params),
+                        })
+                        .await?;
+                    thread_rt
+                        .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                            tool_id,
+                            status: pm_protocol::ToolStatus::Denied,
+                            error: Some(format!(
+                                "max_concurrent_subagents limit reached: active={active}, max={max_concurrent_subagents}"
+                            )),
+                            result: Some(serde_json::json!({
+                                "max_concurrent_subagents": max_concurrent_subagents,
+                                "active": active,
+                                "active_threads": active_thread_ids,
+                            })),
+                        })
+                        .await?;
+                    return Ok(serde_json::json!({
+                        "tool_id": tool_id,
+                        "denied": true,
+                        "max_concurrent_subagents": max_concurrent_subagents,
+                        "active": active,
+                    }));
+                }
+            }
+
+            if effective_decision == pm_core::modes::Decision::Prompt {
+                match super::gate_approval(
+                    server,
+                    &thread_rt,
+                    thread_id,
+                    turn_id,
+                    approval_policy,
+                    super::ApprovalRequest {
+                        approval_id,
+                        action: "subagent/spawn",
+                        params: &approval_params,
+                    },
+                )
+                .await?
+                {
+                    super::ApprovalGate::Approved => {}
+                    super::ApprovalGate::Denied { remembered } => {
+                        thread_rt
+                            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                                tool_id,
+                                turn_id,
+                                tool: "subagent/spawn".to_string(),
+                                params: Some(approval_params),
+                            })
+                            .await?;
+                        thread_rt
+                            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                                tool_id,
+                                status: pm_protocol::ToolStatus::Denied,
+                                error: Some(super::approval_denied_error(remembered).to_string()),
+                                result: Some(serde_json::json!({
+                                    "approval_policy": approval_policy,
+                                })),
+                            })
+                            .await?;
+                        return Ok(serde_json::json!({
+                            "tool_id": tool_id,
+                            "denied": true,
+                            "remembered": remembered,
+                        }));
+                    }
+                    super::ApprovalGate::NeedsApproval { approval_id } => {
+                        return Ok(serde_json::json!({
+                            "needs_approval": true,
+                            "approval_id": approval_id,
+                        }));
+                    }
+                }
+            }
+
+            thread_rt
+                .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                    tool_id,
+                    turn_id,
+                    tool: "subagent/spawn".to_string(),
+                    params: Some(approval_params),
+                })
+                .await?;
+
+            let outcome: anyhow::Result<(ForkResult, TurnId)> = async {
+                let forked = super::handle_thread_fork(server, super::ThreadForkParams { thread_id })
+                    .await?;
+                let forked: ForkResult = serde_json::from_value(forked)?;
+
                 super::handle_thread_configure(
                     server,
                     super::ThreadConfigureParams {
                         thread_id: forked.thread_id,
                         approval_policy: None,
-                        sandbox_policy: None,
+                        sandbox_policy: Some(pm_protocol::SandboxPolicy::ReadOnly),
                         sandbox_writable_roots: None,
                         sandbox_network_access: None,
-                        mode: None,
+                        mode: Some(child_mode.clone()),
                         model: args.model,
                         openai_base_url: args.openai_base_url,
                     },
                 )
                 .await?;
+
+                let rt = server.get_or_load_thread(forked.thread_id).await?;
+                let server_arc = Arc::new(server.clone());
+                let turn_id = rt.start_turn(server_arc, args.input).await?;
+
+                Ok((forked, turn_id))
             }
+            .await;
 
-            let rt = server.get_or_load_thread(forked.thread_id).await?;
-            let server_arc = Arc::new(server.clone());
-            let turn_id = rt.start_turn(server_arc, args.input).await?;
+            match outcome {
+                Ok((forked, turn_id)) => {
+                    thread_rt
+                        .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                            tool_id,
+                            status: pm_protocol::ToolStatus::Completed,
+                            error: None,
+                            result: Some(serde_json::json!({
+                                "thread_id": forked.thread_id,
+                                "turn_id": turn_id,
+                                "log_path": forked.log_path,
+                                "last_seq": forked.last_seq,
+                            })),
+                        })
+                        .await?;
 
-            Ok(serde_json::json!({
-                "thread_id": forked.thread_id,
-                "turn_id": turn_id,
-                "log_path": forked.log_path,
-                "last_seq": forked.last_seq,
-            }))
+                    Ok(serde_json::json!({
+                        "tool_id": tool_id,
+                        "thread_id": forked.thread_id,
+                        "turn_id": turn_id,
+                        "log_path": forked.log_path,
+                        "last_seq": forked.last_seq,
+                    }))
+                }
+                Err(err) => {
+                    thread_rt
+                        .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                            tool_id,
+                            status: pm_protocol::ToolStatus::Failed,
+                            error: Some(err.to_string()),
+                            result: None,
+                        })
+                        .await?;
+                    Err(err)
+                }
+            }
         }
         _ => anyhow::bail!("unknown tool: {tool_name}"),
+    }
+}
+
+#[cfg(test)]
+mod agent_spawn_guard_tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use tokio::sync::mpsc;
+
+    fn build_test_server(pm_root: PathBuf) -> super::super::Server {
+        let (out_tx, _out_rx) = mpsc::unbounded_channel::<String>();
+        super::super::Server {
+            cwd: pm_root.clone(),
+            out_tx,
+            thread_store: super::super::ThreadStore::new(super::super::PmPaths::new(pm_root)),
+            threads: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            processes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            disk_warning: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            exec_policy: pm_execpolicy::Policy::empty(),
+        }
+    }
+
+    #[tokio::test]
+    async fn agent_spawn_denies_isolated_write_workspace_mode() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = build_test_server(tmp.path().join(".code_pm"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let result = run_tool_call_once(
+            &server,
+            thread_id,
+            None,
+            "agent_spawn",
+            serde_json::json!({
+                "input": "x",
+                "workspace_mode": "isolated_write",
+            }),
+            None,
+        )
+        .await?;
+
+        assert!(result["denied"].as_bool().unwrap_or(false));
+        assert_eq!(result["workspace_mode"].as_str().unwrap_or(""), "isolated_write");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn agent_spawn_denies_disallowed_child_mode() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = build_test_server(tmp.path().join(".code_pm"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let result = run_tool_call_once(
+            &server,
+            thread_id,
+            None,
+            "agent_spawn",
+            serde_json::json!({
+                "input": "x",
+                "mode": "coder",
+            }),
+            None,
+        )
+        .await?;
+
+        assert!(result["denied"].as_bool().unwrap_or(false));
+        assert!(result["allowed_modes"].as_array().is_some());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn agent_spawn_enforces_default_max_concurrent_subagents() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = build_test_server(tmp.path().join(".code_pm"));
+        let mut parent = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let thread_id = parent.thread_id();
+
+        for _ in 0..4 {
+            let mut child = server.thread_store.create_thread(repo_dir.clone()).await?;
+            let child_id = child.thread_id();
+            child
+                .append(pm_protocol::ThreadEventKind::TurnStarted {
+                    turn_id: pm_protocol::TurnId::new(),
+                    input: "child".to_string(),
+                })
+                .await?;
+            drop(child);
+
+            let tool_id = pm_protocol::ToolId::new();
+            parent
+                .append(pm_protocol::ThreadEventKind::ToolStarted {
+                    tool_id,
+                    turn_id: None,
+                    tool: "subagent/spawn".to_string(),
+                    params: None,
+                })
+                .await?;
+            parent
+                .append(pm_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: pm_protocol::ToolStatus::Completed,
+                    error: None,
+                    result: Some(serde_json::json!({
+                        "thread_id": child_id,
+                    })),
+                })
+                .await?;
+        }
+        drop(parent);
+
+        let result = run_tool_call_once(
+            &server,
+            thread_id,
+            None,
+            "agent_spawn",
+            serde_json::json!({
+                "input": "x",
+            }),
+            None,
+        )
+        .await?;
+
+        assert!(result["denied"].as_bool().unwrap_or(false));
+        assert_eq!(result["max_concurrent_subagents"].as_u64().unwrap_or(0), 4);
+        assert_eq!(result["active"].as_u64().unwrap_or(0), 4);
+        Ok(())
     }
 }

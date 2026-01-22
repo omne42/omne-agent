@@ -108,12 +108,12 @@ v0.2.0 MVP 已支持字段：
 - `process: { inspect: {decision}, kill: {decision}, interact: {decision} }`
 - `artifact: { decision }`
 - `browser: { decision }`（字段已支持；`web/*` 工具属于未来扩展）
+- `subagent: { spawn: { decision, allowed_modes?: [string] } }`：fan-out / 子 agent 权限边界（对应 `agent_spawn`）
 - `tool_overrides?: [{ tool: string, decision: Decision }]`（少数例外；避免把规则写成一坨）
 
 未来扩展（TODO；v0.2.0 未实现）：
 
 - `execpolicy_rules`：per-thread execpolicy 覆盖（TODO 草案见 `docs/execpolicy.md`）
-- `subagent: { spawn: { decision, allowed_modes?: [string] } }`：fan-out / 子 agent 权限边界
 
 约束：
 

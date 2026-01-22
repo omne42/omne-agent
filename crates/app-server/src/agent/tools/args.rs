@@ -146,9 +146,20 @@ struct ThreadHookRunArgs {
     hook: super::WorkspaceHookName,
 }
 
+#[derive(Debug, Deserialize, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+enum AgentSpawnWorkspaceMode {
+    ReadOnly,
+    IsolatedWrite,
+}
+
 #[derive(Debug, Deserialize)]
 struct AgentSpawnArgs {
     input: String,
+    #[serde(default)]
+    mode: Option<String>,
+    #[serde(default)]
+    workspace_mode: Option<AgentSpawnWorkspaceMode>,
     #[serde(default)]
     model: Option<String>,
     #[serde(default)]
