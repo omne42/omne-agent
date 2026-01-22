@@ -11,6 +11,7 @@
 - 新增 Agent-first 重新开发流程文档：`docs/development_process.md`。
 - 新增 vNext 目标态“RTS 风格使用流程”文档：`docs/rts_workflow.md`。
 - 新增 v0.2.x 文档索引与 v0.2.0 口径补充（approval/attention/event model/runtime/execpolicy 等，详见 `docs/README.md`）。
+- 补齐 Subagents/Fan-out 文档：加入 Codex/OpenCode/Claude Code/Antigravity 对照、v0.2.x 务实 DoD 与 A/B/C 选型建议（`docs/subagents.md`）。
 - 新增 Agent GUI 爆发期产品调研：`docs/research/onecode.md`、`docs/research/superset.md`、`docs/research/aion-ui.md`。
 - 新增 `v0.2.0` 功能对齐与 TODO 汇总：`docs/v0.2.0_parity.md`。
 - 新增 Mode（角色权限边界）规范：`docs/modes.md`（配置发现顺序、`deny/prompt/allow` 语义、`prompt+auto_approve` 的落盘审计规则）。
