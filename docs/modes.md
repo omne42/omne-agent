@@ -10,7 +10,7 @@
 
 - **Mode**：一个命名角色（例如 `architect/coder/reviewer/builder`），定义该角色允许使用的能力边界。
 - **Role（角色）**：人类语义上的职责（Architect/Coder/Reviewer/Builder…）；在系统里以 `mode=<name>` 落盘并生效。
-- **Capability（能力组）**：对工具能力的稳定抽象（例如 `read/edit/command/process/artifact/browser/subagent`）。
+- **Capability（能力组）**：对工具能力的稳定抽象（例如 `read/edit/command/process/artifact/browser`；`browser` 字段 v0.2.0 已预留，但 web tools 仍是未来扩展）。
 - **Decision**：权限判定结果：`allow | prompt | deny`
   - `deny`：硬拒绝（无论 approval policy 如何都不可执行）。
   - `prompt`：必须产生审批事件（`ApprovalRequested`），由 approval policy 决定“停下来等人”还是“自动决策并继续”。
@@ -22,7 +22,7 @@
 
 > 这是“规范”和“实现”交汇的地方：Capability 是稳定抽象，tool/method 是实现细节；但需要一张表避免讨论跑偏。
 
-- `read`：`file/read`、`file/glob`、`file/grep`
+- `read`：`file/read`、`file/glob`、`file/grep`、`thread/state`、`thread/events`
 - `edit`：`file/write`、`file/patch`、`file/edit`、`file/delete`、`fs/mkdir`
 - `command`：`process/start`
 - `process.inspect`：`process/inspect`、`process/tail`、`process/follow`（只读 attach）
@@ -69,6 +69,7 @@
 - **mode gate**：按能力组/路径规则/per-tool override 做第一层硬裁决（`deny/prompt/allow`）。
 - **sandbox**：路径与可写根等硬边界（例如 `read-only/workspace-write`）。
 - **execpolicy**：命令前缀规则（allow/prompt/forbidden）。
+- execpolicy 规范与用法见：`docs/execpolicy.md`（v0.2.0 通过 app-server 启动参数全局注入）。
 - **approval handling**：当需要审批时（来源可能是 mode 或 execpolicy），由 `ApprovalPolicy` 决定停/自动决策。
 
 合并规则：任一层 `deny` 即 deny；否则任一层 `prompt` 即 prompt；否则 allow。
@@ -99,16 +100,20 @@
 
 ### 5.3 `Permissions`（能力组 + per-tool override）
 
-建议字段（v0.2.0 MVP 先落最小可用）：
+v0.2.0 MVP 已支持字段：
 
 - `read: { decision }`
 - `edit: { decision, allow_globs?: [string], deny_globs?: [string] }`
-- `command: { decision, execpolicy_rules?: [string] }`
+- `command: { decision }`
 - `process: { inspect: {decision}, kill: {decision}, interact: {decision} }`
 - `artifact: { decision }`
-- `browser: { decision }`（未来 web tools）
-- `subagent: { spawn: { decision, allowed_modes?: [string] } }`（未来 fan-out）
+- `browser: { decision }`（字段已支持；`web/*` 工具属于未来扩展）
 - `tool_overrides?: [{ tool: string, decision: Decision }]`（少数例外；避免把规则写成一坨）
+
+未来扩展（TODO；v0.2.0 未实现）：
+
+- `command.execpolicy_rules`：per-mode execpolicy 覆盖（当前 execpolicy 通过 `pm-app-server --execpolicy-rules` 全局注入；TODO 草案见 `docs/execpolicy.md`）
+- `subagent: { spawn: { decision, allowed_modes?: [string] } }`：fan-out / 子 agent 权限边界
 
 约束：
 
@@ -130,15 +135,11 @@ modes:
         deny_globs: [".git/**", ".code_pm/**", ".codepm/**"]
       command:
         decision: prompt
-        execpolicy_rules: ["policies/execpolicy/coder.star"]
       process:
         inspect: { decision: allow }
         kill: { decision: prompt }
         interact: { decision: deny }
       artifact: { decision: allow }
-      browser: { decision: prompt }
-      subagent:
-        spawn: { decision: prompt, allowed_modes: ["reviewer", "builder"] }
       tool_overrides:
         - tool: "file/delete"
           decision: deny
@@ -159,9 +160,9 @@ v0.2.0 内置最小模式（作为没有 project config 时的兜底）：
 
 ---
 
-## 7) 未来扩展（不在 v1 强做）
+## 7) 未来扩展（不在 v0.2.0 强做）
 
-- `prompt_strict`/`escalate`：即使 auto_approve 也必须停下来的人类确认（单独的 decision，不要污染 `prompt`）。
+- `prompt_strict`/`escalate`：即使 `auto_approve` 也必须停下来的人类确认（单独的 decision，不要污染 `prompt`；见 `docs/approvals.md` 的 Escalate 草案）。
 - per-tool 参数约束（例如 `file/write` 限制路径/大小，`process/start` 限制 cwd/env）。
 - 全量的 config layering 与 explain（回答“为什么现在生效的是这个 mode/这个决策”）。
 

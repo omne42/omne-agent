@@ -1,5 +1,7 @@
 # 项目启动（CodePM / Rust）
 
+> 想看文档索引看：`docs/README.md`。
+> 想看 v0.2.0 对齐清单（实现状态 + TODO）看：`docs/v0.2.0_parity.md`。
 > 想直接跑通端到端流程（`v0.1.1` legacy，含 serve/API、hooks、session 查询）看：`docs/workflow.md`。
 > 想看 vNext 目标态“RTS 风格使用流程”看：`docs/rts_workflow.md`。
 > 想进入“重新设计/重新开发”（Agent-first）看：`docs/development_process.md`。
@@ -178,6 +180,8 @@ cargo run -p code-pm -- run \
 - 覆盖：`CODE_PM_TMP_ROOT=/your/tmp/root`
 
 数据目录根路径（`PmPaths` / `.code_pm`）：
+
+> 注：本段是 `v0.1.1` legacy（`code-pm`）的口径；`v0.2.0`（`pm`/`pm-app-server`）的 runtime layout 与 `pm_root` 口径见 `docs/runtime_layout.md`。
 
 - 默认：`<repo_root>/.code_pm`（`repo_root` 为当前目录的 git root；若不在 git repo 中则为当前目录）
 - 覆盖：`--pm-root /path/to/.code_pm` 或 `CODE_PM_ROOT=/path/to/.code_pm`（相对路径会按 `repo_root` 解析）

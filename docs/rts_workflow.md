@@ -1,6 +1,10 @@
 # CodePM vNext 使用流程（RTS 风格 / 目标态）
 
 > 这不是“又一个聊天框”。RTS 的关键是：你同时指挥多个 agent，但系统必须把一切变更收敛成 **可观测、可暂停、可回放、可收口** 的状态机。
+>
+> 注：本文是“目标态”。v0.2.0 MVP 的 `attention_state` 枚举以 `docs/v0.2.0_parity.md` 为准；`plan_ready/diff_ready/test_failed` 属于语义标记（markers，TODO），不应把 `attention_state` 扩成万能枚举（见 `docs/attention.md`）。
+>
+> v0.2.0 现状补充：workspace hooks 已支持最小执行入口（`.codepm/workspace.yaml` + `pm thread hook-run setup|run|archive`），但还没有“自动在创建/归档时触发”的编排逻辑（见 `docs/workspace_hooks.md`）。
 
 ---
 
@@ -23,18 +27,18 @@
 
 1. **创建 workspace**
    - 系统创建隔离目录（本地 `/tmp` 或 git worktree 等目录级隔离方案是实现细节；**git/workspace 不以 Docker 为前提，但不禁止 agent 自己运行 Docker**）。
-   - 自动执行 `setup` 生命周期脚本（复制 env/装依赖/启动外部资源/端口映射）。
+   - 自动执行 `setup` 生命周期脚本（复制 env/装依赖/启动外部资源/端口映射；v0.2.0 仅支持手动 `thread/hook_run`，自动触发 TODO）。
 2. **Plan（先想清楚）**
    - agent 输出结构化 plan（作为 artifact 落盘）。
-   - `Attention` 标记为 `PlanReady`，等待用户确认/修改。
+   - `Attention` 标记 `plan_ready`（marker），等待用户确认/修改。
 3. **Approve（显式放权）**
    - 用户确认 plan，并选择 sandbox/approval policy（例如 `workspace-write` + `on-request`）。
 4. **Act（执行）**
    - agent 通过 tools 与环境交互：读写文件、运行命令、查询网络资源（按 policy 约束）。
    - 每一次工具调用都生成 `Item`，并落盘 stdout/stderr 与相关 artifacts。
 5. **Review gate（收口）**
-   - 产出 diff/patch（artifact），`Attention` 标记为 `DiffReady`。
-   - 测试失败则标记 `TestFailed`，把“修复”当成下一轮 turn（而不是默默继续乱改）。
+   - 产出 diff/patch（artifact），`Attention` 标记 `diff_ready`（marker）。
+   - 测试失败则标记 `test_failed`（marker），把“修复”当成下一轮 turn（而不是默默继续乱改）。
 6. **Deliver（交付）**
    - 默认 `patch-only`：输出可应用 patch + artifacts。
    - 可选 git adapter：把 patch 应用到分支、跑 checks、（可选）创建 PR/合并。
@@ -50,6 +54,7 @@
 - `interrupt`：打断当前工具/turn（防止卡死/循环烧钱）。
 - `cancel`：终止任务（并落盘原因与残留 artifacts）。
 - `escalate`：当出现越权操作时，必须进入 `NeedApproval`，由人决定放行/拒绝。
+  - 规范口径：`docs/approvals.md`
 - `inspect/attach`：随时查看任何运行中的后台进程/子 agent（状态 + 最近输出 + 完整 artifacts 路径；只读，不提供 stdin 交互）。
 - `kill`：强制停止某个后台进程（语义必须事件化并进入审计/回放）。
 

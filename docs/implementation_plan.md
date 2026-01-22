@@ -132,14 +132,10 @@
 - `step`：在 plan/execute 之间做硬切换（默认先 plan）。
 - `inspect/attach`：只读查看运行中进程/子 agent 输出（禁止 stdin 交互）；必要时可 `kill`。
 
-Attention/Inbox（派生视图）至少包含：
+Attention/Inbox（派生视图）：
 
-- `NeedApproval`（阻塞）
-- `PlanReady`（等待用户确认）
-- `DiffReady`（等待 review）
-- `TestFailed`（等待修复/降级）
-- `Stuck`（超时/循环检测/无进展）
-- `Done`
+- v0.2.0 MVP（已实现；状态枚举见 `docs/v0.2.0_parity.md`）：`NeedApproval` / `Running` / `Failed` / `Stuck` / `Done` / `Idle` / `Paused` / `Archived`
+- 目标态扩展（TODO；不是 v0.2.0 gate）：语义标记（markers）`plan_ready`（等待用户确认）/ `diff_ready`（等待 review）/ `test_failed`（等待修复/降级）（见 `docs/attention.md` 的 marker 草案）
 
 > RTS 的关键不是“同时跑 100 个 agent”，而是用户能在 30 秒内定位：**哪个在卡、为什么卡、我该按哪个按钮**。
 
@@ -158,6 +154,11 @@ Attention/Inbox（派生视图）至少包含：
 - stdout/stderr 必须落盘到 artifacts。
 - 每条命令要有 timeout 与可读的失败摘要（别让人翻半天日志）。
 - 为脚本注入标准 env：`CODEPM_WORKSPACE_NAME`、`CODEPM_ROOT`、`CODEPM_WORKSPACE_DIR`、`CODEPM_PORT`（占位）等。
+
+v0.2.0 现状：
+
+- 已提供最小执行入口：`.codepm/workspace.yaml` + `thread/hook_run setup|run|archive`（见 `docs/workspace_hooks.md`）。
+- 自动触发（创建后自动 setup / archive 时自动 teardown）仍是 TODO（需要调度层编排）。
 
 参考实现方向：
 
@@ -202,7 +203,7 @@ Attention/Inbox（派生视图）至少包含：
 ### M1：事件模型 + 存储 + 回放
 
 - `Thread/Turn/Item` + file storage + `list/show/export/replay`。
-- Attention view：能列出 `NeedApproval/TestFailed/...`。
+- Attention view：能列出 `NeedApproval/Failed/Stuck/...`，并附带可行动的语义标记（例如 `plan_ready/diff_ready/test_failed`；TODO）。
 
 ### M2：执行层（tools + approvals + sandbox）
 
