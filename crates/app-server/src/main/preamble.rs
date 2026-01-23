@@ -473,7 +473,8 @@ fn classify_agent_turn_error(err: &anyhow::Error) -> TurnStatus {
                 agent::AgentTurnError::Cancelled => TurnStatus::Interrupted,
                 agent::AgentTurnError::BudgetExceeded { .. }
                 | agent::AgentTurnError::TokenBudgetExceeded { .. }
-                | agent::AgentTurnError::OpenAiRequestTimedOut => TurnStatus::Stuck,
+                | agent::AgentTurnError::OpenAiRequestTimedOut
+                | agent::AgentTurnError::LoopDetected { .. } => TurnStatus::Stuck,
             };
         }
     }

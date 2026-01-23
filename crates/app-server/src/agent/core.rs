@@ -30,6 +30,10 @@ const MAX_MAX_TOTAL_TOKENS: u64 = 10_000_000;
 const MAX_MAX_TURN_SECONDS: u64 = 24 * 60 * 60;
 const MAX_MAX_OPENAI_REQUEST_SECONDS: u64 = 60 * 60;
 
+const LOOP_DETECTOR_HISTORY_LIMIT: usize = 8;
+const LOOP_DETECTOR_CONSECUTIVE_LIMIT: usize = 3;
+const LOOP_DETECTOR_CYCLE_LENGTH: usize = 2;
+
 const DEFAULT_INSTRUCTIONS: &str = r#"
 You are a coding agent.
 
@@ -48,6 +52,130 @@ pub enum AgentTurnError {
     TokenBudgetExceeded { used: u64, limit: u64 },
     #[error("openai request timed out")]
     OpenAiRequestTimedOut,
+    #[error("loop_detected: {kind}")]
+    LoopDetected { kind: &'static str },
+}
+
+struct LoopDetector {
+    recent: Vec<u64>,
+}
+
+impl LoopDetector {
+    fn new() -> Self {
+        Self { recent: Vec::new() }
+    }
+
+    fn observe(&mut self, signature: u64) -> Option<&'static str> {
+        self.recent.push(signature);
+        if self.recent.len() > LOOP_DETECTOR_HISTORY_LIMIT {
+            let drain = self.recent.len().saturating_sub(LOOP_DETECTOR_HISTORY_LIMIT);
+            self.recent.drain(0..drain);
+        }
+
+        let mut consecutive = 0usize;
+        for &value in self.recent.iter().rev() {
+            if value == signature {
+                consecutive += 1;
+            } else {
+                break;
+            }
+        }
+        if consecutive >= LOOP_DETECTOR_CONSECUTIVE_LIMIT {
+            return Some("consecutive");
+        }
+
+        let cycle_len = LOOP_DETECTOR_CYCLE_LENGTH;
+        if cycle_len > 0 && self.recent.len() >= cycle_len.saturating_mul(2) {
+            let total = self.recent.len();
+            let mut matches = true;
+            for idx in 0..cycle_len {
+                if self.recent[total - 1 - idx] != self.recent[total - 1 - idx - cycle_len] {
+                    matches = false;
+                    break;
+                }
+            }
+            if matches {
+                return Some("cycle");
+            }
+        }
+
+        None
+    }
+}
+
+fn tool_call_signature(tool_name: &str, args: &Value) -> u64 {
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    tool_name.hash(&mut hasher);
+    hash_json_value(args, &mut hasher);
+    hasher.finish()
+}
+
+fn tool_call_signature_from_raw(tool_name: &str, arguments: &str) -> u64 {
+    let redacted = pm_core::redact_text(arguments);
+    match serde_json::from_str::<Value>(&redacted) {
+        Ok(args) => tool_call_signature(tool_name, &args),
+        Err(_) => {
+            use std::hash::{Hash, Hasher};
+
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            tool_name.hash(&mut hasher);
+            redacted.hash(&mut hasher);
+            hasher.finish()
+        }
+    }
+}
+
+fn step_signature(function_calls: &[(String, String, String)]) -> u64 {
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    function_calls.len().hash(&mut hasher);
+    for (tool_name, arguments, _) in function_calls {
+        tool_call_signature_from_raw(tool_name, arguments).hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+fn hash_json_value(value: &Value, state: &mut impl std::hash::Hasher) {
+    use std::hash::Hash;
+
+    match value {
+        Value::Null => 0u8.hash(state),
+        Value::Bool(v) => {
+            1u8.hash(state);
+            v.hash(state);
+        }
+        Value::Number(v) => {
+            2u8.hash(state);
+            v.to_string().hash(state);
+        }
+        Value::String(v) => {
+            3u8.hash(state);
+            v.hash(state);
+        }
+        Value::Array(values) => {
+            4u8.hash(state);
+            values.len().hash(state);
+            for value in values {
+                hash_json_value(value, state);
+            }
+        }
+        Value::Object(map) => {
+            5u8.hash(state);
+            map.len().hash(state);
+
+            let mut keys = map.keys().collect::<Vec<_>>();
+            keys.sort();
+            for key in keys {
+                key.hash(state);
+                if let Some(value) = map.get(key) {
+                    hash_json_value(value, state);
+                }
+            }
+        }
+    }
 }
 
 pub async fn run_agent_turn(
@@ -262,6 +390,7 @@ pub async fn run_agent_turn(
     let mut last_usage: Option<Value> = None;
     let mut last_text = String::new();
     let mut tool_calls_total = 0usize;
+    let mut loop_detector = LoopDetector::new();
     let mut total_tokens_used = 0u64;
     let mut finished = false;
     let started_at = tokio::time::Instant::now();
@@ -436,6 +565,11 @@ pub async fn run_agent_turn(
         if function_calls.is_empty() {
             finished = true;
             break;
+        }
+
+        let signature = step_signature(&function_calls);
+        if let Some(kind) = loop_detector.observe(signature) {
+            return Err(AgentTurnError::LoopDetected { kind }.into());
         }
 
         let can_parallelize_read_only = parallel_tool_calls
@@ -1095,5 +1229,38 @@ mod tool_parallelism_tests {
         assert!(!tool_is_read_only("artifact_delete"));
         assert!(!tool_is_read_only("thread_hook_run"));
         assert!(!tool_is_read_only("agent_spawn"));
+    }
+}
+
+#[cfg(test)]
+mod loop_detection_tests {
+    use super::*;
+
+    #[test]
+    fn tool_call_signature_is_stable_for_object_key_order() {
+        let a = serde_json::json!({"a": 1, "b": 2});
+        let b = serde_json::json!({"b": 2, "a": 1});
+        assert_eq!(tool_call_signature("file_read", &a), tool_call_signature("file_read", &b));
+    }
+
+    #[test]
+    fn loop_detector_trips_on_consecutive_calls() {
+        let mut detector = LoopDetector::new();
+        let sig = tool_call_signature("file_read", &serde_json::json!({"path": "a.txt"}));
+        assert_eq!(detector.observe(sig), None);
+        assert_eq!(detector.observe(sig), None);
+        assert_eq!(detector.observe(sig), Some("consecutive"));
+    }
+
+    #[test]
+    fn loop_detector_trips_on_short_cycle() {
+        let mut detector = LoopDetector::new();
+        let a = tool_call_signature("file_read", &serde_json::json!({"path": "a.txt"}));
+        let b = tool_call_signature("file_read", &serde_json::json!({"path": "b.txt"}));
+
+        assert_eq!(detector.observe(a), None);
+        assert_eq!(detector.observe(b), None);
+        assert_eq!(detector.observe(a), None);
+        assert_eq!(detector.observe(b), Some("cycle"));
     }
 }

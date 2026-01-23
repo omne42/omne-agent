@@ -115,6 +115,7 @@
 - `pm-app-server process/start`：当 `sandbox_network_access=deny` 时，拒绝明显网络命令（best-effort 防呆；非 OS 级网络沙箱），需要联网可显式配置 `sandbox_network_access=allow`。
 - `pm-app-server` agent loop：支持 read-only tool calls 并发执行与结果聚合（默认关闭；`CODE_PM_AGENT_PARALLEL_TOOL_CALLS=1` 启用，`CODE_PM_AGENT_MAX_PARALLEL_TOOL_CALLS` 限制并发数）。
 - `pm-app-server` agent loop：支持 token budget（`CODE_PM_AGENT_MAX_TOTAL_TOKENS`；超限标记为 `stuck`）。
+- `pm-app-server` agent loop：新增 loop/cycle detection（连续重复/短周期）以 `TurnStatus::Stuck` 中止明显循环（reason `loop_detected:*`）。
 - `pm-openai`/`pm-app-server`：OpenAI Responses 请求 URL 改为 `base_url + /responses`（不再固定拼 `/v1/responses`）；默认 `openai_base_url` 统一为 `https://api.openai.com/v1`。
 - 更新 `docs/research/README.md`：补齐新增调研条目并调整落地方向表述。
 - 更新 `docs/v0.2.0_parity.md`：同步 `item/* notifications` 与通知去重/节流的落地状态（`pm watch|inbox --debounce-ms`）。

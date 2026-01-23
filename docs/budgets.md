@@ -123,41 +123,24 @@ v0.2.0 现状：
 
 ---
 
-## 5) TODO：loop/cycle detection（别烧到预算才发现）
+## 5) 已实现：loop/cycle detection（别烧到预算才发现）
 
-最小规格（TODO）：
+v0.2.0 最小实现（写死边界）：
 
 - 只在单个 turn 内做检测（不跨 turn 建模/不跨 turn 记忆）。
-- 检测到明显循环时直接结束 turn：`TurnCompleted{status=stuck, reason="loop_detected"}`（先别把 “cycle/loop” 拆成一堆状态机）。
+- 检测信号（固定）：
+  - **连续重复**：相同 tool call 签名连续出现 `N=3` 次；
+  - **短周期**：检测 `L=2` 的短周期（ABAB）。
+- 触发后直接结束 turn：`TurnStatus::Stuck`，reason 以 `loop_detected:` 开头（例如 `loop_detected: consecutive` / `loop_detected: cycle`）。
 
-建议的最小检测信号（实现可选其一，但必须稳定）：
+签名（实现口径）：
 
-- **连续重复**：相同的“步骤签名”连续出现 N 次（例如同一工具以相同参数反复调用）。
-- **短周期**：最近 `L` 个签名与前一个 `L` 完全相同（例如 ABAB；L 取 2~4 的小常数即可）。
+- 使用 `u64` hash（只保留元数据），避免把大 JSON/大文本留在内存里。
+- 构成：`tool_name + args_json` 的稳定 hash（不包含 `approval_id` 等易变字段；approval id 属于 app-server 内部 gate，不会出现在 model 提供的 args 里）。
 
-建议默认（别让实现发散）：
+对照实现：
 
-- 连续重复：`N=3`
-- 短周期：`L=2`（检测 ABAB）
-
-签名（建议）：
-
-- 用一个小的纯值类型（例如 `u64` hash），避免把大 JSON/大文本留在内存里。
-- 建议构成（按可得性从低到高选）：
-  - tool call：`tool_name + redacted(params_json)`（不含 approval_id 等易变字段）
-  - 或加上：`tool_status`（completed/denied/failed）
-  - 或加上：assistant 输出文本的 hash（更容易误判，谨慎）
-
-安全边界（写死）：
-
-- loop 检测相关的落盘内容必须是**元数据**，禁止把 raw prompt / tool args / tool output 写进事件或报告（脱敏不确定就等于泄漏）。
-
-可选产物（建议，但不强依赖）：
-
-- 生成 `artifact_type="loop_report"`（markdown，脱敏），只包含：
-  - `thread_id/turn_id`
-  - 触发原因（`loop_detected` + 命中的信号类型）
-  - 最近几个 tool 名称与 `tool_id`（不含参数）
+- `crates/app-server/src/agent/core.rs`（`LoopDetector` + `tool_call_signature`）
 
 ---
 
