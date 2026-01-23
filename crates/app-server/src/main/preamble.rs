@@ -601,6 +601,28 @@ struct ThreadPatchParams {
     wait_seconds: Option<u64>,
 }
 
+#[derive(Debug, Deserialize)]
+struct ThreadCheckpointCreateParams {
+    thread_id: ThreadId,
+    #[serde(default)]
+    label: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ThreadCheckpointListParams {
+    thread_id: ThreadId,
+}
+
+#[derive(Debug, Deserialize)]
+struct ThreadCheckpointRestoreParams {
+    thread_id: ThreadId,
+    checkpoint_id: pm_protocol::CheckpointId,
+    #[serde(default)]
+    turn_id: Option<TurnId>,
+    #[serde(default)]
+    approval_id: Option<pm_protocol::ApprovalId>,
+}
+
 #[derive(Debug, Deserialize, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
 enum WorkspaceHookName {

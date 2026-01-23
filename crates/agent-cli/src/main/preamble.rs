@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 use anyhow::Context;
 use clap::{Parser, Subcommand, ValueEnum};
 use pm_protocol::{
-    ApprovalDecision, ApprovalId, ApprovalPolicy, ProcessId, SandboxPolicy, ThreadEvent, ThreadId,
-    TurnId, TurnStatus,
+    ApprovalDecision, ApprovalId, ApprovalPolicy, CheckpointId, ProcessId, SandboxPolicy,
+    ThreadEvent, ThreadId, TurnId, TurnStatus,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -59,6 +59,10 @@ enum Command {
     Thread {
         #[command(subcommand)]
         command: ThreadCommand,
+    },
+    Checkpoint {
+        #[command(subcommand)]
+        command: CheckpointCommand,
     },
     Inbox(InboxArgs),
     Ask(AskArgs),
@@ -363,6 +367,33 @@ enum ThreadCommand {
         json: bool,
     },
     Configure(ThreadConfigureArgs),
+}
+
+#[derive(Subcommand)]
+enum CheckpointCommand {
+    /// Create a checkpoint snapshot of the current workspace.
+    Create {
+        thread_id: ThreadId,
+        #[arg(long)]
+        label: Option<String>,
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    /// List available checkpoints for a thread.
+    List {
+        thread_id: ThreadId,
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    /// Restore the workspace from a checkpoint (requires prompt_strict approval).
+    Restore {
+        thread_id: ThreadId,
+        checkpoint_id: CheckpointId,
+        #[arg(long)]
+        approval_id: Option<ApprovalId>,
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
 }
 
 #[derive(Parser)]

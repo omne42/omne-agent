@@ -183,6 +183,31 @@ pub struct ThreadPatchParams {
     pub wait_seconds: Option<u64>,
 }
 
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
+pub struct ThreadCheckpointCreateParams {
+    pub thread_id: pm_protocol::ThreadId,
+    #[serde(default)]
+    #[ts(optional)]
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
+pub struct ThreadCheckpointListParams {
+    pub thread_id: pm_protocol::ThreadId,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
+pub struct ThreadCheckpointRestoreParams {
+    pub thread_id: pm_protocol::ThreadId,
+    pub checkpoint_id: pm_protocol::CheckpointId,
+    #[serde(default)]
+    #[ts(optional)]
+    pub turn_id: Option<pm_protocol::TurnId>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub approval_id: Option<pm_protocol::ApprovalId>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkspaceHookName {
@@ -802,6 +827,24 @@ pub enum ClientRequest {
         #[serde(rename = "id")]
         request_id: RequestId,
         params: ThreadPatchParams,
+    },
+    #[serde(rename = "thread/checkpoint/create")]
+    ThreadCheckpointCreate {
+        #[serde(rename = "id")]
+        request_id: RequestId,
+        params: ThreadCheckpointCreateParams,
+    },
+    #[serde(rename = "thread/checkpoint/list")]
+    ThreadCheckpointList {
+        #[serde(rename = "id")]
+        request_id: RequestId,
+        params: ThreadCheckpointListParams,
+    },
+    #[serde(rename = "thread/checkpoint/restore")]
+    ThreadCheckpointRestore {
+        #[serde(rename = "id")]
+        request_id: RequestId,
+        params: ThreadCheckpointRestoreParams,
     },
     #[serde(rename = "thread/hook_run")]
     ThreadHookRun {

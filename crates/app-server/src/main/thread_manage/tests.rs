@@ -105,4 +105,104 @@ hooks:
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn checkpoint_create_list_restore_roundtrip() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        tokio::fs::write(repo_dir.join("foo.txt"), "v1\n").await?;
+        tokio::fs::write(repo_dir.join(".env"), "SECRET=sk-should-not-be-snapshotted\n").await?;
+
+        let server = build_test_server(tmp.path().join(".codepm_data"));
+        let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let created = handle_thread_checkpoint_create(
+            &server,
+            ThreadCheckpointCreateParams {
+                thread_id,
+                label: Some("before changes".to_string()),
+            },
+        )
+        .await?;
+
+        let checkpoint_id: pm_protocol::CheckpointId = created["checkpoint_id"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing checkpoint_id"))?
+            .parse()?;
+
+        let listed = handle_thread_checkpoint_list(&server, ThreadCheckpointListParams { thread_id }).await?;
+        let checkpoints = listed["checkpoints"]
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("missing checkpoints"))?;
+        assert_eq!(checkpoints.len(), 1);
+        assert_eq!(
+            checkpoints[0]["checkpoint_id"].as_str().unwrap_or(""),
+            checkpoint_id.to_string()
+        );
+
+        tokio::fs::write(repo_dir.join("foo.txt"), "v2\n").await?;
+        tokio::fs::write(repo_dir.join("bar.txt"), "new file\n").await?;
+
+        let first_restore = handle_thread_checkpoint_restore(
+            &server,
+            ThreadCheckpointRestoreParams {
+                thread_id,
+                checkpoint_id,
+                turn_id: None,
+                approval_id: None,
+            },
+        )
+        .await?;
+
+        assert!(first_restore["needs_approval"].as_bool().unwrap_or(false));
+        let approval_id: pm_protocol::ApprovalId = first_restore["approval_id"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing approval_id"))?
+            .parse()?;
+
+        handle_approval_decide(
+            &server,
+            ApprovalDecideParams {
+                thread_id,
+                approval_id,
+                decision: pm_protocol::ApprovalDecision::Approved,
+                remember: false,
+                reason: None,
+            },
+        )
+        .await?;
+
+        let second_restore = handle_thread_checkpoint_restore(
+            &server,
+            ThreadCheckpointRestoreParams {
+                thread_id,
+                checkpoint_id,
+                turn_id: None,
+                approval_id: Some(approval_id),
+            },
+        )
+        .await?;
+        assert!(second_restore["restored"].as_bool().unwrap_or(false));
+
+        assert_eq!(tokio::fs::read_to_string(repo_dir.join("foo.txt")).await?, "v1\n");
+        assert!(!repo_dir.join("bar.txt").exists());
+        assert_eq!(
+            tokio::fs::read_to_string(repo_dir.join(".env")).await?,
+            "SECRET=sk-should-not-be-snapshotted\n"
+        );
+
+        let events = server
+            .thread_store
+            .read_events_since(thread_id, EventSeq::ZERO)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("thread not found"))?;
+        assert!(events.iter().any(|e| matches!(e.kind, pm_protocol::ThreadEventKind::CheckpointCreated { checkpoint_id: got, .. } if got == checkpoint_id)));
+        assert!(events.iter().any(|e| matches!(e.kind, pm_protocol::ThreadEventKind::CheckpointRestored { checkpoint_id: got, status: pm_protocol::CheckpointRestoreStatus::Ok, .. } if got == checkpoint_id)));
+
+        Ok(())
+    }
 }

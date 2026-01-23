@@ -229,6 +229,31 @@ async fn main() -> anyhow::Result<()> {
                 app.thread_configure(args).await?;
             }
         },
+        Some(Command::Checkpoint { command }) => match command {
+            CheckpointCommand::Create {
+                thread_id,
+                label,
+                json,
+            } => {
+                let result = app.checkpoint_create(thread_id, label).await?;
+                print_json_or_pretty(json, &result)?;
+            }
+            CheckpointCommand::List { thread_id, json } => {
+                let result = app.checkpoint_list(thread_id).await?;
+                print_json_or_pretty(json, &result)?;
+            }
+            CheckpointCommand::Restore {
+                thread_id,
+                checkpoint_id,
+                approval_id,
+                json,
+            } => {
+                let result = app
+                    .checkpoint_restore(thread_id, checkpoint_id, approval_id)
+                    .await?;
+                print_json_or_pretty(json, &result)?;
+            }
+        },
         Some(Command::Inbox(args)) => {
             run_inbox(&mut app, args).await?;
         }

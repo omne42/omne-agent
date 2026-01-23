@@ -240,6 +240,21 @@ pub(crate) fn redact_thread_event_kind(kind: &mut ThreadEventKind) {
                 *reason = redact_text(reason);
             }
         }
+        ThreadEventKind::CheckpointCreated {
+            label,
+            snapshot_ref,
+            ..
+        } => {
+            if let Some(label) = label {
+                *label = redact_text(label);
+            }
+            *snapshot_ref = redact_text(snapshot_ref);
+        }
+        ThreadEventKind::CheckpointRestored { reason, .. } => {
+            if let Some(reason) = reason {
+                *reason = redact_text(reason);
+            }
+        }
     }
 }
 

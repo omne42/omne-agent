@@ -180,6 +180,28 @@ fn render_event(event: &ThreadEvent) {
                 reason.as_deref().unwrap_or("")
             );
         }
+        pm_protocol::ThreadEventKind::CheckpointCreated {
+            checkpoint_id,
+            label,
+            snapshot_ref,
+            ..
+        } => {
+            println!(
+                "[{ts}] checkpoint created {checkpoint_id} label={} snapshot_ref={snapshot_ref}",
+                label.as_deref().unwrap_or("")
+            );
+        }
+        pm_protocol::ThreadEventKind::CheckpointRestored {
+            checkpoint_id,
+            status,
+            reason,
+            ..
+        } => {
+            println!(
+                "[{ts}] checkpoint restored {checkpoint_id} status={status:?} reason={}",
+                reason.as_deref().unwrap_or("")
+            );
+        }
     }
 }
 
@@ -543,6 +565,46 @@ impl App {
     async fn thread_models(&mut self, thread_id: ThreadId) -> anyhow::Result<Value> {
         self.rpc("thread/models", serde_json::json!({ "thread_id": thread_id }))
             .await
+    }
+
+    async fn checkpoint_create(
+        &mut self,
+        thread_id: ThreadId,
+        label: Option<String>,
+    ) -> anyhow::Result<Value> {
+        self.rpc(
+            "thread/checkpoint/create",
+            serde_json::json!({ "thread_id": thread_id, "label": label }),
+        )
+        .await
+    }
+
+    async fn checkpoint_list(&mut self, thread_id: ThreadId) -> anyhow::Result<Value> {
+        self.rpc(
+            "thread/checkpoint/list",
+            serde_json::json!({ "thread_id": thread_id }),
+        )
+        .await
+    }
+
+    async fn checkpoint_restore(
+        &mut self,
+        thread_id: ThreadId,
+        checkpoint_id: pm_protocol::CheckpointId,
+        approval_id: Option<ApprovalId>,
+    ) -> anyhow::Result<Value> {
+        let v = self
+            .rpc(
+                "thread/checkpoint/restore",
+                serde_json::json!({
+                    "thread_id": thread_id,
+                    "checkpoint_id": checkpoint_id,
+                    "approval_id": approval_id,
+                }),
+            )
+            .await?;
+        ensure_approval_and_denial_handled("thread/checkpoint/restore", &v)?;
+        Ok(v)
     }
 
     async fn thread_configure(&mut self, args: ThreadConfigureArgs) -> anyhow::Result<()> {

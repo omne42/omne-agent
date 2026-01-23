@@ -246,6 +246,31 @@ async fn handle_thread_request(
             },
             Err(err) => invalid_params(id, err),
         },
+        "thread/checkpoint/create" => match serde_json::from_value::<ThreadCheckpointCreateParams>(params)
+        {
+            Ok(params) => match handle_thread_checkpoint_create(server, params).await {
+                Ok(result) => JsonRpcResponse::ok(id, result),
+                Err(err) => JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None),
+            },
+            Err(err) => invalid_params(id, err),
+        },
+        "thread/checkpoint/list" => match serde_json::from_value::<ThreadCheckpointListParams>(params)
+        {
+            Ok(params) => match handle_thread_checkpoint_list(server, params).await {
+                Ok(result) => JsonRpcResponse::ok(id, result),
+                Err(err) => JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None),
+            },
+            Err(err) => invalid_params(id, err),
+        },
+        "thread/checkpoint/restore" => match serde_json::from_value::<ThreadCheckpointRestoreParams>(
+            params,
+        ) {
+            Ok(params) => match handle_thread_checkpoint_restore(server, params).await {
+                Ok(result) => JsonRpcResponse::ok(id, result),
+                Err(err) => JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None),
+            },
+            Err(err) => invalid_params(id, err),
+        },
         "thread/hook_run" => match serde_json::from_value::<ThreadHookRunParams>(params) {
             Ok(params) => match handle_thread_hook_run(server, params).await {
                 Ok(result) => JsonRpcResponse::ok(id, result),

@@ -213,6 +213,39 @@ impl FromStr for ArtifactId {
     Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize, JsonSchema, TS,
 )]
 #[serde(transparent)]
+#[ts(type = "string")]
+pub struct CheckpointId(pub Uuid);
+
+impl CheckpointId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+}
+
+impl Default for CheckpointId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl fmt::Display for CheckpointId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl FromStr for CheckpointId {
+    type Err = uuid::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self(Uuid::parse_str(s)?))
+    }
+}
+
+#[derive(
+    Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize, JsonSchema, TS,
+)]
+#[serde(transparent)]
 #[ts(type = "number")]
 pub struct EventSeq(pub u64);
 
@@ -243,6 +276,13 @@ pub enum ToolStatus {
     Failed,
     Denied,
     Cancelled,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckpointRestoreStatus {
+    Ok,
+    Failed,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -501,5 +541,25 @@ pub enum ThreadEventKind {
         exit_code: Option<i32>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
+    },
+
+    CheckpointCreated {
+        checkpoint_id: CheckpointId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        turn_id: Option<TurnId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
+        snapshot_ref: String,
+    },
+
+    CheckpointRestored {
+        checkpoint_id: CheckpointId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        turn_id: Option<TurnId>,
+        status: CheckpointRestoreStatus,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        report_artifact_id: Option<ArtifactId>,
     },
 }

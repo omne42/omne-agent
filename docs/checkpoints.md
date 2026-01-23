@@ -1,8 +1,8 @@
-# Checkpoints / Rollback（TODO：规格草案）
+# Checkpoints / Rollback
 
 > 目标：当 agent 走偏（坏改动/误操作/循环）时，用户能把 workspace 回到一个“稳定点”，并继续推进，而不是只能重开线程。
 >
-> 状态：本文是 **TODO 规格草案**（v0.2.0 未实现）。
+> 状态：v0.2.0 已实现 **P0（目录快照）**：`thread/checkpoint/{create,list,restore}` + CLI `pm checkpoint {create,list,restore}`。
 
 ---
 
@@ -114,16 +114,16 @@ v1 建议的 size limits（防止无意把大文件打进快照）：
 
 ---
 
-## 5) 操作语义（TODO：未来实现时必须满足）
+## 5) 操作语义（v0.2.0：P0 已实现）
 
-### 5.1 `checkpoint/create`
+### 5.1 `thread/checkpoint/create`
 
 - 作用：把当前 workspace（按第 4 节的边界）保存为一个可恢复快照。
 - 落盘：
   - 写入快照目录与 `manifest.json`
   - 追加事件 `CheckpointCreated`
 
-### 5.2 `checkpoint/restore`
+### 5.2 `thread/checkpoint/restore`
 
 restore 是破坏性操作，最小约束建议写死：
 
@@ -131,6 +131,7 @@ restore 是破坏性操作，最小约束建议写死：
   - 必须没有 active turn
   - 必须没有 running process（否则直接拒绝；由用户先 kill）
   - thread `sandbox_policy` 不能是 `read_only`
+  - 当 thread 配置了 `sandbox_writable_roots` 时，restore 会被拒绝（避免绕过“只允许写某些目录”的约束；先保持实现简单且保守）。
 - 审批（强制）：
   - restore 必须请求人工审批（建议使用 `approval.requirement="prompt_strict"`；见 `docs/approvals.md`），避免 `ApprovalPolicy=auto_approve` 静默覆盖文件树。
   - `prompt_strict` 不应被 remembered decision 自动复用（见 `docs/approvals.md`）。
@@ -138,7 +139,7 @@ restore 是破坏性操作，最小约束建议写死：
 - 成功：workspace 文件树与 checkpoint 一致，并追加事件 `CheckpointRestored{status="ok"}`。
 - 失败：
   - 追加事件 `CheckpointRestored{status="failed", reason}`（append-only）
-  - 建议生成 `artifact_type="rollback_report"`（markdown，脱敏；见 `docs/redaction.md`），说明失败原因与下一步建议。
+  - `rollback_report`（markdown，脱敏；见 `docs/redaction.md`）在 v0.2.0 P0 **未实现**（P1 TODO）。
 
 ### 5.3 `rollback_report`（失败报告模板，建议写死）
 
@@ -188,7 +189,7 @@ restore 是破坏性操作，最小约束建议写死：
 
 ---
 
-## 7) CLI/API（未来实现占位）
+## 7) CLI/API（v0.2.0）
 
 ```bash
 pm checkpoint create <thread_id> --label "before refactor"
@@ -196,12 +197,25 @@ pm checkpoint list <thread_id>
 pm checkpoint restore <thread_id> <checkpoint_id>
 ```
 
+restore 的审批流程（示例）：
+
+```bash
+# 1) 第一次 restore 会返回 needs_approval + approval_id
+pm checkpoint restore <thread_id> <checkpoint_id>
+
+# 2) 人工决定
+pm approval decide --thread-id <thread_id> --approval-id <approval_id> --approve
+
+# 3) 带 approval_id 重试，执行实际 restore
+pm checkpoint restore <thread_id> <checkpoint_id> --approval-id <approval_id>
+```
+
 ---
 
-## 8) 验收（未来实现时）
+## 8) 验收（v0.2.0：P0）
 
 - 创建 checkpoint 后，产生可回放事件 `CheckpointCreated`，并能从中定位 `snapshot_ref`。
 - restore 成功后，workspace 文件树回到 checkpoint 对应状态，且产生 `CheckpointRestored{status=ok}`。
 - restore 失败时：
   - `CheckpointRestored{status=failed, reason=...}` 必须落盘
-  - 建议自动生成 `artifact_type="rollback_report"`（脱敏）说明失败原因与下一步建议
+  - `artifact_type="rollback_report"`（脱敏）在 v0.2.0 P0 未实现（P1 TODO）
