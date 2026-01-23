@@ -1718,8 +1718,9 @@ fn format_event_for_context(kind: &ThreadEventKind) -> Option<String> {
             mode,
             model,
             openai_base_url,
+            allowed_tools,
         } => Some(format!(
-            "[thread/config] approval_policy={approval_policy:?} sandbox_policy={} sandbox_writable_roots={} sandbox_network_access={} mode={} model={} openai_base_url={}",
+            "[thread/config] approval_policy={approval_policy:?} sandbox_policy={} sandbox_writable_roots={} sandbox_network_access={} mode={} model={} openai_base_url={} allowed_tools={}",
             sandbox_policy
                 .as_ref()
                 .map(|v| format!("{v:?}"))
@@ -1735,6 +1736,11 @@ fn format_event_for_context(kind: &ThreadEventKind) -> Option<String> {
             mode.as_deref().unwrap_or("<unchanged>"),
             model.as_deref().unwrap_or("<unchanged>"),
             openai_base_url.as_deref().unwrap_or("<unchanged>"),
+            match allowed_tools {
+                None => "<unchanged>".to_string(),
+                Some(None) => "null".to_string(),
+                Some(Some(tools)) => json_one_line(&serde_json::json!(tools), 2000),
+            },
         )),
         ThreadEventKind::ApprovalRequested {
             approval_id,

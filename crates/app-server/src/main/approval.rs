@@ -162,6 +162,53 @@ fn approval_denied_error(remembered: bool) -> &'static str {
     }
 }
 
+async fn enforce_thread_allowed_tools(
+    thread_rt: &Arc<ThreadRuntime>,
+    tool_id: pm_protocol::ToolId,
+    turn_id: Option<TurnId>,
+    tool: &str,
+    params: Option<serde_json::Value>,
+    allowed_tools: &Option<Vec<String>>,
+) -> anyhow::Result<Option<Value>> {
+    let Some(allowed_tools) = allowed_tools else {
+        return Ok(None);
+    };
+    if allowed_tools.iter().any(|allowed| allowed == tool) {
+        return Ok(None);
+    }
+
+    let allowed_json = serde_json::to_string(allowed_tools)
+        .unwrap_or_else(|_| format!("{allowed_tools:?}"));
+    let error = format!("tool {tool} denied by thread allowed_tools={allowed_json}");
+
+    thread_rt
+        .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+            tool_id,
+            turn_id,
+            tool: tool.to_string(),
+            params,
+        })
+        .await?;
+    thread_rt
+        .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+            tool_id,
+            status: pm_protocol::ToolStatus::Denied,
+            error: Some(error),
+            result: Some(serde_json::json!({
+                "tool": tool,
+                "allowed_tools": allowed_tools,
+            })),
+        })
+        .await?;
+
+    Ok(Some(serde_json::json!({
+        "tool_id": tool_id,
+        "denied": true,
+        "tool": tool,
+        "allowed_tools": allowed_tools,
+    })))
+}
+
 struct ApprovalRequest<'a> {
     approval_id: Option<pm_protocol::ApprovalId>,
     action: &'a str,

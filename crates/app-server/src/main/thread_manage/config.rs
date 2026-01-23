@@ -11,6 +11,7 @@ async fn handle_thread_configure(
         current_mode,
         current_model,
         current_openai_base_url,
+        current_allowed_tools,
     ) = {
         let handle = rt.handle.lock().await;
         let state = handle.state();
@@ -22,6 +23,7 @@ async fn handle_thread_configure(
             state.mode.clone(),
             state.model.clone(),
             state.openai_base_url.clone(),
+            state.allowed_tools.clone(),
         )
     };
 
@@ -63,6 +65,16 @@ async fn handle_thread_configure(
     }
     let model = params.model.filter(|s| !s.trim().is_empty());
     let openai_base_url = params.openai_base_url.filter(|s| !s.trim().is_empty());
+    let allowed_tools = match params.allowed_tools {
+        None => None,
+        Some(None) => Some(None),
+        Some(Some(tools)) => Some(Some(normalize_allowed_tools(tools)?)),
+    };
+    let allowed_tools_changed = match &allowed_tools {
+        None => false,
+        Some(None) => current_allowed_tools.is_some(),
+        Some(Some(tools)) => current_allowed_tools.as_ref() != Some(tools),
+    };
 
     let changed = approval_policy != current_approval_policy
         || params
@@ -75,7 +87,8 @@ async fn handle_thread_configure(
             .is_some_and(|access| access != current_sandbox_network_access)
         || mode.as_ref().is_some_and(|m| m != &current_mode)
         || model.as_ref() != current_model.as_ref()
-        || openai_base_url.as_ref() != current_openai_base_url.as_ref();
+        || openai_base_url.as_ref() != current_openai_base_url.as_ref()
+        || allowed_tools_changed;
 
     if changed {
         rt.append_event(pm_protocol::ThreadEventKind::ThreadConfigUpdated {
@@ -86,6 +99,7 @@ async fn handle_thread_configure(
             mode,
             model,
             openai_base_url,
+            allowed_tools,
         })
         .await?;
     }
@@ -125,6 +139,7 @@ async fn handle_thread_config_explain(
     let mut effective_openai_provider = default_openai_provider.clone();
     let mut effective_model = default_model.clone();
     let mut effective_openai_base_url = default_openai_base_url.clone();
+    let mut effective_allowed_tools: Option<Vec<String>> = None;
     let mut layers = vec![serde_json::json!({
         "source": "default",
         "approval_policy": effective_approval_policy,
@@ -135,6 +150,7 @@ async fn handle_thread_config_explain(
         "openai_provider": effective_openai_provider,
         "model": effective_model,
         "openai_base_url": effective_openai_base_url,
+        "allowed_tools": effective_allowed_tools,
     })];
 
     let env_provider = std::env::var("CODE_PM_OPENAI_PROVIDER")
@@ -225,6 +241,7 @@ async fn handle_thread_config_explain(
             mode,
             model,
             openai_base_url,
+            allowed_tools,
         } = event.kind
         {
             let ts = event.timestamp.format(&Rfc3339)?;
@@ -247,6 +264,9 @@ async fn handle_thread_config_explain(
             if let Some(openai_base_url) = openai_base_url {
                 effective_openai_base_url = openai_base_url;
             }
+            if let Some(allowed_tools) = allowed_tools {
+                effective_allowed_tools = allowed_tools;
+            }
             layers.push(serde_json::json!({
                 "source": "thread",
                 "seq": event.seq.0,
@@ -259,6 +279,7 @@ async fn handle_thread_config_explain(
                 "openai_provider": effective_openai_provider,
                 "model": effective_model,
                 "openai_base_url": effective_openai_base_url,
+                "allowed_tools": effective_allowed_tools,
             }));
         }
     }
@@ -307,6 +328,7 @@ async fn handle_thread_config_explain(
             "mode": effective_mode,
             "model": effective_model,
             "openai_base_url": effective_openai_base_url,
+            "allowed_tools": effective_allowed_tools,
         },
         "mode_catalog": {
             "source": mode_catalog_source,
@@ -317,4 +339,47 @@ async fn handle_thread_config_explain(
         "effective_mode_def": effective_mode_def,
         "layers": layers,
     }))
+}
+
+const KNOWN_ALLOWED_TOOLS: &[&str] = &[
+    "file/read",
+    "file/glob",
+    "file/grep",
+    "file/write",
+    "file/patch",
+    "file/edit",
+    "file/delete",
+    "fs/mkdir",
+    "repo/search",
+    "repo/index",
+    "artifact/write",
+    "artifact/list",
+    "artifact/read",
+    "artifact/delete",
+    "process/start",
+    "process/list",
+    "process/inspect",
+    "process/kill",
+    "process/interrupt",
+    "process/tail",
+    "process/follow",
+];
+
+fn normalize_allowed_tools(tools: Vec<String>) -> anyhow::Result<Vec<String>> {
+    let mut out = Vec::new();
+    let mut seen = std::collections::BTreeSet::<String>::new();
+    for tool in tools {
+        let trimmed = tool.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if !KNOWN_ALLOWED_TOOLS.contains(&trimmed) {
+            let known = KNOWN_ALLOWED_TOOLS.join(", ");
+            anyhow::bail!("unknown tool: {trimmed} (known tools: {known})");
+        }
+        if seen.insert(trimmed.to_string()) {
+            out.push(trimmed.to_string());
+        }
+    }
+    Ok(out)
 }

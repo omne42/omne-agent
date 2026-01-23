@@ -11,6 +11,19 @@ async fn main() -> anyhow::Result<()> {
     if let Some(Command::Reference { command }) = cli.command.take() {
         return run_reference(&cli, command).await;
     }
+    if let Some(Command::Workflow { command }) = cli.command.take() {
+        match command {
+            CommandCommand::List { json } => return run_command_list(&cli, json).await,
+            CommandCommand::Show { name, json } => {
+                return run_command_show(&cli, &name, json).await;
+            }
+            CommandCommand::Run(args) => {
+                cli.command = Some(Command::Workflow {
+                    command: CommandCommand::Run(args),
+                });
+            }
+        }
+    }
 
     let mut app = App::connect(&cli).await?;
 
@@ -22,6 +35,9 @@ async fn main() -> anyhow::Result<()> {
         Some(Command::Reference { .. }) => unreachable!("handled before App::connect"),
         Some(Command::Preset { ref command }) => {
             run_preset(&cli, &mut app, command.clone()).await?;
+        }
+        Some(Command::Workflow { ref command }) => {
+            run_command_run(&cli, &mut app, command).await?;
         }
         Some(Command::Repo { command }) => match command {
             RepoCommand::Search {

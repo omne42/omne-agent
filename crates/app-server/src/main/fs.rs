@@ -1,7 +1,7 @@
 async fn handle_fs_mkdir(server: &Server, params: FsMkdirParams) -> anyhow::Result<Value> {
     let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
 
-    let (approval_policy, sandbox_policy, sandbox_writable_roots, mode_name) = {
+    let (approval_policy, sandbox_policy, sandbox_writable_roots, mode_name, allowed_tools) = {
         let handle = thread_rt.handle.lock().await;
         let state = handle.state();
         (
@@ -9,6 +9,7 @@ async fn handle_fs_mkdir(server: &Server, params: FsMkdirParams) -> anyhow::Resu
             state.sandbox_policy,
             state.sandbox_writable_roots.clone(),
             state.mode.clone(),
+            state.allowed_tools.clone(),
         )
     };
     let tool_id = pm_protocol::ToolId::new();
@@ -17,6 +18,18 @@ async fn handle_fs_mkdir(server: &Server, params: FsMkdirParams) -> anyhow::Resu
         "path": params.path.clone(),
         "recursive": params.recursive,
     });
+    if let Some(result) = enforce_thread_allowed_tools(
+        &thread_rt,
+        tool_id,
+        params.turn_id,
+        "fs/mkdir",
+        Some(approval_params.clone()),
+        &allowed_tools,
+    )
+    .await?
+    {
+        return Ok(result);
+    }
     if sandbox_policy == pm_protocol::SandboxPolicy::ReadOnly {
         thread_rt
             .append_event(pm_protocol::ThreadEventKind::ToolStarted {

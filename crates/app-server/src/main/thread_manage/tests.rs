@@ -205,4 +205,54 @@ hooks:
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn thread_allowed_tools_denies_file_read() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+        tokio::fs::write(repo_dir.join("foo.txt"), "hello\n").await?;
+
+        let server = build_test_server(tmp.path().join(".codepm_data"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        handle_thread_configure(
+            &server,
+            ThreadConfigureParams {
+                thread_id,
+                approval_policy: None,
+                sandbox_policy: None,
+                sandbox_writable_roots: None,
+                sandbox_network_access: None,
+                mode: None,
+                model: None,
+                openai_base_url: None,
+                allowed_tools: Some(Some(vec!["repo/search".to_string()])),
+            },
+        )
+        .await?;
+
+        let result = handle_file_read(
+            &server,
+            FileReadParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                root: None,
+                path: "foo.txt".to_string(),
+                max_bytes: None,
+            },
+        )
+        .await?;
+
+        assert!(result["denied"].as_bool().unwrap_or(false));
+        let allowed_tools = result["allowed_tools"]
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("missing allowed_tools"))?;
+        assert_eq!(allowed_tools.len(), 1);
+        assert_eq!(allowed_tools[0].as_str().unwrap_or(""), "repo/search");
+        Ok(())
+    }
 }

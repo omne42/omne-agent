@@ -223,6 +223,7 @@ pub struct ThreadState {
     pub mode: String,
     pub model: Option<String>,
     pub openai_base_url: Option<String>,
+    pub allowed_tools: Option<Vec<String>>,
     pub last_seq: EventSeq,
     pub active_turn_id: Option<TurnId>,
     pub active_turn_interrupt_requested: bool,
@@ -252,6 +253,7 @@ impl ThreadState {
             mode: "coder".to_string(),
             model: None,
             openai_base_url: None,
+            allowed_tools: None,
             last_seq: EventSeq::ZERO,
             active_turn_id: None,
             active_turn_interrupt_requested: false,
@@ -312,6 +314,7 @@ impl ThreadState {
                 mode,
                 model,
                 openai_base_url,
+                allowed_tools,
             } => {
                 self.approval_policy = *approval_policy;
                 if let Some(policy) = sandbox_policy {
@@ -331,6 +334,9 @@ impl ThreadState {
                 }
                 if let Some(openai_base_url) = openai_base_url {
                     self.openai_base_url = Some(openai_base_url.clone());
+                }
+                if let Some(allowed_tools) = allowed_tools {
+                    self.allowed_tools = allowed_tools.clone();
                 }
             }
             ThreadEventKind::TurnStarted { turn_id, .. } => {

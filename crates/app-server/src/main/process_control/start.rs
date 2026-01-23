@@ -53,7 +53,7 @@ async fn handle_process_start_inner(
     }
 
     let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
-    let (approval_policy, sandbox_policy, sandbox_network_access, mode_name) = {
+    let (approval_policy, sandbox_policy, sandbox_network_access, mode_name, allowed_tools) = {
         let handle = thread_rt.handle.lock().await;
         let state = handle.state();
         (
@@ -61,8 +61,29 @@ async fn handle_process_start_inner(
             state.sandbox_policy,
             state.sandbox_network_access,
             state.mode.clone(),
+            state.allowed_tools.clone(),
         )
     };
+    let tool_id = pm_protocol::ToolId::new();
+    let approval_params = serde_json::json!({
+        "argv": params.argv.clone(),
+        "cwd": params
+            .cwd
+            .clone()
+            .unwrap_or_else(|| thread_root.display().to_string()),
+    });
+    if let Some(result) = enforce_thread_allowed_tools(
+        &thread_rt,
+        tool_id,
+        params.turn_id,
+        "process/start",
+        Some(approval_params),
+        &allowed_tools,
+    )
+    .await?
+    {
+        return Ok(result);
+    }
 
     let cwd_path = if let Some(cwd) = params.cwd.as_deref() {
         resolve_dir_for_sandbox(&thread_root, sandbox_policy, Path::new(cwd)).await?
@@ -613,6 +634,7 @@ mod process_start_tests {
                 mode: None,
                 model: None,
                 openai_base_url: None,
+                allowed_tools: None,
             },
         )
         .await?;
@@ -707,6 +729,7 @@ prefix_rule(
                 mode: Some("mode-x".to_string()),
                 model: None,
                 openai_base_url: None,
+                allowed_tools: None,
             },
         )
         .await?;
@@ -766,6 +789,7 @@ modes:
                 mode: Some("mode-x".to_string()),
                 model: None,
                 openai_base_url: None,
+                allowed_tools: None,
             },
         )
         .await?;

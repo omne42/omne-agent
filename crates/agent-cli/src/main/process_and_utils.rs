@@ -103,9 +103,10 @@ fn render_event(event: &ThreadEvent) {
             mode,
             model,
             openai_base_url,
+            allowed_tools,
         } => {
             println!(
-                "[{ts}] config approval_policy={approval_policy:?} sandbox_policy={sandbox_policy:?} sandbox_writable_roots={sandbox_writable_roots:?} sandbox_network_access={sandbox_network_access:?} mode={} model={} openai_base_url={}",
+                "[{ts}] config approval_policy={approval_policy:?} sandbox_policy={sandbox_policy:?} sandbox_writable_roots={sandbox_writable_roots:?} sandbox_network_access={sandbox_network_access:?} mode={} model={} openai_base_url={} allowed_tools={allowed_tools:?}",
                 mode.as_deref().unwrap_or(""),
                 model.as_deref().unwrap_or(""),
                 openai_base_url.as_deref().unwrap_or("")

@@ -906,6 +906,7 @@ async fn run_tool_call_once(
                         mode: Some(child_mode.clone()),
                         model: args.model,
                         openai_base_url: args.openai_base_url,
+                        allowed_tools: None,
                     },
                 )
                 .await?;

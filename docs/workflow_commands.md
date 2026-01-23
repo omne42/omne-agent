@@ -1,8 +1,8 @@
-# Workflow / Commands（Markdown + frontmatter）（TODO：规格草案）
+# Workflow / Commands（Markdown + frontmatter）
 
 > 目标：把“常用工作流”做成可版本化、可 review、可复用的 spec 文件，而不是散落在 prompt 里。
 >
-> 状态：本文是 **TODO 规格草案**（v0.2.0 未实现）。先把边界写死，避免未来实现跑偏。
+> 状态：v0.2.x 已落地 **v1 最小子集**（`pm command {list,show,run}`）；并发拆分/Orchestrator 读取仍是 TODO（见第 4 节）。
 
 ---
 
@@ -29,7 +29,7 @@ Project config（可提交/可 review）：
 
 - v1 **只支持**：`./.codepm_data/spec/commands/<name>.md`（不做 fallback/模糊搜索；找不到即报错）
 
-CLI 形态（未来实现，占位）：
+CLI 形态（已实现）：
 
 ```bash
 pm command list
@@ -120,7 +120,7 @@ inputs:
 
 ---
 
-## 5) 验收（未来实现时）
+## 5) 验收（v0.2.x 现状）
 
 - `pm command list` 能发现 `./.codepm_data/spec/commands/*.md`，并显示 `name/mode/version`。
 - `pm command run <name>` 必须把最终生效的 `mode/allowed_tools` 记录到 thread config（可解释性见 `thread/config/explain`）。

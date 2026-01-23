@@ -252,6 +252,9 @@ pub struct ThreadConfigureParams {
     #[serde(default)]
     #[ts(optional)]
     pub openai_base_url: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub allowed_tools: Option<Option<Vec<String>>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]

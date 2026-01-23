@@ -197,6 +197,7 @@ pub(crate) fn redact_thread_event_kind(kind: &mut ThreadEventKind) {
             model,
             openai_base_url,
             sandbox_writable_roots,
+            allowed_tools,
             ..
         } => {
             if let Some(model) = model {
@@ -208,6 +209,11 @@ pub(crate) fn redact_thread_event_kind(kind: &mut ThreadEventKind) {
             if let Some(roots) = sandbox_writable_roots {
                 for root in roots {
                     *root = redact_text(root);
+                }
+            }
+            if let Some(Some(tools)) = allowed_tools {
+                for tool in tools {
+                    *tool = redact_text(tool);
                 }
             }
         }

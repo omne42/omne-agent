@@ -179,6 +179,7 @@ modes:
                 mode: Some("prompt-mode".to_string()),
                 model: None,
                 openai_base_url: None,
+                allowed_tools: None,
             },
         )
         .await?;

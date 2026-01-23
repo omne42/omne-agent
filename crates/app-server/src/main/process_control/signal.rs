@@ -9,10 +9,14 @@ async fn handle_process_kill(server: &Server, params: ProcessKillParams) -> anyh
     let info = entry.info.lock().await.clone();
 
     let (thread_rt, thread_root) = load_thread_root(server, info.thread_id).await?;
-    let (approval_policy, mode_name) = {
+    let (approval_policy, mode_name, allowed_tools) = {
         let handle = thread_rt.handle.lock().await;
         let state = handle.state();
-        (state.approval_policy, state.mode.clone())
+        (
+            state.approval_policy,
+            state.mode.clone(),
+            state.allowed_tools.clone(),
+        )
     };
 
     let tool_id = pm_protocol::ToolId::new();
@@ -20,6 +24,18 @@ async fn handle_process_kill(server: &Server, params: ProcessKillParams) -> anyh
         "process_id": params.process_id,
         "reason": params.reason.clone(),
     });
+    if let Some(result) = enforce_thread_allowed_tools(
+        &thread_rt,
+        tool_id,
+        params.turn_id,
+        "process/kill",
+        Some(approval_params.clone()),
+        &allowed_tools,
+    )
+    .await?
+    {
+        return Ok(result);
+    }
 
     let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {
@@ -186,10 +202,14 @@ async fn handle_process_interrupt(
     let info = entry.info.lock().await.clone();
 
     let (thread_rt, thread_root) = load_thread_root(server, info.thread_id).await?;
-    let (approval_policy, mode_name) = {
+    let (approval_policy, mode_name, allowed_tools) = {
         let handle = thread_rt.handle.lock().await;
         let state = handle.state();
-        (state.approval_policy, state.mode.clone())
+        (
+            state.approval_policy,
+            state.mode.clone(),
+            state.allowed_tools.clone(),
+        )
     };
 
     let tool_id = pm_protocol::ToolId::new();
@@ -197,6 +217,18 @@ async fn handle_process_interrupt(
         "process_id": params.process_id,
         "reason": params.reason.clone(),
     });
+    if let Some(result) = enforce_thread_allowed_tools(
+        &thread_rt,
+        tool_id,
+        params.turn_id,
+        "process/interrupt",
+        Some(approval_params.clone()),
+        &allowed_tools,
+    )
+    .await?
+    {
+        return Ok(result);
+    }
 
     let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {

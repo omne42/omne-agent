@@ -9,12 +9,15 @@ struct RepoGrepOutcome {
 
 async fn handle_repo_search(server: &Server, params: RepoSearchParams) -> anyhow::Result<Value> {
     let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
-    let (approval_policy, mode_name) = {
+    let (approval_policy, mode_name, allowed_tools) = {
         let handle = thread_rt.handle.lock().await;
         let state = handle.state();
-        (state.approval_policy, state.mode.clone())
+        (
+            state.approval_policy,
+            state.mode.clone(),
+            state.allowed_tools.clone(),
+        )
     };
-
     let query = params.query.trim().to_string();
     if query.is_empty() {
         anyhow::bail!("query must not be empty");
@@ -38,6 +41,18 @@ async fn handle_repo_search(server: &Server, params: RepoSearchParams) -> anyhow
         "max_bytes_per_file": max_bytes_per_file,
         "max_files": max_files,
     });
+    if let Some(result) = enforce_thread_allowed_tools(
+        &thread_rt,
+        tool_id,
+        params.turn_id,
+        "repo/search",
+        Some(approval_params.clone()),
+        &allowed_tools,
+    )
+    .await?
+    {
+        return Ok(result);
+    }
 
     let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {
@@ -380,10 +395,14 @@ struct RepoIndexOutcome {
 
 async fn handle_repo_index(server: &Server, params: RepoIndexParams) -> anyhow::Result<Value> {
     let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
-    let (approval_policy, mode_name) = {
+    let (approval_policy, mode_name, allowed_tools) = {
         let handle = thread_rt.handle.lock().await;
         let state = handle.state();
-        (state.approval_policy, state.mode.clone())
+        (
+            state.approval_policy,
+            state.mode.clone(),
+            state.allowed_tools.clone(),
+        )
     };
 
     let file_root = params.root.unwrap_or(FileRoot::Workspace);
@@ -395,6 +414,18 @@ async fn handle_repo_index(server: &Server, params: RepoIndexParams) -> anyhow::
         "include_glob": params.include_glob.clone(),
         "max_files": max_files,
     });
+    if let Some(result) = enforce_thread_allowed_tools(
+        &thread_rt,
+        tool_id,
+        params.turn_id,
+        "repo/index",
+        Some(approval_params.clone()),
+        &allowed_tools,
+    )
+    .await?
+    {
+        return Ok(result);
+    }
 
     let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {

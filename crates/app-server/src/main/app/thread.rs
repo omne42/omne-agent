@@ -198,6 +198,7 @@ async fn handle_thread_request(
                             "mode": state.mode,
                             "model": state.model,
                             "openai_base_url": state.openai_base_url,
+                            "allowed_tools": state.allowed_tools,
                             "last_seq": handle.last_seq().0,
                             "active_turn_id": state.active_turn_id,
                             "active_turn_interrupt_requested": state.active_turn_interrupt_requested,

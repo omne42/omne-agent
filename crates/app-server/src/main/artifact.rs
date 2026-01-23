@@ -10,10 +10,14 @@ async fn handle_artifact_write(
     }
 
     let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
-    let (approval_policy, mode_name) = {
+    let (approval_policy, mode_name, allowed_tools) = {
         let handle = thread_rt.handle.lock().await;
         let state = handle.state();
-        (state.approval_policy, state.mode.clone())
+        (
+            state.approval_policy,
+            state.mode.clone(),
+            state.allowed_tools.clone(),
+        )
     };
     let tool_id = pm_protocol::ToolId::new();
     let bytes_len = params.text.len();
@@ -25,6 +29,18 @@ async fn handle_artifact_write(
         "summary": summary,
         "bytes": bytes_len,
     });
+    if let Some(result) = enforce_thread_allowed_tools(
+        &thread_rt,
+        tool_id,
+        params.turn_id,
+        "artifact/write",
+        Some(approval_params.clone()),
+        &allowed_tools,
+    )
+    .await?
+    {
+        return Ok(result);
+    }
 
     let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {
@@ -431,13 +447,29 @@ async fn handle_artifact_list(
     params: ArtifactListParams,
 ) -> anyhow::Result<Value> {
     let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
-    let (approval_policy, mode_name) = {
+    let (approval_policy, mode_name, allowed_tools) = {
         let handle = thread_rt.handle.lock().await;
         let state = handle.state();
-        (state.approval_policy, state.mode.clone())
+        (
+            state.approval_policy,
+            state.mode.clone(),
+            state.allowed_tools.clone(),
+        )
     };
     let tool_id = pm_protocol::ToolId::new();
     let approval_params = serde_json::json!({});
+    if let Some(result) = enforce_thread_allowed_tools(
+        &thread_rt,
+        tool_id,
+        params.turn_id,
+        "artifact/list",
+        Some(approval_params.clone()),
+        &allowed_tools,
+    )
+    .await?
+    {
+        return Ok(result);
+    }
 
     let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {
@@ -668,16 +700,32 @@ async fn handle_artifact_read(
     let max_bytes = params.max_bytes.unwrap_or(256 * 1024).min(4 * 1024 * 1024);
 
     let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
-    let (approval_policy, mode_name) = {
+    let (approval_policy, mode_name, allowed_tools) = {
         let handle = thread_rt.handle.lock().await;
         let state = handle.state();
-        (state.approval_policy, state.mode.clone())
+        (
+            state.approval_policy,
+            state.mode.clone(),
+            state.allowed_tools.clone(),
+        )
     };
     let tool_id = pm_protocol::ToolId::new();
     let approval_params = serde_json::json!({
         "artifact_id": params.artifact_id,
         "max_bytes": max_bytes,
     });
+    if let Some(result) = enforce_thread_allowed_tools(
+        &thread_rt,
+        tool_id,
+        params.turn_id,
+        "artifact/read",
+        Some(approval_params.clone()),
+        &allowed_tools,
+    )
+    .await?
+    {
+        return Ok(result);
+    }
 
     let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {
@@ -882,15 +930,31 @@ async fn handle_artifact_delete(
     params: ArtifactDeleteParams,
 ) -> anyhow::Result<Value> {
     let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
-    let (approval_policy, mode_name) = {
+    let (approval_policy, mode_name, allowed_tools) = {
         let handle = thread_rt.handle.lock().await;
         let state = handle.state();
-        (state.approval_policy, state.mode.clone())
+        (
+            state.approval_policy,
+            state.mode.clone(),
+            state.allowed_tools.clone(),
+        )
     };
     let tool_id = pm_protocol::ToolId::new();
     let approval_params = serde_json::json!({
         "artifact_id": params.artifact_id,
     });
+    if let Some(result) = enforce_thread_allowed_tools(
+        &thread_rt,
+        tool_id,
+        params.turn_id,
+        "artifact/delete",
+        Some(approval_params.clone()),
+        &allowed_tools,
+    )
+    .await?
+    {
+        return Ok(result);
+    }
 
     let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {

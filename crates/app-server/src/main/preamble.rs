@@ -718,6 +718,8 @@ struct ThreadConfigureParams {
     model: Option<String>,
     #[serde(default)]
     openai_base_url: Option<String>,
+    #[serde(default)]
+    allowed_tools: Option<Option<Vec<String>>>,
 }
 
 #[derive(Debug, Deserialize)]

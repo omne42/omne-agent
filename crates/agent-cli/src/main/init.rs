@@ -33,7 +33,9 @@ async fn run_init(args: InitArgs) -> anyhow::Result<()> {
     tokio::fs::create_dir_all(&codepm_data_dir).await?;
 
     if create_spec_dir {
-        tokio::fs::create_dir_all(codepm_data_dir.join("spec")).await?;
+        let spec_dir = codepm_data_dir.join("spec");
+        tokio::fs::create_dir_all(&spec_dir).await?;
+        tokio::fs::create_dir_all(spec_dir.join("commands")).await?;
     }
     tokio::fs::create_dir_all(codepm_data_dir.join("tmp")).await?;
     tokio::fs::create_dir_all(codepm_data_dir.join("data")).await?;

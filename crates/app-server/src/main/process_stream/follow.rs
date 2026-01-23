@@ -4,10 +4,14 @@ async fn handle_process_follow(server: &Server, params: ProcessFollowParams) -> 
 
     let info = resolve_process_info(server, params.process_id).await?;
     let (thread_rt, thread_root) = load_thread_root(server, info.thread_id).await?;
-    let (approval_policy, mode_name) = {
+    let (approval_policy, mode_name, allowed_tools) = {
         let handle = thread_rt.handle.lock().await;
         let state = handle.state();
-        (state.approval_policy, state.mode.clone())
+        (
+            state.approval_policy,
+            state.mode.clone(),
+            state.allowed_tools.clone(),
+        )
     };
     let tool_id = pm_protocol::ToolId::new();
 
@@ -17,6 +21,18 @@ async fn handle_process_follow(server: &Server, params: ProcessFollowParams) -> 
         "since_offset": params.since_offset,
         "max_bytes": max_bytes,
     });
+    if let Some(result) = enforce_thread_allowed_tools(
+        &thread_rt,
+        tool_id,
+        params.turn_id,
+        "process/follow",
+        Some(approval_params.clone()),
+        &allowed_tools,
+    )
+    .await?
+    {
+        return Ok(result);
+    }
 
     let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {

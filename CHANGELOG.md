@@ -110,6 +110,8 @@
 - `pm-protocol`/`pm-app-server`/`pm`：新增 Checkpoints（`thread/checkpoint/{create,list,restore}`；CLI: `pm checkpoint {create,list,restore}`），workspace 快照落盘到 `.codepm_data/threads/<thread_id>/artifacts/checkpoints/`；restore 强制 `prompt_strict` 审批并要求无 active turn/running process。
 - `pm-app-server`：新增 Hooks（`./.codepm_data/spec/hooks.yaml`）：支持 `session_start/pre_tool_use/post_tool_use/stop` 触发命令（走 `process/start` + mode/sandbox/execpolicy/approval），并支持 `additional_context` 注入与落盘审计（见 `docs/hooks.md`）。
 - `pm-protocol`/`pm-app-server-protocol`/`pm-app-server`/`pm`：新增 `turn/start.context_refs`（结构化上下文引用）：CLI 可在输入开头解析 `@file/@diff` 并剥离，服务端将结构化输入落盘到 `TurnStarted.context_refs`，agent turn 启动前解析并注入上下文（`@file`→`file_read`，`@diff`→`thread_diff` 产出 diff artifact 并注入元信息）。
+- `pm` CLI：新增 Workflow/Commands（Markdown + frontmatter）：`pm command {list,show,run}`（读取 `./.codepm_data/spec/commands/*.md`，执行 context steps，并以渲染后的正文启动 turn；见 `docs/workflow_commands.md`）。
+- `pm-app-server`：thread-level `allowed_tools`（`thread/configure.allowed_tools`）落盘与强制执行（覆盖 `file/*`、`fs/mkdir`、`repo/*`、`artifact/*`、`process/*`），并在 `thread/state`/`thread/config-explain` 可观测。
 
 ### Changed
 - `pm`/`pm-app-server`：`pm_root` 默认目录改为 `./.codepm_data/`（可用 `--pm-root` 或 `CODE_PM_ROOT` 覆盖）。

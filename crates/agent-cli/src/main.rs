@@ -4,6 +4,7 @@
 include!("main/preamble.rs");
 include!("main/app.rs");
 include!("main/ask_exec.rs");
+include!("main/command.rs");
 include!("main/init.rs");
 include!("main/preset.rs");
 include!("main/reference.rs");

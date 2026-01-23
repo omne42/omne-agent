@@ -1,6 +1,6 @@
 async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Result<Value> {
     let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
-    let (approval_policy, sandbox_policy, sandbox_writable_roots, mode_name) = {
+    let (approval_policy, sandbox_policy, sandbox_writable_roots, mode_name, allowed_tools) = {
         let handle = thread_rt.handle.lock().await;
         let state = handle.state();
         (
@@ -8,6 +8,7 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
             state.sandbox_policy,
             state.sandbox_writable_roots.clone(),
             state.mode.clone(),
+            state.allowed_tools.clone(),
         )
     };
 
@@ -19,6 +20,18 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
         "path": params.path.clone(),
         "max_bytes": max_bytes,
     });
+    if let Some(result) = enforce_thread_allowed_tools(
+        &thread_rt,
+        tool_id,
+        params.turn_id,
+        "file/read",
+        Some(approval_params.clone()),
+        &allowed_tools,
+    )
+    .await?
+    {
+        return Ok(result);
+    }
 
     let root = match file_root {
         FileRoot::Workspace => thread_root.clone(),
@@ -351,11 +364,27 @@ async fn handle_file_glob(server: &Server, params: FileGlobParams) -> anyhow::Re
         "max_results": max_results,
     });
 
-    let (approval_policy, mode_name) = {
+    let (approval_policy, mode_name, allowed_tools) = {
         let handle = thread_rt.handle.lock().await;
         let state = handle.state();
-        (state.approval_policy, state.mode.clone())
+        (
+            state.approval_policy,
+            state.mode.clone(),
+            state.allowed_tools.clone(),
+        )
     };
+    if let Some(result) = enforce_thread_allowed_tools(
+        &thread_rt,
+        tool_id,
+        params.turn_id,
+        "file/glob",
+        Some(approval_params.clone()),
+        &allowed_tools,
+    )
+    .await?
+    {
+        return Ok(result);
+    }
     let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {
         Some(mode) => mode,
@@ -616,11 +645,27 @@ async fn handle_file_grep(server: &Server, params: FileGrepParams) -> anyhow::Re
         "max_files": max_files,
     });
 
-    let (approval_policy, mode_name) = {
+    let (approval_policy, mode_name, allowed_tools) = {
         let handle = thread_rt.handle.lock().await;
         let state = handle.state();
-        (state.approval_policy, state.mode.clone())
+        (
+            state.approval_policy,
+            state.mode.clone(),
+            state.allowed_tools.clone(),
+        )
     };
+    if let Some(result) = enforce_thread_allowed_tools(
+        &thread_rt,
+        tool_id,
+        params.turn_id,
+        "file/grep",
+        Some(approval_params.clone()),
+        &allowed_tools,
+    )
+    .await?
+    {
+        return Ok(result);
+    }
     let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {
         Some(mode) => mode,

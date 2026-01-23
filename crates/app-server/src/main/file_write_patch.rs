@@ -2,7 +2,7 @@ async fn handle_file_write(server: &Server, params: FileWriteParams) -> anyhow::
     let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
 
     let create_parent_dirs = params.create_parent_dirs.unwrap_or(true);
-    let (approval_policy, sandbox_policy, sandbox_writable_roots, mode_name) = {
+    let (approval_policy, sandbox_policy, sandbox_writable_roots, mode_name, allowed_tools) = {
         let handle = thread_rt.handle.lock().await;
         let state = handle.state();
         (
@@ -10,6 +10,7 @@ async fn handle_file_write(server: &Server, params: FileWriteParams) -> anyhow::
             state.sandbox_policy,
             state.sandbox_writable_roots.clone(),
             state.mode.clone(),
+            state.allowed_tools.clone(),
         )
     };
     let tool_id = pm_protocol::ToolId::new();
@@ -20,6 +21,18 @@ async fn handle_file_write(server: &Server, params: FileWriteParams) -> anyhow::
         "bytes": bytes,
         "create_parent_dirs": create_parent_dirs,
     });
+    if let Some(result) = enforce_thread_allowed_tools(
+        &thread_rt,
+        tool_id,
+        params.turn_id,
+        "file/write",
+        Some(approval_params.clone()),
+        &allowed_tools,
+    )
+    .await?
+    {
+        return Ok(result);
+    }
     if sandbox_policy == pm_protocol::SandboxPolicy::ReadOnly {
         thread_rt
             .append_event(pm_protocol::ThreadEventKind::ToolStarted {
@@ -273,7 +286,7 @@ async fn handle_file_patch(server: &Server, params: FilePatchParams) -> anyhow::
         .min(16 * 1024 * 1024);
     let patch_bytes = params.patch.len();
 
-    let (approval_policy, sandbox_policy, sandbox_writable_roots, mode_name) = {
+    let (approval_policy, sandbox_policy, sandbox_writable_roots, mode_name, allowed_tools) = {
         let handle = thread_rt.handle.lock().await;
         let state = handle.state();
         (
@@ -281,6 +294,7 @@ async fn handle_file_patch(server: &Server, params: FilePatchParams) -> anyhow::
             state.sandbox_policy,
             state.sandbox_writable_roots.clone(),
             state.mode.clone(),
+            state.allowed_tools.clone(),
         )
     };
     let tool_id = pm_protocol::ToolId::new();
@@ -290,6 +304,18 @@ async fn handle_file_patch(server: &Server, params: FilePatchParams) -> anyhow::
         "patch_bytes": patch_bytes,
         "max_bytes": max_bytes,
     });
+    if let Some(result) = enforce_thread_allowed_tools(
+        &thread_rt,
+        tool_id,
+        params.turn_id,
+        "file/patch",
+        Some(approval_params.clone()),
+        &allowed_tools,
+    )
+    .await?
+    {
+        return Ok(result);
+    }
     if sandbox_policy == pm_protocol::SandboxPolicy::ReadOnly {
         thread_rt
             .append_event(pm_protocol::ThreadEventKind::ToolStarted {

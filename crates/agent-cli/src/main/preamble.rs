@@ -48,6 +48,11 @@ enum Command {
         #[command(subcommand)]
         command: PresetCommand,
     },
+    #[command(name = "command")]
+    Workflow {
+        #[command(subcommand)]
+        command: CommandCommand,
+    },
     Repo {
         #[command(subcommand)]
         command: RepoCommand,
@@ -80,6 +85,64 @@ enum Command {
         #[command(subcommand)]
         command: ArtifactCommand,
     },
+}
+
+#[derive(Subcommand)]
+enum CommandCommand {
+    /// List available commands under `./.codepm_data/spec/commands/`.
+    List {
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    /// Show a command (frontmatter + body).
+    Show {
+        name: String,
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    /// Run a command (executes context steps, then starts a turn).
+    Run(CommandRunArgs),
+}
+
+#[derive(Parser)]
+struct CommandRunArgs {
+    name: String,
+
+    /// Template variables: `--var key=value` (repeatable).
+    #[arg(long = "var", value_name = "KEY=VALUE")]
+    vars: Vec<CommandVar>,
+
+    /// Resume an existing thread instead of creating a new one.
+    #[arg(long)]
+    thread_id: Option<ThreadId>,
+
+    /// Working directory for a newly created thread.
+    #[arg(long)]
+    cwd: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug)]
+struct CommandVar {
+    key: String,
+    value: String,
+}
+
+impl std::str::FromStr for CommandVar {
+    type Err = String;
+
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        let (key, value) = input
+            .split_once('=')
+            .ok_or_else(|| "expected KEY=VALUE".to_string())?;
+        let key = key.trim();
+        if key.is_empty() {
+            return Err("command var key must not be empty".to_string());
+        }
+        Ok(Self {
+            key: key.to_string(),
+            value: value.to_string(),
+        })
+    }
 }
 
 #[derive(clap::Args)]
