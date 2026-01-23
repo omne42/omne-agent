@@ -123,13 +123,13 @@ v0.2.x 行为（已实现）：
 - fan-out：每个 task 会通过 `thread/fork` 创建子 thread，并强制配置为 `sandbox_policy=read_only` + `mode=reviewer`，然后 `turn/start` 并发执行。
   - 并发上限：复用 `CODE_PM_MAX_CONCURRENT_SUBAGENTS`（默认 `4`；`0` 表示不限制）。
   - 重要限制：由于 v0.2.x 还没有 workspace 隔离，fan-out 子任务只能做并发只读分析（读文件/索引/事件），不能写代码/跑命令。
-- fan-in：等待所有子任务 `TurnCompleted` 后，在父 thread 写入 `artifact_type="fan_in_summary"`，内容包含每个 task 的 `thread_id/turn_id/status` 与最后一条 `AssistantMessage`（可用于主 turn 的上下文）。
+- fan-in：父 thread 会先创建一个 `artifact_type="fan_in_summary"`，fan-out 期间持续更新进度（含 rough ETA）；待所有子任务 `TurnCompleted` 后写入最终汇总（包含每个 task 的 `thread_id/turn_id/status` 与最后一条 `AssistantMessage`）。
 - 主 turn：fan-in 完成后，仍会继续执行原 `pm command run` 的主 turn，并在输入中附带 `fan_in_summary` 的定位信息（便于后续 `pm artifact read`）。
 
 非目标（仍 TODO）：
 
 - task 依赖（`depends_on`）、优先级与公平调度（worker pool with priority）。
-- “提前返回/持续更新”进度摘要（见 `docs/v0.2.0_parity.md` 与 `docs/subagents.md`）。
+- “提前返回”策略：在子任务未全部完成时先收口并持续更新（见 `docs/v0.2.0_parity.md`）。
 
 ---
 

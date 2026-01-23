@@ -514,9 +514,11 @@ async fn run_command_run(
     if args.fan_out {
         let tasks = parse_workflow_tasks(&rendered_body)?;
         if !tasks.is_empty() {
-            fan_out_results = run_workflow_fan_out(app, thread_id, &tasks).await?;
-            let (artifact_id, _artifact_path) =
-                write_fan_in_summary_artifact(app, thread_id, &fan_out_results).await?;
+            let artifact_id = pm_protocol::ArtifactId::new();
+            fan_out_results = run_workflow_fan_out(app, thread_id, &tasks, artifact_id).await?;
+            let _artifact_path =
+                write_fan_in_summary_artifact(app, thread_id, artifact_id, &fan_out_results)
+                    .await?;
             fan_in_artifact_id = Some(artifact_id);
         }
     }
@@ -639,6 +641,7 @@ async fn run_workflow_fan_out(
     app: &mut App,
     parent_thread_id: ThreadId,
     tasks: &[WorkflowTask],
+    fan_in_artifact_id: pm_protocol::ArtifactId,
 ) -> anyhow::Result<Vec<WorkflowTaskResult>> {
     #[derive(Debug, Deserialize)]
     struct ForkResult {
@@ -667,7 +670,21 @@ async fn run_workflow_fan_out(
     let mut active = Vec::<ActiveTask>::new();
     let mut finished = Vec::<WorkflowTaskResult>::new();
 
+    let started_at = Instant::now();
     let mut last_progress_print = Instant::now();
+    let mut last_progress_artifact_write = Instant::now();
+
+    write_fan_out_progress_artifact(
+        app,
+        parent_thread_id,
+        fan_in_artifact_id,
+        tasks.len(),
+        &finished,
+        &active,
+        started_at,
+    )
+    .await?;
+
     while finished.len() < tasks.len() {
         while active.len() < concurrency_limit && pending_idx < tasks.len() {
             let task = &tasks[pending_idx];
@@ -792,8 +809,39 @@ async fn run_workflow_fan_out(
                 );
                 last_progress_print = Instant::now();
             }
+            if last_progress_artifact_write.elapsed() >= Duration::from_secs(2) {
+                let outcome = write_fan_out_progress_artifact(
+                    app,
+                    parent_thread_id,
+                    fan_in_artifact_id,
+                    tasks.len(),
+                    &finished,
+                    &active,
+                    started_at,
+                )
+                .await;
+                if let Err(err) = outcome {
+                    eprintln!("[fan-out] progress artifact update failed: {err}");
+                } else {
+                    last_progress_artifact_write = Instant::now();
+                }
+            }
             tokio::time::sleep(Duration::from_millis(200)).await;
         }
+    }
+
+    let outcome = write_fan_out_progress_artifact(
+        app,
+        parent_thread_id,
+        fan_in_artifact_id,
+        tasks.len(),
+        &finished,
+        &active,
+        started_at,
+    )
+    .await;
+    if let Err(err) = outcome {
+        eprintln!("[fan-out] final progress artifact update failed: {err}");
     }
 
     let mut by_id = std::collections::HashMap::<String, WorkflowTaskResult>::new();
@@ -810,11 +858,82 @@ async fn run_workflow_fan_out(
     Ok(ordered)
 }
 
+async fn write_fan_out_progress_artifact<T: std::fmt::Debug>(
+    app: &mut App,
+    thread_id: ThreadId,
+    artifact_id: pm_protocol::ArtifactId,
+    total_tasks: usize,
+    finished: &[WorkflowTaskResult],
+    active: &[T],
+    started_at: Instant,
+) -> anyhow::Result<()> {
+    let elapsed = started_at.elapsed();
+    let done = finished.len();
+
+    let eta_seconds = if done == 0 {
+        None
+    } else {
+        let elapsed_secs = elapsed.as_secs_f64();
+        let total_secs_estimate = elapsed_secs * (total_tasks as f64) / (done as f64);
+        let eta_secs = (total_secs_estimate - elapsed_secs).max(0.0);
+        Some(eta_secs.round() as u64)
+    };
+
+    let mut text = String::new();
+    text.push_str("# Fan-out Progress\n\n");
+    text.push_str(&format!("Progress: {done}/{total_tasks}\n\n"));
+    text.push_str(&format!("Elapsed: {}s\n\n", elapsed.as_secs()));
+    if let Some(eta_seconds) = eta_seconds {
+        text.push_str(&format!("ETA (rough): {}s\n\n", eta_seconds));
+    }
+
+    text.push_str("Active tasks:\n\n");
+    text.push_str("```text\n");
+    if active.is_empty() {
+        text.push_str("(none)\n");
+    } else {
+        for entry in active {
+            text.push_str(&format!("{entry:?}\n"));
+        }
+    }
+    text.push_str("```\n\n");
+
+    text.push_str("Completed tasks:\n\n");
+    if finished.is_empty() {
+        text.push_str("- (none)\n");
+    } else {
+        for result in finished {
+            text.push_str(&format!(
+                "- {} status={:?} thread_id={} turn_id={}\n",
+                result.task_id, result.status, result.thread_id, result.turn_id
+            ));
+        }
+    }
+
+    let v = app
+        .rpc(
+            "artifact/write",
+            serde_json::json!({
+                "thread_id": thread_id,
+                "turn_id": null,
+                "approval_id": null,
+                "artifact_id": artifact_id,
+                "artifact_type": "fan_in_summary",
+                "summary": "fan-in summary",
+                "text": text,
+            }),
+        )
+        .await?;
+    ensure_approval_and_denial_handled("artifact/write", &v)?;
+    Ok(())
+}
+
 async fn write_fan_in_summary_artifact(
     app: &mut App,
     thread_id: ThreadId,
+    artifact_id: pm_protocol::ArtifactId,
     results: &[WorkflowTaskResult],
-) -> anyhow::Result<(pm_protocol::ArtifactId, String)> {
+) -> anyhow::Result<String> {
     let mut text = String::new();
     text.push_str("# Fan-in Summary\n\n");
     text.push_str(&format!("Tasks: {}\n\n", results.len()));
@@ -853,7 +972,7 @@ async fn write_fan_in_summary_artifact(
                 "thread_id": thread_id,
                 "turn_id": null,
                 "approval_id": null,
-                "artifact_id": null,
+                "artifact_id": artifact_id,
                 "artifact_type": "fan_in_summary",
                 "summary": "fan-in summary",
                 "text": text,
@@ -862,10 +981,7 @@ async fn write_fan_in_summary_artifact(
         .await?;
     ensure_approval_and_denial_handled("artifact/write", &v)?;
 
-    let artifact_id: pm_protocol::ArtifactId =
-        serde_json::from_value(v["artifact_id"].clone()).context("parse artifact_id")?;
-    let content_path = v["content_path"].as_str().unwrap_or("").to_string();
-    Ok((artifact_id, content_path))
+    Ok(v["content_path"].as_str().unwrap_or("").to_string())
 }
 
 fn truncate_chars(input: &str, max_chars: usize) -> String {
