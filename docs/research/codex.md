@@ -281,3 +281,149 @@ Codex 的安全与执行底座很厚，相关 crate/文档：
    - `Reviewer` 输出 review 结论结构
    - `Merger` 输出合并计划与顺序
 4. 安全与密钥：优先使用 `OPENAI_API_KEY`，后续可引入 `codex-responses-api-proxy` 模式用于多用户/隔离场景。
+
+---
+
+## 8. 其它值得借鉴的工程细节（补充：codex-cli + codex-rs 各子 crate）
+
+> 这一节不重复前文的 “app-server / Responses / Thread 模型”。重点是 Codex 在“分发、配置、硬化、安全降噪、传输形态”上的工程化细节。
+
+### 8.1 Node 只做 launcher（分发边界：薄而正确）
+
+参考：`example/codex/codex-cli/bin/codex.js`
+
+- Node 入口只做：
+  - 平台/架构 → target triple 映射
+  - 定位 `vendor/<triple>/<component>/<exe>`
+  - `spawn()` 子进程并转发信号（保证 Ctrl-C/SIGTERM 语义正确）
+  - 可选：把 `vendor/<triple>/path` prepend 到 `PATH`（让 `rg` 之类的依赖可用）
+- Node **不**做：任何 agent/core/权限/工具逻辑（这些留给 Rust binary）。
+
+对 `CodePM` 的直接启发：
+
+- 我们的 v0.3.0 Node 方案应该复刻这个边界（见 `docs/TODO.md`）。
+- Node 的职责越薄，Rust 才是唯一可信执行体（安全模型只存在一份）。
+
+### 8.2 npm 包的 vendor 组装脚本（release 工程，不是“顺便写写”）
+
+参考：`example/codex/codex-cli/scripts/build_npm_package.py`
+
+- 显式列出每个 npm 包需要哪些 native components，并把它们复制到固定目录结构（例如把 `rg` 放进 `path/`）。
+- release 工作流把 `vendor/` 树作为产物，后续再被 npm 包/发行版复用。
+
+对 `CodePM`：
+
+- 如果选择 “npm vendoring 多平台二进制”，必须把 vendor layout 与 release pipeline 当作第一等工程，而不是散落脚本。
+- 反过来，如果不想背负这套复杂度，就选 “npm thin client + 外部安装二进制”。
+
+### 8.3 “arg0 trick”：单个 Rust binary 伪装多个工具（同时守住安全边界）
+
+参考：`example/codex/codex-rs/arg0/src/lib.rs`
+
+- 通过 `argv0`（可执行文件名）或特殊 `argv1` 触发分发：
+  - `codex-linux-sandbox`（Linux 专用）
+  - `apply_patch`（也兼容拼错的 `applypatch`）
+- 在启动 tokio runtime/多线程**之前**：
+  - 加载 `~/.codex/.env`
+  - 过滤掉保留前缀变量（Codex 禁止 `.env` 写 `CODEX_*`）
+  - 创建 `~/.codex/tmp/path/*` 临时目录，把 helper symlink/bat 放进去并 prepend 到 `PATH`
+
+对 `CodePM`：
+
+- `.env` 必须“可用但不可提权”：建议对 `CODE_PM_*` 做同类过滤（避免 `.env` 伪造 root/path/sandbox 等关键配置）。
+- “工具别名（apply_patch/…）”可以作为分发优化，但一定要在多线程前完成，避免环境竞态。
+
+### 8.4 配置分层 + 可解释性 + 冲突检测（把配置当产品能力）
+
+参考：`example/codex/codex-rs/core/src/config_loader/README.md`
+
+- Codex 的 config loader 不是简单读 `config.toml`，而是输出：
+  - effective merged config（合并后的最终值）
+  - per-key origins（每个 key 谁赢了，来自哪一层）
+  - per-layer fingerprint（稳定 hash，用于乐观并发写/冲突检测）
+
+对 `CodePM`：
+
+- 我们已经在 v0.2.0 做了部分 “config explain”，但如果要做 GUI/daemon 的在线配置编辑，这种 layer fingerprint 才是“不会互相踩配置”的正确答案。
+
+### 8.5 “命令安全降噪”：已知安全命令 + 保守解析 `bash -lc`
+
+参考：
+
+- `example/codex/codex-rs/core/src/command_safety/is_safe_command.rs`
+- `example/codex/codex-rs/core/src/command_safety/is_dangerous_command.rs`
+- `example/codex/codex-rs/core/src/bash.rs`
+
+Codex 做了两件值得抄但要克制的事：
+
+- 对一小撮“确定安全、不会写盘/不会执行任意命令”的工具做 allow-list（例如 `ls/cat/rg/git status/...`，并对 `rg --pre` 这类选项做反向禁用）。
+- 对 `bash -lc "..."` 并不是“一刀切允许”，而是用 tree-sitter-bash **只接受**：
+  - word-only commands
+  - 只包含 `&& || ; |` 这类“不会引入副作用”的 operator
+  - 并拒绝重定向、命令替换、控制流、括号等复杂构造
+
+对 `CodePM`：
+
+- 我们文档已强调 `bash -lc` 默认应 forbidden（见 `docs/execpolicy.md`）。
+- 但如果未来要在 `ApprovalPolicy=unless_trusted` 下减少噪音，可以考虑引入这种“可证明安全的极小子集解析”，把“安全读取类命令”自动通过，其余一律走审批/拒绝。
+
+### 8.6 sandbox 的“持久化提权防护”：workspace-write 也要保护 `.git` / 配置目录
+
+参考：`example/codex/codex-rs/core/src/seatbelt.rs`
+
+- Codex 的 seatbelt policy 在 workspace-write 下仍然把 `.git` 与 `.codex` 设为只读。
+- 测试里直说原因：`.git/hooks/*` 可写会导致用户后续手工 `git commit` 执行恶意代码；修改配置目录可能把下一次运行升级成 full-access。
+
+对 `CodePM`：
+
+- 我们的等价目录是 `.git` 与 `.codepm_data/`；“允许写 workspace”不能等价于“允许写一切”，否则会把 agent 变成持久化后门的写入器。
+
+### 8.7 pre-main hardening：别让宿主环境轻易劫持你
+
+参考：`example/codex/codex-rs/process-hardening/src/lib.rs`
+
+- pre-main 直接做：
+  - 禁 core dump
+  - 禁 ptrace attach
+  - 清理 `LD_*` / `DYLD_*` 这类动态链接劫持入口
+- 并且注意非 UTF-8 env key 的边界条件（测试覆盖）。
+
+对 `CodePM`：
+
+- daemon/长驻进程尤其需要这一层；否则“你以为你在沙箱里”，实际上你已经被 `LD_PRELOAD` 之类的东西劫持了。
+
+### 8.8 传输形态：stdio ↔ UDS 适配（让协议既能嵌入也能常驻）
+
+参考：`example/codex/codex-rs/stdio-to-uds/README.md`
+
+- 把原本只支持 stdio 的 server 挂到 Unix domain socket 上：
+  - 便于常驻进程复用
+  - 可以用文件权限控制访问（比 TCP 暴露更安全）
+
+对 `CodePM`：
+
+- 我们已有 daemon/socket 方向（见 `docs/daemon.md`）；Codex 的适配器提供了“保留 stdio 协议但支持常驻”的通用解法。
+
+### 8.9 Auth 与凭据：device code + keyring store（未来如果做“Sign in with ChatGPT”）
+
+参考：
+
+- `example/codex/codex-rs/login/src/device_code_auth.rs`
+- `example/codex/codex-rs/keyring-store/src/lib.rs`
+
+- 设备码登录 UX 里明确提示钓鱼风险（“Never share this code”），这不是花活，是必要防线。
+- keyring store 被抽象成一个很小的 trait（默认实现 + mock 测试），避免把 OS keyring 细节污染到 core。
+
+对 `CodePM`：
+
+- 如果未来做 OAuth/device-code 登录，建议同样抽象出 “credential store” 与 “login flow”，并确保日志/事件落盘不会泄露 token。
+
+### 8.10 可观测性：独立的 OTEL 集成 crate（别把 tracing/metrics 绑死在主逻辑）
+
+参考：`example/codex/codex-rs/otel/README.md`
+
+- 把 tracing + metrics 的出口封装成独立 crate，并提供 in-memory exporter 供测试断言。
+
+对 `CodePM`：
+
+- 我们现在以事件 log 为主，但 daemon/多 workspace 并发后，“指标化”会变得很值钱（排队时延、turn 时延、tool 失败率、重试率等）。
