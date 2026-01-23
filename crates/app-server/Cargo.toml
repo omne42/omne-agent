@@ -11,7 +11,7 @@ diffy.workspace = true
 globset.workspace = true
 futures-util.workspace = true
 nix.workspace = true
-ditto-llm = { path = "../../bitto-llm" }
+ditto-llm = { path = "../../ditto-llm" }
 pm-core = { path = "../core" }
 pm-execpolicy = { path = "../execpolicy" }
 pm-app-server-protocol = { path = "../app-server-protocol" }

@@ -6,11 +6,11 @@
 
 ## 在 CodePM 仓库中的定位（v0.2.x 现状）
 
-> 本仓库依赖的 `ditto-llm`（本地 checkout：`./bitto-llm`）**不是**“统一生成 SDK”，而是为 `Provider/Model 路由`提供最小抽象：provider profile 配置 + OpenAI-compatible `/models` 发现 + `thinking`(reasoning.effort) 配置。
+> 本仓库依赖的 `ditto-llm`（本地 checkout：`./ditto-llm`）**不是**“统一生成 SDK”，而是为 `Provider/Model 路由`提供最小抽象：provider profile 配置 + OpenAI-compatible `/models` 发现 + `thinking`(reasoning.effort) 配置。
 >
 > OpenAI Responses API 的实际调用实现位于 `crates/openai`；本文后续 “LanguageModel/EmbeddingModel + 多 provider 适配” 属于未来设想，尚未在本仓库落地。
 
-已实现（`bitto-llm/src/lib.rs`）：
+已实现（`ditto-llm/src/lib.rs`）：
 
 - `ProviderConfig` / `ProviderAuth`（base_url / auth / model whitelist）
 - `.env` 解析：`parse_dotenv` / `Env`
