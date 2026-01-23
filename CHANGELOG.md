@@ -35,6 +35,7 @@
 - `pm-app-server`：新增 OpenAI provider 选择（`openai.provider` / `CODE_PM_OPENAI_PROVIDER`），首个 provider `openai-codex-apikey`；并支持 `openai-auth-command`（运行外部命令返回 `{ "api_key": "..." }`，便于 Node 插件化 auth）。
 - 新增 `ditto-llm`：以 provider profile 为中心的 `auth/base_url/model whitelist` 配置与 OpenAI-compatible `/models` 发现；并支持 model-level `thinking`（`unsupported/small/medium/high/xhigh`，默认 `medium`），`pm-app-server` 用其派生 `reasoning.effort`。
 - `ditto-llm`：新增 `Provider` trait + `ProviderCapabilities`（tools/vision/reasoning/json-schema/streaming）；`thread/models` 返回 `capabilities`。
+- `ditto-llm`：provider profile 支持可选 `capabilities` 覆盖（tools/vision/reasoning/json-schema/streaming），用于 OpenAI-compatible provider 的能力声明。
 - `pm-core`/`pm-app-server`：新增 Router（`router.yaml|router.json`）用于 role/keyword/project override 的模型路由，并落盘 `ModelRouted` 事件。
 - `pm-app-server`/`pm`：新增 `thread/models`（`GET /models` + provider whitelist）与 `pm thread models`，用于发现当前 provider 的可用模型。
 - 新增 `pm-app-server`：最小 JSON-RPC over stdio 控制面（`initialize` + `thread/*` + `turn/*`），用于验证 v0.2.0 的 thread/turn/interrupt 与落盘回放。
@@ -181,7 +182,6 @@
 - `thread/list_meta`/`thread/attention`：后台进程以非零 exit code 退出时会派生 `attention_state=failed`（失败优先于 `running`），并在新 turn 开始时清空历史失败集合（避免一次失败导致 thread 永久处于 `failed`）；`pm watch --bell` 也会在 `ProcessExited` 失败时触发提醒。
 - `pm-app-server approvals`：当同类操作被 `remember=true` 记住为 `deny` 时，`file/write|patch|edit|delete`、`fs/mkdir`、`process/start` 现在会返回结构化 `denied` 结果并写入 `ToolStatus=Denied`（不再走内部 error 路径）。
 - `pm-core threads resume`：现在会修复 “ToolStarted 没有对应 ToolCompleted” 的中间态，自动补写 `ToolStatus=Cancelled`（避免崩溃/中断后留下悬空 tool）。
-
 ### Security
 - `pm-core::threads`：落盘事件前自动脱敏（Turn input/argv/approval params/tool results 等），避免 secrets 进入 event log；`pm-app-server process/tail`/`process/follow` 返回内容也会脱敏展示。
 - `pm-app-server`：`process/start` 默认从子进程环境中移除常见 provider key（`OPENAI_API_KEY` 等），降低“任意命令读取/回显密钥”的泄露面。

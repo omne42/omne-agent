@@ -12,9 +12,9 @@
 
 已实现（`ditto-llm/src/lib.rs`）：
 
-- `ProviderConfig` / `ProviderAuth`（base_url / auth / model whitelist）
+- `ProviderConfig` / `ProviderAuth`（base_url / auth / model whitelist / capability flags）
 - `.env` 解析：`parse_dotenv` / `Env`
-- `/models` 发现：`Provider` trait / `OpenAiProvider`（含 `ProviderCapabilities`）
+- `/models` 发现：`Provider` trait / `OpenAiProvider`（含 `ProviderCapabilities`；可在 provider profile 覆盖）
 - model-level `thinking`：`ThinkingIntensity` / `ModelConfig`（供 app-server 映射到 `reasoning.effort`）
 
 相关使用点：

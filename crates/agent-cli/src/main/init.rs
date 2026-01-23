@@ -162,6 +162,13 @@ enabled = {enabled}
 # # # default_model = "gpt-4.1"
 # # # optional: enforce a model allowlist
 # # # model_whitelist = ["gpt-4.1", "gpt-4o-mini"]
+# # # optional: override capability flags (useful for OpenAI-compatible providers)
+# # # [openai.providers.openai-codex-apikey.capabilities]
+# # # tools = true
+# # # vision = true
+# # # reasoning = true
+# # # json_schema = true
+# # # streaming = true
 # # [openai.providers.openai-codex-apikey.auth]
 # # type = "api_key_env"
 # # # optional: override env keys (default: ["OPENAI_API_KEY","CODE_PM_OPENAI_API_KEY"])
@@ -227,6 +234,13 @@ enabled = {enabled}
 # # # default_model = "gpt-4.1"
 # # # optional: enforce a model allowlist
 # # # model_whitelist = ["gpt-4.1", "gpt-4o-mini"]
+# # # optional: override capability flags (useful for OpenAI-compatible providers)
+# # # [openai.providers.openai-codex-apikey.capabilities]
+# # # tools = true
+# # # vision = true
+# # # reasoning = true
+# # # json_schema = true
+# # # streaming = true
 # # [openai.providers.openai-codex-apikey.auth]
 # # type = "api_key_env"
 # # # optional: override env keys (default: ["OPENAI_API_KEY","CODE_PM_OPENAI_API_KEY"])

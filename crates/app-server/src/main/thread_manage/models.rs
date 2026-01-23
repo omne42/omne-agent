@@ -56,6 +56,7 @@ async fn handle_thread_models(server: &Server, params: ThreadModelsParams) -> an
         default_model: provider_config.default_model,
         model_whitelist: provider_config.model_whitelist.clone(),
         auth: provider_config.auth,
+        capabilities: provider_config.capabilities,
     };
 
     let env = ditto_llm::Env {
@@ -91,12 +92,14 @@ fn builtin_openai_provider_config(provider: &str) -> Option<ditto_llm::ProviderC
             default_model: None,
             model_whitelist: Vec::new(),
             auth: Some(ditto_llm::ProviderAuth::ApiKeyEnv { keys: Vec::new() }),
+            capabilities: None,
         }),
         "openai-auth-command" => Some(ditto_llm::ProviderConfig {
             base_url: Some("https://api.openai.com/v1".to_string()),
             default_model: None,
             model_whitelist: Vec::new(),
             auth: Some(ditto_llm::ProviderAuth::Command { command: Vec::new() }),
+            capabilities: None,
         }),
         _ => None,
     }
@@ -127,6 +130,9 @@ fn merge_provider_config(
     }
     if let Some(auth) = overrides.auth.clone() {
         base.auth = Some(auth);
+    }
+    if let Some(capabilities) = overrides.capabilities {
+        base.capabilities = Some(capabilities);
     }
     base
 }
