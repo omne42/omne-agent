@@ -2,7 +2,7 @@
 
 > 结论先行：TUI 不是“另一套 core”，只是 `pm-app-server`（JSON-RPC 事件流）的一个投影。**唯一真相**仍然是 `Thread/Turn/Item` 落盘事件与可重放语义。
 >
-> v0.2.0 现状：已落地最小 `pm tui`（thread picker + transcript + 输入 + `item/delta` 流式）；Approvals/Process/Artifacts 的 UI 仍是 TODO。
+> v0.2.0 现状：已落地 `pm tui`（thread picker + transcript + 输入 + `item/delta` 流式）以及 Approvals/Processes/Artifacts 弹窗（只调用既有 JSON-RPC；无 stdin/PTY 交互）。
 
 ## 1) v0.2.0 P0 目标与边界
 
@@ -14,8 +14,8 @@
   - 订阅事件并增量渲染 transcript（含 `item/delta` 文本流）。
   - 支持输入并提交 `turn/start`。
 - Approvals：展示 pending approvals，并在 UI 内 `approve/deny`（调用既有 JSON-RPC；不引入新语义）。
-- Process：只读 `inspect/tail/follow` + `kill`（继续遵守 v0.2.0 约束：**禁止 stdin/PTY 交互**）。
-- Artifacts：列表/读取/打开（pager/less 级别即可）。
+- Process：只读 `inspect`（stdout/stderr tail）+ `kill` + `interrupt`（继续遵守 v0.2.0 约束：**禁止 stdin/PTY 交互**）。
+- Artifacts：列表/读取（内置滚动查看，pager/less 级别即可）。
 
 ### 1.2 明确不做（v0.2.0）
 
@@ -58,10 +58,10 @@
 
 ## 5) 测试策略（别把 TUI 变成黑盒）
 
-- 引入 vt100/back-end 模拟做 snapshot tests（参考 Codex 的 `vt100` 思路），至少覆盖：
+- 使用 Ratatui `TestBackend` 做 snapshot tests（参考 Codex 思路），至少覆盖：
   - thread 列表渲染
   - transcript 基础渲染
-  - approvals 弹窗/状态切换
+  - overlays（approvals/processes/artifacts）的基础渲染与交互状态
 - 关键渲染函数尽量纯函数化（输入 state → 输出 layout），降低 `.clone()` 与生命周期噪音。
 
 ## 6) 参考实现（上游快照）
