@@ -419,6 +419,7 @@ async fn handle_process_start_inner(
     if let Some(extra_env) = extra_env {
         cmd.envs(extra_env.iter());
     }
+    apply_child_process_env_defaults(&mut cmd, extra_env);
     scrub_child_process_env(&mut cmd);
     let mut child = cmd
         .spawn()

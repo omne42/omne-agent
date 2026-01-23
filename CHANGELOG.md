@@ -196,6 +196,7 @@
 - `pm-core threads resume`：现在会修复 “ToolStarted 没有对应 ToolCompleted” 的中间态，自动补写 `ToolStatus=Cancelled`（避免崩溃/中断后留下悬空 tool）。
 ### Security
 - `pm-core::threads`：落盘事件前自动脱敏（Turn input/argv/approval params/tool results 等），避免 secrets 进入 event log；`pm-app-server process/tail`/`process/follow` 返回内容也会脱敏展示。
+- `pm-app-server`：最小 OS/process hardening（`CODE_PM_HARDENING`，默认 `best_effort`）落地：pre-main 禁 core dump/收紧 umask/Linux 禁 dumpable；`process/start` 为子进程注入非交互 env defaults（`GIT_TERMINAL_PROMPT=0`/`NO_COLOR=1`/`PAGER=cat`）；详见 `docs/os_hardening.md`。
 - `pm-app-server`：`process/start` 默认从子进程环境中移除常见 provider key（`OPENAI_API_KEY` 等），降低“任意命令读取/回显密钥”的泄露面。
 - `pm-app-server`：`file/*` 默认硬拒绝 `.env` 的读取与写入（write/patch/edit/delete），并在 `file/glob`/`file/grep` 扫描时跳过 `.codepm_data/{tmp,threads,data,repos,locks,logs}/`。
 

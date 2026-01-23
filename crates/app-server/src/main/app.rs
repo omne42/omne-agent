@@ -16,6 +16,8 @@ async fn main() -> anyhow::Result<()> {
         .with_env_filter(EnvFilter::from_default_env())
         .init();
 
+    apply_pre_main_hardening()?;
+
     let args = Args::parse();
     if let Some(command) = args.command {
         match command {
