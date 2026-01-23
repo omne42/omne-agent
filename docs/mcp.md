@@ -2,7 +2,7 @@
 
 > 目标：把“外部工具生态”接入做成标准接口：可配置、可审计、可回放、可收口。
 >
-> 状态：v0.2.x 已落地 **MCP client（stdio 最小子集）**；MCP server 仍 TODO。
+> 状态：v0.2.x 已落地 **MCP client（stdio 最小子集）**；并提供 **实验性 MCP server（stdio）**：`pm mcp serve`（只读 allowlist + 每次调用落盘审计）。
 >
 > 背景参考：`docs/research/codex.md`、`docs/research/openai-cli-agent.md`、`docs/research/claude-code.md`。
 >
@@ -167,6 +167,32 @@ v0.2.x 实现口径（最小）：
 - `pm.thread.subscribe`
 - `pm.artifact.list/read`
 - `pm.process.list/inspect/tail/follow`
+
+### 2.1 v0.2.x 现状：`pm mcp serve`（stdio）
+
+最小用法（由外部 MCP client 启动该进程并通过 stdio 交互）：
+
+```bash
+pm mcp serve
+```
+
+审计：
+
+- 默认启用：每次 `tools/call` 都会向一个 audit thread 写入一条 `artifact_type="mcp_server_call"`（从而产生可回放事件）。
+- 可用 `--audit-thread-id <thread_id>` 复用已有 thread；或 `--no-audit` 关闭审计（不推荐）。
+
+暴露的工具（只读 allowlist；通过 `tools/list` 返回）：
+
+- `pm.thread.list_meta`
+- `pm.thread.attention`
+- `pm.thread.state`
+- `pm.thread.events`
+- `pm.artifact.list`
+- `pm.artifact.read`
+- `pm.process.list`
+- `pm.process.inspect`
+- `pm.process.tail`
+- `pm.process.follow`
 
 ---
 

@@ -114,6 +114,9 @@ async fn main() -> anyhow::Result<()> {
             }
         },
         Some(Command::Mcp { command }) => match command {
+            McpCommand::Serve(args) => {
+                run_mcp_serve(&mut app, args).await?;
+            }
             McpCommand::ListServers {
                 thread_id,
                 approval_id,

@@ -280,6 +280,10 @@ enum RepoCommand {
 
 #[derive(Subcommand)]
 enum McpCommand {
+    /// Serve CodePM as an MCP server over stdio (experimental).
+    ///
+    /// This exposes a small read-only tool allowlist intended for other MCP clients.
+    Serve(McpServeArgs),
     /// List configured MCP servers (from `.codepm_data/spec/mcp.json`).
     ListServers {
         thread_id: ThreadId,
@@ -318,6 +322,23 @@ enum McpCommand {
         #[arg(long, default_value_t = false)]
         json: bool,
     },
+}
+
+#[derive(Parser)]
+struct McpServeArgs {
+    /// Write one audit artifact per external tool call (default: enabled).
+    ///
+    /// When not set, a new thread is created in `--audit-cwd` (default: current directory).
+    #[arg(long)]
+    audit_thread_id: Option<ThreadId>,
+
+    /// Working directory used when creating a new audit thread.
+    #[arg(long)]
+    audit_cwd: Option<PathBuf>,
+
+    /// Disable audit artifact logging entirely.
+    #[arg(long, default_value_t = false)]
+    no_audit: bool,
 }
 
 #[derive(clap::Args)]

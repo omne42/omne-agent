@@ -107,6 +107,7 @@
 - `pm-app-server`：新增 `repo/search` 与 `repo/index`：将搜索结果/文件清单写入 `repo_search`/`repo_index` user artifact（结果可引用/可回放；tool 事件只记录摘要 + `artifact_id`）。
 - `pm-app-server`：新增 `repo/symbols`：使用 tree-sitter（Rust）提取符号并写入 `repo_symbols` user artifact（用于 Reviewer/Architect 上下文构建）。
 - `pm-app-server`：新增 MCP client（stdio）：`mcp/list_servers|list_tools|list_resources|call`，并将 MCP server 作为后台 process 管理（stdout/stderr 落盘；大结果写入 `mcp_result` artifact；`mcp/call` 默认 `prompt_strict`）。
+- `pm` CLI：新增实验性 MCP server（stdio）：`pm mcp serve`（只读工具 allowlist），并默认将每次外部 `tools/call` 写入 `artifact_type="mcp_server_call"` 审计 artifact（可 `--no-audit` 关闭）。
 - `pm` CLI：新增 `pm repo search/index/symbols`（支持 `--approval-id` 重试）。
 - `pm` CLI：新增 `pm mcp list-servers/list-tools/list-resources/call`（需 `CODE_PM_ENABLE_MCP=true`）。
 - `pm` CLI：新增 `pm reference import/status`（导入本地目录为 reference repo；导入时不复制 `.git/`、默认跳过单文件 `> 10MB` 并生成 `manifest.json`），`pm init` 同步创建 `.codepm_data/reference/` 并写入 `.codepm_data/.gitignore`。

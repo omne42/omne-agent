@@ -6,6 +6,7 @@ include!("main/app.rs");
 include!("main/ask_exec.rs");
 include!("main/command.rs");
 include!("main/init.rs");
+include!("main/mcp_server.rs");
 include!("main/preset.rs");
 include!("main/reference.rs");
 include!("main/repl.rs");
