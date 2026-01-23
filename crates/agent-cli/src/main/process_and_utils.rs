@@ -241,6 +241,31 @@ struct RepoSymbolsRequest {
     approval_id: Option<ApprovalId>,
 }
 
+struct McpListServersRequest {
+    thread_id: ThreadId,
+    approval_id: Option<ApprovalId>,
+}
+
+struct McpListToolsRequest {
+    thread_id: ThreadId,
+    server: String,
+    approval_id: Option<ApprovalId>,
+}
+
+struct McpListResourcesRequest {
+    thread_id: ThreadId,
+    server: String,
+    approval_id: Option<ApprovalId>,
+}
+
+struct McpCallRequest {
+    thread_id: ThreadId,
+    server: String,
+    tool: String,
+    arguments: Option<Value>,
+    approval_id: Option<ApprovalId>,
+}
+
 fn split_special_directives(
     input: &str,
 ) -> anyhow::Result<(String, Vec<pm_protocol::ContextRef>)> {
@@ -1017,6 +1042,67 @@ impl App {
             )
             .await?;
         ensure_approval_and_denial_handled("repo/symbols", &v)?;
+        Ok(v)
+    }
+
+    async fn mcp_list_servers(&mut self, req: McpListServersRequest) -> anyhow::Result<Value> {
+        let v = self
+            .rpc(
+                "mcp/list_servers",
+                serde_json::json!({
+                    "thread_id": req.thread_id,
+                    "approval_id": req.approval_id,
+                }),
+            )
+            .await?;
+        ensure_approval_and_denial_handled("mcp/list_servers", &v)?;
+        Ok(v)
+    }
+
+    async fn mcp_list_tools(&mut self, req: McpListToolsRequest) -> anyhow::Result<Value> {
+        let v = self
+            .rpc(
+                "mcp/list_tools",
+                serde_json::json!({
+                    "thread_id": req.thread_id,
+                    "approval_id": req.approval_id,
+                    "server": req.server,
+                }),
+            )
+            .await?;
+        ensure_approval_and_denial_handled("mcp/list_tools", &v)?;
+        Ok(v)
+    }
+
+    async fn mcp_list_resources(&mut self, req: McpListResourcesRequest) -> anyhow::Result<Value> {
+        let v = self
+            .rpc(
+                "mcp/list_resources",
+                serde_json::json!({
+                    "thread_id": req.thread_id,
+                    "approval_id": req.approval_id,
+                    "server": req.server,
+                }),
+            )
+            .await?;
+        ensure_approval_and_denial_handled("mcp/list_resources", &v)?;
+        Ok(v)
+    }
+
+    async fn mcp_call(&mut self, req: McpCallRequest) -> anyhow::Result<Value> {
+        let v = self
+            .rpc(
+                "mcp/call",
+                serde_json::json!({
+                    "thread_id": req.thread_id,
+                    "approval_id": req.approval_id,
+                    "server": req.server,
+                    "tool": req.tool,
+                    "arguments": req.arguments,
+                }),
+            )
+            .await?;
+        ensure_approval_and_denial_handled("mcp/call", &v)?;
         Ok(v)
     }
 

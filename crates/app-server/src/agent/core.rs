@@ -2174,6 +2174,7 @@ mod auto_summary_tests {
             thread_store: ThreadStore::new(PmPaths::new(pm_root)),
             threads: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             processes: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            mcp: Arc::new(tokio::sync::Mutex::new(crate::McpManager::default())),
             disk_warning: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             exec_policy: pm_execpolicy::Policy::empty(),
         }

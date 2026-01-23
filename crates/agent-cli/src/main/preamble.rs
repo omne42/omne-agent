@@ -57,6 +57,10 @@ enum Command {
         #[command(subcommand)]
         command: RepoCommand,
     },
+    Mcp {
+        #[command(subcommand)]
+        command: McpCommand,
+    },
     /// Start a full-screen TUI (thin client over JSON-RPC).
     Tui(TuiArgs),
     /// Start an interactive REPL.
@@ -267,6 +271,48 @@ enum RepoCommand {
         max_symbols: Option<usize>,
         #[arg(long)]
         root: Option<RepoRoot>,
+        #[arg(long)]
+        approval_id: Option<ApprovalId>,
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum McpCommand {
+    /// List configured MCP servers (from `.codepm_data/spec/mcp.json`).
+    ListServers {
+        thread_id: ThreadId,
+        #[arg(long)]
+        approval_id: Option<ApprovalId>,
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    /// List tools exposed by an MCP server.
+    ListTools {
+        thread_id: ThreadId,
+        server: String,
+        #[arg(long)]
+        approval_id: Option<ApprovalId>,
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    /// List resources exposed by an MCP server.
+    ListResources {
+        thread_id: ThreadId,
+        server: String,
+        #[arg(long)]
+        approval_id: Option<ApprovalId>,
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    /// Call a tool exposed by an MCP server.
+    Call {
+        thread_id: ThreadId,
+        server: String,
+        tool: String,
+        #[arg(long)]
+        arguments_json: Option<String>,
         #[arg(long)]
         approval_id: Option<ApprovalId>,
         #[arg(long, default_value_t = false)]

@@ -1,8 +1,8 @@
-# MCP（Model Context Protocol）（TODO：规格草案）
+# MCP（Model Context Protocol）
 
 > 目标：把“外部工具生态”接入做成标准接口：可配置、可审计、可回放、可收口。
 >
-> 状态：本文是 **TODO 规格草案**（v0.2.0 未实现；当前代码中没有 MCP client/server 实现）。
+> 状态：v0.2.x 已落地 **MCP client（stdio 最小子集）**；MCP server 仍 TODO。
 >
 > 背景参考：`docs/research/codex.md`、`docs/research/openai-cli-agent.md`、`docs/research/claude-code.md`。
 >
@@ -12,7 +12,7 @@
 
 ## 0) 范围与非目标
 
-范围（未来实现；v1 先做最小子集）：
+范围（v1 最小子集；v0.2.x 已实现 client 侧）：
 
 - MCP client：连接一个或多个 MCP servers，获取 tools/resources/prompts，并在 agent loop 中可调用。
 - MCP server（实验）：让其它 MCP clients 把 CodePM 当作一个工具（暴露受限能力子集）。
@@ -32,7 +32,7 @@
 
 MCP 属于“执行外部二进制 + 任意 side-effect”的高风险能力，v1 建议 **默认关闭**：
 
-- `CODE_PM_ENABLE_MCP=true` 才允许启用 MCP client。
+- `CODE_PM_ENABLE_MCP=true` 才允许启用 MCP client（**未启用时不读取配置文件**）。
 - 未启用时：
   - 不读取配置文件（即使存在）。
   - `mcp/*` 调用一律返回错误（fail-closed），且不得启动任何外部进程。
@@ -114,7 +114,25 @@ fail-closed（写死）：
 - `mcp/*` 必须经过：`mode gate → sandbox → execpolicy → approval handling`（顺序写死，见 `docs/modes.md`/`docs/approvals.md`）。
   - mode：v1 建议默认对 `mcp/*` 采取 `prompt`（或直接 `deny`），避免默认放权。
   - approval：启用 MCP 时强烈建议 `ApprovalPolicy=manual`。
-  - `prompt_strict`（TODO）：如果未来实现（见 `docs/approvals.md`），v1 建议 `mcp/call` 默认写入 `approval.requirement="prompt_strict"`，并且不可被 `remember` 自动复用。
+  - `prompt_strict`（已实现；见 `docs/approvals.md`）：v0.2.x 中 `mcp/call` 默认写入 `approval.requirement="prompt_strict"`，并且不可被 `remember` 自动复用。
+
+v0.2.x 实现口径（最小）：
+
+- app-server JSON-RPC：
+  - `mcp/list_servers`
+  - `mcp/list_tools`
+  - `mcp/list_resources`
+  - `mcp/call`（默认 `prompt_strict`）
+- agent tools（snake_case）：
+  - `mcp_list_servers`
+  - `mcp_list_tools`
+  - `mcp_list_resources`
+  - `mcp_call`
+- CLI：
+  - `pm mcp list-servers <thread_id>`
+  - `pm mcp list-tools <thread_id> <server>`
+  - `pm mcp list-resources <thread_id> <server>`
+  - `pm mcp call <thread_id> <server> <tool> --arguments-json '<json>'`
 
 > 注意：MCP 不能绕过 execpolicy。即使 MCP server 内部执行命令，也必须在它自己的侧做 policy；本地侧只能保证“我们何时允许调用它”。
 >
@@ -156,7 +174,7 @@ fail-closed（写死）：
 
 MCP client：
 
-- 指定 `./.codepm_data/spec/mcp.json` 后，`pm` 能列出 servers 与 tools（至少 list tools/resources）。
+- 指定 `./.codepm_data/spec/mcp.json` 后，`pm` 能列出 servers 与 tools/resources。
 - 调用 `mcp/call` 时必须产生审批事件（`ApprovalRequested`），且可在 `pm inbox` 中看到阻塞。
 - MCP server 进程 stdout/stderr 必须落盘并可 `process/tail`。
 

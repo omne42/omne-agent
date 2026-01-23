@@ -7,6 +7,7 @@ async fn handle_initialized_request(server: &Arc<Server>, request: JsonRpcReques
         method if method.starts_with("process/") => handle_process_request(server, id, method, params).await,
         method if method.starts_with("file/") => handle_file_request(server, id, method, params).await,
         method if method.starts_with("repo/") => handle_repo_request(server, id, method, params).await,
+        method if method.starts_with("mcp/") => handle_mcp_request(server, id, method, params).await,
         method if method.starts_with("fs/") => handle_fs_request(server, id, method, params).await,
         method if method.starts_with("artifact/") => handle_artifact_request(server, id, method, params).await,
         method if method.starts_with("approval/") => handle_approval_request(server, id, method, params).await,

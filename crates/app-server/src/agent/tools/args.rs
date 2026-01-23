@@ -71,6 +71,24 @@ struct RepoSymbolsArgs {
 }
 
 #[derive(Debug, Deserialize)]
+struct McpListToolsArgs {
+    server: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct McpListResourcesArgs {
+    server: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct McpCallArgs {
+    server: String,
+    tool: String,
+    #[serde(default)]
+    arguments: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
 struct FileWriteArgs {
     path: String,
     text: String,

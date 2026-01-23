@@ -316,6 +316,58 @@ async fn run_tool_call_once(
             )
             .await
         }
+        "mcp_list_servers" => {
+            super::handle_mcp_list_servers(
+                server,
+                super::McpListServersParams {
+                    thread_id,
+                    turn_id,
+                    approval_id,
+                },
+            )
+            .await
+        }
+        "mcp_list_tools" => {
+            let args: McpListToolsArgs = serde_json::from_value(args)?;
+            super::handle_mcp_list_tools(
+                server,
+                super::McpListToolsParams {
+                    thread_id,
+                    turn_id,
+                    approval_id,
+                    server: args.server,
+                },
+            )
+            .await
+        }
+        "mcp_list_resources" => {
+            let args: McpListResourcesArgs = serde_json::from_value(args)?;
+            super::handle_mcp_list_resources(
+                server,
+                super::McpListResourcesParams {
+                    thread_id,
+                    turn_id,
+                    approval_id,
+                    server: args.server,
+                },
+            )
+            .await
+        }
+        "mcp_call" => {
+            let args: McpCallArgs = serde_json::from_value(args)?;
+            super::handle_mcp_call(
+                server,
+                super::McpCallParams {
+                    thread_id,
+                    turn_id,
+                    approval_id,
+                    server: args.server,
+                    tool: args.tool,
+                    arguments: args.arguments,
+                },
+            )
+            .await
+        }
         "file_write" => {
             let args: FileWriteArgs = serde_json::from_value(args)?;
             super::handle_file_write(
@@ -1076,6 +1128,7 @@ mod agent_spawn_guard_tests {
             thread_store: super::super::ThreadStore::new(super::super::PmPaths::new(pm_root)),
             threads: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             processes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            mcp: Arc::new(tokio::sync::Mutex::new(super::super::McpManager::default())),
             disk_warning: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             exec_policy: pm_execpolicy::Policy::empty(),
         }
@@ -1218,6 +1271,7 @@ mod reference_repo_file_tools_tests {
             thread_store: super::super::ThreadStore::new(super::super::PmPaths::new(pm_root)),
             threads: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             processes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            mcp: Arc::new(tokio::sync::Mutex::new(super::super::McpManager::default())),
             disk_warning: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             exec_policy: pm_execpolicy::Policy::empty(),
         }

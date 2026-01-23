@@ -4,6 +4,7 @@ include!("app/turn.rs");
 include!("app/process.rs");
 include!("app/file.rs");
 include!("app/repo.rs");
+include!("app/mcp.rs");
 include!("app/fs.rs");
 include!("app/artifact.rs");
 include!("app/approval.rs");
@@ -49,6 +50,7 @@ async fn main() -> anyhow::Result<()> {
         thread_store: ThreadStore::new(PmPaths::new(pm_root)),
         threads: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         processes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+        mcp: Arc::new(tokio::sync::Mutex::new(McpManager::default())),
         disk_warning: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         exec_policy,
     });

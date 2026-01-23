@@ -106,7 +106,9 @@
 - `pm-app-server`：`file/read|glob|grep` 支持 `root="reference"`（读取 `.codepm_data/reference/repo` 的只读快照），并确保 workspace 的 `glob/grep` 默认不扫描 `.codepm_data/reference`。
 - `pm-app-server`：新增 `repo/search` 与 `repo/index`：将搜索结果/文件清单写入 `repo_search`/`repo_index` user artifact（结果可引用/可回放；tool 事件只记录摘要 + `artifact_id`）。
 - `pm-app-server`：新增 `repo/symbols`：使用 tree-sitter（Rust）提取符号并写入 `repo_symbols` user artifact（用于 Reviewer/Architect 上下文构建）。
+- `pm-app-server`：新增 MCP client（stdio）：`mcp/list_servers|list_tools|list_resources|call`，并将 MCP server 作为后台 process 管理（stdout/stderr 落盘；大结果写入 `mcp_result` artifact；`mcp/call` 默认 `prompt_strict`）。
 - `pm` CLI：新增 `pm repo search/index/symbols`（支持 `--approval-id` 重试）。
+- `pm` CLI：新增 `pm mcp list-servers/list-tools/list-resources/call`（需 `CODE_PM_ENABLE_MCP=true`）。
 - `pm` CLI：新增 `pm reference import/status`（导入本地目录为 reference repo；导入时不复制 `.git/`、默认跳过单文件 `> 10MB` 并生成 `manifest.json`），`pm init` 同步创建 `.codepm_data/reference/` 并写入 `.codepm_data/.gitignore`。
 - `pm-protocol`/`pm-app-server`/`pm`：新增 Checkpoints（`thread/checkpoint/{create,list,restore}`；CLI: `pm checkpoint {create,list,restore}`），workspace 快照落盘到 `.codepm_data/threads/<thread_id>/artifacts/checkpoints/`；restore 强制 `prompt_strict` 审批并要求无 active turn/running process。
 - `pm-app-server`：新增 Hooks（`./.codepm_data/spec/hooks.yaml`）：支持 `session_start/pre_tool_use/post_tool_use/stop` 触发命令（走 `process/start` + mode/sandbox/execpolicy/approval），并支持 `additional_context` 注入与落盘审计（见 `docs/hooks.md`）。

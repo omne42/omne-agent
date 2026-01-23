@@ -113,6 +113,76 @@ async fn main() -> anyhow::Result<()> {
                 print_json_or_pretty(json, &result)?;
             }
         },
+        Some(Command::Mcp { command }) => match command {
+            McpCommand::ListServers {
+                thread_id,
+                approval_id,
+                json,
+            } => {
+                let result = app
+                    .mcp_list_servers(McpListServersRequest {
+                        thread_id,
+                        approval_id,
+                    })
+                    .await?;
+                print_json_or_pretty(json, &result)?;
+            }
+            McpCommand::ListTools {
+                thread_id,
+                server,
+                approval_id,
+                json,
+            } => {
+                let result = app
+                    .mcp_list_tools(McpListToolsRequest {
+                        thread_id,
+                        server,
+                        approval_id,
+                    })
+                    .await?;
+                print_json_or_pretty(json, &result)?;
+            }
+            McpCommand::ListResources {
+                thread_id,
+                server,
+                approval_id,
+                json,
+            } => {
+                let result = app
+                    .mcp_list_resources(McpListResourcesRequest {
+                        thread_id,
+                        server,
+                        approval_id,
+                    })
+                    .await?;
+                print_json_or_pretty(json, &result)?;
+            }
+            McpCommand::Call {
+                thread_id,
+                server,
+                tool,
+                arguments_json,
+                approval_id,
+                json,
+            } => {
+                let arguments = match arguments_json {
+                    Some(raw) => Some(
+                        serde_json::from_str(&raw).context("parse --arguments-json as JSON")?,
+                    ),
+                    None => None,
+                };
+                let result = app
+                    .mcp_call(McpCallRequest {
+                        thread_id,
+                        server,
+                        tool,
+                        arguments,
+                        approval_id,
+                    })
+                    .await?;
+                print_json_or_pretty(json, &result)?;
+            }
+        },
         Some(Command::Tui(args)) => {
             run_tui(&mut app, args).await?;
         }

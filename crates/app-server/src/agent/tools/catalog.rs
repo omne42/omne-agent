@@ -93,6 +93,54 @@ fn build_tools() -> Vec<Value> {
             }),
         ),
         pm_openai::tool_function(
+            "mcp_list_servers",
+            "List configured MCP servers (from .codepm_data/spec/mcp.json).",
+            serde_json::json!({
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": false,
+            }),
+        ),
+        pm_openai::tool_function(
+            "mcp_list_tools",
+            "List tools exposed by an MCP server.",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "server": { "type": "string" },
+                },
+                "required": ["server"],
+                "additionalProperties": false,
+            }),
+        ),
+        pm_openai::tool_function(
+            "mcp_list_resources",
+            "List resources exposed by an MCP server.",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "server": { "type": "string" },
+                },
+                "required": ["server"],
+                "additionalProperties": false,
+            }),
+        ),
+        pm_openai::tool_function(
+            "mcp_call",
+            "Call a tool exposed by an MCP server (requires prompt_strict approval).",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "server": { "type": "string" },
+                    "tool": { "type": "string" },
+                    "arguments": { "type": "object", "additionalProperties": true },
+                },
+                "required": ["server", "tool"],
+                "additionalProperties": false,
+            }),
+        ),
+        pm_openai::tool_function(
             "file_write",
             "Write a UTF-8 text file (overwrites).",
             serde_json::json!({
