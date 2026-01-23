@@ -65,7 +65,7 @@
 
 ### P4（真实可用性）
 
-- [ ] **集成测试（可选 feature）**
+- [x] **集成测试（可选 feature）**
   - DoD:
     - `--features integration` 下可用真实 API keys 跑最小回归（默认不在 CI 强制）
 
