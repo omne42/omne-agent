@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use ditto_llm::{ModelConfig, ProviderConfig, ThinkingIntensity};
+use ditto_llm::{ModelConfig, ProviderConfig};
 use serde::Deserialize;
 
 #[derive(Default)]
@@ -61,23 +61,11 @@ struct ProjectOpenAiSection {
     #[serde(default)]
     provider: Option<String>,
     #[serde(default)]
-    base_url: Option<String>,
-    #[serde(default)]
     model: Option<String>,
     #[serde(default)]
     providers: BTreeMap<String, ProviderConfig>,
     #[serde(default)]
     models: BTreeMap<String, ModelConfig>,
-    #[serde(default)]
-    model_reasoning_effort: BTreeMap<String, ThinkingIntensity>,
-    #[serde(default)]
-    auth_command: Option<ProjectOpenAiAuthCommandSection>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct ProjectOpenAiAuthCommandSection {
-    #[serde(default)]
-    command: Vec<String>,
 }
 
 #[derive(Default)]
@@ -177,42 +165,18 @@ pub async fn load_project_config(thread_root: &Path) -> LoadedProjectConfig {
 
     let mut enabled = false;
     let mut config_openai_provider: Option<String> = None;
-    let mut config_openai_base_url: Option<String> = None;
     let mut config_openai_model: Option<String> = None;
     let mut config_openai_providers: BTreeMap<String, ProviderConfig> = BTreeMap::new();
     let mut config_openai_models: BTreeMap<String, ModelConfig> = BTreeMap::new();
-    let mut config_openai_model_reasoning_effort: BTreeMap<String, ThinkingIntensity> =
-        BTreeMap::new();
-    let mut config_openai_auth_command: Option<Vec<String>> = None;
 
     if let Some(raw) = config_raw {
         match toml::from_str::<ProjectConfigToml>(&raw) {
             Ok(parsed) => {
                 enabled = parsed.project_config.enabled;
                 config_openai_provider = clean_string_opt(parsed.openai.provider);
-                config_openai_base_url = clean_string_opt(parsed.openai.base_url);
                 config_openai_model = clean_string_opt(parsed.openai.model);
                 config_openai_providers = parsed.openai.providers;
                 config_openai_models = parsed.openai.models;
-                for (k, v) in parsed.openai.model_reasoning_effort {
-                    let key = k.trim().to_string();
-                    if !key.is_empty() {
-                        config_openai_model_reasoning_effort.insert(key, v);
-                    }
-                }
-                config_openai_auth_command = parsed.openai.auth_command.and_then(|section| {
-                    let command = section
-                        .command
-                        .into_iter()
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty())
-                        .collect::<Vec<_>>();
-                    if command.is_empty() {
-                        None
-                    } else {
-                        Some(command)
-                    }
-                });
             }
             Err(err) => {
                 let msg = format!("parse {}: {err}", config_path.display());
@@ -256,32 +220,14 @@ pub async fn load_project_config(thread_root: &Path) -> LoadedProjectConfig {
         .unwrap_or_default()
         .into_project_overrides();
 
-    let mut openai = ProjectOpenAiOverrides {
+    let openai = ProjectOpenAiOverrides {
         provider: clean_string_opt(dotenv_openai.provider).or(config_openai_provider),
-        base_url: clean_string_opt(dotenv_openai.base_url).or(config_openai_base_url),
+        base_url: clean_string_opt(dotenv_openai.base_url),
         model: clean_string_opt(dotenv_openai.model).or(config_openai_model),
         providers: config_openai_providers,
         models: config_openai_models,
         dotenv: dotenv_openai.dotenv,
     };
-
-    for (k, v) in config_openai_model_reasoning_effort {
-        openai
-            .models
-            .entry(k)
-            .or_insert_with(|| ModelConfig { thinking: v });
-    }
-
-    if let Some(command) = config_openai_auth_command {
-        let provider = openai.provider.as_deref().unwrap_or("openai-auth-command");
-        if provider == "openai-auth-command" {
-            openai
-                .providers
-                .entry(provider.to_string())
-                .or_default()
-                .auth = Some(ditto_llm::ProviderAuth::Command { command });
-        }
-    }
 
     LoadedProjectConfig {
         enabled,
@@ -302,6 +248,7 @@ pub async fn load_project_openai_overrides(thread_root: &Path) -> ProjectOpenAiO
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ditto_llm::ThinkingIntensity;
 
     #[tokio::test]
     async fn loads_provider_reasoning_and_auth_command_from_config_toml() -> anyhow::Result<()> {
@@ -318,12 +265,18 @@ enabled = true
 
 [openai]
 provider = "openai-auth-command"
-base_url = "https://example.com/v9"
 model = "codex-mini-latest"
-model_reasoning_effort = { "*" = "small", "codex-mini-latest" = "xhigh" }
 
-[openai.auth_command]
+[openai.providers.openai-auth-command]
+base_url = "https://example.com/v9"
+[openai.providers.openai-auth-command.auth]
+type = "command"
 command = ["node", "script.mjs"]
+
+[openai.models."*"]
+thinking = "small"
+[openai.models."codex-mini-latest"]
+thinking = "xhigh"
 "#,
         )
         .await?;
@@ -334,10 +287,7 @@ command = ["node", "script.mjs"]
             loaded.openai.provider.as_deref(),
             Some("openai-auth-command")
         );
-        assert_eq!(
-            loaded.openai.base_url.as_deref(),
-            Some("https://example.com/v9")
-        );
+        assert!(loaded.openai.base_url.is_none());
         assert_eq!(loaded.openai.model.as_deref(), Some("codex-mini-latest"));
         assert_eq!(
             loaded.openai.models.get("*").map(|c| c.thinking),
@@ -350,6 +300,15 @@ command = ["node", "script.mjs"]
                 .get("codex-mini-latest")
                 .map(|c| c.thinking),
             Some(ThinkingIntensity::XHigh)
+        );
+        assert_eq!(
+            loaded
+                .openai
+                .providers
+                .get("openai-auth-command")
+                .and_then(|p| p.base_url.as_deref())
+                .map(str::to_string),
+            Some("https://example.com/v9".to_string())
         );
         assert_eq!(
             loaded

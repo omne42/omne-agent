@@ -28,7 +28,7 @@
 - 新增 `pm-execpolicy`：对齐 Codex `prefix_rule` 子集的执行策略引擎（Starlark 语法 + `match/not_match` 例子校验），并提供 `pm-execpolicy check --rules ... <cmd...>` 输出匹配结果 JSON。
 - 新增 `pm-openai`：最小 OpenAI Responses API 客户端与类型（用于 v0.2.0 的 Responses-first agent loop）。
 - `pm-openai`：新增 Responses SSE 流式解析与 `Client::create_response_stream`（`response.output_text.delta`/`response.output_item.done`/`response.completed`），为 `item/delta` 与更强可观测性打底。
-- `pm-openai`：新增 `reasoning.effort`（`low|medium|high|xhigh`）请求字段支持；`pm-app-server` 可按模型配置下发（见 `openai.model_reasoning_effort`）。
+- `pm-openai`：新增 `reasoning.effort`（`low|medium|high|xhigh`）请求字段支持；`pm-app-server` 可按模型配置下发（见 `openai.models."<pattern>".thinking`）。
 - `pm-openai`/`pm-app-server`：新增 `response_format` 支持（JSON schema），默认关闭，可通过 `CODE_PM_AGENT_RESPONSE_FORMAT_JSON` 启用。
 - `pm-openai`：SSE 事件强类型化：`TokenUsage`/`RateLimits`/`ApiError`，并支持 `response.failed` → `ResponseEvent::Failed`；`pm-app-server` agent loop 会消费 typed usage 并把 failed 作为错误返回。
 - `pm-app-server`：新增 OpenAI provider 选择（`openai.provider` / `CODE_PM_OPENAI_PROVIDER`），首个 provider `openai-codex-apikey`；并支持 `openai-auth-command`（运行外部命令返回 `{ "api_key": "..." }`，便于 Node 插件化 auth）。
@@ -149,6 +149,9 @@
 - `pm-protocol`：新增 `ApprovalId`、`ApprovalRequested/ApprovalDecided` 与 `ThreadConfigUpdated(approval_policy)`，为 approvals 做事件化与回放打底。
 - `pm-protocol`：新增 `AssistantMessage` 事件，用于把模型输出落盘并支撑 resume 拼合对话上下文。
 - workspace `tokio` 特性启用 `io-std`（支持 app-server 的 stdio 读写）。
+
+### Changed
+- `pm-app-server`：移除 legacy project config 字段 `openai.base_url`/`openai.auth_command`/`openai.model_reasoning_effort`；改用 `openai.providers.<profile>.base_url`/`openai.providers.<profile>.auth` 与 `openai.models."<pattern>".thinking`。
 
 ### Fixed
 - `pm-app-server`/`pm`/`code-pm`/`pm-core::orchestrator`：拆分超大 Rust 源文件（保持行为不变），避免单文件超过 1000 行，降低 review/IDE 压力。

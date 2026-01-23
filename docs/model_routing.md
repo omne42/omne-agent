@@ -40,7 +40,7 @@
 当前 turn 的 `openai_base_url` 生效顺序为：
 
 1. thread config（来自 `ThreadConfigUpdated` 事件）
-2. project config（当 `project_config.enabled=true`）：`openai.base_url`（legacy；建议迁移到 provider profile）
+2. project overrides（当 `project_config.enabled=true`）：`.codepm_data/.env` 的 `CODE_PM_OPENAI_BASE_URL`（可选）
 3. env：`CODE_PM_OPENAI_BASE_URL`
 4. provider base_url：`openai.providers.<provider>.base_url`（或 builtin default）
 5. default：`openai_base_url="https://api.openai.com/v1"`
