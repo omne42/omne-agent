@@ -144,25 +144,24 @@ v0.2.0 最小实现（写死边界）：
 
 ---
 
-## 6) TODO：auto compact/summary（降低 token 风险）
+## 6) 已实现：auto compact/summary（降低 token 风险）
 
-最小规格（TODO）：
+v0.2.0 最小实现（写死边界）：
 
-- 目标：把“长上下文导致烧钱/卡死”变成可控行为，而不是隐式退化。
-- 建议触发条件：当 `CODE_PM_AGENT_MAX_TOTAL_TOKENS>0` 且已使用量接近阈值（例如 80%）时。
-- 产物：用 `artifact/write` 写入 `artifact_type="summary"`（脱敏），并在后续请求用摘要重建上下文。
-- 长上下文模型切换（`long-context`）属于 Router 范畴（TODO 草案见 `docs/model_routing.md`），与 compact 二选一即可；别一口气做完。
+- 触发条件：当 `CODE_PM_AGENT_MAX_TOTAL_TOKENS>0` 且 turn 内累计 token 使用量达到阈值时（默认 `80%`；可用 `CODE_PM_AGENT_AUTO_SUMMARY_THRESHOLD_PCT` 覆盖）。
+- 产物：用 `artifact/write` 写入 `artifact_type="summary"`（文本会自动脱敏），且 provenance 指向触发的 `turn_id`。
+- 上下文重建：当 thread 存在 `summary` artifact 时，后续 turn 构建上下文会优先使用：
+  - `system` summary + summary 之后最近 `K` 条事件（默认 `200`；可用 `CODE_PM_AGENT_SUMMARY_CONTEXT_EVENT_LIMIT` 覆盖）
+  - 避免每个 turn 都把全量历史塞回模型导致继续膨胀。
+- 本次 turn 的后续请求：触发 summary 后，会把当前 in-memory 上下文压缩为 `system` summary + 最近少量 tail items（默认 `20`；可用 `CODE_PM_AGENT_AUTO_SUMMARY_TAIL_ITEMS` 覆盖）。
 
-摘要内容边界（写死，防泄漏）：
+相关参数（可选）：
 
-- 不落盘 reasoning（用“行动/结论/下一步”的摘要代替）。
-- 不内联大 tool 输出/日志：只写引用（`process_id/tool_id/artifact_id` + 路径/摘要），需要细节让用户去看 artifacts。
-- 摘要必须走脱敏（`docs/redaction.md`），并建议在写入后再做一次“哨兵扫描”（命中 token 形态则替换为 `<REDACTED>`）。
+- `CODE_PM_AGENT_AUTO_SUMMARY_SOURCE_MAX_CHARS`：生成 summary 时用于拼接 transcript 的最大字符数（默认 `50000`）。
 
-验收（未来实现时）：
+仍是 TODO：
 
-- 触发阈值后生成 `artifact_type="summary"`，且 provenance 指向该 `turn_id`（见 `pm_protocol::ArtifactProvenance`）。
-- 后续 turn 的上下文构建能选择“summary + 最近 K 条事件”而不是全量历史（避免继续膨胀）。
+- “切 long-context 模型”（Router 的上下文阈值路由；草案见 `docs/model_routing.md`）。
 
 ---
 

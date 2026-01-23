@@ -6,7 +6,10 @@ use anyhow::Context;
 use crate::project_config::ProjectOpenAiOverrides;
 use futures_util::stream::{self, StreamExt};
 use ditto_llm::ThinkingIntensity;
-use pm_protocol::{ApprovalDecision, ApprovalId, EventSeq, ThreadEventKind, TurnId};
+use pm_protocol::{
+    ApprovalDecision, ApprovalId, ArtifactId, ArtifactMetadata, EventSeq, ThreadEventKind, ThreadId,
+    TurnId,
+};
 use serde::Deserialize;
 use serde_json::Value;
 use thiserror::Error;
@@ -34,12 +37,35 @@ const LOOP_DETECTOR_HISTORY_LIMIT: usize = 8;
 const LOOP_DETECTOR_CONSECUTIVE_LIMIT: usize = 3;
 const LOOP_DETECTOR_CYCLE_LENGTH: usize = 2;
 
+const DEFAULT_AUTO_SUMMARY_THRESHOLD_PCT: u64 = 80;
+const MAX_AUTO_SUMMARY_THRESHOLD_PCT: u64 = 99;
+const DEFAULT_AUTO_SUMMARY_SOURCE_MAX_CHARS: usize = 50_000;
+const MAX_AUTO_SUMMARY_SOURCE_MAX_CHARS: usize = 200_000;
+const DEFAULT_AUTO_SUMMARY_TAIL_ITEMS: usize = 20;
+const MAX_AUTO_SUMMARY_TAIL_ITEMS: usize = 200;
+const DEFAULT_SUMMARY_CONTEXT_EVENT_LIMIT: usize = 200;
+const MAX_SUMMARY_CONTEXT_EVENT_LIMIT: usize = 5_000;
+
 const DEFAULT_INSTRUCTIONS: &str = r#"
 You are a coding agent.
 
 - Use tools to read/write files and run commands.
 - Processes are non-interactive: you can only start/inspect/tail/follow/kill them.
 - Prefer small, reviewable changes; run checks/tests when relevant.
+"#;
+
+const SUMMARY_INSTRUCTIONS: &str = r#"
+You are writing a compact, redaction-safe summary of the current session state so that a coding agent can continue.
+
+Requirements:
+- Keep it concise and actionable.
+- Do NOT include secrets (API keys, tokens, private keys) or large raw logs.
+- Prefer references (thread_id/turn_id/tool_id/process_id/artifact_id) instead of inlining long content.
+
+Output format (Markdown):
+- What happened
+- Current state
+- Next actions
 "#;
 
 #[derive(Debug, Error)]
@@ -176,6 +202,78 @@ fn hash_json_value(value: &Value, state: &mut impl std::hash::Hasher) {
             }
         }
     }
+}
+
+fn should_auto_summarize(total_tokens_used: u64, max_total_tokens: u64, threshold_pct: u64) -> bool {
+    if max_total_tokens == 0 {
+        return false;
+    }
+    if threshold_pct == 0 {
+        return false;
+    }
+    let threshold_pct = threshold_pct.min(MAX_AUTO_SUMMARY_THRESHOLD_PCT);
+    let threshold = max_total_tokens.saturating_mul(threshold_pct) / 100;
+    threshold > 0 && total_tokens_used >= threshold
+}
+
+fn render_items_for_summary(items: &[pm_openai::ResponseItem], max_chars: usize) -> String {
+    let mut out = String::new();
+
+    for item in items {
+        match item {
+            pm_openai::ResponseItem::Message { role, content } => {
+                for part in content {
+                    let text = match part {
+                        pm_openai::ContentItem::InputText { text } => text,
+                        pm_openai::ContentItem::OutputText { text } => text,
+                        pm_openai::ContentItem::Other => continue,
+                    };
+                    if text.trim().is_empty() {
+                        continue;
+                    }
+                    out.push_str(role);
+                    out.push_str(": ");
+                    out.push_str(text.trim());
+                    out.push('\n');
+                }
+            }
+            pm_openai::ResponseItem::FunctionCall {
+                name,
+                arguments,
+                call_id,
+            } => {
+                let arguments = pm_core::redact_text(arguments);
+                let args_preview = truncate_chars(&arguments, 200);
+                out.push_str("[tool_call] ");
+                out.push_str(name.trim());
+                out.push_str(" call_id=");
+                out.push_str(call_id.trim());
+                if !args_preview.trim().is_empty() {
+                    out.push_str(" args=");
+                    out.push_str(args_preview.trim());
+                }
+                out.push('\n');
+            }
+            pm_openai::ResponseItem::FunctionCallOutput { call_id, output } => {
+                let output = pm_core::redact_text(output);
+                let output_preview = truncate_chars(&output, 500);
+                out.push_str("[tool_output] call_id=");
+                out.push_str(call_id.trim());
+                if !output_preview.trim().is_empty() {
+                    out.push_str(" output=");
+                    out.push_str(output_preview.trim());
+                }
+                out.push('\n');
+            }
+            pm_openai::ResponseItem::Other => {}
+        }
+
+        if max_chars > 0 && out.chars().count() > max_chars.saturating_mul(2) {
+            break;
+        }
+    }
+
+    truncate_chars(&out, max_chars)
 }
 
 pub async fn run_agent_turn(
@@ -335,6 +433,24 @@ pub async fn run_agent_turn(
         0,
         MAX_MAX_TOTAL_TOKENS,
     );
+    let auto_summary_threshold_pct = parse_env_u64(
+        "CODE_PM_AGENT_AUTO_SUMMARY_THRESHOLD_PCT",
+        DEFAULT_AUTO_SUMMARY_THRESHOLD_PCT,
+        1,
+        MAX_AUTO_SUMMARY_THRESHOLD_PCT,
+    );
+    let auto_summary_source_max_chars = parse_env_usize(
+        "CODE_PM_AGENT_AUTO_SUMMARY_SOURCE_MAX_CHARS",
+        DEFAULT_AUTO_SUMMARY_SOURCE_MAX_CHARS,
+        1,
+        MAX_AUTO_SUMMARY_SOURCE_MAX_CHARS,
+    );
+    let auto_summary_tail_items = parse_env_usize(
+        "CODE_PM_AGENT_AUTO_SUMMARY_TAIL_ITEMS",
+        DEFAULT_AUTO_SUMMARY_TAIL_ITEMS,
+        0,
+        MAX_AUTO_SUMMARY_TAIL_ITEMS,
+    );
     let parallel_tool_calls = parse_env_bool("CODE_PM_AGENT_PARALLEL_TOOL_CALLS", false);
     let max_parallel_tool_calls = parse_env_usize(
         "CODE_PM_AGENT_MAX_PARALLEL_TOOL_CALLS",
@@ -392,6 +508,8 @@ pub async fn run_agent_turn(
     let mut tool_calls_total = 0usize;
     let mut loop_detector = LoopDetector::new();
     let mut total_tokens_used = 0u64;
+    let mut did_auto_summary = false;
+    let mut attempted_auto_summary = false;
     let mut finished = false;
     let started_at = tokio::time::Instant::now();
 
@@ -690,6 +808,31 @@ pub async fn run_agent_turn(
                 });
             }
         }
+
+        if !attempted_auto_summary
+            && should_auto_summarize(total_tokens_used, max_total_tokens, auto_summary_threshold_pct)
+        {
+            attempted_auto_summary = true;
+            let cfg = AutoCompactSummaryConfig {
+                threshold_pct: auto_summary_threshold_pct.min(MAX_AUTO_SUMMARY_THRESHOLD_PCT),
+                source_max_chars: auto_summary_source_max_chars,
+                tail_items: auto_summary_tail_items,
+            };
+            let ctx = AutoCompactSummaryContext {
+                server: &server,
+                thread_id,
+                turn_id,
+                model: &model,
+                openai: &openai,
+                max_openai_request_duration,
+                max_total_tokens,
+                total_tokens_used: &mut total_tokens_used,
+                input_items: &mut input_items,
+            };
+            if !did_auto_summary && auto_compact_summary(ctx, cfg).await? {
+                did_auto_summary = true;
+            }
+        }
     }
 
     if !finished {
@@ -709,6 +852,160 @@ pub async fn run_agent_turn(
     }
 
     Ok(())
+}
+
+struct AutoCompactSummaryContext<'a> {
+    server: &'a super::Server,
+    thread_id: ThreadId,
+    turn_id: TurnId,
+    model: &'a str,
+    openai: &'a pm_openai::Client,
+    max_openai_request_duration: Duration,
+    max_total_tokens: u64,
+    total_tokens_used: &'a mut u64,
+    input_items: &'a mut Vec<pm_openai::ResponseItem>,
+}
+
+#[derive(Clone, Copy)]
+struct AutoCompactSummaryConfig {
+    threshold_pct: u64,
+    source_max_chars: usize,
+    tail_items: usize,
+}
+
+async fn auto_compact_summary(
+    ctx: AutoCompactSummaryContext<'_>,
+    cfg: AutoCompactSummaryConfig,
+) -> anyhow::Result<bool> {
+    let AutoCompactSummaryContext {
+        server,
+        thread_id,
+        turn_id,
+        model,
+        openai,
+        max_openai_request_duration,
+        max_total_tokens,
+        total_tokens_used,
+        input_items,
+    } = ctx;
+
+    let transcript = render_items_for_summary(input_items, cfg.source_max_chars);
+    if transcript.trim().is_empty() {
+        return Ok(false);
+    }
+
+    let prompt = format!(
+        "# Summarize session\n\nthread_id: {thread_id}\nturn_id: {turn_id}\n\n## Transcript\n\n{transcript}"
+    );
+
+    let summary_input = vec![pm_openai::ResponseItem::Message {
+        role: "user".to_string(),
+        content: vec![pm_openai::ContentItem::InputText { text: prompt }],
+    }];
+    let tools = Vec::<Value>::new();
+    let req = pm_openai::ResponsesApiRequest {
+        model,
+        instructions: SUMMARY_INSTRUCTIONS,
+        input: &summary_input,
+        tools: &tools,
+        tool_choice: "none",
+        response_format: None,
+        reasoning: None,
+        parallel_tool_calls: false,
+        store: false,
+        stream: false,
+    };
+
+    let resp = match tokio::time::timeout(max_openai_request_duration, openai.create_response(&req))
+        .await
+    {
+        Ok(Ok(resp)) => resp,
+        Ok(Err(_)) => return Ok(false),
+        Err(_) => return Ok(false),
+    };
+
+    if max_total_tokens > 0 {
+        if let Some(tokens) = resp.usage.as_ref().and_then(usage_total_tokens) {
+            *total_tokens_used = total_tokens_used.saturating_add(tokens);
+            if *total_tokens_used > max_total_tokens {
+                return Err(
+                    AgentTurnError::TokenBudgetExceeded {
+                        used: *total_tokens_used,
+                        limit: max_total_tokens,
+                    }
+                    .into(),
+                );
+            }
+        }
+    }
+
+    let summary_text = extract_assistant_text(&resp.output);
+    let summary_text = summary_text.trim();
+    if summary_text.is_empty() {
+        return Ok(false);
+    }
+    let summary_text = pm_core::redact_text(summary_text);
+    let summary_text = truncate_chars(&summary_text, 20_000);
+
+    let artifact_value = match crate::handle_artifact_write(
+        server,
+        crate::ArtifactWriteParams {
+            thread_id,
+            turn_id: Some(turn_id),
+            approval_id: None,
+            artifact_id: None,
+            artifact_type: "summary".to_string(),
+            summary: format!("Summary (auto compact at {0}% of token budget)", cfg.threshold_pct),
+            text: summary_text.clone(),
+        },
+    )
+    .await
+    {
+        Ok(value) => value,
+        Err(_) => return Ok(false),
+    };
+
+    if artifact_value
+        .get("needs_approval")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+        || artifact_value
+            .get("denied")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    {
+        return Ok(false);
+    }
+
+    let artifact_id = artifact_value
+        .get("artifact_id")
+        .cloned()
+        .and_then(|value| serde_json::from_value::<ArtifactId>(value).ok());
+
+    let tail_count = cfg.tail_items.min(input_items.len());
+    let mut tail = input_items
+        .iter()
+        .rev()
+        .take(tail_count)
+        .cloned()
+        .collect::<Vec<_>>();
+    tail.reverse();
+
+    let mut system_text = String::new();
+    system_text.push_str("# Context summary\n\n");
+    system_text.push_str(summary_text.trim());
+    if let Some(artifact_id) = artifact_id {
+        system_text.push_str(&format!("\n\n(summary artifact_id: {artifact_id})"));
+    }
+
+    input_items.clear();
+    input_items.push(pm_openai::ResponseItem::Message {
+        role: "system".to_string(),
+        content: vec![pm_openai::ContentItem::InputText { text: system_text }],
+    });
+    input_items.extend(tail);
+
+    Ok(true)
 }
 
 fn resolve_user_instructions_path() -> Option<PathBuf> {
@@ -933,9 +1230,70 @@ fn usage_total_tokens(usage: &pm_openai::TokenUsage) -> Option<u64> {
     })
 }
 
+async fn load_latest_summary_artifact(
+    server: &super::Server,
+    thread_id: ThreadId,
+) -> anyhow::Result<Option<(ArtifactMetadata, String)>> {
+    let dir = crate::user_artifacts_dir_for_thread(server, thread_id);
+    let mut read_dir = match tokio::fs::read_dir(&dir).await {
+        Ok(read_dir) => read_dir,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err).with_context(|| format!("read {}", dir.display())),
+    };
+
+    let mut latest: Option<ArtifactMetadata> = None;
+    loop {
+        let Some(entry) = read_dir
+            .next_entry()
+            .await
+            .with_context(|| format!("read {}", dir.display()))?
+        else {
+            break;
+        };
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        if !name.ends_with(".metadata.json") {
+            continue;
+        }
+
+        let meta = match crate::read_artifact_metadata(&path).await {
+            Ok(meta) => meta,
+            Err(_) => continue,
+        };
+        if meta.artifact_type != "summary" {
+            continue;
+        }
+
+        let should_replace = match &latest {
+            None => true,
+            Some(prev) => meta
+                .updated_at
+                .unix_timestamp_nanos()
+                .cmp(&prev.updated_at.unix_timestamp_nanos())
+                .then_with(|| meta.artifact_id.cmp(&prev.artifact_id))
+                .is_gt(),
+        };
+        if should_replace {
+            latest = Some(meta);
+        }
+    }
+
+    let Some(meta) = latest else {
+        return Ok(None);
+    };
+
+    let (content_path, _metadata_path) = crate::user_artifact_paths(server, thread_id, meta.artifact_id);
+    let text = tokio::fs::read_to_string(&content_path)
+        .await
+        .with_context(|| format!("read {}", content_path.display()))?;
+    Ok(Some((meta, text)))
+}
+
 async fn build_conversation(
     server: &super::Server,
-    thread_id: pm_protocol::ThreadId,
+    thread_id: ThreadId,
 ) -> anyhow::Result<Vec<pm_openai::ResponseItem>> {
     let events = server
         .thread_store
@@ -944,6 +1302,74 @@ async fn build_conversation(
         .ok_or_else(|| anyhow::anyhow!("thread not found: {thread_id}"))?;
 
     let mut input = Vec::new();
+
+    if let Some((meta, summary_text)) = load_latest_summary_artifact(server, thread_id).await? {
+        let event_limit = parse_env_usize(
+            "CODE_PM_AGENT_SUMMARY_CONTEXT_EVENT_LIMIT",
+            DEFAULT_SUMMARY_CONTEXT_EVENT_LIMIT,
+            0,
+            MAX_SUMMARY_CONTEXT_EVENT_LIMIT,
+        );
+
+        let summary_text = pm_core::redact_text(&summary_text);
+        if !summary_text.trim().is_empty() {
+            input.push(pm_openai::ResponseItem::Message {
+                role: "system".to_string(),
+                content: vec![pm_openai::ContentItem::InputText {
+                    text: format!(
+                        "# Context summary\n\n{}\n\n(summary artifact_id: {})",
+                        summary_text.trim(),
+                        meta.artifact_id
+                    ),
+                }],
+            });
+        }
+
+        let mut start_idx = 0usize;
+        if let Some(summary_turn_id) = meta.provenance.as_ref().and_then(|p| p.turn_id) {
+            if let Some(idx) = events.iter().rposition(|event| {
+                matches!(
+                    &event.kind,
+                    ThreadEventKind::TurnCompleted { turn_id, .. } if *turn_id == summary_turn_id
+                )
+            }) {
+                start_idx = idx + 1;
+            }
+        }
+
+        let mut slice = &events[start_idx..];
+        if event_limit > 0 && slice.len() > event_limit {
+            slice = &slice[slice.len().saturating_sub(event_limit)..];
+        }
+
+        for event in slice {
+            match &event.kind {
+                ThreadEventKind::TurnStarted { input: text, .. } => {
+                    input.push(pm_openai::ResponseItem::Message {
+                        role: "user".to_string(),
+                        content: vec![pm_openai::ContentItem::InputText { text: text.clone() }],
+                    });
+                }
+                ThreadEventKind::AssistantMessage { text, .. } => {
+                    input.push(pm_openai::ResponseItem::Message {
+                        role: "assistant".to_string(),
+                        content: vec![pm_openai::ContentItem::OutputText { text: text.clone() }],
+                    });
+                }
+                other => {
+                    if let Some(text) = format_event_for_context(other) {
+                        input.push(pm_openai::ResponseItem::Message {
+                            role: "assistant".to_string(),
+                            content: vec![pm_openai::ContentItem::OutputText { text }],
+                        });
+                    }
+                }
+            }
+        }
+
+        return Ok(input);
+    }
+
     for event in events {
         match event.kind {
             ThreadEventKind::TurnStarted { input: text, .. } => {
@@ -1262,5 +1688,139 @@ mod loop_detection_tests {
         assert_eq!(detector.observe(b), None);
         assert_eq!(detector.observe(a), None);
         assert_eq!(detector.observe(b), Some("cycle"));
+    }
+}
+
+#[cfg(test)]
+mod auto_summary_tests {
+    use super::*;
+
+    use pm_core::{PmPaths, ThreadStore};
+    use pm_protocol::TurnStatus;
+    use tokio::sync::broadcast;
+
+    fn build_test_server(pm_root: PathBuf) -> crate::Server {
+        let (notify_tx, _notify_rx) = broadcast::channel::<String>(16);
+        crate::Server {
+            cwd: pm_root.clone(),
+            notify_tx,
+            thread_store: ThreadStore::new(PmPaths::new(pm_root)),
+            threads: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            processes: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            disk_warning: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            exec_policy: pm_execpolicy::Policy::empty(),
+        }
+    }
+
+    #[test]
+    fn should_auto_summarize_triggers_at_threshold() {
+        assert!(!should_auto_summarize(0, 0, 80));
+        assert!(!should_auto_summarize(79, 100, 80));
+        assert!(should_auto_summarize(80, 100, 80));
+        assert!(should_auto_summarize(100, 100, 80));
+    }
+
+    #[tokio::test]
+    async fn build_conversation_prefers_latest_summary_artifact() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = build_test_server(tmp.path().join(".codepm_data"));
+        let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let thread_rt = server.get_or_load_thread(thread_id).await?;
+        let turn_id1 = TurnId::new();
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::TurnStarted {
+                turn_id: turn_id1,
+                input: "first".to_string(),
+            })
+            .await?;
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::AssistantMessage {
+                turn_id: Some(turn_id1),
+                text: "hello".to_string(),
+                model: None,
+                response_id: None,
+                token_usage: None,
+            })
+            .await?;
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::TurnCompleted {
+                turn_id: turn_id1,
+                status: TurnStatus::Completed,
+                reason: None,
+            })
+            .await?;
+
+        let _summary = crate::handle_artifact_write(
+            &server,
+            crate::ArtifactWriteParams {
+                thread_id,
+                turn_id: Some(turn_id1),
+                approval_id: None,
+                artifact_id: None,
+                artifact_type: "summary".to_string(),
+                summary: "summary".to_string(),
+                text: "This is the summary.".to_string(),
+            },
+        )
+        .await?;
+
+        let turn_id2 = TurnId::new();
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::TurnStarted {
+                turn_id: turn_id2,
+                input: "second".to_string(),
+            })
+            .await?;
+
+        let items = build_conversation(&server, thread_id).await?;
+        assert!(
+            items.iter().any(|item| match item {
+                pm_openai::ResponseItem::Message { role, content } => {
+                    role == "system"
+                        && content.iter().any(|part| match part {
+                            pm_openai::ContentItem::InputText { text } => {
+                                text.contains("This is the summary.")
+                            }
+                            _ => false,
+                        })
+                }
+                _ => false,
+            }),
+            "expected system summary message"
+        );
+        assert!(
+            items.iter().any(|item| match item {
+                pm_openai::ResponseItem::Message { role, content } => {
+                    role == "user"
+                        && content.iter().any(|part| match part {
+                            pm_openai::ContentItem::InputText { text } => text == "second",
+                            _ => false,
+                        })
+                }
+                _ => false,
+            }),
+            "expected latest turn input"
+        );
+        assert!(
+            !items.iter().any(|item| match item {
+                pm_openai::ResponseItem::Message { role, content } => {
+                    role == "user"
+                        && content.iter().any(|part| match part {
+                            pm_openai::ContentItem::InputText { text } => text == "first",
+                            _ => false,
+                        })
+                }
+                _ => false,
+            }),
+            "expected summary to replace older turn input"
+        );
+
+        Ok(())
     }
 }
