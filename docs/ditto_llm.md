@@ -437,4 +437,4 @@ async fn main() -> Result<(), ditto_llm::Error> {
 > 已确认/已实现：
 >
 > 1. ✅ **初始供应商支持**：OpenAI + Anthropic + Google
-> 2. ⏸️ **图片/文件上传支持**：暂不支持（先以纯文本 + tool calling 为主）
+> 2. ✅ **图片/文件上传支持**：支持 images + PDFs（url/base64；provider 不支持会以 `Warning` 显式暴露）

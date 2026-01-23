@@ -268,8 +268,13 @@ struct McpCallRequest {
 
 fn split_special_directives(
     input: &str,
-) -> anyhow::Result<(String, Vec<pm_protocol::ContextRef>)> {
+) -> anyhow::Result<(
+    String,
+    Vec<pm_protocol::ContextRef>,
+    Vec<pm_protocol::TurnAttachment>,
+)> {
     let mut refs = Vec::<pm_protocol::ContextRef>::new();
+    let mut attachments = Vec::<pm_protocol::TurnAttachment>::new();
     let lines = input.lines().collect::<Vec<_>>();
 
     let mut idx = 0usize;
@@ -309,14 +314,65 @@ fn split_special_directives(
             continue;
         }
 
+        if trimmed == "@image" {
+            anyhow::bail!("@image requires a path or url");
+        }
+        if trimmed.starts_with("@image ") || trimmed.starts_with("@image\t") {
+            let spec = trimmed["@image".len()..].trim();
+            let source = if spec.starts_with("http://") || spec.starts_with("https://") {
+                pm_protocol::AttachmentSource::Url {
+                    url: spec.to_string(),
+                }
+            } else {
+                pm_protocol::AttachmentSource::Path {
+                    path: spec.to_string(),
+                }
+            };
+            attachments.push(pm_protocol::TurnAttachment::Image(
+                pm_protocol::TurnAttachmentImage {
+                    source,
+                    media_type: None,
+                },
+            ));
+            did_parse = true;
+            idx += 1;
+            continue;
+        }
+
+        if trimmed == "@pdf" {
+            anyhow::bail!("@pdf requires a path or url");
+        }
+        if trimmed.starts_with("@pdf ") || trimmed.starts_with("@pdf\t") {
+            let spec = trimmed["@pdf".len()..].trim();
+            let source = if spec.starts_with("http://") || spec.starts_with("https://") {
+                pm_protocol::AttachmentSource::Url {
+                    url: spec.to_string(),
+                }
+            } else {
+                pm_protocol::AttachmentSource::Path {
+                    path: spec.to_string(),
+                }
+            };
+            attachments.push(pm_protocol::TurnAttachment::File(
+                pm_protocol::TurnAttachmentFile {
+                    source,
+                    media_type: "application/pdf".to_string(),
+                    filename: None,
+                },
+            ));
+            did_parse = true;
+            idx += 1;
+            continue;
+        }
+
         break;
     }
 
     if !did_parse {
-        return Ok((input.to_string(), refs));
+        return Ok((input.to_string(), refs, attachments));
     }
 
-    Ok((lines[idx..].join("\n"), refs))
+    Ok((lines[idx..].join("\n"), refs, attachments))
 }
 
 fn parse_file_ref_spec(spec: &str) -> anyhow::Result<(String, Option<u64>, Option<u64>)> {
@@ -766,7 +822,7 @@ impl App {
     }
 
     async fn turn_start(&mut self, thread_id: ThreadId, input: String) -> anyhow::Result<TurnId> {
-        let (input, context_refs) = split_special_directives(&input)?;
+        let (input, context_refs, attachments) = split_special_directives(&input)?;
         let v = self
             .rpc(
                 "turn/start",
@@ -774,6 +830,7 @@ impl App {
                     "thread_id": thread_id,
                     "input": input,
                     "context_refs": context_refs,
+                    "attachments": attachments,
                 }),
             )
             .await?;
@@ -1223,18 +1280,20 @@ mod special_directives_tests {
     #[test]
     fn split_special_directives_noop_without_directives() -> anyhow::Result<()> {
         let input = "\n\nhello\nworld\n";
-        let (remaining, refs) = split_special_directives(input)?;
+        let (remaining, refs, attachments) = split_special_directives(input)?;
         assert_eq!(remaining, input);
         assert!(refs.is_empty());
+        assert!(attachments.is_empty());
         Ok(())
     }
 
     #[test]
     fn split_special_directives_parses_file_and_diff() -> anyhow::Result<()> {
         let input = "@file crates/core/src/redaction.rs:1:3\n@diff\n\nplease help\n";
-        let (remaining, refs) = split_special_directives(input)?;
+        let (remaining, refs, attachments) = split_special_directives(input)?;
         assert_eq!(remaining, "please help");
         assert_eq!(refs.len(), 2);
+        assert!(attachments.is_empty());
         assert!(matches!(
             &refs[0],
             pm_protocol::ContextRef::File(pm_protocol::ContextRefFile {
@@ -1258,5 +1317,29 @@ mod special_directives_tests {
     fn split_special_directives_rejects_file_without_path() {
         let err = split_special_directives("@file\nx").unwrap_err();
         assert!(err.to_string().contains("@file"));
+    }
+
+    #[test]
+    fn split_special_directives_parses_image_and_pdf() -> anyhow::Result<()> {
+        let input = "@image assets/example.png\n@pdf https://example.com/file.pdf\n\nhello";
+        let (remaining, refs, attachments) = split_special_directives(input)?;
+        assert_eq!(remaining, "hello");
+        assert!(refs.is_empty());
+        assert!(matches!(
+            &attachments[0],
+            pm_protocol::TurnAttachment::Image(pm_protocol::TurnAttachmentImage {
+                source: pm_protocol::AttachmentSource::Path { path },
+                ..
+            }) if path == "assets/example.png"
+        ));
+        assert!(matches!(
+            &attachments[1],
+            pm_protocol::TurnAttachment::File(pm_protocol::TurnAttachmentFile {
+                source: pm_protocol::AttachmentSource::Url { url },
+                media_type,
+                ..
+            }) if url == "https://example.com/file.pdf" && media_type == "application/pdf"
+        ));
+        Ok(())
     }
 }

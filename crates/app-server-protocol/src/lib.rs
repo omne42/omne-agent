@@ -297,6 +297,9 @@ pub struct TurnStartParams {
     #[serde(default)]
     #[ts(optional)]
     pub context_refs: Option<Vec<pm_protocol::ContextRef>>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub attachments: Option<Vec<pm_protocol::TurnAttachment>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]

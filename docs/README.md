@@ -5,6 +5,7 @@
 ## 1) 从哪里开始
 
 - `docs/v0.2.0_parity.md`：v0.2.0 对齐清单（实现状态 + TODO）
+- `docs/TODO.md`：新增待办项与版本计划（例如 v0.3.0 Node.js）
 - `docs/implementation_plan.md`：vNext 实现计划与里程碑
 - `docs/rts_workflow.md`：目标态使用流程（RTS 风格）
 - `docs/development_process.md`：重新开发流程（Agent-first）

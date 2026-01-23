@@ -515,6 +515,55 @@ fn validate_context_refs(refs: &[pm_protocol::ContextRef]) -> anyhow::Result<()>
     Ok(())
 }
 
+fn validate_turn_attachments(attachments: &[pm_protocol::TurnAttachment]) -> anyhow::Result<()> {
+    for attachment in attachments {
+        match attachment {
+            pm_protocol::TurnAttachment::Image(image) => {
+                match &image.source {
+                    pm_protocol::AttachmentSource::Path { path } => {
+                        if path.trim().is_empty() {
+                            anyhow::bail!("attachments.image.source.path must be non-empty");
+                        }
+                    }
+                    pm_protocol::AttachmentSource::Url { url } => {
+                        if url.trim().is_empty() {
+                            anyhow::bail!("attachments.image.source.url must be non-empty");
+                        }
+                    }
+                }
+                if let Some(media_type) = image.media_type.as_deref() {
+                    if media_type.trim().is_empty() {
+                        anyhow::bail!("attachments.image.media_type must be non-empty when provided");
+                    }
+                }
+            }
+            pm_protocol::TurnAttachment::File(file) => {
+                match &file.source {
+                    pm_protocol::AttachmentSource::Path { path } => {
+                        if path.trim().is_empty() {
+                            anyhow::bail!("attachments.file.source.path must be non-empty");
+                        }
+                    }
+                    pm_protocol::AttachmentSource::Url { url } => {
+                        if url.trim().is_empty() {
+                            anyhow::bail!("attachments.file.source.url must be non-empty");
+                        }
+                    }
+                }
+                if file.media_type.trim().is_empty() {
+                    anyhow::bail!("attachments.file.media_type must be non-empty");
+                }
+                if let Some(filename) = file.filename.as_deref() {
+                    if filename.trim().is_empty() {
+                        anyhow::bail!("attachments.file.filename must be non-empty when provided");
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 impl ThreadRuntime {
     fn new(handle: pm_core::ThreadHandle, notify_tx: broadcast::Sender<String>) -> Self {
         Self {
@@ -568,6 +617,7 @@ impl ThreadRuntime {
         server: Arc<Server>,
         input: String,
         context_refs: Option<Vec<pm_protocol::ContextRef>>,
+        attachments: Option<Vec<pm_protocol::TurnAttachment>>,
     ) -> anyhow::Result<TurnId> {
         let mut handle = self.handle.lock().await;
         let state = handle.state();
@@ -589,6 +639,14 @@ impl ThreadRuntime {
             validate_context_refs(refs)?;
         }
 
+        let attachments = match attachments {
+            Some(attachments) if attachments.is_empty() => None,
+            other => other,
+        };
+        if let Some(attachments) = attachments.as_deref() {
+            validate_turn_attachments(attachments)?;
+        }
+
         let turn_id = TurnId::new();
         let input_for_event = input.clone();
         let event = handle
@@ -596,6 +654,7 @@ impl ThreadRuntime {
                 turn_id,
                 input: input_for_event,
                 context_refs,
+                attachments,
             })
             .await?;
         drop(handle);
@@ -970,6 +1029,8 @@ struct TurnStartParams {
     input: String,
     #[serde(default)]
     context_refs: Option<Vec<pm_protocol::ContextRef>>,
+    #[serde(default)]
+    attachments: Option<Vec<pm_protocol::TurnAttachment>>,
 }
 
 #[derive(Debug, Deserialize)]

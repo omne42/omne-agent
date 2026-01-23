@@ -1230,6 +1230,7 @@ mod stuck_report_tests {
                 turn_id,
                 input: "test".to_string(),
                 context_refs: None,
+                attachments: None,
             })
             .await?;
 

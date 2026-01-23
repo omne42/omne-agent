@@ -248,6 +248,7 @@ mod tests {
                 turn_id,
                 input: "token=sk-1234567890abcdefghijklmnop".to_string(),
                 context_refs: None,
+                attachments: None,
             })
             .await?;
         drop(thread);
@@ -282,6 +283,7 @@ mod tests {
                 turn_id,
                 input: "x".to_string(),
                 context_refs: None,
+                attachments: None,
             })
             .await?;
         drop(thread);

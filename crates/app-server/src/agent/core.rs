@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use crate::project_config::ProjectOpenAiOverrides;
+use base64::Engine;
 use futures_util::stream::{self, StreamExt};
 use ditto_llm::ThinkingIntensity;
 use pm_protocol::{
@@ -30,6 +31,11 @@ const MAX_LLM_MAX_ATTEMPTS: usize = 20;
 const DEFAULT_LLM_RETRY_BASE_DELAY_MS: u64 = 200;
 const DEFAULT_LLM_RETRY_MAX_DELAY_MS: u64 = 2_000;
 const MAX_LLM_RETRY_DELAY_MS: u64 = 60_000;
+
+const DEFAULT_AGENT_MAX_ATTACHMENTS: usize = 4;
+const MAX_AGENT_MAX_ATTACHMENTS: usize = 32;
+const DEFAULT_AGENT_MAX_ATTACHMENT_BYTES: u64 = 10 * 1024 * 1024;
+const MAX_AGENT_MAX_ATTACHMENT_BYTES: u64 = 200 * 1024 * 1024;
 
 const MAX_MAX_AGENT_STEPS: usize = 10_000;
 const MAX_MAX_TOOL_CALLS: usize = 10_000;
@@ -361,6 +367,7 @@ fn token_usage_from_ditto_usage(usage: &ditto_llm::Usage) -> Option<pm_openai::T
 fn response_items_to_ditto_messages(
     instructions: &str,
     items: &[pm_openai::ResponseItem],
+    attachments: &[ditto_llm::ContentPart],
 ) -> Vec<ditto_llm::Message> {
     let mut out = Vec::<ditto_llm::Message>::new();
     if !instructions.trim().is_empty() {
@@ -422,6 +429,17 @@ fn response_items_to_ditto_messages(
                 });
             }
             pm_openai::ResponseItem::Other => {}
+        }
+    }
+
+    if !attachments.is_empty() {
+        if let Some(idx) = out.iter().rposition(|msg| msg.role == ditto_llm::Role::User) {
+            out[idx].content.extend_from_slice(attachments);
+        } else {
+            out.push(ditto_llm::Message {
+                role: ditto_llm::Role::User,
+                content: attachments.to_vec(),
+            });
         }
     }
 
@@ -768,7 +786,7 @@ pub async fn run_agent_turn(
     input: String,
     cancel: CancellationToken,
 ) -> anyhow::Result<()> {
-    let (thread_id, thread_mode, thread_model, thread_openai_base_url, thread_cwd) = {
+    let (thread_id, thread_mode, thread_model, thread_openai_base_url, thread_cwd, allowed_tools) = {
         let handle = thread_rt.handle.lock().await;
         let state = handle.state();
         (
@@ -777,6 +795,7 @@ pub async fn run_agent_turn(
             state.model.clone(),
             state.openai_base_url.clone(),
             state.cwd.clone(),
+            state.allowed_tools.clone(),
         )
     };
 
@@ -1045,6 +1064,39 @@ pub async fn run_agent_turn(
             }
         }
     }
+
+    let attachments = load_turn_attachments(&server, thread_id, turn_id).await?;
+    let max_attachments = parse_env_usize(
+        "CODE_PM_AGENT_MAX_ATTACHMENTS",
+        DEFAULT_AGENT_MAX_ATTACHMENTS,
+        0,
+        MAX_AGENT_MAX_ATTACHMENTS,
+    );
+    if max_attachments > 0 && attachments.len() > max_attachments {
+        anyhow::bail!(
+            "too many attachments: count={} max={}",
+            attachments.len(),
+            max_attachments
+        );
+    }
+    let max_attachment_bytes = parse_env_u64(
+        "CODE_PM_AGENT_MAX_ATTACHMENT_BYTES",
+        DEFAULT_AGENT_MAX_ATTACHMENT_BYTES,
+        0,
+        MAX_AGENT_MAX_ATTACHMENT_BYTES,
+    );
+    let attachment_parts = if attachments.is_empty() {
+        Vec::new()
+    } else {
+        attachments_to_ditto_parts(
+            thread_root.as_deref(),
+            thread_mode.as_str(),
+            allowed_tools.as_deref(),
+            &attachments,
+            max_attachment_bytes,
+        )
+        .await?
+    };
     let context_tokens_estimate = estimate_context_tokens(&instructions, &input_items);
 
     let router_config = match thread_root.as_deref() {
@@ -1116,7 +1168,8 @@ pub async fn run_agent_turn(
             .into());
         }
 
-        let messages = response_items_to_ditto_messages(&instructions, &input_items);
+        let messages =
+            response_items_to_ditto_messages(&instructions, &input_items, &attachment_parts);
         let mut req_base = ditto_llm::GenerateRequest::from(messages);
         req_base.model = Some(model.clone());
         req_base.tools = Some(tools.clone());
@@ -2077,6 +2130,247 @@ async fn load_turn_context_refs(
     Ok(Vec::new())
 }
 
+async fn load_turn_attachments(
+    server: &super::Server,
+    thread_id: ThreadId,
+    turn_id: TurnId,
+) -> anyhow::Result<Vec<pm_protocol::TurnAttachment>> {
+    let events = server
+        .thread_store
+        .read_events_since(thread_id, EventSeq::ZERO)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("thread not found: {thread_id}"))?;
+
+    for event in events.iter().rev() {
+        let ThreadEventKind::TurnStarted {
+            turn_id: ev_turn_id,
+            attachments,
+            ..
+        } = &event.kind
+        else {
+            continue;
+        };
+        if *ev_turn_id != turn_id {
+            continue;
+        }
+        return Ok(attachments.clone().unwrap_or_default());
+    }
+
+    Ok(Vec::new())
+}
+
+fn infer_image_media_type(path: &str) -> Option<&'static str> {
+    let ext = Path::new(path)
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_ascii_lowercase())?;
+    match ext.as_str() {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "webp" => Some("image/webp"),
+        "gif" => Some("image/gif"),
+        _ => None,
+    }
+}
+
+fn filename_from_path(path: &str) -> Option<String> {
+    Path::new(path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_string())
+}
+
+fn filename_from_url(url: &str) -> Option<String> {
+    let url = url.split('?').next().unwrap_or(url);
+    url.rsplit('/')
+        .next()
+        .filter(|name| !name.trim().is_empty())
+        .map(|name| name.to_string())
+}
+
+async fn read_attachment_bytes(
+    thread_root: &Path,
+    path: &str,
+    max_bytes: u64,
+) -> anyhow::Result<Vec<u8>> {
+    let rel = Path::new(path);
+    if rel.file_name() == Some(std::ffi::OsStr::new(".env")) {
+        anyhow::bail!("refusing to attach secrets file (.env)");
+    }
+
+    let resolved = pm_core::resolve_file(thread_root, rel, pm_core::PathAccess::Read, false)
+        .await
+        .with_context(|| format!("resolve attachment path: {}", rel.display()))?;
+
+    if resolved.file_name() == Some(std::ffi::OsStr::new(".env")) {
+        anyhow::bail!("refusing to attach secrets file (.env)");
+    }
+
+    let metadata = tokio::fs::metadata(&resolved)
+        .await
+        .with_context(|| format!("stat {}", resolved.display()))?;
+    if metadata.len() > max_bytes {
+        anyhow::bail!(
+            "attachment too large: path={} bytes={} max_bytes={}",
+            rel.display(),
+            metadata.len(),
+            max_bytes
+        );
+    }
+
+    tokio::fs::read(&resolved)
+        .await
+        .with_context(|| format!("read {}", resolved.display()))
+}
+
+async fn attachments_to_ditto_parts(
+    thread_root: Option<&Path>,
+    mode_name: &str,
+    allowed_tools: Option<&[String]>,
+    attachments: &[pm_protocol::TurnAttachment],
+    max_bytes: u64,
+) -> anyhow::Result<Vec<ditto_llm::ContentPart>> {
+    if max_bytes == 0 {
+        anyhow::bail!("attachments are disabled (max_bytes=0)");
+    }
+
+    let has_local_paths = attachments.iter().any(|attachment| match attachment {
+        pm_protocol::TurnAttachment::Image(image) => {
+            matches!(image.source, pm_protocol::AttachmentSource::Path { .. })
+        }
+        pm_protocol::TurnAttachment::File(file) => {
+            matches!(file.source, pm_protocol::AttachmentSource::Path { .. })
+        }
+    });
+
+    if has_local_paths {
+        if let Some(allowed_tools) = allowed_tools
+            && !allowed_tools.iter().any(|allowed| allowed == "file/read")
+        {
+            let allowed_json = serde_json::to_string(allowed_tools)
+                .unwrap_or_else(|_| format!("{allowed_tools:?}"));
+            anyhow::bail!(
+                "attachments with local paths require file/read to be allowed (thread allowed_tools={allowed_json})"
+            );
+        }
+
+        let Some(thread_root) = thread_root else {
+            anyhow::bail!("cannot attach local files without thread cwd/root");
+        };
+
+        let catalog = pm_core::modes::ModeCatalog::load(thread_root).await;
+        let mode = match catalog.mode(mode_name) {
+            Some(mode) => mode,
+            None => {
+                let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
+                anyhow::bail!(
+                    "unknown mode: {mode_name} (available: {available}; load_error={})",
+                    catalog.load_error.as_deref().unwrap_or("")
+                );
+            }
+        };
+
+        for attachment in attachments {
+            let path = match attachment {
+                pm_protocol::TurnAttachment::Image(image) => match &image.source {
+                    pm_protocol::AttachmentSource::Path { path } => Some(path.as_str()),
+                    _ => None,
+                },
+                pm_protocol::TurnAttachment::File(file) => match &file.source {
+                    pm_protocol::AttachmentSource::Path { path } => Some(path.as_str()),
+                    _ => None,
+                },
+            };
+            let Some(path) = path else {
+                continue;
+            };
+
+            let rel = pm_core::modes::relative_path_under_root(thread_root, Path::new(path));
+            let base_decision = match rel.as_ref() {
+                Ok(rel) if mode.permissions.edit.is_denied(rel) => pm_core::modes::Decision::Deny,
+                Ok(_) => mode.permissions.read,
+                Err(_) => pm_core::modes::Decision::Deny,
+            };
+            let effective_decision = match mode.tool_overrides.get("file/read").copied() {
+                Some(override_decision) => base_decision.combine(override_decision),
+                None => base_decision,
+            };
+            if effective_decision != pm_core::modes::Decision::Allow {
+                anyhow::bail!(
+                    "mode denies file attachment read: mode={mode_name} decision={effective_decision:?} path={path}"
+                );
+            }
+        }
+    }
+
+    let mut out = Vec::new();
+    for attachment in attachments {
+        match attachment {
+            pm_protocol::TurnAttachment::Image(image) => match &image.source {
+                pm_protocol::AttachmentSource::Url { url } => {
+                    out.push(ditto_llm::ContentPart::Image {
+                        source: ditto_llm::ImageSource::Url { url: url.clone() },
+                    });
+                }
+                pm_protocol::AttachmentSource::Path { path } => {
+                    let Some(thread_root) = thread_root else {
+                        anyhow::bail!("cannot attach local files without thread cwd/root");
+                    };
+                    let media_type = image
+                        .media_type
+                        .as_deref()
+                        .filter(|s| !s.trim().is_empty())
+                        .or_else(|| infer_image_media_type(path))
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "unsupported image type: path={path} (expected: png/jpg/jpeg/webp/gif)"
+                            )
+                        })?;
+                    let bytes = read_attachment_bytes(thread_root, path, max_bytes).await?;
+                    let data = base64::engine::general_purpose::STANDARD.encode(bytes);
+                    out.push(ditto_llm::ContentPart::Image {
+                        source: ditto_llm::ImageSource::Base64 {
+                            media_type: media_type.to_string(),
+                            data,
+                        },
+                    });
+                }
+            },
+            pm_protocol::TurnAttachment::File(file) => match &file.source {
+                pm_protocol::AttachmentSource::Url { url } => {
+                    let filename = file
+                        .filename
+                        .clone()
+                        .or_else(|| filename_from_url(url));
+                    out.push(ditto_llm::ContentPart::File {
+                        filename,
+                        media_type: file.media_type.clone(),
+                        source: ditto_llm::FileSource::Url { url: url.clone() },
+                    });
+                }
+                pm_protocol::AttachmentSource::Path { path } => {
+                    let Some(thread_root) = thread_root else {
+                        anyhow::bail!("cannot attach local files without thread cwd/root");
+                    };
+                    let bytes = read_attachment_bytes(thread_root, path, max_bytes).await?;
+                    let data = base64::engine::general_purpose::STANDARD.encode(bytes);
+                    let filename = file
+                        .filename
+                        .clone()
+                        .or_else(|| filename_from_path(path));
+                    out.push(ditto_llm::ContentPart::File {
+                        filename,
+                        media_type: file.media_type.clone(),
+                        source: ditto_llm::FileSource::Base64 { data },
+                    });
+                }
+            },
+        }
+    }
+
+    Ok(out)
+}
+
 async fn context_refs_to_messages(
     server: &super::Server,
     thread_id: ThreadId,
@@ -2663,6 +2957,7 @@ mod auto_summary_tests {
                 turn_id: turn_id1,
                 input: "first".to_string(),
                 context_refs: None,
+                attachments: None,
             })
             .await?;
         thread_rt
@@ -2702,6 +2997,7 @@ mod auto_summary_tests {
                 turn_id: turn_id2,
                 input: "second".to_string(),
                 context_refs: None,
+                attachments: None,
             })
             .await?;
 

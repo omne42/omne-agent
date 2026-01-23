@@ -56,6 +56,265 @@ struct WorkflowTaskResult {
     assistant_text: Option<String>,
 }
 
+#[derive(Debug)]
+struct FanOutScheduler {
+    tasks: Vec<WorkflowTask>,
+    fan_in_artifact_id: pm_protocol::ArtifactId,
+    concurrency_limit: usize,
+    pending_idx: usize,
+    active: Vec<FanOutActiveTask>,
+    finished: Vec<WorkflowTaskResult>,
+    final_summary_written: bool,
+    started_at: Instant,
+    last_progress_print: Instant,
+    last_progress_artifact_write: Instant,
+}
+
+#[derive(Debug)]
+struct FanOutActiveTask {
+    task_id: String,
+    title: String,
+    thread_id: ThreadId,
+    turn_id: TurnId,
+    since_seq: u64,
+    assistant_text: Option<String>,
+}
+
+impl FanOutScheduler {
+    async fn start(
+        app: &mut App,
+        parent_thread_id: ThreadId,
+        tasks: Vec<WorkflowTask>,
+        fan_in_artifact_id: pm_protocol::ArtifactId,
+    ) -> anyhow::Result<Self> {
+        let max_concurrent_subagents = parse_env_usize("CODE_PM_MAX_CONCURRENT_SUBAGENTS", 4, 0, 64);
+        let concurrency_limit = if max_concurrent_subagents == 0 {
+            tasks.len().max(1)
+        } else {
+            max_concurrent_subagents
+        };
+
+        let started_at = Instant::now();
+        let scheduler = Self {
+            tasks,
+            fan_in_artifact_id,
+            concurrency_limit,
+            pending_idx: 0,
+            active: Vec::new(),
+            finished: Vec::new(),
+            final_summary_written: false,
+            started_at,
+            last_progress_print: Instant::now(),
+            last_progress_artifact_write: Instant::now(),
+        };
+
+        write_fan_out_progress_artifact(
+            app,
+            parent_thread_id,
+            scheduler.fan_in_artifact_id,
+            scheduler.tasks.len(),
+            &scheduler.finished,
+            &scheduler.active,
+            scheduler.started_at,
+        )
+        .await?;
+
+        Ok(scheduler)
+    }
+
+    fn is_done(&self) -> bool {
+        self.finished.len() >= self.tasks.len()
+    }
+
+    fn results_ordered(&self) -> Vec<WorkflowTaskResult> {
+        let mut by_id = std::collections::HashMap::<String, WorkflowTaskResult>::new();
+        for result in &self.finished {
+            by_id.insert(result.task_id.clone(), result.clone());
+        }
+        let mut ordered = Vec::<WorkflowTaskResult>::new();
+        for task in &self.tasks {
+            if let Some(result) = by_id.remove(&task.id) {
+                ordered.push(result);
+            }
+        }
+        ordered
+    }
+
+    async fn tick(&mut self, app: &mut App, parent_thread_id: ThreadId) -> anyhow::Result<()> {
+        #[derive(Debug, Deserialize)]
+        struct ForkResult {
+            thread_id: ThreadId,
+            last_seq: u64,
+        }
+
+        if self.tasks.is_empty() {
+            return Ok(());
+        }
+        if self.final_summary_written {
+            return Ok(());
+        }
+
+        while self.active.len() < self.concurrency_limit && self.pending_idx < self.tasks.len() {
+            let task = &self.tasks[self.pending_idx];
+            self.pending_idx += 1;
+
+            let forked = app.thread_fork(parent_thread_id).await?;
+            let forked: ForkResult = serde_json::from_value(forked).context("parse thread/fork")?;
+
+            let _ = app
+                .rpc(
+                    "thread/configure",
+                    serde_json::json!({
+                        "thread_id": forked.thread_id,
+                        "approval_policy": null,
+                        "sandbox_policy": pm_protocol::SandboxPolicy::ReadOnly,
+                        "sandbox_writable_roots": null,
+                        "sandbox_network_access": null,
+                        "mode": "reviewer",
+                        "model": null,
+                        "openai_base_url": null,
+                        "allowed_tools": null,
+                    }),
+                )
+                .await?;
+
+            let mut input = format!(
+                "You are a read-only subagent.\nTask: {}{}\n\n",
+                task.id,
+                if task.title.is_empty() {
+                    "".to_string()
+                } else {
+                    format!(" ({})", task.title)
+                }
+            );
+            let body = task.body.trim();
+            if body.is_empty() {
+                input.push_str("(no task body)\n");
+            } else {
+                input.push_str(body);
+                input.push('\n');
+            }
+            input.push_str("\nReturn a concise result.\n");
+
+            let turn_id = app.turn_start(forked.thread_id, input).await?;
+            self.active.push(FanOutActiveTask {
+                task_id: task.id.clone(),
+                title: task.title.clone(),
+                thread_id: forked.thread_id,
+                turn_id,
+                since_seq: forked.last_seq,
+                assistant_text: None,
+            });
+        }
+
+        let mut idx = 0usize;
+        while idx < self.active.len() {
+            let mut done: Option<(TurnStatus, Option<String>)> = None;
+            let thread_id = self.active[idx].thread_id;
+            let turn_id = self.active[idx].turn_id;
+
+            loop {
+                let resp = app
+                    .thread_subscribe(thread_id, self.active[idx].since_seq, Some(1_000), Some(0))
+                    .await?;
+                self.active[idx].since_seq = resp.last_seq;
+
+                for event in resp.events {
+                    match event.kind {
+                        pm_protocol::ThreadEventKind::AssistantMessage {
+                            turn_id: Some(msg_turn_id),
+                            text,
+                            ..
+                        } if msg_turn_id == turn_id => {
+                            self.active[idx].assistant_text = Some(text);
+                        }
+                        pm_protocol::ThreadEventKind::ApprovalRequested { .. } => {
+                            anyhow::bail!(
+                                "fan-out task needs approval (thread_id={thread_id}); use `pm inbox`"
+                            );
+                        }
+                        pm_protocol::ThreadEventKind::TurnCompleted {
+                            turn_id: completed_turn_id,
+                            status,
+                            reason,
+                        } if completed_turn_id == turn_id => {
+                            done = Some((status, reason));
+                        }
+                        _ => {}
+                    }
+                }
+
+                if !resp.has_more {
+                    break;
+                }
+            }
+
+            if let Some((status, reason)) = done {
+                let task = self.active.remove(idx);
+                self.finished.push(WorkflowTaskResult {
+                    task_id: task.task_id,
+                    title: task.title,
+                    thread_id: task.thread_id,
+                    turn_id: task.turn_id,
+                    status,
+                    reason,
+                    assistant_text: task.assistant_text,
+                });
+                continue;
+            }
+
+            idx += 1;
+        }
+
+        if !self.is_done() {
+            if self.last_progress_print.elapsed() >= Duration::from_secs(1) {
+                eprintln!(
+                    "[fan-out] completed {}/{} (active={}, max={})",
+                    self.finished.len(),
+                    self.tasks.len(),
+                    self.active.len(),
+                    self.concurrency_limit
+                );
+                self.last_progress_print = Instant::now();
+            }
+
+            if self.last_progress_artifact_write.elapsed() >= Duration::from_secs(2) {
+                let outcome = write_fan_out_progress_artifact(
+                    app,
+                    parent_thread_id,
+                    self.fan_in_artifact_id,
+                    self.tasks.len(),
+                    &self.finished,
+                    &self.active,
+                    self.started_at,
+                )
+                .await;
+                if let Err(err) = outcome {
+                    eprintln!("[fan-out] progress artifact update failed: {err}");
+                } else {
+                    self.last_progress_artifact_write = Instant::now();
+                }
+            }
+        } else {
+            let outcome = write_fan_out_progress_artifact(
+                app,
+                parent_thread_id,
+                self.fan_in_artifact_id,
+                self.tasks.len(),
+                &self.finished,
+                &self.active,
+                self.started_at,
+            )
+            .await;
+            if let Err(err) = outcome {
+                eprintln!("[fan-out] final progress artifact update failed: {err}");
+            }
+        }
+
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 struct CommandSummary {
     name: String,
@@ -412,6 +671,9 @@ async fn run_command_run(
     let CommandCommand::Run(args) = command else {
         anyhow::bail!("command execution is only supported via `pm command run`");
     };
+    if args.fan_out_early_return && !args.fan_out {
+        anyhow::bail!("--fan-out-early-return requires --fan-out");
+    }
 
     let wf = load_workflow_file(cli, &args.name).await?;
 
@@ -511,14 +773,21 @@ async fn run_command_run(
 
     let mut fan_in_artifact_id: Option<pm_protocol::ArtifactId> = None;
     let mut fan_out_results = Vec::<WorkflowTaskResult>::new();
+    let mut fan_out_scheduler: Option<FanOutScheduler> = None;
     if args.fan_out {
         let tasks = parse_workflow_tasks(&rendered_body)?;
         if !tasks.is_empty() {
             let artifact_id = pm_protocol::ArtifactId::new();
-            fan_out_results = run_workflow_fan_out(app, thread_id, &tasks, artifact_id).await?;
-            let _artifact_path =
-                write_fan_in_summary_artifact(app, thread_id, artifact_id, &fan_out_results)
-                    .await?;
+            if args.fan_out_early_return {
+                let mut scheduler = FanOutScheduler::start(app, thread_id, tasks, artifact_id).await?;
+                scheduler.tick(app, thread_id).await?;
+                fan_out_scheduler = Some(scheduler);
+            } else {
+                fan_out_results = run_workflow_fan_out(app, thread_id, &tasks, artifact_id).await?;
+                let _artifact_path =
+                    write_fan_in_summary_artifact(app, thread_id, artifact_id, &fan_out_results)
+                        .await?;
+            }
             fan_in_artifact_id = Some(artifact_id);
         }
     }
@@ -535,14 +804,25 @@ async fn run_command_run(
         ));
     }
     if let Some(artifact_id) = fan_in_artifact_id {
-        input.push_str(&format!(
-            "Fan-out tasks completed. fan_in_summary artifact_id={artifact_id}.\n"
-        ));
-        for result in &fan_out_results {
+        if args.fan_out_early_return {
             input.push_str(&format!(
-                "- task_id={} thread_id={} turn_id={} status={:?}\n",
-                result.task_id, result.thread_id, result.turn_id, result.status
+                "Fan-out tasks started (early return). fan_in_summary artifact_id={artifact_id} (updates while the main turn runs).\n"
             ));
+            if let Some(scheduler) = fan_out_scheduler.as_ref() {
+                for task in &scheduler.tasks {
+                    input.push_str(&format!("- task_id={} title={}\n", task.id, task.title));
+                }
+            }
+        } else {
+            input.push_str(&format!(
+                "Fan-out tasks completed. fan_in_summary artifact_id={artifact_id}.\n"
+            ));
+            for result in &fan_out_results {
+                input.push_str(&format!(
+                    "- task_id={} thread_id={} turn_id={} status={:?}\n",
+                    result.task_id, result.thread_id, result.turn_id, result.status
+                ));
+            }
         }
         input.push('\n');
         input.push_str(&format!(
@@ -551,20 +831,68 @@ async fn run_command_run(
     }
     input.push_str(&rendered_body);
 
-    run_ask(
-        app,
-        AskArgs {
-            thread_id: Some(thread_id),
-            cwd: None,
-            approval_policy: None,
-            sandbox_policy: None,
-            mode: None,
-            model: None,
-            openai_base_url: None,
-            input,
-        },
-    )
-    .await?;
+    let ask_args = AskArgs {
+        thread_id: Some(thread_id),
+        cwd: None,
+        approval_policy: None,
+        sandbox_policy: None,
+        mode: None,
+        model: None,
+        openai_base_url: None,
+        input,
+    };
+
+    if let Some(scheduler) = fan_out_scheduler {
+        let artifact_id = fan_in_artifact_id.unwrap_or_default();
+        let scheduler = Arc::new(tokio::sync::Mutex::new(Some(scheduler)));
+
+        let scheduler_for_tick = scheduler.clone();
+        run_ask_with_tick(app, ask_args, move |app, parent_thread_id, _turn_id| {
+            let scheduler_for_tick = scheduler_for_tick.clone();
+            Box::pin(async move {
+                let mut guard = scheduler_for_tick.lock().await;
+                let Some(mut scheduler) = guard.take() else {
+                    return Ok(());
+                };
+                drop(guard);
+
+                scheduler.tick(app, parent_thread_id).await?;
+                if scheduler.is_done() && !scheduler.final_summary_written {
+                    let results = scheduler.results_ordered();
+                    let outcome =
+                        write_fan_in_summary_artifact(app, parent_thread_id, artifact_id, &results)
+                            .await;
+                    if let Err(err) = outcome {
+                        eprintln!("[fan-out] final summary artifact write failed: {err}");
+                    } else {
+                        scheduler.final_summary_written = true;
+                    }
+                }
+
+                let mut guard = scheduler_for_tick.lock().await;
+                *guard = Some(scheduler);
+                Ok(())
+            })
+        })
+        .await?;
+
+        let mut scheduler = scheduler
+            .lock()
+            .await
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("fan-out scheduler missing"))?;
+        while !scheduler.is_done() {
+            scheduler.tick(app, thread_id).await?;
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+        if !scheduler.final_summary_written {
+            let results = scheduler.results_ordered();
+            let _artifact_path =
+                write_fan_in_summary_artifact(app, thread_id, artifact_id, &results).await?;
+        }
+    } else {
+        run_ask(app, ask_args).await?;
+    }
 
     Ok(())
 }

@@ -37,6 +37,7 @@
 
 - GitHub PR / merge 自动化（先做 adapter，不要污染核心域）。
 - 桌面 GUI（先把控制协议与事件模型钉死，GUI 只是 client）。
+- Node.js 分发/集成（npm launcher + TS types/client；v0.3.0；见 `docs/TODO.md`）。
 - 分布式多机执行（先单机并发）。
 
 ---

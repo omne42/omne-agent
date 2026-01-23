@@ -982,7 +982,7 @@ async fn run_tool_call_once(
 
                 let rt = server.get_or_load_thread(forked.thread_id).await?;
                 let server_arc = Arc::new(server.clone());
-                let turn_id = rt.start_turn(server_arc, input, None).await?;
+                let turn_id = rt.start_turn(server_arc, input, None, None).await?;
 
                 Ok((forked, turn_id, notify_rx))
             }
@@ -1210,6 +1210,7 @@ mod agent_spawn_guard_tests {
                     turn_id: pm_protocol::TurnId::new(),
                     input: "child".to_string(),
                     context_refs: None,
+                    attachments: None,
                 })
                 .await?;
             drop(child);

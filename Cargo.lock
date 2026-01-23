@@ -1637,6 +1637,7 @@ name = "pm-app-server"
 version = "0.1.1"
 dependencies = [
  "anyhow",
+ "base64",
  "clap",
  "diffy",
  "ditto-llm",

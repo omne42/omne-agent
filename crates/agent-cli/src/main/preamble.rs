@@ -121,6 +121,11 @@ struct CommandRunArgs {
     #[arg(long, default_value_t = false)]
     fan_out: bool,
 
+    /// When used with `--fan-out`, start the main turn without waiting for all fan-out tasks to
+    /// finish. The `fan_in_summary` artifact will be updated while the main turn runs.
+    #[arg(long, default_value_t = false)]
+    fan_out_early_return: bool,
+
     /// Resume an existing thread instead of creating a new one.
     #[arg(long)]
     thread_id: Option<ThreadId>,

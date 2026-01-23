@@ -2,7 +2,7 @@
 
 > 目标：把“用户想表达的控制意图/上下文引用”从纯文本里剥离出来，变成 **结构化、可审计、可回放** 的输入。
 >
-> 状态：v0.2.0 已实现最小 at 引用（`@file`/`@diff`）→ `turn/start.context_refs`，并将结构化输入落盘到 `ThreadEventKind::TurnStarted.context_refs` 以便可审计/可回放。slash 指令（`/plan`/`/approve` 等）仍以 CLI/RPC 为主（本文保留 TODO 占位）。
+> 状态：v0.2.0 已实现最小 at 引用（`@file`/`@diff`）→ `turn/start.context_refs`，并将结构化输入落盘到 `ThreadEventKind::TurnStarted.context_refs` 以便可审计/可回放；同时实现最小 attachments（`@image`/`@pdf`）→ `turn/start.attachments` → `ThreadEventKind::TurnStarted.attachments`，用于把图片/文件作为结构化输入注入模型。slash 指令（`/plan`/`/approve` 等）仍以 CLI/RPC 为主（本文保留 TODO 占位）。
 
 ---
 
@@ -52,7 +52,7 @@
 
 这类指令是“上下文引用”，本质是让系统把外部对象拉进上下文构建流程，而不是让模型靠字符串猜文件路径。
 
-最小建议（只定义两个，别扩面）：
+v0.2.0 最小建议（先钉死 4 个 at，别继续扩面）：
 
 - `@file <path>[:start_line[:end_line]]`
   - 语义：把文件（或片段）作为上下文引用。
@@ -67,6 +67,20 @@
   - 安全边界（写死）：
     - argv 固定，不接受用户拼接参数。
     - 注入前必须做脱敏（见 `docs/redaction.md`），默认只注入摘要与 artifact 位置。
+- `@image <path|url>`
+  - 语义：把图片作为输入附件（image attachment）。
+  - v0.2.0 实现：CLI 从输入开头解析并剥离该行，转为 `turn/start.attachments`；agent turn 开始前将附件注入为模型输入的 image content part（provider 支持时）。
+  - 安全边界（写死）：
+    - `path` 的解析与 sandbox 边界与 `@file` 一致；并额外拒绝 `.env`。
+    - local path 会在 agent side 读取文件并 base64 编码后发送；必须满足：
+      - thread `allowed_tools` 包含 `file/read`；
+      - 当前 mode 对该路径的 read 权限为 allow（含 `tool_overrides.file/read` 合并）。
+    - size 上限由 `CODE_PM_AGENT_MAX_ATTACHMENT_BYTES` 强制（单文件上限）。
+    - count 上限由 `CODE_PM_AGENT_MAX_ATTACHMENTS` 强制（每 turn 上限）。
+- `@pdf <path|url>`
+  - 语义：把 PDF 作为输入附件（file attachment，`media_type="application/pdf"`）。
+  - v0.2.0 实现：同 `@image`，但注入为 file content part。
+  - 安全边界（写死）：同 `@image`。
 
 关联规范：
 
@@ -80,12 +94,14 @@
 已实现：
 
 - `crates/app-server-protocol/src/lib.rs::TurnStartParams` 增加 `context_refs?: Vec<ContextRef>`（向后兼容：旧客户端仍可只发 `input`）。
-- `crates/agent-protocol/src/lib.rs::ThreadEventKind::TurnStarted` 增加 `context_refs`（缺省为 `None`，兼容旧日志回放）。
+- `crates/app-server-protocol/src/lib.rs::TurnStartParams` 增加 `attachments?: Vec<TurnAttachment>`（向后兼容：旧客户端仍可只发 `input`）。
+- `crates/agent-protocol/src/lib.rs::ThreadEventKind::TurnStarted` 增加 `context_refs`/`attachments`（缺省为 `None`，兼容旧日志回放）。
 
 ### 3.1 `turn/start` params（v0.2.0）
 
 - 保留 `input: String`
 - 新增 `context_refs?: [ContextRef]`（顺序保留；未知 kind/字段直接拒绝）
+- 新增 `attachments?: [TurnAttachment]`（顺序保留；未知 kind/字段直接拒绝）
 
 `ContextRef`（v0.2.0，JSON 形态）：
 
@@ -100,13 +116,22 @@
   "context_refs": [
     { "kind": "file", "path": "crates/core/src/lib.rs", "start_line": 1, "end_line": 80 },
     { "kind": "diff", "max_bytes": 1048576 }
+  ],
+  "attachments": [
+    { "kind": "image", "source": { "type": "path", "path": "assets/example.png" } },
+    {
+      "kind": "file",
+      "source": { "type": "url", "url": "https://example.com/file.pdf" },
+      "media_type": "application/pdf",
+      "filename": "file.pdf"
+    }
   ]
 }
 ```
 
 ### 3.2 回放可审计性（v0.2.0）
 
-- 结构化 `context_refs` 会随 `TurnStarted` 事件落盘；事件流仍是唯一真相（见 `docs/thread_event_model.md`）。
+- 结构化 `context_refs`/`attachments` 会随 `TurnStarted` 事件落盘；事件流仍是唯一真相（见 `docs/thread_event_model.md`）。
 
 ---
 
@@ -131,7 +156,10 @@
 ## 5) 验收（v0.2.0）
 
 - `pm` CLI 会从输入开头解析并剥离 `@file`/`@diff`，转为 `turn/start.context_refs`（模型不需要做文本解析）。
+- `pm` CLI 会从输入开头解析并剥离 `@image`/`@pdf`，转为 `turn/start.attachments`（模型不需要做文本解析）。
 - `turn/start` 接收结构化 `context_refs`（旧客户端仍可只发 `input`）。
-- 结构化输入会随 `TurnStarted.context_refs` 落盘，可回放定位。
+- `turn/start` 接收结构化 `attachments`（旧客户端仍可只发 `input`）。
+- 结构化输入会随 `TurnStarted.context_refs`/`TurnStarted.attachments` 落盘，可回放定位。
 - `@file` 会触发一次 `file_read`，受 `mode/sandbox/approval` 约束，并将内容注入模型输入。
 - `@diff` 会触发一次 `thread_diff`（固定 argv 的 git diff → process/start + diff artifact），默认只注入 artifact 元信息，避免把整段巨量 diff 直接塞进上下文。
+- `@image`/`@pdf` 会把图片/文件作为 attachment 注入模型输入；local path 读取受 `mode/allowed_tools/sandbox` 约束，并强制 `.env` 拒绝与 size 上限。

@@ -166,6 +166,163 @@ async fn run_ask(app: &mut App, args: AskArgs) -> anyhow::Result<()> {
     }
 }
 
+type TickFuture<'a> = std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + 'a>>;
+
+async fn run_ask_with_tick<F>(
+    app: &mut App,
+    args: AskArgs,
+    mut tick: F,
+) -> anyhow::Result<()>
+where
+    for<'a> F: FnMut(&'a mut App, ThreadId, TurnId) -> TickFuture<'a>,
+{
+    let thread_result = if let Some(thread_id) = args.thread_id {
+        app.thread_resume(thread_id).await?
+    } else {
+        let cwd = args.cwd.map(|p| p.display().to_string());
+        app.thread_start(cwd).await?
+    };
+
+    let thread_id: ThreadId = serde_json::from_value(thread_result["thread_id"].clone())
+        .context("thread_id missing in result")?;
+    let mut since_seq = thread_result["last_seq"].as_u64().unwrap_or(0);
+
+    if args.approval_policy.is_some()
+        || args.sandbox_policy.is_some()
+        || args.mode.is_some()
+        || args.model.is_some()
+        || args.openai_base_url.is_some()
+    {
+        app.thread_configure(ThreadConfigureArgs {
+            thread_id,
+            approval_policy: args.approval_policy,
+            sandbox_policy: args.sandbox_policy,
+            sandbox_writable_roots: None,
+            sandbox_network_access: None,
+            mode: args.mode,
+            model: args.model,
+            openai_base_url: args.openai_base_url,
+        })
+        .await?;
+    }
+
+    let turn_id = app.turn_start(thread_id, args.input).await?;
+    eprintln!("thread: {thread_id}");
+    eprintln!("turn: {turn_id}");
+
+    let saw_delta = Arc::new(AtomicBool::new(false));
+    let mut streaming_handle: Option<tokio::task::JoinHandle<()>> = None;
+    if let Some(mut notifications) = app.take_notifications() {
+        let saw_delta = saw_delta.clone();
+        let thread_id_str = thread_id.to_string();
+        let turn_id_str = turn_id.to_string();
+        streaming_handle = Some(tokio::spawn(async move {
+            while let Some(note) = notifications.recv().await {
+                if note.method != "item/delta" {
+                    continue;
+                }
+                let params = match note.params.as_object() {
+                    Some(params) => params,
+                    None => continue,
+                };
+                let Some(thread_id) = params.get("thread_id").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                let Some(turn_id) = params.get("turn_id").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                if thread_id != thread_id_str || turn_id != turn_id_str {
+                    continue;
+                }
+                if params.get("kind").and_then(|v| v.as_str()) != Some("output_text") {
+                    continue;
+                }
+                let Some(delta) = params.get("delta").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                if delta.is_empty() {
+                    continue;
+                }
+                saw_delta.store(true, Ordering::Relaxed);
+                print!("{delta}");
+                std::io::stdout().flush().ok();
+            }
+        }));
+    }
+
+    let (interrupt_tx, mut interrupt_rx) = tokio::sync::mpsc::channel::<()>(1);
+    tokio::spawn(async move {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            let _ = interrupt_tx.send(()).await;
+        }
+    });
+
+    loop {
+        if interrupt_rx.try_recv().is_ok() {
+            app.turn_interrupt(thread_id, turn_id, Some("ctrl-c".to_string()))
+                .await?;
+            eprintln!("interrupt requested: {turn_id}");
+            if let Some(handle) = streaming_handle.take() {
+                handle.abort();
+            }
+            return Ok(());
+        }
+
+        tick(app, thread_id, turn_id).await?;
+
+        let resp = app
+            .thread_subscribe(thread_id, since_seq, Some(10_000), Some(1_000))
+            .await?;
+        since_seq = resp.last_seq;
+
+        for event in &resp.events {
+            let did_stream = saw_delta.load(Ordering::Relaxed);
+            render_event_for_ask(event, did_stream);
+            if let pm_protocol::ThreadEventKind::ApprovalRequested {
+                approval_id,
+                turn_id: Some(approval_turn_id),
+                action,
+                params,
+            } = &event.kind
+                && *approval_turn_id == turn_id
+            {
+                if did_stream {
+                    println!();
+                    std::io::stdout().flush().ok();
+                }
+                let decision = prompt_approval(approval_id, action, params)?;
+                app.approval_decide(
+                    thread_id,
+                    *approval_id,
+                    decision.decision,
+                    decision.remember,
+                    decision.reason,
+                )
+                .await?;
+            }
+            if let pm_protocol::ThreadEventKind::TurnCompleted { turn_id: id, .. } = &event.kind
+                && *id == turn_id
+            {
+                if did_stream {
+                    println!();
+                    std::io::stdout().flush().ok();
+                }
+                if let Some(handle) = streaming_handle.take() {
+                    handle.abort();
+                }
+                return Ok(());
+            }
+        }
+
+        if resp.timed_out {
+            continue;
+        }
+        if resp.has_more {
+            continue;
+        }
+    }
+}
+
 async fn run_exec(app: &mut App, args: ExecArgs) -> anyhow::Result<i32> {
     let thread_result = if let Some(thread_id) = args.thread_id {
         app.thread_resume(thread_id).await?

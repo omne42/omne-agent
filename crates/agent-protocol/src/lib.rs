@@ -418,6 +418,37 @@ pub struct ContextRefDiff {
     pub max_bytes: Option<u64>,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AttachmentSource {
+    Path { path: String },
+    Url { url: String },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(deny_unknown_fields)]
+pub struct TurnAttachmentImage {
+    pub source: AttachmentSource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_type: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(deny_unknown_fields)]
+pub struct TurnAttachmentFile {
+    pub source: AttachmentSource,
+    pub media_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filename: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TurnAttachment {
+    Image(TurnAttachmentImage),
+    File(TurnAttachmentFile),
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ThreadEventKind {
@@ -450,6 +481,8 @@ pub enum ThreadEventKind {
         input: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         context_refs: Option<Vec<ContextRef>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attachments: Option<Vec<TurnAttachment>>,
     },
 
     ModelRouted {

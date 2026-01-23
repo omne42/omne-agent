@@ -155,6 +155,7 @@ pub(crate) fn redact_thread_event_kind(kind: &mut ThreadEventKind) {
         ThreadEventKind::TurnStarted {
             input,
             context_refs,
+            attachments,
             ..
         } => {
             *input = redact_text(input);
@@ -165,6 +166,39 @@ pub(crate) fn redact_thread_event_kind(kind: &mut ThreadEventKind) {
                             file.path = redact_text(&file.path);
                         }
                         pm_protocol::ContextRef::Diff(_diff) => {}
+                    }
+                }
+            }
+            if let Some(attachments) = attachments {
+                for attachment in attachments {
+                    match attachment {
+                        pm_protocol::TurnAttachment::Image(image) => {
+                            match &mut image.source {
+                                pm_protocol::AttachmentSource::Path { path } => {
+                                    *path = redact_text(path);
+                                }
+                                pm_protocol::AttachmentSource::Url { url } => {
+                                    *url = redact_text(url);
+                                }
+                            }
+                            if let Some(media_type) = image.media_type.as_mut() {
+                                *media_type = redact_text(media_type);
+                            }
+                        }
+                        pm_protocol::TurnAttachment::File(file) => {
+                            match &mut file.source {
+                                pm_protocol::AttachmentSource::Path { path } => {
+                                    *path = redact_text(path);
+                                }
+                                pm_protocol::AttachmentSource::Url { url } => {
+                                    *url = redact_text(url);
+                                }
+                            }
+                            file.media_type = redact_text(&file.media_type);
+                            if let Some(filename) = file.filename.as_mut() {
+                                *filename = redact_text(filename);
+                            }
+                        }
                     }
                 }
             }
