@@ -2,7 +2,7 @@
 
 > 目标：把“需要人类放行/拒绝”的点，从 prompt 里的软约束，变成**可落盘、可回放、可审计**的事实。
 >
-> 这份文档描述的是**已经落地的行为** + **Escalate 的规格草案**（明确标注为 TODO）。
+> 这份文档描述的是**已经落地的行为** + **Escalate（prompt_strict）** 的实现口径（v0.2.0 已实现）。
 
 ---
 
@@ -97,7 +97,7 @@ key 的稳定性（v0.2.0 实现口径）：
 
 ---
 
-## 5) Escalate 语义（TODO：规格草案，未实现）
+## 5) Escalate 语义（v0.2.0：prompt_strict 已实现）
 
 问题：当前只有 `prompt`（可被 `auto_approve` 自动放行）与 `deny`（硬拒绝）。缺少一种“**即使 auto_approve 也必须停下来**”的语义槽位。
 
@@ -105,19 +105,20 @@ key 的稳定性（v0.2.0 实现口径）：
 
 - 语义：强制人工审批（不能被 `auto_approve/on_request/unless_trusted` 自动放行）。
 - 不是“绕过 deny”：如果 `mode/sandbox/execpolicy` 的结果是 deny，仍然 deny。
-- 典型来源：未来的 `execve-wrapper`/MCP 等低层执行通道在发现高风险调用时上提要求。
-  - 参考：`docs/execve_wrapper.md`（execve-wrapper 草案）、`docs/mcp.md`（MCP 草案）、`docs/v0.2.0_parity.md`（对齐清单）。
+- 触发来源（v0.2.0）：
+  - ExecPolicy 支持 decision=`prompt_strict`；当 `process/start` 命中该决策，会在 `ApprovalRequested.params` 写入 `approval.requirement="prompt_strict"`（见 `docs/execpolicy.md`）。
+  - 未来的 `execve-wrapper`/MCP 等低层执行通道也可复用该槽位（参考：`docs/execve_wrapper.md`、`docs/mcp.md`）。
 
 最小可实现表达方式（不破坏现有事件结构）：
 
 - 在 `ApprovalRequested.params` 里加入一个稳定字段（建议命名空间化，避免污染 action params）：
-  - `{"approval": {"requirement": "prompt" | "prompt_strict", "source": "...", "reason": "..."}}`
+  - `{"approval": {"requirement": "prompt" | "prompt_strict", "source": "execpolicy"}}`
 - `approval handling` 对 `prompt_strict` 的策略矩阵：
   - `auto_approve/on_request/unless_trusted/manual`：一律进入人工审批（行为等价 `manual`）
   - `auto_deny`：仍直接拒绝（并落盘 decided）
-- `remember`（建议写死）：当 `approval.requirement="prompt_strict"` 时，不应被 remembered decision 自动复用（每次都要显式人类批准/拒绝）。
+- `remember`（写死实现口径）：当 `approval.requirement="prompt_strict"` 时，不会生成 remembered decision，也不会复用 remembered decision。
 
-验收（未来实现时）：
+验收（现实现状）：
 
 - 在 `approval_policy=auto_approve` 下触发 `prompt_strict`：
   - 必须进入 `NeedApproval`，且不会自动写入 `ApprovalDecided(Approved)`。

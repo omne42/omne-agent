@@ -244,6 +244,7 @@ async fn handle_process_start(
 
     let effective_exec_decision = match exec_decision {
         Some(ExecDecision::Forbidden) => ExecDecision::Forbidden,
+        Some(ExecDecision::PromptStrict) => ExecDecision::PromptStrict,
         Some(ExecDecision::Allow) => ExecDecision::Allow,
         Some(ExecDecision::Prompt) | None => ExecDecision::Prompt,
     };
@@ -293,12 +294,21 @@ async fn handle_process_start(
         }));
     }
 
-    let approval_params = serde_json::json!({
+    let mut approval_params = serde_json::json!({
         "argv": params.argv.clone(),
         "cwd": cwd_str.clone(),
     });
+    if effective_exec_decision == ExecDecision::PromptStrict {
+        approval_params["approval"] = serde_json::json!({
+            "requirement": "prompt_strict",
+            "source": "execpolicy",
+        });
+    }
     let needs_approval = effective_mode_decision == pm_core::modes::Decision::Prompt
-        || effective_exec_decision == ExecDecision::Prompt;
+        || matches!(
+            effective_exec_decision,
+            ExecDecision::Prompt | ExecDecision::PromptStrict
+        );
     if needs_approval {
         match gate_approval(
             server,

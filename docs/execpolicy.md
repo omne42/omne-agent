@@ -15,10 +15,11 @@
 ExecPolicy 只负责 `process/start` 的**命令前缀规则**：
 
 - `forbidden`：硬拒绝（不走审批）
+- `prompt_strict`：需要审批，且**强制人工审批**（不能被 `auto_approve/on_request/unless_trusted` 自动放行；见 `docs/approvals.md`）
 - `prompt`：需要审批（由 `ApprovalPolicy` 决定人工/自动）
 - `allow`：ExecPolicy 不拦截（仍可能被 mode/sandbox 拦截或要求审批）
 
-合并优先级：`forbidden > prompt > allow`（取最大值）。
+合并优先级：`forbidden > prompt_strict > prompt > allow`（取最大值）。
 
 默认行为（写死，v0.2.0 实现口径）：
 
@@ -34,14 +35,20 @@ ExecPolicy 只负责 `process/start` 的**命令前缀规则**：
   - `ToolStarted { tool="process/start", params={argv,cwd} }`
   - `ToolCompleted { status=Denied, error="execpolicy forbids this command", result={decision, matched_rules, justification?} }`
 
-### 1.2 `prompt`
+### 1.2 `prompt_strict`
+
+- 当最终决策为 `prompt_strict` 时，需要审批，且强制人工：
+  - `ApprovalPolicy=manual|auto_approve|on_request|unless_trusted`：返回 `needs_approval=true` + `approval_id`，进入 `NeedApproval`（不启动进程）。
+  - `ApprovalPolicy=auto_deny`：自动落盘 `ApprovalRequested + ApprovalDecided(Denied, ...)` 并拒绝执行。
+
+### 1.3 `prompt`
 
 - 当最终决策为 `prompt` 时，需要审批（见 `docs/approvals.md`）：
   - `ApprovalPolicy=manual`：返回 `needs_approval=true` + `approval_id`，进入 `NeedApproval`（不启动进程）。
   - `ApprovalPolicy=auto_approve|on_request`：自动落盘 `ApprovalRequested + ApprovalDecided(Approved, ...)` 并继续启动进程（不会进入 `NeedApproval`）。
   - `ApprovalPolicy=auto_deny`：自动落盘 `ApprovalRequested + ApprovalDecided(Denied, ...)` 并拒绝执行。
 
-### 1.3 `allow`
+### 1.4 `allow`
 
 - ExecPolicy 本身不要求审批；但如果 mode 的 `command=prompt`，仍会走审批。
 - 当 `ApprovalPolicy=unless_trusted` 时：
@@ -54,7 +61,7 @@ ExecPolicy 只负责 `process/start` 的**命令前缀规则**：
 规则文件使用 `.rules`（Starlark subset）语法，核心是 `prefix_rule(...)`：
 
 - `pattern`：命令前缀匹配（可用 token 备选）
-- `decision`：`"allow" | "prompt" | "forbidden"`（缺省为 `allow`）
+- `decision`：`"allow" | "prompt" | "prompt_strict" | "forbidden"`（缺省为 `allow`）
 - `justification`：可选，便于审计输出
 - `match` / `not_match`：可选，用例校验（像单测一样，解析时即验证）
 
@@ -80,7 +87,7 @@ prefix_rule(
 安全提示（写死口径）：
 
 - `bash -lc` / `sh -c` / `python -c` / `node -e` 这类“解释执行字符串”的入口，建议默认 `forbidden`（否则在 `ApprovalPolicy=auto_approve` 下等价于任意命令执行）。
-- 真要允许，优先走“显式白名单 + 人工审批”（例如 `ApprovalPolicy=manual`，或未来的 `prompt_strict`；见 `docs/approvals.md`）。
+- 真要允许，优先走“显式白名单 + 人工审批”（例如 `ApprovalPolicy=manual`，或 `prompt_strict`；见 `docs/approvals.md`）。
 
 ---
 

@@ -16,6 +16,14 @@ fn prompt_all(_: &[String]) -> Decision {
     Decision::Prompt
 }
 
+#[test]
+fn prompt_strict_decision_parses_and_orders_above_prompt() -> anyhow::Result<()> {
+    assert_eq!(Decision::parse("prompt_strict")?, Decision::PromptStrict);
+    assert_eq!(Decision::parse("promptStrict")?, Decision::PromptStrict);
+    assert!(Decision::PromptStrict > Decision::Prompt);
+    Ok(())
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum RuleSnapshot {
     Prefix(PrefixRule),

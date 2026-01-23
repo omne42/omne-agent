@@ -147,6 +147,7 @@ async fn ensure_approval(
     }
 }
 
+#[derive(Debug)]
 enum ApprovalGate {
     Approved,
     Denied { remembered: bool },
@@ -167,6 +168,27 @@ struct ApprovalRequest<'a> {
     params: &'a serde_json::Value,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ApprovalRequirement {
+    Prompt,
+    PromptStrict,
+}
+
+fn approval_requirement(params: &serde_json::Value) -> ApprovalRequirement {
+    let requirement = params
+        .as_object()
+        .and_then(|obj| obj.get("approval"))
+        .and_then(|approval| approval.as_object())
+        .and_then(|approval| approval.get("requirement"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .unwrap_or("prompt");
+    match requirement {
+        "prompt_strict" | "promptStrict" => ApprovalRequirement::PromptStrict,
+        _ => ApprovalRequirement::Prompt,
+    }
+}
+
 async fn gate_approval(
     server: &Server,
     thread_rt: &Arc<ThreadRuntime>,
@@ -185,6 +207,44 @@ async fn gate_approval(
         )
         .await?;
         return Ok(ApprovalGate::Approved);
+    }
+
+    let requirement = approval_requirement(request.params);
+    if requirement == ApprovalRequirement::PromptStrict {
+        return match approval_policy {
+            pm_protocol::ApprovalPolicy::AutoDeny => {
+                let approval_id = pm_protocol::ApprovalId::new();
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ApprovalRequested {
+                        approval_id,
+                        turn_id,
+                        action: request.action.to_string(),
+                        params: request.params.clone(),
+                    })
+                    .await?;
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ApprovalDecided {
+                        approval_id,
+                        decision: pm_protocol::ApprovalDecision::Denied,
+                        remember: false,
+                        reason: Some("auto-denied by policy".to_string()),
+                    })
+                    .await?;
+                Ok(ApprovalGate::Denied { remembered: false })
+            }
+            _ => {
+                let approval_id = pm_protocol::ApprovalId::new();
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ApprovalRequested {
+                        approval_id,
+                        turn_id,
+                        action: request.action.to_string(),
+                        params: request.params.clone(),
+                    })
+                    .await?;
+                Ok(ApprovalGate::NeedsApproval { approval_id })
+            }
+        };
     }
 
     if let Some(decision) =
@@ -274,6 +334,7 @@ async fn gate_approval(
                         let exec_decision = exec_matches.iter().map(ExecRuleMatch::decision).max();
                         let effective_exec_decision = match exec_decision {
                             Some(ExecDecision::Forbidden) => ExecDecision::Forbidden,
+                            Some(ExecDecision::PromptStrict) => ExecDecision::PromptStrict,
                             Some(ExecDecision::Allow) => ExecDecision::Allow,
                             Some(ExecDecision::Prompt) | None => ExecDecision::Prompt,
                         };
@@ -439,6 +500,9 @@ async fn remembered_approval_decision(
                 let Some((action, params)) = requested.get(&approval_id) else {
                     continue;
                 };
+                if approval_requirement(params) == ApprovalRequirement::PromptStrict {
+                    continue;
+                }
                 let key = approval_rule_key(action, params)?;
                 remembered.insert(key, decision);
             }
@@ -447,6 +511,139 @@ async fn remembered_approval_decision(
     }
 
     Ok(remembered.get(&expected_key).copied())
+}
+
+#[cfg(test)]
+mod approval_prompt_strict_tests {
+    use super::*;
+
+    fn build_test_server(pm_root: PathBuf) -> Server {
+        let (notify_tx, _notify_rx) = broadcast::channel::<String>(16);
+        Server {
+            cwd: pm_root.clone(),
+            notify_tx,
+            thread_store: ThreadStore::new(PmPaths::new(pm_root)),
+            threads: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            processes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            disk_warning: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            exec_policy: pm_execpolicy::Policy::empty(),
+        }
+    }
+
+    #[tokio::test]
+    async fn prompt_strict_forces_manual_even_when_auto_approve() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+
+        tokio::fs::create_dir_all(repo_dir.join(".codepm_data")).await?;
+        let server = build_test_server(repo_dir.join(".codepm_data"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let thread_rt = server.get_or_load_thread(thread_id).await?;
+        let params = serde_json::json!({
+            "path": "foo.txt",
+            "create_parent_dirs": true,
+            "approval": { "requirement": "prompt_strict" },
+        });
+
+        let gate = gate_approval(
+            &server,
+            &thread_rt,
+            thread_id,
+            None,
+            pm_protocol::ApprovalPolicy::AutoApprove,
+            ApprovalRequest {
+                approval_id: None,
+                action: "file/write",
+                params: &params,
+            },
+        )
+        .await?;
+
+        let ApprovalGate::NeedsApproval { .. } = gate else {
+            anyhow::bail!("expected NeedsApproval, got {gate:?}");
+        };
+
+        let events = server
+            .thread_store
+            .read_events_since(thread_id, EventSeq::ZERO)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("thread not found: {}", thread_id))?;
+        let mut requested = 0usize;
+        let mut decided = 0usize;
+        for event in events {
+            match event.kind {
+                pm_protocol::ThreadEventKind::ApprovalRequested { .. } => requested += 1,
+                pm_protocol::ThreadEventKind::ApprovalDecided { .. } => decided += 1,
+                _ => {}
+            }
+        }
+        assert_eq!(requested, 1);
+        assert_eq!(decided, 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn prompt_strict_decisions_are_not_remembered() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+
+        tokio::fs::create_dir_all(repo_dir.join(".codepm_data")).await?;
+        let server = build_test_server(repo_dir.join(".codepm_data"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let thread_rt = server.get_or_load_thread(thread_id).await?;
+
+        let strict_approval_id = pm_protocol::ApprovalId::new();
+        let strict_params = serde_json::json!({
+            "path": "foo.txt",
+            "create_parent_dirs": true,
+            "approval": { "requirement": "prompt_strict" },
+        });
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ApprovalRequested {
+                approval_id: strict_approval_id,
+                turn_id: None,
+                action: "file/write".to_string(),
+                params: strict_params,
+            })
+            .await?;
+        thread_rt
+            .append_event(pm_protocol::ThreadEventKind::ApprovalDecided {
+                approval_id: strict_approval_id,
+                decision: pm_protocol::ApprovalDecision::Approved,
+                remember: true,
+                reason: Some("test".to_string()),
+            })
+            .await?;
+
+        let params = serde_json::json!({
+            "path": "foo.txt",
+            "create_parent_dirs": true,
+        });
+        let gate = gate_approval(
+            &server,
+            &thread_rt,
+            thread_id,
+            None,
+            pm_protocol::ApprovalPolicy::Manual,
+            ApprovalRequest {
+                approval_id: None,
+                action: "file/write",
+                params: &params,
+            },
+        )
+        .await?;
+
+        let ApprovalGate::NeedsApproval { .. } = gate else {
+            anyhow::bail!("expected NeedsApproval, got {gate:?}");
+        };
+        Ok(())
+    }
 }
 
 async fn load_thread_root(

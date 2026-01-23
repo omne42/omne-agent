@@ -7,6 +7,8 @@ use crate::error::{Error, Result};
 pub enum Decision {
     Allow,
     Prompt,
+    #[serde(rename = "prompt_strict")]
+    PromptStrict,
     Forbidden,
 }
 
@@ -15,6 +17,7 @@ impl Decision {
         match raw {
             "allow" => Ok(Self::Allow),
             "prompt" => Ok(Self::Prompt),
+            "prompt_strict" | "promptStrict" => Ok(Self::PromptStrict),
             "forbidden" => Ok(Self::Forbidden),
             other => Err(Error::InvalidDecision(other.to_string())),
         }
