@@ -392,6 +392,32 @@ pub struct ThreadEvent {
     pub kind: ThreadEventKind,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ContextRef {
+    File(ContextRefFile),
+    Diff(ContextRefDiff),
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(deny_unknown_fields)]
+pub struct ContextRefFile {
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_line: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_line: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_bytes: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(deny_unknown_fields)]
+pub struct ContextRefDiff {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_bytes: Option<u64>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ThreadEventKind {
@@ -422,6 +448,8 @@ pub enum ThreadEventKind {
     TurnStarted {
         turn_id: TurnId,
         input: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        context_refs: Option<Vec<ContextRef>>,
     },
 
     ModelRouted {

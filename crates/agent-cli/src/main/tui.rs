@@ -410,7 +410,7 @@ mod tui {
 
         fn apply_event(&mut self, event: &ThreadEvent) {
             match &event.kind {
-                ThreadEventKind::TurnStarted { turn_id, input } => {
+                ThreadEventKind::TurnStarted { turn_id, input, .. } => {
                     self.active_turn_id = Some(*turn_id);
                     self.push_transcript(TranscriptEntry {
                         role: TranscriptRole::User,

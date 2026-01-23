@@ -1228,6 +1228,7 @@ mod stuck_report_tests {
             .append_event(pm_protocol::ThreadEventKind::TurnStarted {
                 turn_id,
                 input: "test".to_string(),
+                context_refs: None,
             })
             .await?;
 

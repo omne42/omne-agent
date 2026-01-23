@@ -263,6 +263,47 @@ struct ThreadRuntime {
     notify_tx: broadcast::Sender<String>,
 }
 
+fn validate_context_refs(refs: &[pm_protocol::ContextRef]) -> anyhow::Result<()> {
+    for ctx in refs {
+        match ctx {
+            pm_protocol::ContextRef::File(file) => {
+                if file.path.trim().is_empty() {
+                    anyhow::bail!("context_refs.file.path must be non-empty");
+                }
+                if let Some(start_line) = file.start_line {
+                    if start_line == 0 {
+                        anyhow::bail!("context_refs.file.start_line must be >= 1");
+                    }
+                }
+                if let Some(end_line) = file.end_line {
+                    if end_line == 0 {
+                        anyhow::bail!("context_refs.file.end_line must be >= 1");
+                    }
+                    let Some(start_line) = file.start_line else {
+                        anyhow::bail!("context_refs.file.end_line requires start_line");
+                    };
+                    if end_line < start_line {
+                        anyhow::bail!("context_refs.file.end_line must be >= start_line");
+                    }
+                }
+                if let Some(max_bytes) = file.max_bytes {
+                    if max_bytes == 0 {
+                        anyhow::bail!("context_refs.file.max_bytes must be >= 1");
+                    }
+                }
+            }
+            pm_protocol::ContextRef::Diff(diff) => {
+                if let Some(max_bytes) = diff.max_bytes {
+                    if max_bytes == 0 {
+                        anyhow::bail!("context_refs.diff.max_bytes must be >= 1");
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 impl ThreadRuntime {
     fn new(handle: pm_core::ThreadHandle, notify_tx: broadcast::Sender<String>) -> Self {
         Self {
@@ -315,6 +356,7 @@ impl ThreadRuntime {
         self: Arc<Self>,
         server: Arc<Server>,
         input: String,
+        context_refs: Option<Vec<pm_protocol::ContextRef>>,
     ) -> anyhow::Result<TurnId> {
         let mut handle = self.handle.lock().await;
         let state = handle.state();
@@ -328,12 +370,21 @@ impl ThreadRuntime {
             anyhow::bail!("turn already active");
         }
 
+        let context_refs = match context_refs {
+            Some(refs) if refs.is_empty() => None,
+            other => other,
+        };
+        if let Some(refs) = context_refs.as_deref() {
+            validate_context_refs(refs)?;
+        }
+
         let turn_id = TurnId::new();
         let input_for_event = input.clone();
         let event = handle
             .append(pm_protocol::ThreadEventKind::TurnStarted {
                 turn_id,
                 input: input_for_event,
+                context_refs,
             })
             .await?;
         drop(handle);
@@ -704,6 +755,8 @@ struct ThreadSubscribeParams {
 struct TurnStartParams {
     thread_id: ThreadId,
     input: String,
+    #[serde(default)]
+    context_refs: Option<Vec<pm_protocol::ContextRef>>,
 }
 
 #[derive(Debug, Deserialize)]

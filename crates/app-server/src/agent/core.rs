@@ -514,6 +514,24 @@ pub async fn run_agent_turn(
     }
 
     let mut input_items = build_conversation(&server, thread_id).await?;
+    if let Ok(context_refs) = load_turn_context_refs(&server, thread_id, turn_id).await {
+        if !context_refs.is_empty() {
+            let ctx_items =
+                context_refs_to_messages(&server, thread_id, turn_id, &context_refs, cancel.clone())
+                    .await;
+            match ctx_items {
+                Ok(ctx_items) => insert_context_before_last_user_message(&mut input_items, ctx_items),
+                Err(err) => {
+                    input_items.push(pm_openai::ResponseItem::Message {
+                        role: "system".to_string(),
+                        content: vec![pm_openai::ContentItem::InputText {
+                            text: format!("[context_refs] failed to resolve: {}", err),
+                        }],
+                    });
+                }
+            }
+        }
+    }
     let context_tokens_estimate = estimate_context_tokens(&instructions, &input_items);
 
     let router_config = match thread_root.as_deref() {
@@ -1460,6 +1478,206 @@ async fn build_conversation(
     Ok(input)
 }
 
+async fn load_turn_context_refs(
+    server: &super::Server,
+    thread_id: ThreadId,
+    turn_id: TurnId,
+) -> anyhow::Result<Vec<pm_protocol::ContextRef>> {
+    let events = server
+        .thread_store
+        .read_events_since(thread_id, EventSeq::ZERO)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("thread not found: {thread_id}"))?;
+
+    for event in events.iter().rev() {
+        let ThreadEventKind::TurnStarted {
+            turn_id: ev_turn_id,
+            context_refs,
+            ..
+        } = &event.kind
+        else {
+            continue;
+        };
+        if *ev_turn_id != turn_id {
+            continue;
+        }
+        return Ok(context_refs.clone().unwrap_or_default());
+    }
+
+    Ok(Vec::new())
+}
+
+async fn context_refs_to_messages(
+    server: &super::Server,
+    thread_id: ThreadId,
+    turn_id: TurnId,
+    refs: &[pm_protocol::ContextRef],
+    cancel: CancellationToken,
+) -> anyhow::Result<Vec<pm_openai::ResponseItem>> {
+    const DEFAULT_CONTEXT_FILE_MAX_BYTES: u64 = 64 * 1024;
+    const MAX_CONTEXT_FILE_MAX_BYTES: u64 = 4 * 1024 * 1024;
+    const DEFAULT_CONTEXT_DIFF_MAX_BYTES: u64 = 1024 * 1024;
+    const MAX_CONTEXT_DIFF_MAX_BYTES: u64 = 16 * 1024 * 1024;
+
+    let mut out = Vec::new();
+
+    for ctx in refs {
+        match ctx {
+            pm_protocol::ContextRef::File(file) => {
+                let max_bytes = file
+                    .max_bytes
+                    .unwrap_or(DEFAULT_CONTEXT_FILE_MAX_BYTES)
+                    .min(MAX_CONTEXT_FILE_MAX_BYTES);
+
+                let args = serde_json::json!({
+                    "path": file.path,
+                    "max_bytes": max_bytes,
+                });
+
+                let (output, hook_messages) =
+                    match run_tool_call(server, thread_id, Some(turn_id), "file_read", args, cancel.clone())
+                        .await
+                    {
+                        Ok(outcome) => (outcome.output, outcome.hook_messages),
+                        Err(err) => (serde_json::json!({ "error": err.to_string() }), Vec::new()),
+                    };
+
+                out.extend(hook_messages);
+
+                let denied = output
+                    .get("denied")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let resolved_path = output
+                    .get("resolved_path")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                let truncated = output
+                    .get("truncated")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let mut text = output.get("text").and_then(Value::as_str).unwrap_or("").to_string();
+
+                if !denied && (file.start_line.is_some() || file.end_line.is_some()) {
+                    let start_line = file.start_line.unwrap_or(1);
+                    let end_line = file.end_line;
+                    let lines = text.lines().collect::<Vec<_>>();
+                    let start_idx = usize::try_from(start_line.saturating_sub(1)).unwrap_or(usize::MAX);
+                    let end_idx = end_line
+                        .and_then(|v| usize::try_from(v).ok())
+                        .unwrap_or(lines.len());
+                    if start_idx < lines.len() {
+                        let end_idx = end_idx.clamp(start_idx, lines.len());
+                        text = lines[start_idx..end_idx].join("\n");
+                    } else if !truncated {
+                        text.clear();
+                    }
+                }
+
+                let mut msg = String::new();
+                msg.push_str("# Context (@file)\n\n");
+                msg.push_str(&format!("path: {}\n", file.path.trim()));
+                if let Some(start) = file.start_line {
+                    msg.push_str(&format!(
+                        "range: L{}{}\n",
+                        start,
+                        file.end_line.map(|e| format!("-L{}", e)).unwrap_or_default()
+                    ));
+                }
+                if !resolved_path.trim().is_empty() {
+                    msg.push_str(&format!("resolved_path: {}\n", resolved_path.trim()));
+                }
+                if truncated {
+                    msg.push_str("truncated: true\n");
+                }
+                if denied {
+                    msg.push_str("\nstatus: denied\n");
+                    msg.push_str(&format!("details: {}\n", json_one_line(&output, 2000)));
+                    out.push(pm_openai::ResponseItem::Message {
+                        role: "system".to_string(),
+                        content: vec![pm_openai::ContentItem::InputText { text: msg }],
+                    });
+                    continue;
+                }
+
+                msg.push_str("\n```text\n");
+                msg.push_str(text.trim_end());
+                msg.push_str("\n```\n");
+
+                out.push(pm_openai::ResponseItem::Message {
+                    role: "system".to_string(),
+                    content: vec![pm_openai::ContentItem::InputText { text: msg }],
+                });
+            }
+            pm_protocol::ContextRef::Diff(diff) => {
+                let max_bytes = diff
+                    .max_bytes
+                    .unwrap_or(DEFAULT_CONTEXT_DIFF_MAX_BYTES)
+                    .min(MAX_CONTEXT_DIFF_MAX_BYTES);
+
+                let args = serde_json::json!({
+                    "max_bytes": max_bytes,
+                });
+                let (output, hook_messages) =
+                    match run_tool_call(server, thread_id, Some(turn_id), "thread_diff", args, cancel.clone())
+                        .await
+                    {
+                        Ok(outcome) => (outcome.output, outcome.hook_messages),
+                        Err(err) => (serde_json::json!({ "error": err.to_string() }), Vec::new()),
+                    };
+
+                out.extend(hook_messages);
+
+                let denied = output
+                    .get("denied")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let artifact = output.get("artifact").cloned().unwrap_or(Value::Null);
+                let artifact_id = artifact.get("artifact_id").and_then(Value::as_str).unwrap_or("");
+                let summary = artifact.get("summary").and_then(Value::as_str).unwrap_or("");
+
+                let mut msg = String::new();
+                msg.push_str("# Context (@diff)\n\n");
+                if !artifact_id.trim().is_empty() {
+                    msg.push_str(&format!("artifact_id: {artifact_id}\n"));
+                }
+                if !summary.trim().is_empty() {
+                    msg.push_str(&format!("summary: {summary}\n"));
+                }
+                if denied {
+                    msg.push_str("\nstatus: denied\n");
+                    msg.push_str(&format!("details: {}\n", json_one_line(&output, 2000)));
+                } else {
+                    msg.push_str("\nNote: diff content is stored as an artifact. Use `artifact_read` if you need the full text.\n");
+                }
+
+                out.push(pm_openai::ResponseItem::Message {
+                    role: "system".to_string(),
+                    content: vec![pm_openai::ContentItem::InputText { text: msg }],
+                });
+            }
+        }
+    }
+
+    Ok(out)
+}
+
+fn insert_context_before_last_user_message(
+    input_items: &mut Vec<pm_openai::ResponseItem>,
+    ctx_items: Vec<pm_openai::ResponseItem>,
+) {
+    if ctx_items.is_empty() {
+        return;
+    }
+
+    let insert_at = input_items
+        .iter()
+        .rposition(|item| matches!(item, pm_openai::ResponseItem::Message { role, .. } if role == "user"))
+        .unwrap_or(input_items.len());
+
+    input_items.splice(insert_at..insert_at, ctx_items);
+}
+
 fn format_event_for_context(kind: &ThreadEventKind) -> Option<String> {
     match kind {
         ThreadEventKind::ThreadArchived { reason } => Some(format!(
@@ -1800,6 +2018,7 @@ mod auto_summary_tests {
             .append_event(pm_protocol::ThreadEventKind::TurnStarted {
                 turn_id: turn_id1,
                 input: "first".to_string(),
+                context_refs: None,
             })
             .await?;
         thread_rt
@@ -1838,6 +2057,7 @@ mod auto_summary_tests {
             .append_event(pm_protocol::ThreadEventKind::TurnStarted {
                 turn_id: turn_id2,
                 input: "second".to_string(),
+                context_refs: None,
             })
             .await?;
 

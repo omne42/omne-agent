@@ -282,6 +282,7 @@ fn hook_tool_name_from_agent_tool(tool_name: &str) -> Option<&'static str> {
         "artifact_delete" => "artifact/delete",
         "thread_state" => "thread/state",
         "thread_events" => "thread/events",
+        "thread_diff" => "thread/diff",
         "thread_hook_run" => "thread/hook_run",
         "agent_spawn" => "subagent/spawn",
         _ => return None,

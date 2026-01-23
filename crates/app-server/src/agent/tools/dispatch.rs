@@ -505,6 +505,20 @@ async fn run_tool_call_once(
             )
             .await
         }
+        "thread_diff" => {
+            let args: ThreadDiffArgs = serde_json::from_value(args)?;
+            super::handle_thread_diff(
+                server,
+                super::ThreadDiffParams {
+                    thread_id,
+                    turn_id,
+                    approval_id,
+                    max_bytes: args.max_bytes,
+                    wait_seconds: args.wait_seconds,
+                },
+            )
+            .await
+        }
         "thread_state" => {
             let args: ThreadStateArgs = serde_json::from_value(args)?;
             let thread_id: pm_protocol::ThreadId = args.thread_id.parse()?;
@@ -898,7 +912,7 @@ async fn run_tool_call_once(
 
                 let rt = server.get_or_load_thread(forked.thread_id).await?;
                 let server_arc = Arc::new(server.clone());
-                let turn_id = rt.start_turn(server_arc, input).await?;
+                let turn_id = rt.start_turn(server_arc, input, None).await?;
 
                 Ok((forked, turn_id, notify_rx))
             }
@@ -1124,6 +1138,7 @@ mod agent_spawn_guard_tests {
                 .append(pm_protocol::ThreadEventKind::TurnStarted {
                     turn_id: pm_protocol::TurnId::new(),
                     input: "child".to_string(),
+                    context_refs: None,
                 })
                 .await?;
             drop(child);

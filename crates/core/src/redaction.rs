@@ -152,8 +152,22 @@ pub(crate) fn redact_thread_event_kind(kind: &mut ThreadEventKind) {
                 *reason = redact_text(reason);
             }
         }
-        ThreadEventKind::TurnStarted { input, .. } => {
+        ThreadEventKind::TurnStarted {
+            input,
+            context_refs,
+            ..
+        } => {
             *input = redact_text(input);
+            if let Some(context_refs) = context_refs {
+                for ctx in context_refs {
+                    match ctx {
+                        pm_protocol::ContextRef::File(file) => {
+                            file.path = redact_text(&file.path);
+                        }
+                        pm_protocol::ContextRef::Diff(_diff) => {}
+                    }
+                }
+            }
         }
         ThreadEventKind::ModelRouted {
             selected_model,

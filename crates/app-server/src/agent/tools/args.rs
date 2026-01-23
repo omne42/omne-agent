@@ -179,6 +179,14 @@ struct ThreadHookRunArgs {
     hook: super::WorkspaceHookName,
 }
 
+#[derive(Debug, Deserialize)]
+struct ThreadDiffArgs {
+    #[serde(default)]
+    max_bytes: Option<u64>,
+    #[serde(default)]
+    wait_seconds: Option<u64>,
+}
+
 #[derive(Debug, Deserialize, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
 enum AgentSpawnWorkspaceMode {

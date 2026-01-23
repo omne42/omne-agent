@@ -62,7 +62,7 @@ fn render_event(event: &ThreadEvent) {
                 reason.as_deref().unwrap_or("")
             );
         }
-        pm_protocol::ThreadEventKind::TurnStarted { turn_id, input } => {
+        pm_protocol::ThreadEventKind::TurnStarted { turn_id, input, .. } => {
             println!("[{ts}] turn started {turn_id}");
             println!("user: {input}");
         }
@@ -228,6 +228,105 @@ struct RepoIndexRequest {
     max_files: Option<usize>,
     root: Option<String>,
     approval_id: Option<ApprovalId>,
+}
+
+fn split_special_directives(
+    input: &str,
+) -> anyhow::Result<(String, Vec<pm_protocol::ContextRef>)> {
+    let mut refs = Vec::<pm_protocol::ContextRef>::new();
+    let lines = input.lines().collect::<Vec<_>>();
+
+    let mut idx = 0usize;
+    let mut did_parse = false;
+    while idx < lines.len() {
+        let line = lines[idx];
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            idx += 1;
+            continue;
+        }
+
+        if trimmed == "@file" {
+            anyhow::bail!("@file requires a path");
+        }
+        if trimmed.starts_with("@file ") || trimmed.starts_with("@file\t") {
+            let spec = trimmed["@file".len()..].trim();
+            let (path, start_line, end_line) = parse_file_ref_spec(spec)?;
+            refs.push(pm_protocol::ContextRef::File(pm_protocol::ContextRefFile {
+                path,
+                start_line,
+                end_line,
+                max_bytes: None,
+            }));
+            did_parse = true;
+            idx += 1;
+            continue;
+        }
+
+        if trimmed.starts_with("@diff") && trimmed != "@diff" {
+            anyhow::bail!("@diff does not accept arguments");
+        }
+        if trimmed == "@diff" {
+            refs.push(pm_protocol::ContextRef::Diff(pm_protocol::ContextRefDiff { max_bytes: None }));
+            did_parse = true;
+            idx += 1;
+            continue;
+        }
+
+        break;
+    }
+
+    if !did_parse {
+        return Ok((input.to_string(), refs));
+    }
+
+    Ok((lines[idx..].join("\n"), refs))
+}
+
+fn parse_file_ref_spec(spec: &str) -> anyhow::Result<(String, Option<u64>, Option<u64>)> {
+    let spec = spec.trim();
+    if spec.is_empty() {
+        anyhow::bail!("file ref is empty");
+    }
+
+    let mut parts = spec.split(':').collect::<Vec<_>>();
+    let last = parts.pop().unwrap_or_default().trim();
+    let Ok(last_num) = last.parse::<u64>() else {
+        return Ok((spec.to_string(), None, None));
+    };
+
+    if last_num == 0 {
+        anyhow::bail!("line numbers must be >= 1");
+    }
+
+    let prev = parts.last().copied().unwrap_or_default().trim();
+    let prev_num = prev.parse::<u64>().ok();
+
+    let (path, start_line, end_line) = match prev_num {
+        Some(prev_num) => {
+            if prev_num == 0 {
+                anyhow::bail!("line numbers must be >= 1");
+            }
+            parts.pop();
+            let path = parts.join(":").trim().to_string();
+            (path, Some(prev_num), Some(last_num))
+        }
+        None => {
+            let path = parts.join(":").trim().to_string();
+            (path, Some(last_num), None)
+        }
+    };
+
+    if path.is_empty() {
+        anyhow::bail!("@file path must be non-empty");
+    }
+    if let (Some(start), Some(end)) = (start_line, end_line) {
+        if end < start {
+            anyhow::bail!("end_line must be >= start_line");
+        }
+    }
+
+    Ok((path, start_line, end_line))
 }
 
 impl App {
@@ -631,10 +730,15 @@ impl App {
     }
 
     async fn turn_start(&mut self, thread_id: ThreadId, input: String) -> anyhow::Result<TurnId> {
+        let (input, context_refs) = split_special_directives(&input)?;
         let v = self
             .rpc(
                 "turn/start",
-                serde_json::json!({ "thread_id": thread_id, "input": input }),
+                serde_json::json!({
+                    "thread_id": thread_id,
+                    "input": input,
+                    "context_refs": context_refs,
+                }),
             )
             .await?;
         serde_json::from_value(v["turn_id"].clone()).context("turn_id missing in result")
@@ -994,4 +1098,49 @@ fn ensure_approval_and_denial_handled(action: &str, value: &Value) -> anyhow::Re
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod special_directives_tests {
+    use super::*;
+
+    #[test]
+    fn split_special_directives_noop_without_directives() -> anyhow::Result<()> {
+        let input = "\n\nhello\nworld\n";
+        let (remaining, refs) = split_special_directives(input)?;
+        assert_eq!(remaining, input);
+        assert!(refs.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn split_special_directives_parses_file_and_diff() -> anyhow::Result<()> {
+        let input = "@file crates/core/src/redaction.rs:1:3\n@diff\n\nplease help\n";
+        let (remaining, refs) = split_special_directives(input)?;
+        assert_eq!(remaining, "please help");
+        assert_eq!(refs.len(), 2);
+        assert!(matches!(
+            &refs[0],
+            pm_protocol::ContextRef::File(pm_protocol::ContextRefFile {
+                path,
+                start_line: Some(1),
+                end_line: Some(3),
+                ..
+            }) if path == "crates/core/src/redaction.rs"
+        ));
+        assert!(matches!(&refs[1], pm_protocol::ContextRef::Diff(_)));
+        Ok(())
+    }
+
+    #[test]
+    fn split_special_directives_rejects_diff_args() {
+        let err = split_special_directives("@diff nope\nx").unwrap_err();
+        assert!(err.to_string().contains("@diff"));
+    }
+
+    #[test]
+    fn split_special_directives_rejects_file_without_path() {
+        let err = split_special_directives("@file\nx").unwrap_err();
+        assert!(err.to_string().contains("@file"));
+    }
 }

@@ -399,7 +399,7 @@ fn render_event_to<W: std::io::Write>(
                 reason.as_deref().unwrap_or("")
             );
         }
-        pm_protocol::ThreadEventKind::TurnStarted { turn_id, input } => {
+        pm_protocol::ThreadEventKind::TurnStarted { turn_id, input, .. } => {
             let _ = writeln!(writer, "[{ts}] turn started {turn_id}");
             let _ = writeln!(writer, "user: {input}");
         }

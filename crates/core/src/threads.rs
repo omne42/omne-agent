@@ -247,6 +247,7 @@ mod tests {
             .append(ThreadEventKind::TurnStarted {
                 turn_id,
                 input: "token=sk-1234567890abcdefghijklmnop".to_string(),
+                context_refs: None,
             })
             .await?;
         drop(thread);
@@ -280,6 +281,7 @@ mod tests {
             .append(ThreadEventKind::TurnStarted {
                 turn_id,
                 input: "x".to_string(),
+                context_refs: None,
             })
             .await?;
         drop(thread);

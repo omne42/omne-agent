@@ -540,6 +540,7 @@ mod tests {
             ThreadEventKind::TurnStarted {
                 turn_id: TurnId::new(),
                 input: "hello".to_string(),
+                context_refs: None,
             },
         )?;
         assert!(state.failed_processes.is_empty());
