@@ -45,13 +45,13 @@
 
 ### P2（质量/一致性）
 
-- [ ] **统一 stream/generate 的语义一致性**
+- [x] **统一 stream/generate 的语义一致性**
   - DoD:
     - `warnings` 在流式与非流式路径一致（不丢）
       - ✅ 已实现：stream 会先发出 `StreamChunk::Warnings`
     - `finish_reason` 的映射规则统一且可测试
 
-- [ ] **Tool calling streaming 细节对齐**
+- [x] **Tool calling streaming 细节对齐**
   - DoD:
     - 增量 arguments（delta）与多 tool_calls 的可靠拼接
     - 对不支持的 provider 必须给 `Warning::Unsupported`
