@@ -122,6 +122,7 @@ v0.2.x 行为（已实现）：
 - 解析：对渲染后的 command body 扫描 `## Task:` 段落，提取 `task_id/title/body`。
 - fan-out：每个 task 会通过 `thread/fork` 创建子 thread，并强制配置为 `sandbox_policy=read_only` + `mode=reviewer`，然后 `turn/start` 并发执行。
   - 并发上限：复用 `CODE_PM_MAX_CONCURRENT_SUBAGENTS`（默认 `4`；`0` 表示不限制）。
+  - turn priority：fan-out 子任务使用 `priority=background`；全局 LLM worker pool 会为 foreground 预留并发额度（`CODE_PM_MAX_CONCURRENT_LLM_REQUESTS`/`CODE_PM_LLM_FOREGROUND_RESERVE`）。
   - 重要限制：由于 v0.2.x 还没有 workspace 隔离，fan-out 子任务只能做并发只读分析（读文件/索引/事件），不能写代码/跑命令。
 - fan-in：父 thread 会先创建一个 `artifact_type="fan_in_summary"`，fan-out 期间持续更新进度（含 rough ETA）；待所有子任务 `TurnCompleted` 后写入最终汇总（包含每个 task 的 `thread_id/turn_id/status` 与最后一条 `AssistantMessage`）。
 - 主 turn：fan-in 完成后，仍会继续执行原 `pm command run` 的主 turn，并在输入中附带 `fan_in_summary` 的定位信息（便于后续 `pm artifact read`）。

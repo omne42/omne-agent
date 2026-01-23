@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use anyhow::Context;
@@ -9,12 +9,13 @@ use futures_util::stream::{self, StreamExt};
 use ditto_llm::ThinkingIntensity;
 use pm_protocol::{
     ApprovalDecision, ApprovalId, ArtifactId, ArtifactMetadata, EventSeq, ThreadEventKind, ThreadId,
-    TurnId,
+    TurnId, TurnPriority,
 };
 use serde::Deserialize;
 use serde_json::Value;
 use thiserror::Error;
 use time::format_description::well_known::Rfc3339;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::CancellationToken;
 
 const DEFAULT_MODEL: &str = "gpt-4.1";
@@ -31,6 +32,10 @@ const MAX_LLM_MAX_ATTEMPTS: usize = 20;
 const DEFAULT_LLM_RETRY_BASE_DELAY_MS: u64 = 200;
 const DEFAULT_LLM_RETRY_MAX_DELAY_MS: u64 = 2_000;
 const MAX_LLM_RETRY_DELAY_MS: u64 = 60_000;
+
+const DEFAULT_MAX_CONCURRENT_LLM_REQUESTS: usize = 4;
+const MAX_MAX_CONCURRENT_LLM_REQUESTS: usize = 256;
+const DEFAULT_LLM_FOREGROUND_RESERVE: usize = 1;
 
 const DEFAULT_AGENT_MAX_ATTACHMENTS: usize = 4;
 const MAX_AGENT_MAX_ATTACHMENTS: usize = 32;
@@ -105,6 +110,103 @@ enum LlmAttemptError {
 struct LlmAttemptFailure {
     error: LlmAttemptError,
     emitted_output: bool,
+}
+
+static LLM_WORKER_POOL: OnceLock<LlmWorkerPool> = OnceLock::new();
+
+#[derive(Debug)]
+struct LlmWorkerPool {
+    total: Option<Arc<Semaphore>>,
+    background: Option<Arc<Semaphore>>,
+}
+
+#[derive(Debug)]
+struct LlmWorkerPermit {
+    _background: Option<OwnedSemaphorePermit>,
+    _total: Option<OwnedSemaphorePermit>,
+}
+
+impl LlmWorkerPermit {
+    fn disabled() -> Self {
+        Self {
+            _background: None,
+            _total: None,
+        }
+    }
+}
+
+impl LlmWorkerPool {
+    fn global() -> &'static Self {
+        LLM_WORKER_POOL.get_or_init(Self::from_env)
+    }
+
+    fn from_env() -> Self {
+        let max_concurrent = parse_env_usize(
+            "CODE_PM_MAX_CONCURRENT_LLM_REQUESTS",
+            DEFAULT_MAX_CONCURRENT_LLM_REQUESTS,
+            0,
+            MAX_MAX_CONCURRENT_LLM_REQUESTS,
+        );
+        if max_concurrent == 0 {
+            return Self {
+                total: None,
+                background: None,
+            };
+        }
+
+        let reserve = parse_env_usize(
+            "CODE_PM_LLM_FOREGROUND_RESERVE",
+            DEFAULT_LLM_FOREGROUND_RESERVE,
+            0,
+            max_concurrent,
+        )
+        .min(max_concurrent);
+
+        let background_limit = max_concurrent.saturating_sub(reserve);
+        let total = Arc::new(Semaphore::new(max_concurrent));
+        let background = if background_limit >= max_concurrent {
+            None
+        } else {
+            Some(Arc::new(Semaphore::new(background_limit)))
+        };
+
+        Self {
+            total: Some(total),
+            background,
+        }
+    }
+
+    async fn acquire(&self, priority: TurnPriority) -> anyhow::Result<LlmWorkerPermit> {
+        let Some(total) = self.total.as_ref() else {
+            return Ok(LlmWorkerPermit::disabled());
+        };
+
+        match priority {
+            TurnPriority::Foreground => {
+                let permit = total.clone().acquire_owned().await?;
+                Ok(LlmWorkerPermit {
+                    _background: None,
+                    _total: Some(permit),
+                })
+            }
+            TurnPriority::Background => {
+                if let Some(background) = self.background.as_ref() {
+                    let bg_permit = background.clone().acquire_owned().await?;
+                    let total_permit = total.clone().acquire_owned().await?;
+                    Ok(LlmWorkerPermit {
+                        _background: Some(bg_permit),
+                        _total: Some(total_permit),
+                    })
+                } else {
+                    let permit = total.clone().acquire_owned().await?;
+                    Ok(LlmWorkerPermit {
+                        _background: None,
+                        _total: Some(permit),
+                    })
+                }
+            }
+        }
+    }
 }
 
 struct LoopDetector {
@@ -641,6 +743,7 @@ async fn build_provider_runtime(
         base_url: Some(base_url),
         default_model: provider_config.default_model.clone(),
         model_whitelist: provider_config.model_whitelist.clone(),
+        http_headers: provider_config.http_headers.clone(),
         auth: provider_config.auth.clone(),
         capabilities: Some(provider_capabilities),
     };
@@ -811,6 +914,7 @@ pub async fn run_agent_turn(
     turn_id: TurnId,
     input: String,
     cancel: CancellationToken,
+    turn_priority: pm_protocol::TurnPriority,
 ) -> anyhow::Result<()> {
     let (thread_id, thread_mode, thread_model, thread_openai_base_url, thread_cwd, allowed_tools) = {
         let handle = thread_rt.handle.lock().await;
@@ -824,6 +928,8 @@ pub async fn run_agent_turn(
             state.allowed_tools.clone(),
         )
     };
+
+    let llm_pool = LlmWorkerPool::global();
 
     let thread_root = match thread_cwd.as_deref() {
         Some(thread_cwd) => Some(pm_core::resolve_dir(Path::new(thread_cwd), Path::new(".")).await?),
@@ -908,6 +1014,7 @@ pub async fn run_agent_turn(
         base_url: Some(base_url),
         default_model: provider_config.default_model.clone(),
         model_whitelist: provider_config.model_whitelist.clone(),
+        http_headers: provider_config.http_headers.clone(),
         auth: provider_config.auth.clone(),
         capabilities: Some(provider_capabilities),
     };
@@ -1371,6 +1478,7 @@ pub async fn run_agent_turn(
                 .context("encode provider_options")?;
 
             attempts += 1;
+            let _permit = llm_pool.acquire(turn_priority).await?;
             match run_llm_stream_once(
                 runtime.client.clone(),
                 thread_rt.clone(),
@@ -1738,6 +1846,7 @@ pub async fn run_agent_turn(
                 turn_id,
                 model: &model,
                 llm: model_client.clone(),
+                turn_priority,
                 max_openai_request_duration,
                 max_total_tokens,
                 total_tokens_used: &mut total_tokens_used,
@@ -1774,6 +1883,7 @@ struct AutoCompactSummaryContext<'a> {
     turn_id: TurnId,
     model: &'a str,
     llm: Arc<dyn ditto_llm::LanguageModel>,
+    turn_priority: TurnPriority,
     max_openai_request_duration: Duration,
     max_total_tokens: u64,
     total_tokens_used: &'a mut u64,
@@ -1797,6 +1907,7 @@ async fn auto_compact_summary(
         turn_id,
         model,
         llm,
+        turn_priority,
         max_openai_request_duration,
         max_total_tokens,
         total_tokens_used,
@@ -1820,6 +1931,7 @@ async fn auto_compact_summary(
     req.model = Some(model.to_string());
     req.tool_choice = Some(ditto_llm::ToolChoice::None);
 
+    let _permit = LlmWorkerPool::global().acquire(turn_priority).await?;
     let resp = match tokio::time::timeout(max_openai_request_duration, llm.generate(req)).await {
         Ok(Ok(resp)) => resp,
         Ok(Err(_)) => return Ok(false),
@@ -1929,6 +2041,7 @@ fn builtin_openai_provider_config(provider: &str) -> Option<ditto_llm::ProviderC
             base_url: Some(DEFAULT_OPENAI_BASE_URL.to_string()),
             default_model: None,
             model_whitelist: Vec::new(),
+            http_headers: Default::default(),
             auth: Some(ditto_llm::ProviderAuth::ApiKeyEnv { keys: Vec::new() }),
             capabilities: None,
         }),
@@ -1936,6 +2049,7 @@ fn builtin_openai_provider_config(provider: &str) -> Option<ditto_llm::ProviderC
             base_url: Some(DEFAULT_OPENAI_BASE_URL.to_string()),
             default_model: None,
             model_whitelist: Vec::new(),
+            http_headers: Default::default(),
             auth: Some(ditto_llm::ProviderAuth::Command { command: Vec::new() }),
             capabilities: None,
         }),
@@ -1966,6 +2080,9 @@ fn merge_provider_config(
     if !overrides.model_whitelist.is_empty() {
         base.model_whitelist =
             ditto_llm::normalize_string_list(overrides.model_whitelist.clone());
+    }
+    if !overrides.http_headers.is_empty() {
+        base.http_headers.extend(overrides.http_headers.clone());
     }
     if let Some(auth) = overrides.auth.clone() {
         base.auth = Some(auth);
@@ -3186,6 +3303,7 @@ mod auto_summary_tests {
                 input: "first".to_string(),
                 context_refs: None,
                 attachments: None,
+                priority: pm_protocol::TurnPriority::Foreground,
             })
             .await?;
         thread_rt
@@ -3226,6 +3344,7 @@ mod auto_summary_tests {
                 input: "second".to_string(),
                 context_refs: None,
                 attachments: None,
+                priority: pm_protocol::TurnPriority::Foreground,
             })
             .await?;
 

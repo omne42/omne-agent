@@ -249,6 +249,7 @@ mod tests {
                 input: "token=sk-1234567890abcdefghijklmnop".to_string(),
                 context_refs: None,
                 attachments: None,
+                priority: pm_protocol::TurnPriority::Foreground,
             })
             .await?;
         drop(thread);
@@ -284,6 +285,7 @@ mod tests {
                 input: "x".to_string(),
                 context_refs: None,
                 attachments: None,
+                priority: pm_protocol::TurnPriority::Foreground,
             })
             .await?;
         drop(thread);

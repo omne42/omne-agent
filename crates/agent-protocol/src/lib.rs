@@ -269,6 +269,14 @@ pub enum TurnStatus {
     Stuck,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema, TS, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TurnPriority {
+    #[default]
+    Foreground,
+    Background,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolStatus {
@@ -483,6 +491,8 @@ pub enum ThreadEventKind {
         context_refs: Option<Vec<ContextRef>>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         attachments: Option<Vec<TurnAttachment>>,
+        #[serde(default)]
+        priority: TurnPriority,
     },
 
     ModelRouted {

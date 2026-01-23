@@ -51,7 +51,7 @@ async fn run_ask(app: &mut App, args: AskArgs) -> anyhow::Result<()> {
         .await?;
     }
 
-    let turn_id = app.turn_start(thread_id, args.input).await?;
+    let turn_id = app.turn_start(thread_id, args.input, None).await?;
     eprintln!("thread: {thread_id}");
     eprintln!("turn: {turn_id}");
 
@@ -206,7 +206,7 @@ where
         .await?;
     }
 
-    let turn_id = app.turn_start(thread_id, args.input).await?;
+    let turn_id = app.turn_start(thread_id, args.input, None).await?;
     eprintln!("thread: {thread_id}");
     eprintln!("turn: {turn_id}");
 
@@ -354,7 +354,7 @@ async fn run_exec(app: &mut App, args: ExecArgs) -> anyhow::Result<i32> {
         .await?;
     }
 
-    let turn_id = app.turn_start(thread_id, args.input).await?;
+    let turn_id = app.turn_start(thread_id, args.input, None).await?;
     eprintln!("thread: {thread_id}");
     eprintln!("turn: {turn_id}");
 

@@ -618,6 +618,7 @@ impl ThreadRuntime {
         input: String,
         context_refs: Option<Vec<pm_protocol::ContextRef>>,
         attachments: Option<Vec<pm_protocol::TurnAttachment>>,
+        priority: pm_protocol::TurnPriority,
     ) -> anyhow::Result<TurnId> {
         let mut handle = self.handle.lock().await;
         let state = handle.state();
@@ -655,6 +656,7 @@ impl ThreadRuntime {
                 input: input_for_event,
                 context_refs,
                 attachments,
+                priority,
             })
             .await?;
         drop(handle);
@@ -671,7 +673,7 @@ impl ThreadRuntime {
         }
 
         tokio::task::spawn_local(async move {
-            self.run_turn(server, turn_id, cancel, input).await;
+            self.run_turn(server, turn_id, cancel, input, priority).await;
         });
 
         Ok(turn_id)
@@ -724,9 +726,10 @@ impl ThreadRuntime {
         turn_id: TurnId,
         cancel: CancellationToken,
         input: String,
+        priority: pm_protocol::TurnPriority,
     ) {
         let agent_fut =
-            agent::run_agent_turn(server.clone(), self.clone(), turn_id, input, cancel.clone());
+            agent::run_agent_turn(server.clone(), self.clone(), turn_id, input, cancel.clone(), priority);
 
         let (status, reason) = tokio::select! {
             _ = cancel.cancelled() => {
@@ -1031,6 +1034,8 @@ struct TurnStartParams {
     context_refs: Option<Vec<pm_protocol::ContextRef>>,
     #[serde(default)]
     attachments: Option<Vec<pm_protocol::TurnAttachment>>,
+    #[serde(default)]
+    priority: Option<pm_protocol::TurnPriority>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -6,9 +6,15 @@ async fn handle_turn_request(
 ) -> JsonRpcResponse {
     match method {
         "turn/start" => match serde_json::from_value::<TurnStartParams>(params) {
-            Ok(params) => match server.get_or_load_thread(params.thread_id).await {
-                Ok(rt) => match rt
-                    .start_turn(server.clone(), params.input, params.context_refs, params.attachments)
+                Ok(params) => match server.get_or_load_thread(params.thread_id).await {
+                    Ok(rt) => match rt
+                    .start_turn(
+                        server.clone(),
+                        params.input,
+                        params.context_refs,
+                        params.attachments,
+                        params.priority.unwrap_or_default(),
+                    )
                     .await
                 {
                     Ok(turn_id) => JsonRpcResponse::ok(id, serde_json::json!({ "turn_id": turn_id })),

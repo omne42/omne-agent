@@ -39,6 +39,7 @@
 - `ditto-llm`：provider profile 支持可选 `capabilities` 覆盖（tools/vision/reasoning/json-schema/streaming），用于 OpenAI-compatible provider 的能力声明。
 - `pm-core`/`pm-app-server`：新增 Router（`router.yaml|router.json`）用于 role/keyword/project override 的模型路由，并落盘 `ModelRouted` 事件。
 - `pm-app-server`：新增 tool 调用“轻模型”通道：`CODE_PM_AGENT_TOOL_MODEL` 使 tool calling 阶段使用轻模型，完成后切回主模型生成最终答复（切换会追加 `ModelRouted` 事件）。
+- `pm-app-server`：新增全局 LLM worker pool + turn priority：`turn/start.priority=foreground|background`，并通过 `CODE_PM_MAX_CONCURRENT_LLM_REQUESTS`/`CODE_PM_LLM_FOREGROUND_RESERVE` 保证 foreground 优先、background 次之。
 - `pm-app-server`/`pm`：新增 `thread/models`（`GET /models` + provider whitelist）与 `pm thread models`，用于发现当前 provider 的可用模型。
 - 新增 `pm-app-server`：最小 JSON-RPC over stdio 控制面（`initialize` + `thread/*` + `turn/*`），用于验证 v0.2.0 的 thread/turn/interrupt 与落盘回放。
 - 新增 `pm` CLI：作为 `pm-app-server` 的人类可用客户端，支持 `ask/watch --bell`、`thread/*`、`approval/*`、`process/*`（只读查看 + interrupt/kill），并在 `ask` 中支持 Ctrl-C 触发 `turn/interrupt`。

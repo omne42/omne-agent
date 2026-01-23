@@ -196,7 +196,13 @@ impl FanOutScheduler {
             }
             input.push_str("\nReturn a concise result.\n");
 
-            let turn_id = app.turn_start(forked.thread_id, input).await?;
+            let turn_id = app
+                .turn_start(
+                    forked.thread_id,
+                    input,
+                    Some(pm_protocol::TurnPriority::Background),
+                )
+                .await?;
             self.active.push(FanOutActiveTask {
                 task_id: task.id.clone(),
                 title: task.title.clone(),
@@ -1056,7 +1062,13 @@ async fn run_workflow_fan_out(
             }
             input.push_str("\nReturn a concise result.\n");
 
-            let turn_id = app.turn_start(forked.thread_id, input).await?;
+            let turn_id = app
+                .turn_start(
+                    forked.thread_id,
+                    input,
+                    Some(pm_protocol::TurnPriority::Background),
+                )
+                .await?;
             active.push(ActiveTask {
                 task_id: task.id.clone(),
                 title: task.title.clone(),

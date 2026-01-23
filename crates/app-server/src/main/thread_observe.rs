@@ -1231,6 +1231,7 @@ mod stuck_report_tests {
                 input: "test".to_string(),
                 context_refs: None,
                 attachments: None,
+                priority: pm_protocol::TurnPriority::Foreground,
             })
             .await?;
 

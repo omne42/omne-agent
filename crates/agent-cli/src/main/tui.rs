@@ -700,7 +700,7 @@ mod tui {
                         return Ok(false);
                     };
                     self.input.clear();
-                    let turn_id = app.turn_start(thread_id, input).await?;
+                    let turn_id = app.turn_start(thread_id, input, None).await?;
                     self.active_turn_id = Some(turn_id);
                 }
                 KeyCode::Backspace => {

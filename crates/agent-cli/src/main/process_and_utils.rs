@@ -516,7 +516,13 @@ impl App {
                 .await?;
         }
 
-        let turn_id = self.turn_start(forked.thread_id, input).await?;
+        let turn_id = self
+            .turn_start(
+                forked.thread_id,
+                input,
+                Some(pm_protocol::TurnPriority::Background),
+            )
+            .await?;
         Ok(serde_json::json!({
             "thread_id": forked.thread_id,
             "turn_id": turn_id,
@@ -821,7 +827,12 @@ impl App {
         Ok(())
     }
 
-    async fn turn_start(&mut self, thread_id: ThreadId, input: String) -> anyhow::Result<TurnId> {
+    async fn turn_start(
+        &mut self,
+        thread_id: ThreadId,
+        input: String,
+        priority: Option<pm_protocol::TurnPriority>,
+    ) -> anyhow::Result<TurnId> {
         let (input, context_refs, attachments) = split_special_directives(&input)?;
         let v = self
             .rpc(
@@ -831,6 +842,7 @@ impl App {
                     "input": input,
                     "context_refs": context_refs,
                     "attachments": attachments,
+                    "priority": priority,
                 }),
             )
             .await?;

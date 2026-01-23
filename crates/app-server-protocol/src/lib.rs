@@ -300,6 +300,9 @@ pub struct TurnStartParams {
     #[serde(default)]
     #[ts(optional)]
     pub attachments: Option<Vec<pm_protocol::TurnAttachment>>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub priority: Option<pm_protocol::TurnPriority>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]

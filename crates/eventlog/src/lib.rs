@@ -548,6 +548,7 @@ mod tests {
                 input: "hello".to_string(),
                 context_refs: None,
                 attachments: None,
+                priority: pm_protocol::TurnPriority::Foreground,
             },
         )?;
         assert!(state.failed_processes.is_empty());

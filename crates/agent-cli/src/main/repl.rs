@@ -116,7 +116,7 @@ async fn repl_run_turn(
     input: String,
     notification_tx: Option<&tokio::sync::broadcast::Sender<pm_jsonrpc::Notification>>,
 ) -> anyhow::Result<()> {
-    let turn_id = app.turn_start(state.thread_id, input).await?;
+    let turn_id = app.turn_start(state.thread_id, input, None).await?;
     eprintln!("turn: {turn_id}");
 
     let saw_delta = Arc::new(AtomicBool::new(false));
