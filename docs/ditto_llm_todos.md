@@ -8,6 +8,7 @@
 2. **多 Provider**：OpenAI（Responses）、Anthropic（Messages）、Google（GenAI）已具备；还需要 **OpenAI-compatible（Chat Completions）** 以覆盖 LiteLLM/DeepSeek/Qwen 等。
 3. **流式 + tools + embeddings**：跨 provider 行为尽量一致；差异必须以 `Warning` 显式暴露，而不是静默丢字段。
 4. **可配置/可复用**：不再出现“配置层一套、SDK 一套”的双轨 API；必须能从 `ProviderConfig/ProviderAuth` 构造可用的 model client。
+5. **多模态输入**：至少支持 **图片** 与 **PDF 文件**（base64/url），并在不支持的 provider 上以 `Warning` 显式提示。
 
 ## Done（验收标准）
 
@@ -22,6 +23,15 @@
 ## Backlog（按优先级）
 
 ### P0（必须做）
+
+- [x] **图片 + PDF 文件上传**：`ContentPart::Image` / `ContentPart::File`
+  - DoD:
+    - types：新增 `ContentPart::File` + `FileSource`
+    - OpenAI（Responses）：映射 `input_image` / `input_file`（PDF: url/base64/file_id）
+    - OpenAI-compatible（Chat）：映射 `image_url` / `file`（PDF: base64/file_id；URL 明确 `Warning::Unsupported`）
+    - Anthropic（Messages）：映射 `image` / `document`（PDF：`anthropic-beta: pdfs-2024-09-25`）
+    - Google（GenAI）：映射 `inlineData`/`fileData`（按 `media_type`）
+    - tests + examples：新增 `examples/multimodal.rs`
 
 - [x] **OpenAI-compatible（Chat Completions）provider**：补齐 `POST /chat/completions` 的 `generate/stream`（含 tools）
   - DoD:

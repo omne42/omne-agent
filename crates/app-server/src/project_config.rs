@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use ditto_llm::{ModelConfig, ProviderConfig};
@@ -9,6 +10,7 @@ pub struct ProjectOpenAiOverrides {
     pub provider: Option<String>,
     pub base_url: Option<String>,
     pub model: Option<String>,
+    pub fallback_providers: Vec<String>,
     pub providers: BTreeMap<String, ProviderConfig>,
     pub models: BTreeMap<String, ModelConfig>,
     pub dotenv: BTreeMap<String, String>,
@@ -63,6 +65,8 @@ struct ProjectOpenAiSection {
     #[serde(default)]
     model: Option<String>,
     #[serde(default)]
+    fallback_providers: Vec<String>,
+    #[serde(default)]
     providers: BTreeMap<String, ProviderConfig>,
     #[serde(default)]
     models: BTreeMap<String, ModelConfig>,
@@ -73,6 +77,7 @@ struct DotenvOpenAiOverrides {
     provider: Option<String>,
     base_url: Option<String>,
     model: Option<String>,
+    fallback_providers: Vec<String>,
     dotenv: BTreeMap<String, String>,
 }
 
@@ -82,6 +87,7 @@ impl DotenvOpenAiOverrides {
             provider: self.provider,
             base_url: self.base_url,
             model: self.model,
+            fallback_providers: self.fallback_providers,
             providers: BTreeMap::new(),
             models: BTreeMap::new(),
             dotenv: self.dotenv,
@@ -100,6 +106,26 @@ fn clean_string_opt(value: Option<String>) -> Option<String> {
     })
 }
 
+fn clean_string_list(values: Vec<String>) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    for value in values {
+        let value = value.trim();
+        if value.is_empty() {
+            continue;
+        }
+        let value = value.to_string();
+        if seen.insert(value.clone()) {
+            out.push(value);
+        }
+    }
+    out
+}
+
+fn parse_csv_list(value: &str) -> Vec<String> {
+    clean_string_list(value.split(',').map(|v| v.trim().to_string()).collect())
+}
+
 fn parse_dotenv_openai(contents: &str) -> DotenvOpenAiOverrides {
     let mut out = DotenvOpenAiOverrides::default();
     out.dotenv = ditto_llm::parse_dotenv(contents);
@@ -107,6 +133,11 @@ fn parse_dotenv_openai(contents: &str) -> DotenvOpenAiOverrides {
     out.provider = out.dotenv.get("CODE_PM_OPENAI_PROVIDER").cloned();
     out.base_url = out.dotenv.get("CODE_PM_OPENAI_BASE_URL").cloned();
     out.model = out.dotenv.get("CODE_PM_OPENAI_MODEL").cloned();
+    out.fallback_providers = out
+        .dotenv
+        .get("CODE_PM_OPENAI_FALLBACK_PROVIDERS")
+        .map(|value| parse_csv_list(value))
+        .unwrap_or_default();
 
     out
 }
@@ -166,6 +197,7 @@ pub async fn load_project_config(thread_root: &Path) -> LoadedProjectConfig {
     let mut enabled = false;
     let mut config_openai_provider: Option<String> = None;
     let mut config_openai_model: Option<String> = None;
+    let mut config_openai_fallback_providers: Vec<String> = Vec::new();
     let mut config_openai_providers: BTreeMap<String, ProviderConfig> = BTreeMap::new();
     let mut config_openai_models: BTreeMap<String, ModelConfig> = BTreeMap::new();
 
@@ -175,6 +207,8 @@ pub async fn load_project_config(thread_root: &Path) -> LoadedProjectConfig {
                 enabled = parsed.project_config.enabled;
                 config_openai_provider = clean_string_opt(parsed.openai.provider);
                 config_openai_model = clean_string_opt(parsed.openai.model);
+                config_openai_fallback_providers =
+                    clean_string_list(parsed.openai.fallback_providers);
                 config_openai_providers = parsed.openai.providers;
                 config_openai_models = parsed.openai.models;
             }
@@ -220,13 +254,29 @@ pub async fn load_project_config(thread_root: &Path) -> LoadedProjectConfig {
         .unwrap_or_default()
         .into_project_overrides();
 
+    let ProjectOpenAiOverrides {
+        provider: dotenv_provider,
+        base_url: dotenv_base_url,
+        model: dotenv_model,
+        fallback_providers: dotenv_fallback_providers,
+        dotenv,
+        ..
+    } = dotenv_openai;
+
+    let fallback_providers = if dotenv_fallback_providers.is_empty() {
+        config_openai_fallback_providers
+    } else {
+        dotenv_fallback_providers
+    };
+
     let openai = ProjectOpenAiOverrides {
-        provider: clean_string_opt(dotenv_openai.provider).or(config_openai_provider),
-        base_url: clean_string_opt(dotenv_openai.base_url),
-        model: clean_string_opt(dotenv_openai.model).or(config_openai_model),
+        provider: clean_string_opt(dotenv_provider).or(config_openai_provider),
+        base_url: clean_string_opt(dotenv_base_url),
+        model: clean_string_opt(dotenv_model).or(config_openai_model),
+        fallback_providers,
         providers: config_openai_providers,
         models: config_openai_models,
-        dotenv: dotenv_openai.dotenv,
+        dotenv,
     };
 
     LoadedProjectConfig {
@@ -356,6 +406,75 @@ CODE_PM_OPENAI_PROVIDER=openai-auth-command
         assert_eq!(
             loaded.openai.provider.as_deref(),
             Some("openai-auth-command")
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn loads_fallback_providers_from_config_toml() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let root = tmp.path();
+        let codepm_data = root.join(".codepm_data");
+        tokio::fs::create_dir_all(&codepm_data).await?;
+
+        tokio::fs::write(
+            codepm_data.join("config.toml"),
+            r#"
+[project_config]
+enabled = true
+
+[openai]
+fallback_providers = ["openai-auth-command", "openai-codex-apikey", "openai-auth-command", ""]
+"#,
+        )
+        .await?;
+
+        let loaded = load_project_config(root).await;
+        assert!(loaded.enabled);
+        assert_eq!(
+            loaded.openai.fallback_providers,
+            vec![
+                "openai-auth-command".to_string(),
+                "openai-codex-apikey".to_string()
+            ]
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn dotenv_fallback_providers_override_config_when_present() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let root = tmp.path();
+        let codepm_data = root.join(".codepm_data");
+        tokio::fs::create_dir_all(&codepm_data).await?;
+
+        tokio::fs::write(
+            codepm_data.join("config.toml"),
+            r#"
+[project_config]
+enabled = true
+
+[openai]
+fallback_providers = ["openai-auth-command"]
+"#,
+        )
+        .await?;
+        tokio::fs::write(
+            codepm_data.join(".env"),
+            r#"
+CODE_PM_OPENAI_FALLBACK_PROVIDERS=openai-codex-apikey, openai-auth-command
+"#,
+        )
+        .await?;
+
+        let loaded = load_project_config(root).await;
+        assert!(loaded.enabled);
+        assert_eq!(
+            loaded.openai.fallback_providers,
+            vec![
+                "openai-codex-apikey".to_string(),
+                "openai-auth-command".to_string()
+            ]
         );
         Ok(())
     }

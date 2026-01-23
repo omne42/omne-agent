@@ -432,7 +432,7 @@ async fn main() -> Result<(), ditto_llm::Error> {
 > CodePM v0.2.x 口径：
 >
 > - 仅要求 OpenAI Responses API（其它 provider 先不做）
-> - 不做图片/文件上传（先以纯文本 + tool calling 为主）
+> - ✅ 支持图片/文件上传：images + PDFs（url/base64；provider 不支持的能力会以 `Warning` 显式暴露）
 >
 > 已确认/已实现：
 >

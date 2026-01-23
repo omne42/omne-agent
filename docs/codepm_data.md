@@ -76,6 +76,8 @@ OpenAI 配置示例（provider/profile + model-level thinking）：
 [openai]
 provider = "openai-codex-apikey"
 model = "gpt-4.1"
+# 可选：provider fallback（当 429/5xx/timeout 时依次尝试）
+fallback_providers = ["openai-auth-command"]
 
 [openai.providers.openai-codex-apikey]
 base_url = "https://api.openai.com/v1"
@@ -105,6 +107,8 @@ OPENAI_API_KEY=...
 CODE_PM_OPENAI_PROVIDER=openai-codex-apikey
 CODE_PM_OPENAI_BASE_URL=https://api.openai.com/v1
 CODE_PM_OPENAI_MODEL=gpt-4.1
+# 可选：逗号分隔的 fallback provider 列表（优先级高于 config.toml 的 `openai.fallback_providers`）
+CODE_PM_OPENAI_FALLBACK_PROVIDERS=openai-auth-command,openai-codex-apikey
 ```
 
 注意：

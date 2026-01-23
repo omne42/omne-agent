@@ -25,6 +25,11 @@ const DEFAULT_MAX_PARALLEL_TOOL_CALLS: usize = 8;
 const DEFAULT_MAX_TOTAL_TOKENS: u64 = 0;
 const DEFAULT_MAX_TURN_SECONDS: u64 = 10 * 60;
 const DEFAULT_MAX_OPENAI_REQUEST_SECONDS: u64 = 120;
+const DEFAULT_LLM_MAX_ATTEMPTS: usize = 3;
+const MAX_LLM_MAX_ATTEMPTS: usize = 20;
+const DEFAULT_LLM_RETRY_BASE_DELAY_MS: u64 = 200;
+const DEFAULT_LLM_RETRY_MAX_DELAY_MS: u64 = 2_000;
+const MAX_LLM_RETRY_DELAY_MS: u64 = 60_000;
 
 const MAX_MAX_AGENT_STEPS: usize = 10_000;
 const MAX_MAX_TOOL_CALLS: usize = 10_000;
@@ -80,6 +85,20 @@ pub enum AgentTurnError {
     OpenAiRequestTimedOut,
     #[error("loop_detected: {kind}")]
     LoopDetected { kind: &'static str },
+}
+
+#[derive(Debug, Error)]
+enum LlmAttemptError {
+    #[error("llm request timed out")]
+    TimedOut,
+    #[error(transparent)]
+    Ditto(#[from] ditto_llm::DittoError),
+}
+
+#[derive(Debug)]
+struct LlmAttemptFailure {
+    error: LlmAttemptError,
+    emitted_output: bool,
 }
 
 struct LoopDetector {
@@ -455,6 +474,293 @@ fn log_llm_warnings(thread_id: ThreadId, turn_id: TurnId, warnings: &[ditto_llm:
     );
 }
 
+#[derive(Clone)]
+struct ProviderRuntime {
+    config: ditto_llm::ProviderConfig,
+    capabilities: ditto_llm::ProviderCapabilities,
+    client: Arc<dyn ditto_llm::LanguageModel>,
+}
+
+fn parse_csv_list(raw: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::<String>::new();
+    for part in raw.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        let value = part.to_string();
+        if seen.insert(value.clone()) {
+            out.push(value);
+        }
+    }
+    out
+}
+
+fn build_provider_candidates(primary: &str, fallbacks: Vec<String>) -> Vec<String> {
+    let mut out = vec![primary.to_string()];
+    for provider in fallbacks {
+        if provider == primary {
+            continue;
+        }
+        if out.iter().any(|existing| existing == &provider) {
+            continue;
+        }
+        out.push(provider);
+    }
+    out
+}
+
+fn model_allowed_by_whitelist(model: &str, whitelist: &[String]) -> bool {
+    whitelist.is_empty() || whitelist.iter().any(|allowed| allowed.trim() == model)
+}
+
+fn llm_error_is_retryable(err: &LlmAttemptError) -> bool {
+    match err {
+        LlmAttemptError::TimedOut => true,
+        LlmAttemptError::Ditto(ditto_llm::DittoError::Api { status, .. }) => {
+            status.as_u16() == 429 || status.is_server_error()
+        }
+        LlmAttemptError::Ditto(ditto_llm::DittoError::Http(err)) => err.is_timeout() || err.is_connect(),
+        LlmAttemptError::Ditto(ditto_llm::DittoError::Io(_)) => true,
+        LlmAttemptError::Ditto(ditto_llm::DittoError::InvalidResponse(_))
+        | LlmAttemptError::Ditto(ditto_llm::DittoError::AuthCommand(_))
+        | LlmAttemptError::Ditto(ditto_llm::DittoError::Json(_)) => false,
+    }
+}
+
+fn llm_error_prefers_provider_fallback(err: &LlmAttemptError) -> bool {
+    match err {
+        LlmAttemptError::TimedOut => true,
+        LlmAttemptError::Ditto(ditto_llm::DittoError::Api { status, .. }) => {
+            status.as_u16() == 429 || status.is_server_error()
+        }
+        _ => false,
+    }
+}
+
+fn llm_error_summary(err: &LlmAttemptError) -> String {
+    let text = pm_core::redact_text(&err.to_string());
+    truncate_chars(&text, 300)
+}
+
+fn retry_backoff_delay(failure_count: usize, base: Duration, max: Duration) -> Duration {
+    if base.is_zero() || max.is_zero() {
+        return Duration::ZERO;
+    }
+    let exponent = failure_count.saturating_sub(1).min(10) as u32;
+    let multiplier = 1u32 << exponent;
+    let delay = base * multiplier;
+    if delay > max { max } else { delay }
+}
+
+async fn build_provider_runtime(
+    provider: &str,
+    project_overrides: &ProjectOpenAiOverrides,
+    base_url_override: Option<&str>,
+    env: &ditto_llm::Env,
+) -> anyhow::Result<ProviderRuntime> {
+    let builtin_provider_config = builtin_openai_provider_config(provider);
+    let provider_overrides = project_overrides.providers.get(provider);
+    if builtin_provider_config.is_none() && provider_overrides.is_none() {
+        anyhow::bail!(
+            "unknown openai provider: {provider} (expected: openai-codex-apikey, openai-auth-command; or define [openai.providers.{provider}] in project config)"
+        );
+    }
+
+    let mut provider_config = builtin_provider_config.unwrap_or_default();
+    if let Some(overrides) = provider_overrides {
+        provider_config = merge_provider_config(provider_config, overrides);
+    }
+
+    let provider_capabilities = provider_config
+        .capabilities
+        .unwrap_or_else(ditto_llm::ProviderCapabilities::openai_responses);
+    if !provider_capabilities.tools {
+        anyhow::bail!(
+            "provider does not support tools: provider={provider} (CodePM requires tool calling; set [openai.providers.{provider}.capabilities.tools]=true)"
+        );
+    }
+    if !provider_capabilities.streaming {
+        anyhow::bail!(
+            "provider does not support streaming: provider={provider} (set [openai.providers.{provider}.capabilities.streaming]=true or choose a streaming-capable provider)"
+        );
+    }
+
+    let base_url = base_url_override
+        .map(|value| value.to_string())
+        .or(provider_config.base_url.clone())
+        .unwrap_or_else(|| DEFAULT_OPENAI_BASE_URL.to_string());
+    let base_url = base_url.trim().to_string();
+    if base_url.is_empty() {
+        anyhow::bail!("openai provider {provider} is missing base_url");
+    }
+
+    let provider_for_llm = ditto_llm::ProviderConfig {
+        base_url: Some(base_url),
+        default_model: provider_config.default_model.clone(),
+        model_whitelist: provider_config.model_whitelist.clone(),
+        auth: provider_config.auth.clone(),
+        capabilities: Some(provider_capabilities),
+    };
+
+    let client: Arc<dyn ditto_llm::LanguageModel> = if provider_capabilities.reasoning {
+        Arc::new(
+            ditto_llm::OpenAI::from_config(&provider_for_llm, env)
+                .await
+                .context("build OpenAI Responses client")?,
+        )
+    } else {
+        Arc::new(
+            ditto_llm::OpenAICompatible::from_config(&provider_for_llm, env)
+                .await
+                .context("build OpenAI-compatible Chat Completions client")?,
+        )
+    };
+
+    Ok(ProviderRuntime {
+        config: provider_for_llm,
+        capabilities: provider_capabilities,
+        client,
+    })
+}
+
+async fn run_llm_stream_once(
+    llm: Arc<dyn ditto_llm::LanguageModel>,
+    thread_rt: Arc<super::ThreadRuntime>,
+    thread_id: ThreadId,
+    turn_id: TurnId,
+    req: ditto_llm::GenerateRequest,
+    max_openai_request_duration: Duration,
+) -> Result<AgentLlmResponse, LlmAttemptFailure> {
+    #[derive(Default)]
+    struct ToolCallBuffer {
+        name: Option<String>,
+        arguments: String,
+    }
+
+    let mut emitted_output = false;
+
+    let inner = async {
+        let mut stream = llm.stream(req).await?;
+        let mut response_id = String::new();
+        let mut usage: Option<ditto_llm::Usage> = None;
+        let mut output_items = Vec::<pm_openai::ResponseItem>::new();
+        let mut output_text = String::new();
+        let mut tool_call_order = Vec::<String>::new();
+        let mut tool_calls = std::collections::BTreeMap::<String, ToolCallBuffer>::new();
+        let mut seen_tool_call_ids = std::collections::HashSet::<String>::new();
+        let mut warnings = Vec::<ditto_llm::Warning>::new();
+
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk?;
+            match chunk {
+                ditto_llm::StreamChunk::Warnings { warnings: w } => warnings.extend(w),
+                ditto_llm::StreamChunk::ResponseId { id } => {
+                    if response_id.is_empty() && !id.trim().is_empty() {
+                        response_id = id;
+                    }
+                }
+                ditto_llm::StreamChunk::TextDelta { text } => {
+                    if text.is_empty() {
+                        continue;
+                    }
+                    emitted_output = true;
+                    output_text.push_str(&text);
+                    let delta = pm_core::redact_text(&text);
+                    let response_id_snapshot = response_id.clone();
+                    thread_rt.emit_notification(
+                        "item/delta",
+                        &serde_json::json!({
+                            "thread_id": thread_id,
+                            "turn_id": turn_id,
+                            "response_id": response_id_snapshot,
+                            "kind": "output_text",
+                            "delta": delta,
+                        }),
+                    );
+                }
+                ditto_llm::StreamChunk::ToolCallStart { id, name } => {
+                    emitted_output = true;
+                    let slot = tool_calls.entry(id.clone()).or_default();
+                    if slot.name.is_none() && !name.trim().is_empty() {
+                        slot.name = Some(name);
+                    }
+                    if seen_tool_call_ids.insert(id.clone()) {
+                        tool_call_order.push(id);
+                    }
+                }
+                ditto_llm::StreamChunk::ToolCallDelta {
+                    id,
+                    arguments_delta,
+                } => {
+                    emitted_output = true;
+                    let slot = tool_calls.entry(id.clone()).or_default();
+                    slot.arguments.push_str(&arguments_delta);
+                    if seen_tool_call_ids.insert(id.clone()) {
+                        tool_call_order.push(id);
+                    }
+                }
+                ditto_llm::StreamChunk::ReasoningDelta { .. } => {
+                    emitted_output = true;
+                }
+                ditto_llm::StreamChunk::Usage(u) => usage = Some(u),
+                ditto_llm::StreamChunk::FinishReason(_) => {}
+            }
+        }
+
+        if response_id.trim().is_empty() {
+            response_id = "<unknown>".to_string();
+        }
+
+        if !output_text.is_empty() {
+            let output_text = pm_core::redact_text(&output_text);
+            output_items.push(pm_openai::ResponseItem::Message {
+                role: "assistant".to_string(),
+                content: vec![pm_openai::ContentItem::OutputText { text: output_text }],
+            });
+        }
+
+        for id in tool_call_order {
+            let Some(call) = tool_calls.get(&id) else {
+                continue;
+            };
+            let Some(name) = call.name.as_deref().filter(|v| !v.trim().is_empty()) else {
+                continue;
+            };
+            let args = if call.arguments.trim().is_empty() {
+                "{}".to_string()
+            } else {
+                call.arguments.clone()
+            };
+            output_items.push(pm_openai::ResponseItem::FunctionCall {
+                name: name.to_string(),
+                arguments: args,
+                call_id: id,
+            });
+        }
+
+        Ok::<_, ditto_llm::DittoError>(AgentLlmResponse {
+            id: response_id,
+            output: output_items,
+            usage: usage.as_ref().and_then(token_usage_from_ditto_usage),
+            warnings,
+        })
+    };
+
+    match tokio::time::timeout(max_openai_request_duration, inner).await {
+        Ok(Ok(resp)) => Ok(resp),
+        Ok(Err(err)) => Err(LlmAttemptFailure {
+            error: err.into(),
+            emitted_output,
+        }),
+        Err(_) => Err(LlmAttemptFailure {
+            error: LlmAttemptError::TimedOut,
+            emitted_output,
+        }),
+    }
+}
+
 pub async fn run_agent_turn(
     server: Arc<super::Server>,
     thread_rt: Arc<super::ThreadRuntime>,
@@ -487,6 +793,7 @@ pub async fn run_agent_turn(
 
     let provider = project_overrides
         .provider
+        .clone()
         .or_else(|| {
             std::env::var("CODE_PM_OPENAI_PROVIDER")
                 .ok()
@@ -518,16 +825,22 @@ pub async fn run_agent_turn(
         .or(provider_config.default_model.clone())
         .unwrap_or_else(|| DEFAULT_MODEL.to_string());
 
-    let base_url = thread_openai_base_url
-        .or(project_overrides.base_url)
+    let base_url_override = thread_openai_base_url
+        .clone()
+        .or(project_overrides.base_url.clone())
         .or_else(|| {
             std::env::var("CODE_PM_OPENAI_BASE_URL")
                 .ok()
                 .filter(|s| !s.trim().is_empty())
-        })
+        });
+    let base_url = base_url_override
+        .clone()
         .or(provider_config.base_url.clone())
-        .filter(|s| !s.trim().is_empty())
-        .ok_or_else(|| anyhow::anyhow!("openai provider {provider} is missing base_url"))?;
+        .unwrap_or_else(|| DEFAULT_OPENAI_BASE_URL.to_string());
+    let base_url = base_url.trim().to_string();
+    if base_url.is_empty() {
+        anyhow::bail!("openai provider {provider} is missing base_url");
+    }
 
     let provider_capabilities = provider_config
         .capabilities
@@ -567,6 +880,21 @@ pub async fn run_agent_turn(
         )
     };
 
+    let fallbacks = std::env::var("CODE_PM_OPENAI_FALLBACK_PROVIDERS")
+        .ok()
+        .map(|value| parse_csv_list(&value))
+        .unwrap_or_else(|| project_overrides.fallback_providers.clone());
+    let provider_candidates = build_provider_candidates(&provider, fallbacks);
+    let mut provider_cache = std::collections::BTreeMap::<String, ProviderRuntime>::new();
+    provider_cache.insert(
+        provider.clone(),
+        ProviderRuntime {
+            config: provider_for_llm,
+            capabilities: provider_capabilities,
+            client: model_client.clone(),
+        },
+    );
+
     let tool_specs = build_tools();
     let tools = tool_specs_to_ditto_tools(&tool_specs).context("parse tool schemas")?;
 
@@ -593,6 +921,24 @@ pub async fn run_agent_turn(
         DEFAULT_MAX_OPENAI_REQUEST_SECONDS,
         1,
         MAX_MAX_OPENAI_REQUEST_SECONDS,
+    ));
+    let llm_max_attempts = parse_env_usize(
+        "CODE_PM_AGENT_LLM_MAX_ATTEMPTS",
+        DEFAULT_LLM_MAX_ATTEMPTS,
+        1,
+        MAX_LLM_MAX_ATTEMPTS,
+    );
+    let llm_retry_base_delay = Duration::from_millis(parse_env_u64(
+        "CODE_PM_AGENT_LLM_RETRY_BASE_DELAY_MS",
+        DEFAULT_LLM_RETRY_BASE_DELAY_MS,
+        0,
+        MAX_LLM_RETRY_DELAY_MS,
+    ));
+    let llm_retry_max_delay = Duration::from_millis(parse_env_u64(
+        "CODE_PM_AGENT_LLM_RETRY_MAX_DELAY_MS",
+        DEFAULT_LLM_RETRY_MAX_DELAY_MS,
+        0,
+        MAX_LLM_RETRY_DELAY_MS,
     ));
     let max_total_tokens = parse_env_u64(
         "CODE_PM_AGENT_MAX_TOTAL_TOKENS",
@@ -731,13 +1077,19 @@ pub async fn run_agent_turn(
         );
     }
 
+    let reason = reason
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| format!("{value}; provider={provider}"))
+        .or_else(|| Some(format!("provider={provider}")));
+
     let _ = thread_rt
         .append_event(ThreadEventKind::ModelRouted {
             turn_id,
             selected_model: model.clone(),
             rule_source,
             reason,
-            rule_id,
+            rule_id: rule_id.clone(),
         })
         .await;
 
@@ -751,21 +1103,7 @@ pub async fn run_agent_turn(
     let mut attempted_auto_summary = false;
     let mut finished = false;
     let started_at = tokio::time::Instant::now();
-
-    let reasoning_effort = if provider_capabilities.reasoning {
-        match ditto_llm::select_model_config(&project_overrides.models, &model)
-            .map(|cfg| cfg.thinking)
-            .unwrap_or_default()
-        {
-            ThinkingIntensity::Unsupported => None,
-            ThinkingIntensity::Small => Some(ditto_llm::ReasoningEffort::Low),
-            ThinkingIntensity::Medium => Some(ditto_llm::ReasoningEffort::Medium),
-            ThinkingIntensity::High => Some(ditto_llm::ReasoningEffort::High),
-            ThinkingIntensity::XHigh => Some(ditto_llm::ReasoningEffort::XHigh),
-        }
-    } else {
-        None
-    };
+    let mut active_provider_idx = 0usize;
 
     for _step in 0..max_agent_steps {
         if cancel.is_cancelled() {
@@ -779,130 +1117,182 @@ pub async fn run_agent_turn(
         }
 
         let messages = response_items_to_ditto_messages(&instructions, &input_items);
-        let mut req = ditto_llm::GenerateRequest::from(messages);
-        req.model = Some(model.clone());
-        req.tools = Some(tools.clone());
-        req.tool_choice = Some(ditto_llm::ToolChoice::Auto);
-        let provider_options = ditto_llm::ProviderOptions {
-            reasoning_effort,
-            response_format: response_format.clone(),
-            parallel_tool_calls: Some(parallel_tool_calls),
-        };
-        let req = req.with_provider_options(provider_options)?;
+        let mut req_base = ditto_llm::GenerateRequest::from(messages);
+        req_base.model = Some(model.clone());
+        req_base.tools = Some(tools.clone());
+        req_base.tool_choice = Some(ditto_llm::ToolChoice::Auto);
 
-        let llm = model_client.clone();
-        let thread_rt = thread_rt.clone();
-        let resp = match tokio::time::timeout(max_openai_request_duration, async move {
-            #[derive(Default)]
-            struct ToolCallBuffer {
-                name: Option<String>,
-                arguments: String,
+        let mut provider_index = active_provider_idx.min(provider_candidates.len().saturating_sub(1));
+        let mut attempts = 0usize;
+        let mut failure_count = 0usize;
+        let mut last_failure: Option<LlmAttemptFailure> = None;
+
+        let resp = loop {
+            if cancel.is_cancelled() {
+                return Err(AgentTurnError::Cancelled.into());
             }
-
-            let mut stream = llm.stream(req).await?;
-            let mut response_id = String::new();
-            let mut usage: Option<ditto_llm::Usage> = None;
-            let mut output_items = Vec::<pm_openai::ResponseItem>::new();
-            let mut output_text = String::new();
-            let mut tool_call_order = Vec::<String>::new();
-            let mut tool_calls = std::collections::BTreeMap::<String, ToolCallBuffer>::new();
-            let mut seen_tool_call_ids = std::collections::HashSet::<String>::new();
-            let mut warnings = Vec::<ditto_llm::Warning>::new();
-
-            while let Some(chunk) = stream.next().await {
-                let chunk = chunk?;
-                match chunk {
-                    ditto_llm::StreamChunk::Warnings { warnings: w } => warnings.extend(w),
-                    ditto_llm::StreamChunk::ResponseId { id } => {
-                        if response_id.is_empty() && !id.trim().is_empty() {
-                            response_id = id;
-                        }
+            if started_at.elapsed() > max_turn_duration {
+                return Err(AgentTurnError::BudgetExceeded {
+                    budget: "turn_seconds",
+                }
+                .into());
+            }
+            if provider_index >= provider_candidates.len() {
+                match last_failure {
+                    Some(LlmAttemptFailure {
+                        error: LlmAttemptError::TimedOut,
+                        ..
+                    }) => return Err(AgentTurnError::OpenAiRequestTimedOut.into()),
+                    Some(LlmAttemptFailure { error, .. }) => {
+                        return Err(anyhow::Error::new(error).context("llm stream failed"))
                     }
-                    ditto_llm::StreamChunk::TextDelta { text } => {
-                        if text.is_empty() {
-                            continue;
-                        }
-                        output_text.push_str(&text);
-                        let delta = pm_core::redact_text(&text);
-                        let response_id_snapshot = response_id.clone();
-                        thread_rt.emit_notification(
-                            "item/delta",
-                            &serde_json::json!({
-                                "thread_id": thread_id,
-                                "turn_id": turn_id,
-                                "response_id": response_id_snapshot,
-                                "kind": "output_text",
-                                "delta": delta,
-                            }),
-                        );
-                    }
-                    ditto_llm::StreamChunk::ToolCallStart { id, name } => {
-                        let slot = tool_calls.entry(id.clone()).or_default();
-                        if slot.name.is_none() && !name.trim().is_empty() {
-                            slot.name = Some(name);
-                        }
-                        if seen_tool_call_ids.insert(id.clone()) {
-                            tool_call_order.push(id);
-                        }
-                    }
-                    ditto_llm::StreamChunk::ToolCallDelta {
-                        id,
-                        arguments_delta,
-                    } => {
-                        let slot = tool_calls.entry(id.clone()).or_default();
-                        slot.arguments.push_str(&arguments_delta);
-                        if seen_tool_call_ids.insert(id.clone()) {
-                            tool_call_order.push(id);
-                        }
-                    }
-                    ditto_llm::StreamChunk::ReasoningDelta { .. } => {}
-                    ditto_llm::StreamChunk::Usage(u) => usage = Some(u),
-                    ditto_llm::StreamChunk::FinishReason(_) => {}
+                    None => anyhow::bail!("no usable openai provider available for model={model}"),
                 }
             }
 
-            if response_id.trim().is_empty() {
-                response_id = "<unknown>".to_string();
+            let provider_name = provider_candidates
+                .get(provider_index)
+                .cloned()
+                .unwrap_or_else(|| provider.clone());
+            let runtime = match provider_cache.get(&provider_name).cloned() {
+                Some(runtime) => runtime,
+                None => match build_provider_runtime(
+                    &provider_name,
+                    &project_overrides,
+                    base_url_override.as_deref(),
+                    &env,
+                )
+                .await
+                {
+                    Ok(runtime) => {
+                        provider_cache.insert(provider_name.clone(), runtime.clone());
+                        runtime
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            thread_id = %thread_id,
+                            turn_id = %turn_id,
+                            provider = provider_name,
+                            error = %err,
+                            "failed to build provider client; skipping"
+                        );
+                        provider_index = provider_index.saturating_add(1);
+                        continue;
+                    }
+                },
+            };
+
+            if !model_allowed_by_whitelist(&model, &runtime.config.model_whitelist) {
+                provider_index = provider_index.saturating_add(1);
+                continue;
             }
 
-            if !output_text.is_empty() {
-                let output_text = pm_core::redact_text(&output_text);
-                output_items.push(pm_openai::ResponseItem::Message {
-                    role: "assistant".to_string(),
-                    content: vec![pm_openai::ContentItem::OutputText { text: output_text }],
-                });
-            }
+            let reasoning_effort = if runtime.capabilities.reasoning {
+                match ditto_llm::select_model_config(&project_overrides.models, &model)
+                    .map(|cfg| cfg.thinking)
+                    .unwrap_or_default()
+                {
+                    ThinkingIntensity::Unsupported => None,
+                    ThinkingIntensity::Small => Some(ditto_llm::ReasoningEffort::Low),
+                    ThinkingIntensity::Medium => Some(ditto_llm::ReasoningEffort::Medium),
+                    ThinkingIntensity::High => Some(ditto_llm::ReasoningEffort::High),
+                    ThinkingIntensity::XHigh => Some(ditto_llm::ReasoningEffort::XHigh),
+                }
+            } else {
+                None
+            };
 
-            for id in tool_call_order {
-                let Some(call) = tool_calls.get(&id) else {
-                    continue;
-                };
-                let Some(name) = call.name.as_deref().filter(|v| !v.trim().is_empty()) else {
-                    continue;
-                };
-                let args = if call.arguments.trim().is_empty() {
-                    "{}".to_string()
-                } else {
-                    call.arguments.clone()
-                };
-                output_items.push(pm_openai::ResponseItem::FunctionCall {
-                    name: name.to_string(),
-                    arguments: args,
-                    call_id: id,
-                });
-            }
+            let provider_options = ditto_llm::ProviderOptions {
+                reasoning_effort,
+                response_format: response_format.clone(),
+                parallel_tool_calls: Some(parallel_tool_calls),
+            };
+            let req = req_base
+                .clone()
+                .with_provider_options(provider_options)
+                .context("encode provider_options")?;
 
-            Ok::<_, anyhow::Error>(AgentLlmResponse {
-                id: response_id,
-                output: output_items,
-                usage: usage.as_ref().and_then(token_usage_from_ditto_usage),
-                warnings,
-            })
-        })
-        .await
-        {
-            Ok(result) => result?,
-            Err(_) => return Err(AgentTurnError::OpenAiRequestTimedOut.into()),
+            attempts += 1;
+            match run_llm_stream_once(
+                runtime.client.clone(),
+                thread_rt.clone(),
+                thread_id,
+                turn_id,
+                req,
+                max_openai_request_duration,
+            )
+            .await
+            {
+                Ok(resp) => {
+                    active_provider_idx = provider_index;
+                    break resp;
+                }
+                Err(failure) => {
+                    let should_fallback = llm_error_prefers_provider_fallback(&failure.error)
+                        && provider_index + 1 < provider_candidates.len();
+                    let is_retryable = llm_error_is_retryable(&failure.error);
+                    last_failure = Some(failure);
+
+                    let Some(failure) = last_failure.as_ref() else {
+                        anyhow::bail!("llm stream failed");
+                    };
+                    if failure.emitted_output {
+                        let summary = llm_error_summary(&failure.error);
+                        anyhow::bail!("llm stream failed after emitting output: {summary}");
+                    }
+
+                    if attempts >= llm_max_attempts {
+                        match &failure.error {
+                            LlmAttemptError::TimedOut => {
+                                return Err(AgentTurnError::OpenAiRequestTimedOut.into())
+                            }
+                            _ => {
+                                let summary = llm_error_summary(&failure.error);
+                                anyhow::bail!("llm stream failed after {attempts} attempts: {summary}");
+                            }
+                        }
+                    }
+
+                    if should_fallback {
+                        let prev = provider_name.clone();
+                        provider_index += 1;
+                        let next = provider_candidates
+                            .get(provider_index)
+                            .cloned()
+                            .unwrap_or_else(|| "<unknown>".to_string());
+                        let cause = llm_error_summary(&failure.error);
+                        let reason = format!("provider_fallback: from={prev} to={next}; cause={cause}");
+                        let _ = thread_rt
+                            .append_event(ThreadEventKind::ModelRouted {
+                                turn_id,
+                                selected_model: model.clone(),
+                                rule_source,
+                                reason: Some(reason),
+                                rule_id: rule_id.clone(),
+                            })
+                            .await;
+                        continue;
+                    }
+
+                    if !is_retryable {
+                        let summary = llm_error_summary(&failure.error);
+                        anyhow::bail!("llm stream failed: {summary}");
+                    }
+
+                    failure_count += 1;
+                    let delay = retry_backoff_delay(
+                        failure_count,
+                        llm_retry_base_delay,
+                        llm_retry_max_delay,
+                    );
+                    if !delay.is_zero() {
+                        tokio::select! {
+                            _ = cancel.cancelled() => return Err(AgentTurnError::Cancelled.into()),
+                            _ = tokio::time::sleep(delay) => {}
+                        }
+                    }
+                }
+            }
         };
 
         if !resp.warnings.is_empty() {
@@ -2122,6 +2512,73 @@ mod tool_parallelism_tests {
         assert!(!tool_is_read_only("artifact_delete"));
         assert!(!tool_is_read_only("thread_hook_run"));
         assert!(!tool_is_read_only("agent_spawn"));
+    }
+}
+
+#[cfg(test)]
+mod llm_retry_tests {
+    use super::*;
+
+    #[test]
+    fn parse_csv_list_trims_and_dedupes() {
+        assert_eq!(
+            parse_csv_list(" openai-a, openai-b,openai-a,, ,openai-c "),
+            vec![
+                "openai-a".to_string(),
+                "openai-b".to_string(),
+                "openai-c".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn build_provider_candidates_keeps_primary_and_uniques() {
+        assert_eq!(
+            build_provider_candidates(
+                "primary",
+                vec![
+                    "fallback-1".to_string(),
+                    "primary".to_string(),
+                    "fallback-1".to_string(),
+                    "fallback-2".to_string(),
+                ]
+            ),
+            vec![
+                "primary".to_string(),
+                "fallback-1".to_string(),
+                "fallback-2".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn llm_error_classification_is_conservative() {
+        use reqwest::StatusCode;
+
+        let rate_limited = LlmAttemptError::Ditto(ditto_llm::DittoError::Api {
+            status: StatusCode::TOO_MANY_REQUESTS,
+            body: "rate limit".to_string(),
+        });
+        assert!(llm_error_is_retryable(&rate_limited));
+        assert!(llm_error_prefers_provider_fallback(&rate_limited));
+
+        let server_error = LlmAttemptError::Ditto(ditto_llm::DittoError::Api {
+            status: StatusCode::BAD_GATEWAY,
+            body: "upstream".to_string(),
+        });
+        assert!(llm_error_is_retryable(&server_error));
+        assert!(llm_error_prefers_provider_fallback(&server_error));
+
+        let bad_request = LlmAttemptError::Ditto(ditto_llm::DittoError::Api {
+            status: StatusCode::BAD_REQUEST,
+            body: "invalid".to_string(),
+        });
+        assert!(!llm_error_is_retryable(&bad_request));
+        assert!(!llm_error_prefers_provider_fallback(&bad_request));
+
+        let timed_out = LlmAttemptError::TimedOut;
+        assert!(llm_error_is_retryable(&timed_out));
+        assert!(llm_error_prefers_provider_fallback(&timed_out));
     }
 }
 

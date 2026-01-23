@@ -15,7 +15,8 @@
 
 - 多 provider 抽象仍是 TODO（capability flags 已有最小实现；见 `docs/v0.2.0_parity.md`）。
 - role/keyword/subagent 的自动路由（MVP 已实现；见下文 Router）。
-- 自动升降级、fallback、长上下文阈值切换（仍是 TODO）。
+- 自动升降级（cheap→strong）与 tool 调用“轻模型”通道仍是 TODO。
+- 429/5xx/timeout 的 provider fallback 已实现（见 §4）。
 
 ---
 
@@ -220,3 +221,36 @@ keyword_rules:
 - 如果两者都实现，建议优先级写死为：
   1. 有 long-context model 且命中阈值 → 路由到 long-context
   2. 否则 → 触发 compact/summary（规格草案见 `docs/budgets.md`）
+
+---
+
+## 4) 已实现：失败重试与 provider fallback（v0.2.0）
+
+### 4.1 触发条件（实现口径）
+
+- 只覆盖 **LLM streaming 请求**（`LanguageModel::stream`）。
+- 若请求在产生任何输出（`output_text` delta / tool_call chunk）之前失败，且错误属于：
+  - HTTP `429`（rate limit）
+  - HTTP `5xx`（provider / upstream error）
+  - 请求超时（timeout）
+  则允许重试。
+- 一旦已产生任何输出：**不做静默重试**（避免重复输出），直接失败。
+
+### 4.2 配置与参数
+
+fallback provider 列表来源（高 → 低）：
+
+1. env：`CODE_PM_OPENAI_FALLBACK_PROVIDERS="p1,p2,p3"`（逗号分隔）
+2. project config（需 `project_config.enabled=true`）：`openai.fallback_providers = ["p1", "p2"]`
+
+重试参数（env）：
+
+- `CODE_PM_AGENT_LLM_MAX_ATTEMPTS`（默认 `3`）
+- `CODE_PM_AGENT_LLM_RETRY_BASE_DELAY_MS`（默认 `200`）
+- `CODE_PM_AGENT_LLM_RETRY_MAX_DELAY_MS`（默认 `2000`）
+
+### 4.3 落盘与可解释性
+
+- 每个 turn 的 `ModelRouted.reason` 会附加 `provider=<name>`。
+- 当发生 provider fallback 时，会追加一条 `ModelRouted` 事件，`reason` 形如：
+  - `provider_fallback: from=<prev> to=<next>; cause=<error summary>`
