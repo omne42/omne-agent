@@ -38,6 +38,24 @@ struct WorkflowFile {
     body: String,
 }
 
+#[derive(Debug, Clone)]
+struct WorkflowTask {
+    id: String,
+    title: String,
+    body: String,
+}
+
+#[derive(Debug, Clone)]
+struct WorkflowTaskResult {
+    task_id: String,
+    title: String,
+    thread_id: ThreadId,
+    turn_id: TurnId,
+    status: TurnStatus,
+    reason: Option<String>,
+    assistant_text: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 struct CommandSummary {
     name: String,
@@ -491,6 +509,18 @@ async fn run_command_run(
         process_ids.push(process_id);
     }
 
+    let mut fan_in_artifact_id: Option<pm_protocol::ArtifactId> = None;
+    let mut fan_out_results = Vec::<WorkflowTaskResult>::new();
+    if args.fan_out {
+        let tasks = parse_workflow_tasks(&rendered_body)?;
+        if !tasks.is_empty() {
+            fan_out_results = run_workflow_fan_out(app, thread_id, &tasks).await?;
+            let (artifact_id, _artifact_path) =
+                write_fan_in_summary_artifact(app, thread_id, &fan_out_results).await?;
+            fan_in_artifact_id = Some(artifact_id);
+        }
+    }
+
     let mut input = String::new();
     if !process_ids.is_empty() {
         let ids = process_ids
@@ -500,6 +530,21 @@ async fn run_command_run(
             .join(", ");
         input.push_str(&format!(
             "Context steps executed. process_id(s)={ids}. Use `pm process inspect/tail/follow` for details.\n\n"
+        ));
+    }
+    if let Some(artifact_id) = fan_in_artifact_id {
+        input.push_str(&format!(
+            "Fan-out tasks completed. fan_in_summary artifact_id={artifact_id}.\n"
+        ));
+        for result in &fan_out_results {
+            input.push_str(&format!(
+                "- task_id={} thread_id={} turn_id={} status={:?}\n",
+                result.task_id, result.thread_id, result.turn_id, result.status
+            ));
+        }
+        input.push('\n');
+        input.push_str(&format!(
+            "Use `pm artifact read {thread_id} {artifact_id}` for the full fan-in summary.\n\n"
         ));
     }
     input.push_str(&rendered_body);
@@ -520,6 +565,319 @@ async fn run_command_run(
     .await?;
 
     Ok(())
+}
+
+fn parse_workflow_tasks(body: &str) -> anyhow::Result<Vec<WorkflowTask>> {
+    let mut tasks = Vec::<WorkflowTask>::new();
+    let mut seen_ids = BTreeSet::<String>::new();
+
+    let mut current_id = None::<String>;
+    let mut current_title = String::new();
+    let mut current_body = String::new();
+
+    for line in body.split_inclusive('\n') {
+        if let Some((id, title)) = parse_task_header(line) {
+            if let Some(id) = current_id.take() {
+                tasks.push(WorkflowTask {
+                    id,
+                    title: std::mem::take(&mut current_title),
+                    body: std::mem::take(&mut current_body),
+                });
+            }
+
+            ensure_valid_var_name(&id, "task id")?;
+            if !seen_ids.insert(id.clone()) {
+                anyhow::bail!("duplicate task id: {id}");
+            }
+            current_id = Some(id);
+            current_title = title;
+            continue;
+        }
+
+        if current_id.is_some() {
+            current_body.push_str(line);
+        }
+    }
+
+    if let Some(id) = current_id.take() {
+        tasks.push(WorkflowTask {
+            id,
+            title: current_title,
+            body: current_body,
+        });
+    }
+
+    Ok(tasks)
+}
+
+fn parse_task_header(line: &str) -> Option<(String, String)> {
+    let trimmed = line
+        .trim_end_matches(&['\r', '\n'][..])
+        .trim_start();
+    let rest = trimmed.strip_prefix("## Task:")?.trim();
+    if rest.is_empty() {
+        return None;
+    }
+
+    let mut split_at = None::<usize>;
+    for (idx, ch) in rest.char_indices() {
+        if ch.is_whitespace() {
+            split_at = Some(idx);
+            break;
+        }
+    }
+
+    let (id, title) = match split_at {
+        Some(idx) => (&rest[..idx], rest[idx..].trim()),
+        None => (rest, ""),
+    };
+
+    Some((id.to_string(), title.to_string()))
+}
+
+async fn run_workflow_fan_out(
+    app: &mut App,
+    parent_thread_id: ThreadId,
+    tasks: &[WorkflowTask],
+) -> anyhow::Result<Vec<WorkflowTaskResult>> {
+    #[derive(Debug, Deserialize)]
+    struct ForkResult {
+        thread_id: ThreadId,
+        last_seq: u64,
+    }
+
+    #[derive(Debug)]
+    struct ActiveTask {
+        task_id: String,
+        title: String,
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        since_seq: u64,
+        assistant_text: Option<String>,
+    }
+
+    let max_concurrent_subagents = parse_env_usize("CODE_PM_MAX_CONCURRENT_SUBAGENTS", 4, 0, 64);
+    let concurrency_limit = if max_concurrent_subagents == 0 {
+        tasks.len().max(1)
+    } else {
+        max_concurrent_subagents
+    };
+
+    let mut pending_idx = 0usize;
+    let mut active = Vec::<ActiveTask>::new();
+    let mut finished = Vec::<WorkflowTaskResult>::new();
+
+    let mut last_progress_print = Instant::now();
+    while finished.len() < tasks.len() {
+        while active.len() < concurrency_limit && pending_idx < tasks.len() {
+            let task = &tasks[pending_idx];
+            pending_idx += 1;
+
+            let forked = app.thread_fork(parent_thread_id).await?;
+            let forked: ForkResult = serde_json::from_value(forked).context("parse thread/fork")?;
+
+            let _ = app
+                .rpc(
+                    "thread/configure",
+                    serde_json::json!({
+                        "thread_id": forked.thread_id,
+                        "approval_policy": null,
+                        "sandbox_policy": pm_protocol::SandboxPolicy::ReadOnly,
+                        "sandbox_writable_roots": null,
+                        "sandbox_network_access": null,
+                        "mode": "reviewer",
+                        "model": null,
+                        "openai_base_url": null,
+                        "allowed_tools": null,
+                    }),
+                )
+                .await?;
+
+            let mut input = format!(
+                "You are a read-only subagent.\nTask: {}{}\n\n",
+                task.id,
+                if task.title.is_empty() {
+                    "".to_string()
+                } else {
+                    format!(" ({})", task.title)
+                }
+            );
+            let body = task.body.trim();
+            if body.is_empty() {
+                input.push_str("(no task body)\n");
+            } else {
+                input.push_str(body);
+                input.push('\n');
+            }
+            input.push_str("\nReturn a concise result.\n");
+
+            let turn_id = app.turn_start(forked.thread_id, input).await?;
+            active.push(ActiveTask {
+                task_id: task.id.clone(),
+                title: task.title.clone(),
+                thread_id: forked.thread_id,
+                turn_id,
+                since_seq: forked.last_seq,
+                assistant_text: None,
+            });
+        }
+
+        let mut idx = 0usize;
+        while idx < active.len() {
+            let mut done: Option<(TurnStatus, Option<String>)> = None;
+            let thread_id = active[idx].thread_id;
+            let turn_id = active[idx].turn_id;
+
+            loop {
+                let resp = app
+                    .thread_subscribe(thread_id, active[idx].since_seq, Some(1_000), Some(0))
+                    .await?;
+                active[idx].since_seq = resp.last_seq;
+
+                for event in resp.events {
+                    match event.kind {
+                        pm_protocol::ThreadEventKind::AssistantMessage {
+                            turn_id: Some(msg_turn_id),
+                            text,
+                            ..
+                        } if msg_turn_id == turn_id => {
+                            active[idx].assistant_text = Some(text);
+                        }
+                        pm_protocol::ThreadEventKind::ApprovalRequested { .. } => {
+                            anyhow::bail!(
+                                "fan-out task needs approval (thread_id={thread_id}); use `pm inbox`"
+                            );
+                        }
+                        pm_protocol::ThreadEventKind::TurnCompleted {
+                            turn_id: completed_turn_id,
+                            status,
+                            reason,
+                        } if completed_turn_id == turn_id => {
+                            done = Some((status, reason));
+                        }
+                        _ => {}
+                    }
+                }
+
+                if !resp.has_more {
+                    break;
+                }
+            }
+
+            if let Some((status, reason)) = done {
+                let task = active.remove(idx);
+                finished.push(WorkflowTaskResult {
+                    task_id: task.task_id,
+                    title: task.title,
+                    thread_id: task.thread_id,
+                    turn_id: task.turn_id,
+                    status,
+                    reason,
+                    assistant_text: task.assistant_text,
+                });
+                continue;
+            }
+
+            idx += 1;
+        }
+
+        if finished.len() < tasks.len() {
+            if last_progress_print.elapsed() >= Duration::from_secs(1) {
+                eprintln!(
+                    "[fan-out] completed {}/{} (active={}, max={})",
+                    finished.len(),
+                    tasks.len(),
+                    active.len(),
+                    concurrency_limit
+                );
+                last_progress_print = Instant::now();
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+    }
+
+    let mut by_id = std::collections::HashMap::<String, WorkflowTaskResult>::new();
+    for result in finished {
+        by_id.insert(result.task_id.clone(), result);
+    }
+
+    let mut ordered = Vec::<WorkflowTaskResult>::new();
+    for task in tasks {
+        if let Some(result) = by_id.remove(&task.id) {
+            ordered.push(result);
+        }
+    }
+    Ok(ordered)
+}
+
+async fn write_fan_in_summary_artifact(
+    app: &mut App,
+    thread_id: ThreadId,
+    results: &[WorkflowTaskResult],
+) -> anyhow::Result<(pm_protocol::ArtifactId, String)> {
+    let mut text = String::new();
+    text.push_str("# Fan-in Summary\n\n");
+    text.push_str(&format!("Tasks: {}\n\n", results.len()));
+
+    text.push_str("| task_id | thread_id | turn_id | status |\n");
+    text.push_str("| --- | --- | --- | --- |\n");
+    for result in results {
+        text.push_str(&format!(
+            "| {} | {} | {} | {:?} |\n",
+            result.task_id, result.thread_id, result.turn_id, result.status
+        ));
+    }
+    text.push('\n');
+
+    for result in results {
+        text.push_str(&format!("## {} {}\n\n", result.task_id, result.title));
+        text.push_str(&format!("- status: `{:?}`\n", result.status));
+        if let Some(reason) = result.reason.as_deref().filter(|v| !v.trim().is_empty()) {
+            text.push_str(&format!("- reason: {}\n", reason));
+        }
+        if let Some(msg) = result.assistant_text.as_deref().filter(|v| !v.trim().is_empty()) {
+            text.push('\n');
+            text.push_str("```text\n");
+            text.push_str(&truncate_chars(msg, 8_000));
+            if msg.chars().count() > 8_000 {
+                text.push_str("\n<...truncated...>\n");
+            }
+            text.push_str("\n```\n\n");
+        }
+    }
+
+    let v = app
+        .rpc(
+            "artifact/write",
+            serde_json::json!({
+                "thread_id": thread_id,
+                "turn_id": null,
+                "approval_id": null,
+                "artifact_id": null,
+                "artifact_type": "fan_in_summary",
+                "summary": "fan-in summary",
+                "text": text,
+            }),
+        )
+        .await?;
+    ensure_approval_and_denial_handled("artifact/write", &v)?;
+
+    let artifact_id: pm_protocol::ArtifactId =
+        serde_json::from_value(v["artifact_id"].clone()).context("parse artifact_id")?;
+    let content_path = v["content_path"].as_str().unwrap_or("").to_string();
+    Ok((artifact_id, content_path))
+}
+
+fn truncate_chars(input: &str, max_chars: usize) -> String {
+    input.chars().take(max_chars).collect()
+}
+
+fn parse_env_usize(key: &str, default: usize, min: usize, max: usize) -> usize {
+    std::env::var(key)
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .map(|value| value.clamp(min, max))
+        .unwrap_or(default)
 }
 
 #[cfg(test)]
@@ -554,5 +912,19 @@ mod tests {
         vars.insert("name".to_string(), "ok".to_string());
         let err = render_template("{{ name }}", &declared, &vars).unwrap_err();
         assert!(err.to_string().contains("whitespace"));
+    }
+
+    #[test]
+    fn parse_workflow_tasks_extracts_task_sections() -> anyhow::Result<()> {
+        let body = "Intro\n\n## Task: t1 First\nhello\n\n## Task: t2\nworld\n";
+        let tasks = parse_workflow_tasks(body)?;
+        assert_eq!(tasks.len(), 2);
+        assert_eq!(tasks[0].id, "t1");
+        assert_eq!(tasks[0].title, "First");
+        assert!(tasks[0].body.contains("hello"));
+        assert_eq!(tasks[1].id, "t2");
+        assert_eq!(tasks[1].title, "");
+        assert!(tasks[1].body.contains("world"));
+        Ok(())
     }
 }

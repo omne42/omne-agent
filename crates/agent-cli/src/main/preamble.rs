@@ -116,6 +116,11 @@ struct CommandRunArgs {
     #[arg(long = "var", value_name = "KEY=VALUE")]
     vars: Vec<CommandVar>,
 
+    /// Parse `## Task: <id> <title>` sections in the command body and run them as parallel
+    /// read-only subagent turns before starting the main turn.
+    #[arg(long, default_value_t = false)]
+    fan_out: bool,
+
     /// Resume an existing thread instead of creating a new one.
     #[arg(long)]
     thread_id: Option<ThreadId>,

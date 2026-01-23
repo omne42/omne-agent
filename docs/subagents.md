@@ -230,6 +230,7 @@ DoD（未来实现时）：
 - [x] 子任务会写出 `artifact_type="fan_out_result"`（可用 `expected_artifact_type` 覆盖），且 summary/内容至少包含 `task_id + thread_id + turn_id`（作为 fan-in 的结果锚点）。
 - [x] `workspace_mode=isolated_write` 在未实现隔离前必须 hard-fail（不要隐式降级到共享写）。
 - [x] fan-out/fan-in 的 hook 点：父 thread 的 `ToolStarted/ToolCompleted(tool=subagent/spawn)` + 子 thread 的 `TurnCompleted`（由返回的 `thread_id/turn_id` 关联）+ 结果锚点 artifact（默认 `fan_out_result`）。
+- [x] workflow fan-out：`pm command run <name> --fan-out` 解析 `## Task:`，并在父 thread 写入 `artifact_type="fan_in_summary"` 汇总 artifact（用于主 turn 上下文/可追溯）。
 
 ### 3.3.2 方案选型（A/B/C，避免“边写边发明”）
 
@@ -244,14 +245,14 @@ DoD（未来实现时）：
 
 ### 3.4 CLI/API（未来实现占位）
 
-CLI（占位）：
+CLI（v0.2.x 最小可用 + 占位）：
 
 ```bash
-# fan-out：启动一个子任务（等价 thread spawn + 约定写出 fan_out_result）
-pm thread spawn <thread_id> "<input>" --json
+# fan-out + fan-in：从 command body 的 `## Task:` 段落并发执行子任务，并写入 fan_in_summary
+pm command run <name> --fan-out
 
-# fan-in：收集多个 fan_out_result 并写汇总
-# （v1 可先由 orchestrator 手工调用 artifact/write 完成）
+# 低阶原语：只 fork + 启动子 turn（不做 fan-in 汇总）
+pm thread spawn <thread_id> "<input>"
 ```
 
 ---

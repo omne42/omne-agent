@@ -110,13 +110,26 @@ inputs:
 
 ---
 
-## 4) Orchestrator 并发拆分（TODO：后续再做）
+## 4) Orchestrator 并发拆分（v0.2.x 最小落地：`pm command run --fan-out`）
 
-当要把一个 workflow 拆成并发子任务时，建议只支持**一个简单约定**（别发明 DSL）：
+当要把一个 workflow 拆成并发子任务时，我们只支持**一个简单约定**（别发明 DSL）：
 
 - `## Task: <id> <title>` 作为 task 边界。
-- 每个 task 作为一个子 thread/turn 执行；依赖关系（如果要做）先用最小字段 `depends_on: [a,b]` 放在 task 段落的局部 frontmatter（或先不支持）。
-- fan-out/fan-in 的正确性来源仍然是事件落盘（见 `docs/thread_event_model.md`）。
+
+v0.2.x 行为（已实现）：
+
+- CLI：`pm command run <name> --fan-out`
+- 解析：对渲染后的 command body 扫描 `## Task:` 段落，提取 `task_id/title/body`。
+- fan-out：每个 task 会通过 `thread/fork` 创建子 thread，并强制配置为 `sandbox_policy=read_only` + `mode=reviewer`，然后 `turn/start` 并发执行。
+  - 并发上限：复用 `CODE_PM_MAX_CONCURRENT_SUBAGENTS`（默认 `4`；`0` 表示不限制）。
+  - 重要限制：由于 v0.2.x 还没有 workspace 隔离，fan-out 子任务只能做并发只读分析（读文件/索引/事件），不能写代码/跑命令。
+- fan-in：等待所有子任务 `TurnCompleted` 后，在父 thread 写入 `artifact_type="fan_in_summary"`，内容包含每个 task 的 `thread_id/turn_id/status` 与最后一条 `AssistantMessage`（可用于主 turn 的上下文）。
+- 主 turn：fan-in 完成后，仍会继续执行原 `pm command run` 的主 turn，并在输入中附带 `fan_in_summary` 的定位信息（便于后续 `pm artifact read`）。
+
+非目标（仍 TODO）：
+
+- task 依赖（`depends_on`）、优先级与公平调度（worker pool with priority）。
+- “提前返回/持续更新”进度摘要（见 `docs/v0.2.0_parity.md` 与 `docs/subagents.md`）。
 
 ---
 
