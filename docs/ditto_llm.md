@@ -6,16 +6,18 @@
 
 ## 在 CodePM 仓库中的定位（v0.2.x 现状）
 
-> 本仓库依赖的 `ditto-llm`（本地 checkout：`./ditto-llm`）**不是**“统一生成 SDK”，而是为 `Provider/Model 路由`提供最小抽象：provider profile 配置 + OpenAI-compatible `/models` 发现 + `thinking`(reasoning.effort) 配置。
+> 本仓库依赖的 `ditto-llm`（本地 checkout：`./ditto-llm`）目前包含两层能力：
 >
-> OpenAI Responses API 的实际调用实现位于 `crates/openai`；本文后续 “LanguageModel/EmbeddingModel + 多 provider 适配” 属于未来设想，尚未在本仓库落地。
+> 1. CodePM v0.2.x 当前用到的“路由/配置层”：provider profile 配置 + OpenAI-compatible `/models` 发现 + `thinking`(reasoning.effort) 配置。
+> 2. “统一 LLM SDK 层”：`LanguageModel` / `EmbeddingModel` traits + 多 provider 适配（OpenAI/Anthropic/Google，含 streaming/tools/embeddings）+ examples/tests。
+>
+> CodePM 主程序目前仍通过 `crates/openai` 直接调用 Responses API；统一 SDK 层尚未接入 app-server 的业务流，但已可独立使用并作为后续迁移目标。
 
-已实现（`ditto-llm/src/lib.rs`）：
+已实现（`ditto-llm` crate）：
 
-- `ProviderConfig` / `ProviderAuth`（base_url / auth / model whitelist / capability flags）
-- `.env` 解析：`parse_dotenv` / `Env`
-- `/models` 发现：`Provider` trait / `OpenAiProvider`（含 `ProviderCapabilities`；可在 provider profile 覆盖）
-- model-level `thinking`：`ThinkingIntensity` / `ModelConfig`（供 app-server 映射到 `reasoning.effort`）
+- 路由/配置层：`ProviderConfig` / `ProviderAuth` / `.env` 解析 / `GET /models` 发现 / model-level `thinking`
+- 统一 SDK 层：统一 types + `LanguageModel`/`EmbeddingModel` + OpenAI/Anthropic/Google providers（含 streaming/tools/embeddings）
+- 示例与测试：`examples/` + unit tests（以转换/解析为主）
 
 相关使用点：
 
@@ -432,7 +434,7 @@ async fn main() -> Result<(), ditto_llm::Error> {
 > - 仅要求 OpenAI Responses API（其它 provider 先不做）
 > - 不做图片/文件上传（先以纯文本 + tool calling 为主）
 >
-> 待确认：
+> 已确认/已实现：
 >
-> 1. **初始供应商支持**：OpenAI + Anthropic + Google，还是先实现前两个？
-> 2. **是否需要图片/文件上传支持**？
+> 1. ✅ **初始供应商支持**：OpenAI + Anthropic + Google
+> 2. ⏸️ **图片/文件上传支持**：暂不支持（先以纯文本 + tool calling 为主）
