@@ -136,6 +136,7 @@
 - 更新 `docs/research/README.md`：补齐新增调研条目并调整落地方向表述。
 - 更新 `docs/v0.2.0_parity.md`：同步 `item/* notifications` 与通知去重/节流的落地状态（`pm watch|inbox --debounce-ms`）。
 - 更新 `docs/v0.2.0_parity.md`：补齐 “Item 覆盖” 勾选状态（见 `docs/thread_event_model.md`）。
+- 更新 `docs/v0.2.0_parity.md`：标记 “统一请求/响应结构 + provider 适配集中” 已通过 `ditto-llm` 在 agent loop 落地（见 `docs/ditto_llm.md`）。
 - `githooks/pre-commit`：强制每次提交同时包含 `CHANGELOG.md` 与实际变更（禁止 changelog-only / non-changelog commit）。
 - `pm-app-server agent loop`：增加最小长任务预算（`max_steps`/`max_tool_calls`/`max_turn_seconds` + 单次 OpenAI 请求超时）；超限会使 turn 失败并写入失败原因，避免无限循环烧钱/卡死。
 - v0.2.0 方向明确：git/workspace 使用 `/tmp`/worktree 等目录隔离，不把 Docker/容器当作实现前提（但不禁止 agent 自己运行 Docker）；实现文档中移除/替换相关表述。
@@ -169,6 +170,7 @@
 - `pm-app-server`：agent loop 的 LLM 调用改为通过 `ditto-llm`（`LanguageModel`）；默认 OpenAI Responses，可通过 provider capabilities 切换到 OpenAI-compatible Chat Completions。
 
 ### Fixed
+- docs：`docs/v0.2.0_parity.md` 更新 Transformers 状态，标记 ditto-llm 接入已落地。
 - `pm-app-server`/`pm`/`code-pm`/`pm-core::orchestrator`：拆分超大 Rust 源文件（保持行为不变），避免单文件超过 1000 行，降低 review/IDE 压力。
 - `pm-app-server`：进一步拆分接近上限的模块（`agent/tools`、`process_control`），为后续扩展 tools/hooks 留出空间并保持单文件 < 1000 行。
 - `pm-app-server`：拆分 JSON-RPC router（`main/app.rs`）为按域 handler 的小文件（`main/app/*.rs`），避免入口路由继续膨胀。
