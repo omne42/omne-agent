@@ -32,6 +32,22 @@ async fn handle_process_start(
     server: &Server,
     params: ProcessStartParams,
 ) -> anyhow::Result<Value> {
+    handle_process_start_inner(server, params, None).await
+}
+
+async fn handle_process_start_with_env(
+    server: &Server,
+    params: ProcessStartParams,
+    extra_env: &std::collections::BTreeMap<String, String>,
+) -> anyhow::Result<Value> {
+    handle_process_start_inner(server, params, Some(extra_env)).await
+}
+
+async fn handle_process_start_inner(
+    server: &Server,
+    params: ProcessStartParams,
+    extra_env: Option<&std::collections::BTreeMap<String, String>>,
+) -> anyhow::Result<Value> {
     if params.argv.is_empty() {
         anyhow::bail!("argv must not be empty");
     }
@@ -379,6 +395,9 @@ async fn handle_process_start(
     cmd.stdin(Stdio::null());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
+    if let Some(extra_env) = extra_env {
+        cmd.envs(extra_env.iter());
+    }
     scrub_child_process_env(&mut cmd);
     let mut child = cmd
         .spawn()

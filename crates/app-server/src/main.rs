@@ -15,6 +15,7 @@ include!("main/file_write_patch.rs");
 include!("main/file_edit_delete.rs");
 include!("main/fs.rs");
 include!("main/artifact.rs");
+include!("main/hooks_dispatch.rs");
 include!("main/process_control.rs");
 include!("main/process_stream.rs");
 

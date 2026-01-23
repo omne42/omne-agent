@@ -459,6 +459,15 @@ impl ThreadRuntime {
             }
         }
 
+        let _ = run_stop_hooks(
+            server.as_ref(),
+            thread_id,
+            turn_id,
+            status,
+            reason_for_report.as_deref(),
+        )
+        .await;
+
         let mut active = self.active_turn.lock().await;
         if active.as_ref().is_some_and(|a| a.turn_id == turn_id) {
             *active = None;

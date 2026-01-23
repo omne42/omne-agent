@@ -5,7 +5,16 @@ async fn run_tool_call(
     tool_name: &str,
     args: Value,
     cancel: CancellationToken,
-) -> anyhow::Result<Value> {
+) -> anyhow::Result<ToolCallOutcome> {
+    let tool_action = super::hook_tool_name_from_agent_tool(tool_name).unwrap_or(tool_name);
+
+    let pre_hook_contexts = match turn_id {
+        Some(turn_id) => {
+            super::run_pre_tool_use_hooks(server, thread_id, turn_id, tool_action, &args).await
+        }
+        None => Vec::new(),
+    };
+
     let mut approval_id: Option<ApprovalId> = None;
 
     for attempt in 0..3usize {
@@ -24,7 +33,19 @@ async fn run_tool_call(
         .await?;
 
         let Some(requested) = parse_needs_approval(&output)? else {
-            return Ok(redact_tool_output(output));
+            let output = redact_tool_output(output);
+            let post_hook_contexts = match turn_id {
+                Some(turn_id) => {
+                    super::run_post_tool_use_hooks(server, thread_id, turn_id, tool_action, &args, &output)
+                        .await
+                }
+                None => Vec::new(),
+            };
+            let hook_messages = hook_contexts_to_messages(&pre_hook_contexts, &post_hook_contexts);
+            return Ok(ToolCallOutcome {
+                output,
+                hook_messages,
+            });
         };
 
         if attempt >= 2 {
@@ -41,18 +62,88 @@ async fn run_tool_call(
                 approval_id = Some(requested);
             }
             ApprovalDecision::Denied => {
-                return Ok(serde_json::json!({
+                let output = serde_json::json!({
                     "denied": true,
                     "approval_id": requested,
                     "decision": outcome.decision,
                     "remember": outcome.remember,
                     "reason": outcome.reason,
-                }));
+                });
+                let output = redact_tool_output(output);
+                let post_hook_contexts = match turn_id {
+                    Some(turn_id) => {
+                        super::run_post_tool_use_hooks(
+                            server,
+                            thread_id,
+                            turn_id,
+                            tool_action,
+                            &args,
+                            &output,
+                        )
+                        .await
+                    }
+                    None => Vec::new(),
+                };
+                let hook_messages =
+                    hook_contexts_to_messages(&pre_hook_contexts, &post_hook_contexts);
+                return Ok(ToolCallOutcome {
+                    output,
+                    hook_messages,
+                });
             }
         }
     }
 
     Err(AgentTurnError::BudgetExceeded { budget: "retries" }.into())
+}
+
+struct ToolCallOutcome {
+    output: Value,
+    hook_messages: Vec<pm_openai::ResponseItem>,
+}
+
+fn hook_contexts_to_messages(
+    pre: &[super::HookAdditionalContext],
+    post: &[super::HookAdditionalContext],
+) -> Vec<pm_openai::ResponseItem> {
+    let mut out = Vec::new();
+    if let Some(item) = hook_contexts_to_message("hooks/pre_tool_use", pre) {
+        out.push(item);
+    }
+    if let Some(item) = hook_contexts_to_message("hooks/post_tool_use", post) {
+        out.push(item);
+    }
+    out
+}
+
+fn hook_contexts_to_message(
+    label: &str,
+    contexts: &[super::HookAdditionalContext],
+) -> Option<pm_openai::ResponseItem> {
+    if contexts.is_empty() {
+        return None;
+    }
+
+    let mut text = String::new();
+    text.push_str(&format!("# {label}\n\n"));
+    for ctx in contexts {
+        text.push_str(&format!(
+            "_hook_point: {}_\n_hook_id: {}_\n_path: {}_\n\n",
+            ctx.hook_point.as_str(),
+            ctx.hook_id,
+            ctx.context_path.display()
+        ));
+        if let Some(summary) = ctx.summary.as_deref() {
+            text.push_str(&format!("## {}\n\n", summary.trim()));
+        }
+        text.push_str(ctx.text.trim());
+        text.push_str("\n\n");
+    }
+
+    Some(pm_openai::ResponseItem::Message {
+        role: "system".to_string(),
+        content: vec![pm_openai::ContentItem::InputText { text }],
+    })
 }
 
 async fn active_subagent_threads(

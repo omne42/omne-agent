@@ -107,6 +107,7 @@
 - `pm` CLI：新增 `pm repo search/index`（支持 `--approval-id` 重试）。
 - `pm` CLI：新增 `pm reference import/status`（导入本地目录为 reference repo；导入时不复制 `.git/`、默认跳过单文件 `> 10MB` 并生成 `manifest.json`），`pm init` 同步创建 `.codepm_data/reference/` 并写入 `.codepm_data/.gitignore`。
 - `pm-protocol`/`pm-app-server`/`pm`：新增 Checkpoints（`thread/checkpoint/{create,list,restore}`；CLI: `pm checkpoint {create,list,restore}`），workspace 快照落盘到 `.codepm_data/threads/<thread_id>/artifacts/checkpoints/`；restore 强制 `prompt_strict` 审批并要求无 active turn/running process。
+- `pm-app-server`：新增 Hooks（`./.codepm_data/spec/hooks.yaml`）：支持 `session_start/pre_tool_use/post_tool_use/stop` 触发命令（走 `process/start` + mode/sandbox/execpolicy/approval），并支持 `additional_context` 注入与落盘审计（见 `docs/hooks.md`）。
 
 ### Changed
 - `pm`/`pm-app-server`：`pm_root` 默认目录改为 `./.codepm_data/`（可用 `--pm-root` 或 `CODE_PM_ROOT` 覆盖）。

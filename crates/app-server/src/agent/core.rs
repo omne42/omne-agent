@@ -500,6 +500,19 @@ pub async fn run_agent_turn(
         instructions.push_str(&skills);
     }
 
+    let session_start_hook_contexts =
+        super::run_session_start_hooks(server.as_ref(), thread_id, turn_id).await;
+    if !session_start_hook_contexts.is_empty() {
+        instructions.push_str("\n\n# Additional context (hooks/session_start)\n\n");
+        for ctx in &session_start_hook_contexts {
+            if let Some(summary) = ctx.summary.as_deref() {
+                instructions.push_str(&format!("## {}\n\n", summary.trim()));
+            }
+            instructions.push_str(ctx.text.trim());
+            instructions.push_str("\n\n");
+        }
+    }
+
     let mut input_items = build_conversation(&server, thread_id).await?;
     let context_tokens_estimate = estimate_context_tokens(&instructions, &input_items);
 
@@ -747,7 +760,8 @@ pub async fn run_agent_turn(
             }
             tool_calls_total += batch_size;
 
-            let mut outputs = vec![None::<pm_openai::ResponseItem>; batch_size];
+            let mut outputs =
+                vec![None::<(String, Value, Vec<pm_openai::ResponseItem>)>; batch_size];
             let mut calls = Vec::new();
 
             for (idx, (tool_name, arguments, call_id)) in function_calls.into_iter().enumerate() {
@@ -759,10 +773,7 @@ pub async fn run_agent_turn(
                             "details": err.to_string(),
                             "arguments": arguments,
                         });
-                        outputs[idx] = Some(pm_openai::ResponseItem::FunctionCallOutput {
-                            call_id,
-                            output: serde_json::to_string(&output)?,
-                        });
+                        outputs[idx] = Some((call_id, output, Vec::new()));
                         continue;
                     }
                 };
@@ -774,7 +785,7 @@ pub async fn run_agent_turn(
                     let server = server.clone();
                     let cancel = cancel.clone();
                     async move {
-                        let output_value = run_tool_call(
+                        let outcome = run_tool_call(
                             &server,
                             thread_id,
                             Some(turn_id),
@@ -783,26 +794,29 @@ pub async fn run_agent_turn(
                             cancel,
                         )
                         .await;
-                        (idx, call_id, output_value)
+                        (idx, call_id, outcome)
                     }
                 })
                 .buffer_unordered(max_parallel_tool_calls)
                 .collect::<Vec<_>>()
                 .await;
 
-            for (idx, call_id, output_value) in results {
-                let output_value = match output_value {
-                    Ok(v) => v,
-                    Err(err) => serde_json::json!({ "error": err.to_string() }),
+            for (idx, call_id, outcome) in results {
+                let (output_value, hook_messages) = match outcome {
+                    Ok(outcome) => (outcome.output, outcome.hook_messages),
+                    Err(err) => (serde_json::json!({ "error": err.to_string() }), Vec::new()),
                 };
-                outputs[idx] = Some(pm_openai::ResponseItem::FunctionCallOutput {
+                outputs[idx] = Some((call_id, output_value, hook_messages));
+            }
+
+            for (call_id, output_value, hook_messages) in outputs.into_iter().flatten() {
+                input_items.push(pm_openai::ResponseItem::FunctionCallOutput {
                     call_id,
                     output: serde_json::to_string(&output_value)?,
                 });
-            }
-
-            for output in outputs.into_iter().flatten() {
-                input_items.push(output);
+                for message in hook_messages {
+                    input_items.push(message);
+                }
             }
         } else {
             for (tool_name, arguments, call_id) in function_calls {
@@ -829,7 +843,7 @@ pub async fn run_agent_turn(
                     }
                 };
 
-                let output_value = run_tool_call(
+                let outcome = run_tool_call(
                     &server,
                     thread_id,
                     Some(turn_id),
@@ -838,15 +852,18 @@ pub async fn run_agent_turn(
                     cancel.clone(),
                 )
                 .await;
-                let output_value = match output_value {
-                    Ok(v) => v,
-                    Err(err) => serde_json::json!({ "error": err.to_string() }),
+                let (output_value, hook_messages) = match outcome {
+                    Ok(outcome) => (outcome.output, outcome.hook_messages),
+                    Err(err) => (serde_json::json!({ "error": err.to_string() }), Vec::new()),
                 };
 
                 input_items.push(pm_openai::ResponseItem::FunctionCallOutput {
                     call_id,
                     output: serde_json::to_string(&output_value)?,
                 });
+                for message in hook_messages {
+                    input_items.push(message);
+                }
             }
         }
 
