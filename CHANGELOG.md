@@ -114,6 +114,7 @@
 - `pm`/`pm-app-server`：`pm_root` 默认目录改为 `./.codepm_data/`（可用 `--pm-root` 或 `CODE_PM_ROOT` 覆盖）。
 - （breaking）project spec 目录固定为 `./.codepm_data/spec/`（modes/workspace hooks/skills 等），不再支持 legacy `.codepm/`/`.code_pm/` 路径。
 - 更新 `docs/ditto_llm.md`：同步 ditto-llm 统一 SDK 层已落地（LanguageModel/EmbeddingModel + OpenAI/Anthropic/Google + streaming/tools/embeddings）。
+- 更新 `docs/ditto_llm_todos.md`：标记已完成的 ditto-llm TODO，并作为后续推进清单。
 - 重写 `docs/implementation_plan.md`：以 Agent CLI（tool/sandbox/approvals + 事件流）为核心基建，Git 降级为交付适配层，并明确 RTS 控制面最小能力集。
 - 更新 `docs/development_process.md`：补齐 RTS 风格交互要求（attention/inbox、pause/interrupt/step），并把 workspace hooks（setup/run/archive）与 artifacts/preview 明确进里程碑。
 - `docs/workflow.md` 标注为 `v0.1.1` legacy，`docs/start.md` 增加 vNext 文档导航。

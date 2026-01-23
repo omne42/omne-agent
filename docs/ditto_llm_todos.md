@@ -23,7 +23,7 @@
 
 ### P0（必须做）
 
-- [ ] **OpenAI-compatible（Chat Completions）provider**：补齐 `POST /chat/completions` 的 `generate/stream`（含 tools）
+- [x] **OpenAI-compatible（Chat Completions）provider**：补齐 `POST /chat/completions` 的 `generate/stream`（含 tools）
   - DoD:
     - 新增 provider：支持 messages 映射（system/user/assistant/tool）、`tools/tool_choice`、`finish_reason/usage` 映射
     - streaming：SSE `data: {...}` 解析 `delta.content` 与 `delta.tool_calls`
@@ -32,7 +32,7 @@
 
 ### P1（强烈建议）
 
-- [ ] **配置层 ↔ SDK 层打通**：用 `ProviderConfig/ProviderAuth/Env` 构造具体 provider client
+- [x] **配置层 ↔ SDK 层打通**：用 `ProviderConfig/ProviderAuth/Env` 构造具体 provider client
   - DoD:
     - 提供 `OpenAI::from_config` / `Anthropic::from_config` / `Google::from_config` / `OpenAICompatible::from_config`（或等价 API）
     - 统一处理 `api_key_env` / `auth_command` / `base_url` / `default_model`
@@ -47,6 +47,7 @@
 - [ ] **统一 stream/generate 的语义一致性**
   - DoD:
     - `warnings` 在流式与非流式路径一致（不丢）
+      - ✅ 已实现：stream 会先发出 `StreamChunk::Warnings`
     - `finish_reason` 的映射规则统一且可测试
 
 - [ ] **Tool calling streaming 细节对齐**
@@ -73,4 +74,3 @@
   - DoD:
     - 不改变现有事件/审计语义（tool events / approvals / JSONL 落盘）
     - 迁移路径明确：先 provider/model 选择 → 再调用层替换
-
