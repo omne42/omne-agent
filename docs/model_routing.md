@@ -15,7 +15,8 @@
 
 - 多 provider 抽象仍是 TODO（capability flags 已有最小实现；见 `docs/v0.2.0_parity.md`）。
 - role/keyword/subagent 的自动路由（MVP 已实现；见下文 Router）。
-- 自动升降级（cheap→strong）与 tool 调用“轻模型”通道仍是 TODO。
+- 自动升降级（cheap→strong）已实现最小切片：模型 fallback（见 §5）。
+- tool 调用“轻模型”通道仍是 TODO。
 - 429/5xx/timeout 的 provider fallback 已实现（见 §4）。
 
 ---
@@ -254,3 +255,29 @@ fallback provider 列表来源（高 → 低）：
 - 每个 turn 的 `ModelRouted.reason` 会附加 `provider=<name>`。
 - 当发生 provider fallback 时，会追加一条 `ModelRouted` 事件，`reason` 形如：
   - `provider_fallback: from=<prev> to=<next>; cause=<error summary>`
+
+---
+
+## 5) 已实现：cheap→strong 模型 fallback（v0.2.0）
+
+### 5.1 触发条件（实现口径）
+
+- 只覆盖 **LLM streaming 请求**（`LanguageModel::stream`）。
+- 当请求在产生任何输出（`output_text` delta / tool_call chunk）之前失败，且错误属于部分非重试类 API 错误（目前按 HTTP status 判定：`400/404/413/422`），则允许切换到下一个 fallback model 并重试本次 step。
+- 一旦已产生任何输出：**不做静默切换**（避免重复/混杂输出），直接失败。
+- 一旦切换到 fallback model：后续 step 默认沿用该 model（不做自动降级）。
+
+### 5.2 配置
+
+fallback model 列表来源：
+
+- env：`CODE_PM_AGENT_FALLBACK_MODELS="m1,m2,m3"`（逗号分隔；按顺序尝试）
+
+约束：
+
+- fallback models 仍受 provider 的 `model_whitelist` 约束（不在白名单直接跳过/拒绝）。
+
+### 5.3 落盘与可解释性
+
+- 当发生 model fallback 时，会追加一条 `ModelRouted` 事件，`reason` 形如：
+  - `model_fallback: from=<prev> to=<next>; cause=<error summary>`

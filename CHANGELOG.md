@@ -139,6 +139,7 @@
 - `pm-app-server` agent loop：新增 auto compact/summary（接近 token budget 时写入 `artifact_type="summary"` 并用 summary + 近端事件重建上下文）。
 - Router：`keyword_rules` 支持 `min_context_tokens` 上下文阈值触发 longContext 路由，并把阈值/估算值写入 `ModelRouted.reason`。
 - `pm-app-server` agent loop：LLM streaming 失败重试 + provider fallback（429/5xx/timeout；`openai.fallback_providers` / `CODE_PM_OPENAI_FALLBACK_PROVIDERS`；`CODE_PM_AGENT_LLM_MAX_ATTEMPTS` 等）。
+- `pm-app-server` agent loop：cheap→strong 模型 fallback：支持 `CODE_PM_AGENT_FALLBACK_MODELS`（逗号分隔）在部分非重试类 API 错误时按顺序切换模型，并追加 `ModelRouted`（reason: `model_fallback:*`）。
 - `pm-openai`/`pm-app-server`：OpenAI Responses 请求 URL 改为 `base_url + /responses`（不再固定拼 `/v1/responses`）；默认 `openai_base_url` 统一为 `https://api.openai.com/v1`。
 - 更新 `docs/research/README.md`：补齐新增调研条目并调整落地方向表述。
 - 更新 `docs/v0.2.0_parity.md`：同步 `item/* notifications` 与通知去重/节流的落地状态（`pm watch|inbox --debounce-ms`）。

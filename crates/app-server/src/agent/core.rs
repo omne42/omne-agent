@@ -529,6 +529,20 @@ fn build_provider_candidates(primary: &str, fallbacks: Vec<String>) -> Vec<Strin
     out
 }
 
+fn build_model_candidates(primary: &str, fallbacks: Vec<String>) -> Vec<String> {
+    let mut out = vec![primary.to_string()];
+    for model in fallbacks {
+        if model == primary {
+            continue;
+        }
+        if out.iter().any(|existing| existing == &model) {
+            continue;
+        }
+        out.push(model);
+    }
+    out
+}
+
 fn model_allowed_by_whitelist(model: &str, whitelist: &[String]) -> bool {
     whitelist.is_empty() || whitelist.iter().any(|allowed| allowed.trim() == model)
 }
@@ -552,6 +566,15 @@ fn llm_error_prefers_provider_fallback(err: &LlmAttemptError) -> bool {
         LlmAttemptError::TimedOut => true,
         LlmAttemptError::Ditto(ditto_llm::DittoError::Api { status, .. }) => {
             status.as_u16() == 429 || status.is_server_error()
+        }
+        _ => false,
+    }
+}
+
+fn llm_error_prefers_model_fallback(err: &LlmAttemptError) -> bool {
+    match err {
+        LlmAttemptError::Ditto(ditto_llm::DittoError::Api { status, .. }) => {
+            matches!(status.as_u16(), 400 | 404 | 413 | 422)
         }
         _ => false,
     }
@@ -1112,22 +1135,30 @@ pub async fn run_agent_turn(
         context_tokens_estimate,
     );
     let pm_core::router::ModelRouteDecision {
-        selected_model: model,
+        selected_model,
         rule_source,
         reason,
         rule_id,
     } = routed;
 
-    if !provider_config.model_whitelist.is_empty()
-        && !provider_config
-            .model_whitelist
-            .iter()
-            .any(|allowed| allowed.trim() == model)
-    {
+    let mut model = selected_model;
+    if !model_allowed_by_whitelist(&model, &provider_config.model_whitelist) {
         anyhow::bail!(
             "model not allowed by provider whitelist: provider={provider} model={model}"
         );
     }
+
+    let model_fallbacks = std::env::var("CODE_PM_AGENT_FALLBACK_MODELS")
+        .ok()
+        .map(|value| parse_csv_list(&value))
+        .unwrap_or_default();
+    let mut model_candidates = build_model_candidates(&model, model_fallbacks);
+    if !provider_config.model_whitelist.is_empty() {
+        model_candidates.retain(|candidate| {
+            model_allowed_by_whitelist(candidate, &provider_config.model_whitelist)
+        });
+    }
+    let mut model_idx = 0usize;
 
     let reason = reason
         .as_deref()
@@ -1191,6 +1222,33 @@ pub async fn run_agent_turn(
                 .into());
             }
             if provider_index >= provider_candidates.len() {
+                if let Some(failure) = last_failure.as_ref()
+                    && llm_error_prefers_model_fallback(&failure.error)
+                    && model_idx + 1 < model_candidates.len()
+                {
+                    let cause = llm_error_summary(&failure.error);
+                    let prev = model.clone();
+                    model_idx += 1;
+                    model = model_candidates[model_idx].clone();
+                    req_base.model = Some(model.clone());
+                    provider_index = 0;
+                    attempts = 0;
+                    failure_count = 0;
+                    last_failure = None;
+
+                    let reason = format!("model_fallback: from={prev} to={model}; cause={cause}");
+                    let _ = thread_rt
+                        .append_event(ThreadEventKind::ModelRouted {
+                            turn_id,
+                            selected_model: model.clone(),
+                            rule_source,
+                            reason: Some(reason),
+                            rule_id: rule_id.clone(),
+                        })
+                        .await;
+                    continue;
+                }
+
                 match last_failure {
                     Some(LlmAttemptFailure {
                         error: LlmAttemptError::TimedOut,
@@ -1295,6 +1353,33 @@ pub async fn run_agent_turn(
                     }
 
                     if attempts >= llm_max_attempts {
+                        if llm_error_prefers_model_fallback(&failure.error)
+                            && model_idx + 1 < model_candidates.len()
+                        {
+                            let cause = llm_error_summary(&failure.error);
+                            let prev = model.clone();
+                            model_idx += 1;
+                            model = model_candidates[model_idx].clone();
+                            req_base.model = Some(model.clone());
+                            provider_index = 0;
+                            attempts = 0;
+                            failure_count = 0;
+                            last_failure = None;
+
+                            let reason =
+                                format!("model_fallback: from={prev} to={model}; cause={cause}");
+                            let _ = thread_rt
+                                .append_event(ThreadEventKind::ModelRouted {
+                                    turn_id,
+                                    selected_model: model.clone(),
+                                    rule_source,
+                                    reason: Some(reason),
+                                    rule_id: rule_id.clone(),
+                                })
+                                .await;
+                            continue;
+                        }
+
                         match &failure.error {
                             LlmAttemptError::TimedOut => {
                                 return Err(AgentTurnError::OpenAiRequestTimedOut.into())
@@ -1328,6 +1413,33 @@ pub async fn run_agent_turn(
                     }
 
                     if !is_retryable {
+                        if llm_error_prefers_model_fallback(&failure.error)
+                            && model_idx + 1 < model_candidates.len()
+                        {
+                            let cause = llm_error_summary(&failure.error);
+                            let prev = model.clone();
+                            model_idx += 1;
+                            model = model_candidates[model_idx].clone();
+                            req_base.model = Some(model.clone());
+                            provider_index = 0;
+                            attempts = 0;
+                            failure_count = 0;
+                            last_failure = None;
+
+                            let reason =
+                                format!("model_fallback: from={prev} to={model}; cause={cause}");
+                            let _ = thread_rt
+                                .append_event(ThreadEventKind::ModelRouted {
+                                    turn_id,
+                                    selected_model: model.clone(),
+                                    rule_source,
+                                    reason: Some(reason),
+                                    rule_id: rule_id.clone(),
+                                })
+                                .await;
+                            continue;
+                        }
+
                         let summary = llm_error_summary(&failure.error);
                         anyhow::bail!("llm stream failed: {summary}");
                     }
@@ -2846,6 +2958,22 @@ mod llm_retry_tests {
     }
 
     #[test]
+    fn build_model_candidates_keeps_primary_and_uniques() {
+        assert_eq!(
+            build_model_candidates(
+                "gpt-4.1-mini",
+                vec![
+                    "gpt-4.1".to_string(),
+                    "gpt-4.1-mini".to_string(),
+                    "gpt-4.1".to_string(),
+                    "gpt-4.1".to_string(),
+                ]
+            ),
+            vec!["gpt-4.1-mini".to_string(), "gpt-4.1".to_string()]
+        );
+    }
+
+    #[test]
     fn llm_error_classification_is_conservative() {
         use reqwest::StatusCode;
 
@@ -2869,10 +2997,18 @@ mod llm_retry_tests {
         });
         assert!(!llm_error_is_retryable(&bad_request));
         assert!(!llm_error_prefers_provider_fallback(&bad_request));
+        assert!(llm_error_prefers_model_fallback(&bad_request));
+
+        let unauthorized = LlmAttemptError::Ditto(ditto_llm::DittoError::Api {
+            status: StatusCode::UNAUTHORIZED,
+            body: "auth".to_string(),
+        });
+        assert!(!llm_error_prefers_model_fallback(&unauthorized));
 
         let timed_out = LlmAttemptError::TimedOut;
         assert!(llm_error_is_retryable(&timed_out));
         assert!(llm_error_prefers_provider_fallback(&timed_out));
+        assert!(!llm_error_prefers_model_fallback(&timed_out));
     }
 }
 
