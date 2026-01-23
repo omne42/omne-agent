@@ -37,10 +37,11 @@
     - 提供 `OpenAI::from_config` / `Anthropic::from_config` / `Google::from_config` / `OpenAICompatible::from_config`（或等价 API）
     - 统一处理 `api_key_env` / `auth_command` / `base_url` / `default_model`
 
-- [ ] **`provider_options` 变成“受控扩展点”**（别把它变成无类型 JSON 垃圾桶）
+- [x] **`provider_options` 变成“受控扩展点”**（别把它变成无类型 JSON 垃圾桶）
   - DoD:
-    - 至少落地 OpenAI `reasoning.effort`、`response_format(json_schema)` 的可选配置
-    - 不同 provider 对同一能力的差异要通过 `Warning` 明确提示
+    - ✅ 已落地：`ProviderOptions`（`reasoning_effort`、`response_format(json_schema)`）
+    - ✅ OpenAI（Responses）：`reasoning.effort` / `response_format` 已映射
+    - ✅ Anthropic/Google：对不支持的 options 明确发出 `Warning::Unsupported`
 
 ### P2（质量/一致性）
 
