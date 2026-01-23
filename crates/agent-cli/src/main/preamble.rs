@@ -255,6 +255,23 @@ enum RepoCommand {
         #[arg(long, default_value_t = false)]
         json: bool,
     },
+    Symbols {
+        thread_id: ThreadId,
+        #[arg(long)]
+        include_glob: Option<String>,
+        #[arg(long)]
+        max_files: Option<usize>,
+        #[arg(long)]
+        max_bytes_per_file: Option<u64>,
+        #[arg(long)]
+        max_symbols: Option<usize>,
+        #[arg(long)]
+        root: Option<RepoRoot>,
+        #[arg(long)]
+        approval_id: Option<ApprovalId>,
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
 }
 
 #[derive(clap::Args)]

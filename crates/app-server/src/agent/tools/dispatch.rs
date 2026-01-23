@@ -299,6 +299,23 @@ async fn run_tool_call_once(
             )
             .await
         }
+        "repo_symbols" => {
+            let args: RepoSymbolsArgs = serde_json::from_value(args)?;
+            super::handle_repo_symbols(
+                server,
+                super::RepoSymbolsParams {
+                    thread_id,
+                    turn_id,
+                    approval_id,
+                    root: args.root,
+                    include_glob: args.include_glob,
+                    max_files: args.max_files,
+                    max_bytes_per_file: args.max_bytes_per_file,
+                    max_symbols: args.max_symbols,
+                },
+            )
+            .await
+        }
         "file_write" => {
             let args: FileWriteArgs = serde_json::from_value(args)?;
             super::handle_file_write(

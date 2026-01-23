@@ -16,7 +16,7 @@
 
 非目标（先别碰）：
 
-- 不做 tree-sitter 符号索引、语义搜索、向量检索、ranking 算法。
+- v0.2.x 仅落地最小 tree-sitter symbols（Rust；`repo/symbols`）。其它：语义搜索、向量检索、ranking 算法、多语言符号索引先别做。
 - 不做常驻 daemon/后台增量索引与一致性保证。
 - 不引入查询 DSL（filter/facet/highlight/boolean 等都先别写死）。
 
@@ -99,6 +99,18 @@ Markdown 内容建议固定结构（方便人看/脚本解析）：
 - 默认只输出统计 + top-N 文件路径（避免一次性输出全仓库）。
 - 未来如需增量索引，可在 artifact 内容里记录“扫描时间/忽略规则/截断信息”，不要先承诺缓存一致性。
 
+### 3.3 `repo/symbols`（v0.2.x 最小已实现）
+
+最小行为：
+
+- 使用 tree-sitter（Rust grammar）从仓库里提取 Rust 符号（默认 `include_glob="**/*.rs"`）。
+- 输出写入 artifact（`artifact_type="repo_symbols"`），并返回 `artifact_id`。
+- 资源边界（best-effort）：
+  - `max_files` 默认 `20000`（上限 `200000`）
+  - `max_bytes_per_file` 默认 `1MiB`（上限 `16MiB`）
+  - `max_symbols` 默认 `5000`（上限 `50000`）
+- 忽略规则与 `repo/index`/`repo/search` 对齐（跳过 `.env`、`.codepm_data/*` 等）。
+
 ---
 
 ## 4) 验收（已实现）
@@ -117,9 +129,11 @@ Markdown 内容建议固定结构（方便人看/脚本解析）：
 ```bash
 pm repo search <thread_id> "TODO" --include-glob "crates/**" --max-matches 50 --json
 pm repo index <thread_id> --include-glob "**/*" --max-files 20000 --json
+pm repo symbols <thread_id> --include-glob "crates/**" --max-files 20000 --max-symbols 5000 --json
 ```
 
 验收点：
 
 - `repo/search` 必须返回 `artifact_id`，并且 `pm artifact read` 能读到固定模板的 Markdown。
 - `repo/index` 生成的 artifact 必须标记是否截断（避免“看起来像全量，其实不是”）。
+- `repo/symbols` 必须返回 `artifact_id`，并且 `pm artifact read` 能看到 `# Repo Symbols (Rust)` 与符号列表；若超限，必须显式标记 `truncated=true`。

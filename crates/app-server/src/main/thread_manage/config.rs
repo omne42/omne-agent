@@ -352,6 +352,7 @@ const KNOWN_ALLOWED_TOOLS: &[&str] = &[
     "fs/mkdir",
     "repo/search",
     "repo/index",
+    "repo/symbols",
     "artifact/write",
     "artifact/list",
     "artifact/read",

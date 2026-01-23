@@ -57,6 +57,20 @@ struct RepoIndexArgs {
 }
 
 #[derive(Debug, Deserialize)]
+struct RepoSymbolsArgs {
+    #[serde(default)]
+    root: Option<crate::FileRoot>,
+    #[serde(default)]
+    include_glob: Option<String>,
+    #[serde(default)]
+    max_files: Option<usize>,
+    #[serde(default)]
+    max_bytes_per_file: Option<u64>,
+    #[serde(default)]
+    max_symbols: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
 struct FileWriteArgs {
     path: String,
     text: String,

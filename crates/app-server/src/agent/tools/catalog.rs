@@ -77,6 +77,22 @@ fn build_tools() -> Vec<Value> {
             }),
         ),
         pm_openai::tool_function(
+            "repo_symbols",
+            "Extract Rust symbols with tree-sitter and write a user-facing artifact (repo_symbols).",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "root": { "type": "string", "enum": ["workspace", "reference"] },
+                    "include_glob": { "type": "string" },
+                    "max_files": { "type": "integer", "minimum": 1 },
+                    "max_bytes_per_file": { "type": "integer", "minimum": 1 },
+                    "max_symbols": { "type": "integer", "minimum": 1 },
+                },
+                "required": [],
+                "additionalProperties": false,
+            }),
+        ),
+        pm_openai::tool_function(
             "file_write",
             "Write a UTF-8 text file (overwrites).",
             serde_json::json!({

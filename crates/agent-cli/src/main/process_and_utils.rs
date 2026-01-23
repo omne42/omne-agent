@@ -231,6 +231,16 @@ struct RepoIndexRequest {
     approval_id: Option<ApprovalId>,
 }
 
+struct RepoSymbolsRequest {
+    thread_id: ThreadId,
+    include_glob: Option<String>,
+    max_files: Option<usize>,
+    max_bytes_per_file: Option<u64>,
+    max_symbols: Option<usize>,
+    root: Option<String>,
+    approval_id: Option<ApprovalId>,
+}
+
 fn split_special_directives(
     input: &str,
 ) -> anyhow::Result<(String, Vec<pm_protocol::ContextRef>)> {
@@ -988,6 +998,25 @@ impl App {
             )
             .await?;
         ensure_approval_and_denial_handled("repo/index", &v)?;
+        Ok(v)
+    }
+
+    async fn repo_symbols(&mut self, req: RepoSymbolsRequest) -> anyhow::Result<Value> {
+        let v = self
+            .rpc(
+                "repo/symbols",
+                serde_json::json!({
+                    "thread_id": req.thread_id,
+                    "approval_id": req.approval_id,
+                    "root": req.root,
+                    "include_glob": req.include_glob,
+                    "max_files": req.max_files,
+                    "max_bytes_per_file": req.max_bytes_per_file,
+                    "max_symbols": req.max_symbols,
+                }),
+            )
+            .await?;
+        ensure_approval_and_denial_handled("repo/symbols", &v)?;
         Ok(v)
     }
 

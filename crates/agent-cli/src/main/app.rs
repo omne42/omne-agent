@@ -88,6 +88,30 @@ async fn main() -> anyhow::Result<()> {
                     .await?;
                 print_json_or_pretty(json, &result)?;
             }
+            RepoCommand::Symbols {
+                thread_id,
+                include_glob,
+                max_files,
+                max_bytes_per_file,
+                max_symbols,
+                root,
+                approval_id,
+                json,
+            } => {
+                let root = root.map(|root| root.as_str().to_string());
+                let result = app
+                    .repo_symbols(RepoSymbolsRequest {
+                        thread_id,
+                        include_glob,
+                        max_files,
+                        max_bytes_per_file,
+                        max_symbols,
+                        root,
+                        approval_id,
+                    })
+                    .await?;
+                print_json_or_pretty(json, &result)?;
+            }
         },
         Some(Command::Tui(args)) => {
             run_tui(&mut app, args).await?;

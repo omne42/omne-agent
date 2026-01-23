@@ -19,10 +19,16 @@ async fn handle_repo_request(
             },
             Err(err) => invalid_params(id, err),
         },
+        "repo/symbols" => match serde_json::from_value::<RepoSymbolsParams>(params) {
+            Ok(params) => match handle_repo_symbols(server, params).await {
+                Ok(result) => JsonRpcResponse::ok(id, result),
+                Err(err) => JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None),
+            },
+            Err(err) => invalid_params(id, err),
+        },
         _ => {
             let _ = params;
             method_not_found(id, method)
         }
     }
 }
-

@@ -1167,6 +1167,25 @@ struct RepoIndexParams {
 }
 
 #[derive(Debug, Deserialize)]
+struct RepoSymbolsParams {
+    thread_id: ThreadId,
+    #[serde(default)]
+    turn_id: Option<TurnId>,
+    #[serde(default)]
+    approval_id: Option<pm_protocol::ApprovalId>,
+    #[serde(default)]
+    root: Option<FileRoot>,
+    #[serde(default)]
+    include_glob: Option<String>,
+    #[serde(default)]
+    max_files: Option<usize>,
+    #[serde(default)]
+    max_bytes_per_file: Option<u64>,
+    #[serde(default)]
+    max_symbols: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
 struct FileWriteParams {
     thread_id: ThreadId,
     #[serde(default)]

@@ -266,6 +266,7 @@ fn hook_tool_name_from_agent_tool(tool_name: &str) -> Option<&'static str> {
         "file_grep" => "file/grep",
         "repo_search" => "repo/search",
         "repo_index" => "repo/index",
+        "repo_symbols" => "repo/symbols",
         "file_write" => "file/write",
         "file_patch" => "file/patch",
         "file_edit" => "file/edit",
