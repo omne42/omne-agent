@@ -178,25 +178,22 @@ project_override: null
 
 ---
 
-### 3.5 TODO：上下文阈值（long-context）最小规格
+### 3.5 已实现：上下文阈值（long-context）
 
 > 目标：当上下文接近模型上限时，避免“隐式截断/隐式退化”，而是做一次**可解释的路由或压缩**。
 >
-> 注意：v0.2.0 还没有 Router 实现；这里只定义口径，避免未来实现漂移。
+实现口径（复用 `keyword_rules` 槽位，不新增优先级链）：
 
-最小建议（不扩优先级链，复用 `keyword_rules` 槽位）：
-
-- 允许 `keyword_rules` 的一条规则用 “上下文阈值” 触发，而不是关键词触发：
-  - `min_context_tokens`：整数（估算的上下文 tokens）
-  - `keywords`：可选；若同时存在，必须同时满足
-- 匹配顺序仍按列表顺序第一条命中为准（写死，避免竞赛）。
+- `keyword_rules` 每条规则可选增加 `min_context_tokens`（整数，> 0）。
+- `keywords` 现在可省略；当同时配置 `keywords + min_context_tokens` 时，必须同时满足。
+- 匹配顺序仍按列表顺序 first-match（写死，避免“规则竞赛”）。
 - 命中后：
   - `selected_model = rule.model`
-  - `rule_source = "keyword_rule"`（保持已有枚举口径）
+  - `rule_source = "keyword_rule"`（保持既有枚举）
   - `rule_id = rule.id`
-  - `reason` 建议包含阈值与估算值（便于审计）
+  - `reason` 会包含 `context_tokens_estimate` 与阈值（便于审计；落盘在 `ModelRouted.reason`）
 
-配置示例（草案）：
+配置示例：
 
 ```yaml
 version: 1
@@ -211,9 +208,11 @@ keyword_rules:
     reason: "context too large; prefer long-context model"
 ```
 
-关于 “context_tokens” 的估算（先别过度设计）：
+关于 `context_tokens_estimate` 的估算（写清楚：这是近似值，不是 tokenizer 的精确结果）：
 
-- MVP 允许粗估（例如用 provider 的 tokenizer 工具或字符长度近似），但必须把 “估算方式/阈值/原因”写入 `reason`，避免黑箱。
+- 现实现状使用 **字符数近似**（`(instructions + input_items).chars()/4`，向上取整）。
+- 这是保守的工程折中：目的是避免“隐式截断/隐式退化”，不是做精确计费。
+- 若需要更精确的 tokenizer，应作为后续增强点（避免 v0.2.0 过度设计）。
 
 压缩（auto compact/summary）的关系：
 

@@ -35,6 +35,7 @@ pub struct ProjectOverride {
 pub struct KeywordRule {
     pub id: String,
     pub keywords: Vec<String>,
+    pub min_context_tokens: Option<u64>,
     pub model: String,
     pub reason: Option<String>,
 }
@@ -71,7 +72,10 @@ struct RawProjectOverride {
 #[serde(deny_unknown_fields)]
 struct RawKeywordRule {
     id: String,
+    #[serde(default)]
     keywords: Vec<String>,
+    #[serde(default)]
+    min_context_tokens: Option<u64>,
     model: String,
     #[serde(default)]
     reason: Option<String>,
@@ -175,9 +179,21 @@ fn router_from_raw(raw: RawRouterFileV1) -> anyhow::Result<RouterConfig> {
         if id.is_empty() {
             bail!("router keyword_rules.id must not be empty");
         }
+        let min_context_tokens = rule.min_context_tokens.filter(|v| *v > 0);
+        if rule.min_context_tokens.is_some() && min_context_tokens.is_none() {
+            bail!("router keyword_rules.min_context_tokens must be > 0");
+        }
+        if rule.keywords.is_empty() && min_context_tokens.is_none() {
+            bail!("router keyword_rules must set keywords and/or min_context_tokens");
+        }
         keyword_rules.push(KeywordRule {
             id,
-            keywords: normalize_keywords(&rule.keywords)?,
+            keywords: if rule.keywords.is_empty() {
+                Vec::new()
+            } else {
+                normalize_keywords(&rule.keywords)?
+            },
+            min_context_tokens,
             model: normalize_model(&rule.model)?,
             reason: rule.reason.filter(|s| !s.trim().is_empty()),
         });
@@ -226,6 +242,7 @@ pub fn route_model(
     input: &str,
     global_default_model: &str,
     forced: bool,
+    context_tokens_estimate: u64,
 ) -> ModelRouteDecision {
     if forced {
         return ModelRouteDecision {
@@ -255,18 +272,36 @@ pub fn route_model(
     }
 
     let input = input.trim();
-    if !input.is_empty() && !router.keyword_rules.is_empty() {
+    if !router.keyword_rules.is_empty() {
         let input_lower = input.to_lowercase();
         for rule in &router.keyword_rules {
-            if rule
-                .keywords
-                .iter()
-                .any(|keyword| input_lower.contains(keyword))
-            {
+            let keywords_ok = rule.keywords.is_empty()
+                || rule
+                    .keywords
+                    .iter()
+                    .any(|keyword| input_lower.contains(keyword));
+            let context_ok = rule
+                .min_context_tokens
+                .is_none_or(|min| context_tokens_estimate >= min);
+            if keywords_ok && context_ok {
+                let mut reason_parts = Vec::<String>::new();
+                if let Some(reason) = rule.reason.clone() {
+                    reason_parts.push(reason);
+                }
+                if let Some(min) = rule.min_context_tokens {
+                    reason_parts.push(format!(
+                        "context_tokens_estimate={context_tokens_estimate} >= min_context_tokens={min}"
+                    ));
+                }
+                let reason = if reason_parts.is_empty() {
+                    None
+                } else {
+                    Some(reason_parts.join("; "))
+                };
                 return ModelRouteDecision {
                     selected_model: rule.model.clone(),
                     rule_source: ModelRoutingRuleSource::KeywordRule,
-                    reason: rule.reason.clone(),
+                    reason,
                     rule_id: Some(rule.id.clone()),
                 };
             }
@@ -349,12 +384,13 @@ keyword_rules:
             keyword_rules: vec![KeywordRule {
                 id: "k".to_string(),
                 keywords: vec!["urgent".to_string()],
+                min_context_tokens: None,
                 model: "gpt-4.1".to_string(),
                 reason: None,
             }],
         };
 
-        let decision = route_model(Some(&router), Some("coder"), "urgent", "gpt-4.1", true);
+        let decision = route_model(Some(&router), Some("coder"), "urgent", "gpt-4.1", true, 0);
         assert_eq!(decision.rule_source, ModelRoutingRuleSource::Subagent);
         assert_eq!(decision.selected_model, "gpt-4.1");
     }
@@ -370,6 +406,7 @@ keyword_rules:
             keyword_rules: vec![KeywordRule {
                 id: "k".to_string(),
                 keywords: vec!["urgent".to_string()],
+                min_context_tokens: None,
                 model: "gpt-4.1-mini".to_string(),
                 reason: None,
             }],
@@ -381,6 +418,7 @@ keyword_rules:
             "urgent",
             "gpt-4.1-mini",
             false,
+            0,
         );
         assert_eq!(
             decision.rule_source,
@@ -398,6 +436,7 @@ keyword_rules:
             keyword_rules: vec![KeywordRule {
                 id: "k".to_string(),
                 keywords: vec!["urgent".to_string()],
+                min_context_tokens: None,
                 model: "gpt-4.1".to_string(),
                 reason: Some("needs reasoning".to_string()),
             }],
@@ -409,10 +448,89 @@ keyword_rules:
             "This is URGENT",
             "gpt-4.1-mini",
             false,
+            0,
         );
         assert_eq!(decision.rule_source, ModelRoutingRuleSource::KeywordRule);
         assert_eq!(decision.selected_model, "gpt-4.1");
         assert_eq!(decision.rule_id.as_deref(), Some("k"));
+    }
+
+    #[test]
+    fn route_context_threshold_rule_beats_role_default() {
+        let router = RouterConfig {
+            project_override: None,
+            role_defaults: BTreeMap::from([("coder".to_string(), "gpt-4.1-mini".to_string())]),
+            keyword_rules: vec![KeywordRule {
+                id: "long-context-threshold".to_string(),
+                keywords: Vec::new(),
+                min_context_tokens: Some(10),
+                model: "gpt-4.1".to_string(),
+                reason: None,
+            }],
+        };
+
+        let decision = route_model(
+            Some(&router),
+            Some("coder"),
+            "hello",
+            "gpt-4.1-mini",
+            false,
+            12,
+        );
+        assert_eq!(decision.rule_source, ModelRoutingRuleSource::KeywordRule);
+        assert_eq!(decision.selected_model, "gpt-4.1");
+        assert_eq!(decision.rule_id.as_deref(), Some("long-context-threshold"));
+        assert!(
+            decision
+                .reason
+                .unwrap_or_default()
+                .contains("min_context_tokens=10")
+        );
+    }
+
+    #[test]
+    fn route_keyword_rule_requires_min_context_tokens_when_set() {
+        let router = RouterConfig {
+            project_override: None,
+            role_defaults: BTreeMap::from([("coder".to_string(), "gpt-4.1-mini".to_string())]),
+            keyword_rules: vec![KeywordRule {
+                id: "k".to_string(),
+                keywords: vec!["urgent".to_string()],
+                min_context_tokens: Some(10),
+                model: "gpt-4.1".to_string(),
+                reason: None,
+            }],
+        };
+
+        let decision = route_model(
+            Some(&router),
+            Some("coder"),
+            "urgent",
+            "gpt-4.1-mini",
+            false,
+            9,
+        );
+        assert_eq!(decision.rule_source, ModelRoutingRuleSource::RoleDefault);
+
+        let decision = route_model(
+            Some(&router),
+            Some("coder"),
+            "hello",
+            "gpt-4.1-mini",
+            false,
+            12,
+        );
+        assert_eq!(decision.rule_source, ModelRoutingRuleSource::RoleDefault);
+
+        let decision = route_model(
+            Some(&router),
+            Some("coder"),
+            "urgent",
+            "gpt-4.1-mini",
+            false,
+            12,
+        );
+        assert_eq!(decision.rule_source, ModelRoutingRuleSource::KeywordRule);
     }
 
     #[test]
@@ -423,7 +541,7 @@ keyword_rules:
             keyword_rules: Vec::new(),
         };
 
-        let decision = route_model(Some(&router), Some("Coder"), "hello", "gpt-4.1", false);
+        let decision = route_model(Some(&router), Some("Coder"), "hello", "gpt-4.1", false, 0);
         assert_eq!(decision.rule_source, ModelRoutingRuleSource::RoleDefault);
         assert_eq!(decision.selected_model, "gpt-4.1-mini");
     }

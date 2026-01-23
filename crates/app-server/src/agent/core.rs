@@ -216,6 +216,45 @@ fn should_auto_summarize(total_tokens_used: u64, max_total_tokens: u64, threshol
     threshold > 0 && total_tokens_used >= threshold
 }
 
+fn estimate_context_tokens(instructions: &str, input_items: &[pm_openai::ResponseItem]) -> u64 {
+    let mut chars = instructions.chars().count() as u64;
+    for item in input_items {
+        chars = chars.saturating_add(estimate_response_item_chars(item));
+    }
+    (chars.saturating_add(3)) / 4
+}
+
+fn estimate_response_item_chars(item: &pm_openai::ResponseItem) -> u64 {
+    match item {
+        pm_openai::ResponseItem::Message { role, content } => {
+            let mut chars = role.chars().count() as u64;
+            for part in content {
+                match part {
+                    pm_openai::ContentItem::InputText { text }
+                    | pm_openai::ContentItem::OutputText { text } => {
+                        chars = chars.saturating_add(text.chars().count() as u64);
+                    }
+                    pm_openai::ContentItem::Other => {}
+                }
+            }
+            chars
+        }
+        pm_openai::ResponseItem::FunctionCall {
+            name,
+            arguments,
+            call_id,
+        } => {
+            (name.chars().count() as u64)
+                .saturating_add(arguments.chars().count() as u64)
+                .saturating_add(call_id.chars().count() as u64)
+        }
+        pm_openai::ResponseItem::FunctionCallOutput { call_id, output } => {
+            (call_id.chars().count() as u64).saturating_add(output.chars().count() as u64)
+        }
+        pm_openai::ResponseItem::Other => 0,
+    }
+}
+
 fn render_items_for_summary(items: &[pm_openai::ResponseItem], max_chars: usize) -> String {
     let mut out = String::new();
 
@@ -338,45 +377,6 @@ pub async fn run_agent_turn(
         })
         .or(provider_config.default_model.clone())
         .unwrap_or_else(|| DEFAULT_MODEL.to_string());
-
-    let router_config = match thread_root.as_deref() {
-        Some(thread_root) => pm_core::router::load_router_config(thread_root).await?,
-        None => None,
-    };
-    let routed = pm_core::router::route_model(
-        router_config.as_ref().map(|loaded| &loaded.config),
-        Some(thread_mode.as_str()),
-        &input,
-        &global_default_model,
-        forced_model,
-    );
-    let pm_core::router::ModelRouteDecision {
-        selected_model: model,
-        rule_source,
-        reason,
-        rule_id,
-    } = routed;
-
-    if !provider_config.model_whitelist.is_empty()
-        && !provider_config
-            .model_whitelist
-            .iter()
-            .any(|allowed| allowed.trim() == model)
-    {
-        anyhow::bail!(
-            "model not allowed by provider whitelist: provider={provider} model={model}"
-        );
-    }
-
-    let _ = thread_rt
-        .append_event(ThreadEventKind::ModelRouted {
-            turn_id,
-            selected_model: model.clone(),
-            rule_source,
-            reason,
-            rule_id,
-        })
-        .await;
 
     let base_url = thread_openai_base_url
         .or(project_overrides.base_url)
@@ -501,6 +501,47 @@ pub async fn run_agent_turn(
     }
 
     let mut input_items = build_conversation(&server, thread_id).await?;
+    let context_tokens_estimate = estimate_context_tokens(&instructions, &input_items);
+
+    let router_config = match thread_root.as_deref() {
+        Some(thread_root) => pm_core::router::load_router_config(thread_root).await?,
+        None => None,
+    };
+    let routed = pm_core::router::route_model(
+        router_config.as_ref().map(|loaded| &loaded.config),
+        Some(thread_mode.as_str()),
+        &input,
+        &global_default_model,
+        forced_model,
+        context_tokens_estimate,
+    );
+    let pm_core::router::ModelRouteDecision {
+        selected_model: model,
+        rule_source,
+        reason,
+        rule_id,
+    } = routed;
+
+    if !provider_config.model_whitelist.is_empty()
+        && !provider_config
+            .model_whitelist
+            .iter()
+            .any(|allowed| allowed.trim() == model)
+    {
+        anyhow::bail!(
+            "model not allowed by provider whitelist: provider={provider} model={model}"
+        );
+    }
+
+    let _ = thread_rt
+        .append_event(ThreadEventKind::ModelRouted {
+            turn_id,
+            selected_model: model.clone(),
+            rule_source,
+            reason,
+            rule_id,
+        })
+        .await;
 
     let mut last_response_id = String::new();
     let mut last_usage: Option<Value> = None;
