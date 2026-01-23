@@ -11,6 +11,7 @@
 - 新增 Agent-first 重新开发流程文档：`docs/development_process.md`。
 - 新增 vNext 目标态“RTS 风格使用流程”文档：`docs/rts_workflow.md`。
 - 新增 v0.2.x 文档索引与 v0.2.0 口径补充（approval/attention/event model/runtime/execpolicy 等，详见 `docs/README.md`）。
+- 新增 Ditto-LLM 方案草案：`docs/ditto_llm.md`（本仓库现状仅实现 provider profile + `/models` 发现）。
 - 新增项目级数据根与运行时目录约定文档：`docs/codepm_data.md`、`docs/runtime_layout.md`，并补齐 daemon/TUI 设计草案：`docs/daemon.md`、`docs/tui.md`。
 - 补齐 Subagents/Fan-out 文档：加入 Codex/OpenCode/Claude Code/Antigravity 对照、v0.2.x 务实 DoD 与 A/B/C 选型建议（`docs/subagents.md`）。
 - 新增 Agent GUI 爆发期产品调研：`docs/research/onecode.md`、`docs/research/superset.md`、`docs/research/aion-ui.md`。
