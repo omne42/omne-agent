@@ -671,6 +671,7 @@ async fn run_llm_stream_once(
     thread_rt: Arc<super::ThreadRuntime>,
     thread_id: ThreadId,
     turn_id: TurnId,
+    emit_deltas: bool,
     req: ditto_llm::GenerateRequest,
     max_openai_request_duration: Duration,
 ) -> Result<AgentLlmResponse, LlmAttemptFailure> {
@@ -708,18 +709,20 @@ async fn run_llm_stream_once(
                     }
                     emitted_output = true;
                     output_text.push_str(&text);
-                    let delta = pm_core::redact_text(&text);
-                    let response_id_snapshot = response_id.clone();
-                    thread_rt.emit_notification(
-                        "item/delta",
-                        &serde_json::json!({
-                            "thread_id": thread_id,
-                            "turn_id": turn_id,
-                            "response_id": response_id_snapshot,
-                            "kind": "output_text",
-                            "delta": delta,
-                        }),
-                    );
+                    if emit_deltas {
+                        let delta = pm_core::redact_text(&text);
+                        let response_id_snapshot = response_id.clone();
+                        thread_rt.emit_notification(
+                            "item/delta",
+                            &serde_json::json!({
+                                "thread_id": thread_id,
+                                "turn_id": turn_id,
+                                "response_id": response_id_snapshot,
+                                "kind": "output_text",
+                                "delta": delta,
+                            }),
+                        );
+                    }
                 }
                 ditto_llm::StreamChunk::ToolCallStart { id, name } => {
                     emitted_output = true;
@@ -1141,18 +1144,39 @@ pub async fn run_agent_turn(
         rule_id,
     } = routed;
 
-    let mut model = selected_model;
-    if !model_allowed_by_whitelist(&model, &provider_config.model_whitelist) {
+    let final_model = selected_model;
+    if !model_allowed_by_whitelist(&final_model, &provider_config.model_whitelist) {
         anyhow::bail!(
-            "model not allowed by provider whitelist: provider={provider} model={model}"
+            "model not allowed by provider whitelist: provider={provider} model={final_model}"
         );
+    }
+
+    let tool_model = if forced_model {
+        None
+    } else {
+        std::env::var("CODE_PM_AGENT_TOOL_MODEL")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    };
+    let tool_model = tool_model.filter(|candidate| candidate != &final_model);
+    if let Some(tool_model) = tool_model.as_deref() {
+        if !model_allowed_by_whitelist(tool_model, &provider_config.model_whitelist) {
+            anyhow::bail!(
+                "tool model not allowed by provider whitelist: provider={provider} model={tool_model}"
+            );
+        }
     }
 
     let model_fallbacks = std::env::var("CODE_PM_AGENT_FALLBACK_MODELS")
         .ok()
         .map(|value| parse_csv_list(&value))
         .unwrap_or_default();
-    let mut model_candidates = build_model_candidates(&model, model_fallbacks);
+
+    let mut tool_phase_active = tool_model.is_some();
+    let mut model = tool_model.clone().unwrap_or_else(|| final_model.clone());
+
+    let mut model_candidates = build_model_candidates(&model, model_fallbacks.clone());
     if !provider_config.model_whitelist.is_empty() {
         model_candidates.retain(|candidate| {
             model_allowed_by_whitelist(candidate, &provider_config.model_whitelist)
@@ -1169,12 +1193,25 @@ pub async fn run_agent_turn(
     let _ = thread_rt
         .append_event(ThreadEventKind::ModelRouted {
             turn_id,
-            selected_model: model.clone(),
+            selected_model: final_model.clone(),
             rule_source,
             reason,
             rule_id: rule_id.clone(),
         })
         .await;
+
+    if let Some(tool_model) = tool_model.as_ref() {
+        let reason = format!("tool_model: from={final_model} to={tool_model}; provider={provider}");
+        let _ = thread_rt
+            .append_event(ThreadEventKind::ModelRouted {
+                turn_id,
+                selected_model: tool_model.clone(),
+                rule_source,
+                reason: Some(reason),
+                rule_id: rule_id.clone(),
+            })
+            .await;
+    }
 
     let mut last_response_id = String::new();
     let mut last_usage: Option<Value> = None;
@@ -1203,8 +1240,18 @@ pub async fn run_agent_turn(
             response_items_to_ditto_messages(&instructions, &input_items, &attachment_parts);
         let mut req_base = ditto_llm::GenerateRequest::from(messages);
         req_base.model = Some(model.clone());
-        req_base.tools = Some(tools.clone());
-        req_base.tool_choice = Some(ditto_llm::ToolChoice::Auto);
+
+        let tools_enabled = tool_model.is_none() || tool_phase_active;
+        let emit_deltas = tool_model.is_none() || !tool_phase_active;
+        let keep_assistant_messages = emit_deltas;
+
+        if tools_enabled {
+            req_base.tools = Some(tools.clone());
+            req_base.tool_choice = Some(ditto_llm::ToolChoice::Auto);
+        } else {
+            req_base.tools = None;
+            req_base.tool_choice = Some(ditto_llm::ToolChoice::None);
+        }
 
         let mut provider_index = active_provider_idx.min(provider_candidates.len().saturating_sub(1));
         let mut attempts = 0usize;
@@ -1329,6 +1376,7 @@ pub async fn run_agent_turn(
                 thread_rt.clone(),
                 thread_id,
                 turn_id,
+                emit_deltas,
                 req,
                 max_openai_request_duration,
             )
@@ -1484,21 +1532,65 @@ pub async fn run_agent_turn(
         }
 
         let mut function_calls = Vec::new();
-        last_text = extract_assistant_text(&resp.output);
+        if keep_assistant_messages {
+            last_text = extract_assistant_text(&resp.output);
+        }
 
         for item in resp.output {
-            if let pm_openai::ResponseItem::FunctionCall {
-                name,
-                arguments,
-                call_id,
-            } = &item
-            {
-                function_calls.push((name.clone(), arguments.clone(), call_id.clone()));
+            match &item {
+                pm_openai::ResponseItem::FunctionCall {
+                    name,
+                    arguments,
+                    call_id,
+                } => {
+                    function_calls.push((name.clone(), arguments.clone(), call_id.clone()));
+                    input_items.push(item);
+                }
+                pm_openai::ResponseItem::Message { .. } => {
+                    if keep_assistant_messages {
+                        input_items.push(item);
+                    }
+                }
+                _ => input_items.push(item),
             }
-            input_items.push(item);
         }
 
         if function_calls.is_empty() {
+            if tool_model.is_some() && tool_phase_active {
+                tool_phase_active = false;
+
+                let prev = model.clone();
+                model = final_model.clone();
+                model_candidates = build_model_candidates(&model, model_fallbacks.clone());
+                if !provider_config.model_whitelist.is_empty() {
+                    model_candidates.retain(|candidate| {
+                        model_allowed_by_whitelist(candidate, &provider_config.model_whitelist)
+                    });
+                }
+                model_idx = 0;
+
+                if prev != model {
+                    let reason = format!("tool_model_final: from={prev} to={model}; provider={provider}");
+                    let _ = thread_rt
+                        .append_event(ThreadEventKind::ModelRouted {
+                            turn_id,
+                            selected_model: model.clone(),
+                            rule_source,
+                            reason: Some(reason),
+                            rule_id: rule_id.clone(),
+                        })
+                        .await;
+                }
+
+                input_items.push(pm_openai::ResponseItem::Message {
+                    role: "system".to_string(),
+                    content: vec![pm_openai::ContentItem::InputText {
+                        text: "Tool phase complete. Provide the final answer to the user's request without calling tools.".to_string(),
+                    }],
+                });
+
+                continue;
+            }
             finished = true;
             break;
         }

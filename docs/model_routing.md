@@ -16,7 +16,7 @@
 - 多 provider 抽象仍是 TODO（capability flags 已有最小实现；见 `docs/v0.2.0_parity.md`）。
 - role/keyword/subagent 的自动路由（MVP 已实现；见下文 Router）。
 - 自动升降级（cheap→strong）已实现最小切片：模型 fallback（见 §5）。
-- tool 调用“轻模型”通道仍是 TODO。
+- tool 调用“轻模型”通道已实现（`CODE_PM_AGENT_TOOL_MODEL`，见 §6）。
 - 429/5xx/timeout 的 provider fallback 已实现（见 §4）。
 
 ---
@@ -281,3 +281,30 @@ fallback model 列表来源：
 
 - 当发生 model fallback 时，会追加一条 `ModelRouted` 事件，`reason` 形如：
   - `model_fallback: from=<prev> to=<next>; cause=<error summary>`
+
+---
+
+## 6) 已实现：tool 调用“轻模型”通道（v0.2.x）
+
+目标：把“tool calling 的多 step 循环”放到更便宜的模型上跑，最终答复仍由 Router 选中的主模型生成。
+
+### 6.1 配置
+
+- env：`CODE_PM_AGENT_TOOL_MODEL="<model>"`（可选；为空/未设置则不启用）
+- 若 thread config 强制了 `model`（例如 subagent 显式指定模型）：忽略 `CODE_PM_AGENT_TOOL_MODEL`
+
+### 6.2 行为（实现口径）
+
+- tool phase：
+  - LLM 请求使用 `CODE_PM_AGENT_TOOL_MODEL`
+  - tools 仍为 `auto`（允许调用工具）
+  - 不发送 `item/delta`（避免把中间“碎碎念”流到客户端）
+  - tool phase 的 assistant 文本不会注入后续上下文（只保留 tool calls 与 tool results）
+- 当某次 tool phase 返回 **无 tool calls**：切回主模型，并在下一次 step 中禁用 tools（`tool_choice=none`）生成最终答复
+- 切换会追加 `ModelRouted` 事件：
+  - `tool_model: from=<final> to=<tool>; provider=<name>`
+  - `tool_model_final: from=<tool> to=<final>; provider=<name>`（仅当发生切换时）
+
+### 6.3 约束
+
+- tool model 仍受 provider 的 `model_whitelist` 约束（不在白名单会直接报错）
