@@ -315,6 +315,146 @@ fn render_items_for_summary(items: &[pm_openai::ResponseItem], max_chars: usize)
     truncate_chars(&out, max_chars)
 }
 
+#[derive(Debug, Clone)]
+struct AgentLlmResponse {
+    id: String,
+    output: Vec<pm_openai::ResponseItem>,
+    usage: Option<pm_openai::TokenUsage>,
+    warnings: Vec<ditto_llm::Warning>,
+}
+
+fn token_usage_from_ditto_usage(usage: &ditto_llm::Usage) -> Option<pm_openai::TokenUsage> {
+    if usage.input_tokens.is_none() && usage.output_tokens.is_none() && usage.total_tokens.is_none()
+    {
+        return None;
+    }
+
+    Some(pm_openai::TokenUsage {
+        input_tokens: usage.input_tokens,
+        output_tokens: usage.output_tokens,
+        total_tokens: usage.total_tokens,
+        input_tokens_details: None,
+        output_tokens_details: None,
+        other: std::collections::BTreeMap::new(),
+    })
+}
+
+fn response_items_to_ditto_messages(
+    instructions: &str,
+    items: &[pm_openai::ResponseItem],
+) -> Vec<ditto_llm::Message> {
+    let mut out = Vec::<ditto_llm::Message>::new();
+    if !instructions.trim().is_empty() {
+        out.push(ditto_llm::Message::system(instructions.to_string()));
+    }
+
+    for item in items {
+        match item {
+            pm_openai::ResponseItem::Message { role, content } => {
+                let role = match role.as_str() {
+                    "system" => ditto_llm::Role::System,
+                    "user" => ditto_llm::Role::User,
+                    "assistant" => ditto_llm::Role::Assistant,
+                    "tool" => ditto_llm::Role::Tool,
+                    _ => ditto_llm::Role::User,
+                };
+
+                let mut parts = Vec::<ditto_llm::ContentPart>::new();
+                for part in content {
+                    match part {
+                        pm_openai::ContentItem::InputText { text }
+                        | pm_openai::ContentItem::OutputText { text } => {
+                            if text.is_empty() {
+                                continue;
+                            }
+                            parts.push(ditto_llm::ContentPart::Text { text: text.clone() });
+                        }
+                        pm_openai::ContentItem::Other => {}
+                    }
+                }
+                if !parts.is_empty() {
+                    out.push(ditto_llm::Message { role, content: parts });
+                }
+            }
+            pm_openai::ResponseItem::FunctionCall {
+                name,
+                arguments,
+                call_id,
+            } => {
+                let args = serde_json::from_str::<Value>(arguments)
+                    .unwrap_or_else(|_| Value::String(arguments.clone()));
+                out.push(ditto_llm::Message {
+                    role: ditto_llm::Role::Assistant,
+                    content: vec![ditto_llm::ContentPart::ToolCall {
+                        id: call_id.clone(),
+                        name: name.clone(),
+                        arguments: args,
+                    }],
+                });
+            }
+            pm_openai::ResponseItem::FunctionCallOutput { call_id, output } => {
+                out.push(ditto_llm::Message {
+                    role: ditto_llm::Role::Tool,
+                    content: vec![ditto_llm::ContentPart::ToolResult {
+                        tool_call_id: call_id.clone(),
+                        content: output.clone(),
+                        is_error: None,
+                    }],
+                });
+            }
+            pm_openai::ResponseItem::Other => {}
+        }
+    }
+
+    out
+}
+
+fn tool_specs_to_ditto_tools(specs: &[Value]) -> anyhow::Result<Vec<ditto_llm::Tool>> {
+    let mut out = Vec::<ditto_llm::Tool>::new();
+    for spec in specs {
+        let obj = spec
+            .as_object()
+            .ok_or_else(|| anyhow::anyhow!("tool spec must be an object"))?;
+        let kind = obj.get("type").and_then(Value::as_str).unwrap_or("");
+        if kind != "function" {
+            anyhow::bail!("unsupported tool spec type: {kind}");
+        }
+        let function = obj
+            .get("function")
+            .and_then(Value::as_object)
+            .ok_or_else(|| anyhow::anyhow!("tool spec.function must be an object"))?;
+        let name = function
+            .get("name")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("tool spec.function.name must be a string"))?;
+        let description = function
+            .get("description")
+            .and_then(Value::as_str)
+            .map(|s| s.to_string());
+        let parameters = function.get("parameters").cloned().unwrap_or(Value::Null);
+        out.push(ditto_llm::Tool {
+            name: name.to_string(),
+            description,
+            parameters,
+            strict: None,
+        });
+    }
+    Ok(out)
+}
+
+fn log_llm_warnings(thread_id: ThreadId, turn_id: TurnId, warnings: &[ditto_llm::Warning]) {
+    if warnings.is_empty() {
+        return;
+    }
+    let warnings_json = serde_json::to_string(warnings).unwrap_or_else(|_| "<unknown>".to_string());
+    tracing::info!(
+        thread_id = %thread_id,
+        turn_id = %turn_id,
+        warnings = warnings_json,
+        "llm warnings"
+    );
+}
+
 pub async fn run_agent_turn(
     server: Arc<super::Server>,
     thread_rt: Arc<super::ThreadRuntime>,
@@ -389,19 +529,46 @@ pub async fn run_agent_turn(
         .filter(|s| !s.trim().is_empty())
         .ok_or_else(|| anyhow::anyhow!("openai provider {provider} is missing base_url"))?;
 
+    let provider_capabilities = provider_config
+        .capabilities
+        .unwrap_or_else(ditto_llm::ProviderCapabilities::openai_responses);
+    if !provider_capabilities.tools {
+        anyhow::bail!(
+            "provider does not support tools: provider={provider} (CodePM requires tool calling; set [openai.providers.{provider}.capabilities.tools]=true)"
+        );
+    }
+    if !provider_capabilities.streaming {
+        anyhow::bail!(
+            "provider does not support streaming: provider={provider} (set [openai.providers.{provider}.capabilities.streaming]=true or choose a streaming-capable provider)"
+        );
+    }
+
     let env = ditto_llm::Env {
         dotenv: std::mem::take(&mut project_overrides.dotenv),
     };
-    let auth = provider_config
-        .auth
-        .clone()
-        .unwrap_or(ditto_llm::ProviderAuth::ApiKeyEnv { keys: Vec::new() });
-    let api_key = ditto_llm::resolve_auth_token(&auth, &env)
-        .await
-        .context("resolve openai auth token")?;
+    let provider_for_llm = ditto_llm::ProviderConfig {
+        base_url: Some(base_url),
+        default_model: provider_config.default_model.clone(),
+        model_whitelist: provider_config.model_whitelist.clone(),
+        auth: provider_config.auth.clone(),
+        capabilities: Some(provider_capabilities),
+    };
+    let model_client: Arc<dyn ditto_llm::LanguageModel> = if provider_capabilities.reasoning {
+        Arc::new(
+            ditto_llm::OpenAI::from_config(&provider_for_llm, &env)
+                .await
+                .context("build OpenAI Responses client")?,
+        )
+    } else {
+        Arc::new(
+            ditto_llm::OpenAICompatible::from_config(&provider_for_llm, &env)
+                .await
+                .context("build OpenAI-compatible Chat Completions client")?,
+        )
+    };
 
-    let openai = pm_openai::Client::new_with_base_url(api_key, base_url)?;
-    let tools = build_tools();
+    let tool_specs = build_tools();
+    let tools = tool_specs_to_ditto_tools(&tool_specs).context("parse tool schemas")?;
 
     let max_agent_steps = parse_env_usize(
         "CODE_PM_AGENT_MAX_STEPS",
@@ -465,7 +632,7 @@ pub async fn run_agent_turn(
                 None
             } else {
                 Some(
-                    serde_json::from_str::<Value>(raw)
+                    serde_json::from_str::<ditto_llm::ResponseFormat>(raw)
                         .context("parse CODE_PM_AGENT_RESPONSE_FORMAT_JSON")?,
                 )
             }
@@ -585,15 +752,19 @@ pub async fn run_agent_turn(
     let mut finished = false;
     let started_at = tokio::time::Instant::now();
 
-    let reasoning_effort = match ditto_llm::select_model_config(&project_overrides.models, &model)
-        .map(|cfg| cfg.thinking)
-        .unwrap_or_default()
-    {
-        ThinkingIntensity::Unsupported => None,
-        ThinkingIntensity::Small => Some(pm_openai::ReasoningEffort::Low),
-        ThinkingIntensity::Medium => Some(pm_openai::ReasoningEffort::Medium),
-        ThinkingIntensity::High => Some(pm_openai::ReasoningEffort::High),
-        ThinkingIntensity::XHigh => Some(pm_openai::ReasoningEffort::XHigh),
+    let reasoning_effort = if provider_capabilities.reasoning {
+        match ditto_llm::select_model_config(&project_overrides.models, &model)
+            .map(|cfg| cfg.thinking)
+            .unwrap_or_default()
+        {
+            ThinkingIntensity::Unsupported => None,
+            ThinkingIntensity::Small => Some(ditto_llm::ReasoningEffort::Low),
+            ThinkingIntensity::Medium => Some(ditto_llm::ReasoningEffort::Medium),
+            ThinkingIntensity::High => Some(ditto_llm::ReasoningEffort::High),
+            ThinkingIntensity::XHigh => Some(ditto_llm::ReasoningEffort::XHigh),
+        }
+    } else {
+        None
     };
 
     for _step in 0..max_agent_steps {
@@ -607,59 +778,52 @@ pub async fn run_agent_turn(
             .into());
         }
 
-        let req = pm_openai::ResponsesApiRequest {
-            model: &model,
-            instructions: &instructions,
-            input: &input_items,
-            tools: &tools,
-            tool_choice: "auto",
-            response_format: response_format.as_ref(),
-            reasoning: reasoning_effort.map(|effort| pm_openai::ReasoningConfig { effort }),
-            parallel_tool_calls,
-            store: false,
-            stream: true,
+        let messages = response_items_to_ditto_messages(&instructions, &input_items);
+        let mut req = ditto_llm::GenerateRequest::from(messages);
+        req.model = Some(model.clone());
+        req.tools = Some(tools.clone());
+        req.tool_choice = Some(ditto_llm::ToolChoice::Auto);
+        let provider_options = ditto_llm::ProviderOptions {
+            reasoning_effort,
+            response_format: response_format.clone(),
+            parallel_tool_calls: Some(parallel_tool_calls),
         };
+        let req = req.with_provider_options(provider_options)?;
 
-        let resp = match tokio::time::timeout(max_openai_request_duration, async {
-            let mut stream = openai.create_response_stream(&req).await?;
+        let llm = model_client.clone();
+        let thread_rt = thread_rt.clone();
+        let resp = match tokio::time::timeout(max_openai_request_duration, async move {
+            #[derive(Default)]
+            struct ToolCallBuffer {
+                name: Option<String>,
+                arguments: String,
+            }
+
+            let mut stream = llm.stream(req).await?;
             let mut response_id = String::new();
-            let mut usage: Option<pm_openai::TokenUsage> = None;
-            let mut output_items = Vec::new();
+            let mut usage: Option<ditto_llm::Usage> = None;
+            let mut output_items = Vec::<pm_openai::ResponseItem>::new();
             let mut output_text = String::new();
+            let mut tool_call_order = Vec::<String>::new();
+            let mut tool_calls = std::collections::BTreeMap::<String, ToolCallBuffer>::new();
+            let mut seen_tool_call_ids = std::collections::HashSet::<String>::new();
+            let mut warnings = Vec::<ditto_llm::Warning>::new();
 
-            while let Some(event) = stream.recv().await {
-                let event = event?;
-                match event {
-                    pm_openai::ResponseEvent::Created { response_id: id } => {
-                        if response_id.is_empty()
-                            && let Some(id) = id
-                            && !id.trim().is_empty()
-                        {
+            while let Some(chunk) = stream.next().await {
+                let chunk = chunk?;
+                match chunk {
+                    ditto_llm::StreamChunk::Warnings { warnings: w } => warnings.extend(w),
+                    ditto_llm::StreamChunk::ResponseId { id } => {
+                        if response_id.is_empty() && !id.trim().is_empty() {
                             response_id = id;
                         }
                     }
-                    pm_openai::ResponseEvent::Failed { response_id: id, error } => {
-                        let failed_response_id = id
-                            .as_deref()
-                            .filter(|id| !id.trim().is_empty())
-                            .or(if response_id.is_empty() {
-                                None
-                            } else {
-                                Some(response_id.as_str())
-                            })
-                            .unwrap_or("");
-                        anyhow::bail!(
-                            "openai response failed: response_id={} type={} code={} message={} param={}",
-                            failed_response_id,
-                            error.r#type.as_deref().unwrap_or(""),
-                            error.code.as_deref().unwrap_or(""),
-                            error.message.as_deref().unwrap_or(""),
-                            error.param.as_deref().unwrap_or("")
-                        );
-                    }
-                    pm_openai::ResponseEvent::OutputTextDelta(delta) => {
-                        output_text.push_str(&delta);
-                        let delta = pm_core::redact_text(&delta);
+                    ditto_llm::StreamChunk::TextDelta { text } => {
+                        if text.is_empty() {
+                            continue;
+                        }
+                        output_text.push_str(&text);
+                        let delta = pm_core::redact_text(&text);
                         let response_id_snapshot = response_id.clone();
                         thread_rt.emit_notification(
                             "item/delta",
@@ -672,20 +836,28 @@ pub async fn run_agent_turn(
                             }),
                         );
                     }
-                    pm_openai::ResponseEvent::OutputItemDone(item) => output_items.push(item),
-                    pm_openai::ResponseEvent::Completed {
-                        response_id: id,
-                        usage: u,
-                    } => {
-                        if response_id.is_empty() {
-                            if let Some(id) = id {
-                                response_id = id;
-                            }
+                    ditto_llm::StreamChunk::ToolCallStart { id, name } => {
+                        let slot = tool_calls.entry(id.clone()).or_default();
+                        if slot.name.is_none() && !name.trim().is_empty() {
+                            slot.name = Some(name);
                         }
-                        usage = u;
-                        break;
+                        if seen_tool_call_ids.insert(id.clone()) {
+                            tool_call_order.push(id);
+                        }
                     }
-                    _ => {}
+                    ditto_llm::StreamChunk::ToolCallDelta {
+                        id,
+                        arguments_delta,
+                    } => {
+                        let slot = tool_calls.entry(id.clone()).or_default();
+                        slot.arguments.push_str(&arguments_delta);
+                        if seen_tool_call_ids.insert(id.clone()) {
+                            tool_call_order.push(id);
+                        }
+                    }
+                    ditto_llm::StreamChunk::ReasoningDelta { .. } => {}
+                    ditto_llm::StreamChunk::Usage(u) => usage = Some(u),
+                    ditto_llm::StreamChunk::FinishReason(_) => {}
                 }
             }
 
@@ -693,30 +865,49 @@ pub async fn run_agent_turn(
                 response_id = "<unknown>".to_string();
             }
 
-            Ok::<_, anyhow::Error>((
-                pm_openai::ResponsesApiResponse {
-                    id: response_id,
-                    output: output_items,
-                    usage,
-                },
-                output_text,
-            ))
+            if !output_text.is_empty() {
+                let output_text = pm_core::redact_text(&output_text);
+                output_items.push(pm_openai::ResponseItem::Message {
+                    role: "assistant".to_string(),
+                    content: vec![pm_openai::ContentItem::OutputText { text: output_text }],
+                });
+            }
+
+            for id in tool_call_order {
+                let Some(call) = tool_calls.get(&id) else {
+                    continue;
+                };
+                let Some(name) = call.name.as_deref().filter(|v| !v.trim().is_empty()) else {
+                    continue;
+                };
+                let args = if call.arguments.trim().is_empty() {
+                    "{}".to_string()
+                } else {
+                    call.arguments.clone()
+                };
+                output_items.push(pm_openai::ResponseItem::FunctionCall {
+                    name: name.to_string(),
+                    arguments: args,
+                    call_id: id,
+                });
+            }
+
+            Ok::<_, anyhow::Error>(AgentLlmResponse {
+                id: response_id,
+                output: output_items,
+                usage: usage.as_ref().and_then(token_usage_from_ditto_usage),
+                warnings,
+            })
         })
         .await
         {
-            Ok(result) => {
-                let (mut resp, output_text) = result?;
-                if extract_assistant_text(&resp.output).is_empty() && !output_text.is_empty() {
-                    let output_text = pm_core::redact_text(&output_text);
-                    resp.output.push(pm_openai::ResponseItem::Message {
-                        role: "assistant".to_string(),
-                        content: vec![pm_openai::ContentItem::OutputText { text: output_text }],
-                    });
-                }
-                resp
-            }
+            Ok(result) => result?,
             Err(_) => return Err(AgentTurnError::OpenAiRequestTimedOut.into()),
         };
+
+        if !resp.warnings.is_empty() {
+            log_llm_warnings(thread_id, turn_id, &resp.warnings);
+        }
         last_response_id = resp.id.clone();
         last_usage = resp
             .usage
@@ -899,7 +1090,7 @@ pub async fn run_agent_turn(
                 thread_id,
                 turn_id,
                 model: &model,
-                openai: &openai,
+                llm: model_client.clone(),
                 max_openai_request_duration,
                 max_total_tokens,
                 total_tokens_used: &mut total_tokens_used,
@@ -935,7 +1126,7 @@ struct AutoCompactSummaryContext<'a> {
     thread_id: ThreadId,
     turn_id: TurnId,
     model: &'a str,
-    openai: &'a pm_openai::Client,
+    llm: Arc<dyn ditto_llm::LanguageModel>,
     max_openai_request_duration: Duration,
     max_total_tokens: u64,
     total_tokens_used: &'a mut u64,
@@ -958,7 +1149,7 @@ async fn auto_compact_summary(
         thread_id,
         turn_id,
         model,
-        openai,
+        llm,
         max_openai_request_duration,
         max_total_tokens,
         total_tokens_used,
@@ -974,48 +1165,37 @@ async fn auto_compact_summary(
         "# Summarize session\n\nthread_id: {thread_id}\nturn_id: {turn_id}\n\n## Transcript\n\n{transcript}"
     );
 
-    let summary_input = vec![pm_openai::ResponseItem::Message {
-        role: "user".to_string(),
-        content: vec![pm_openai::ContentItem::InputText { text: prompt }],
-    }];
-    let tools = Vec::<Value>::new();
-    let req = pm_openai::ResponsesApiRequest {
-        model,
-        instructions: SUMMARY_INSTRUCTIONS,
-        input: &summary_input,
-        tools: &tools,
-        tool_choice: "none",
-        response_format: None,
-        reasoning: None,
-        parallel_tool_calls: false,
-        store: false,
-        stream: false,
-    };
+    let messages = vec![
+        ditto_llm::Message::system(SUMMARY_INSTRUCTIONS),
+        ditto_llm::Message::user(prompt),
+    ];
+    let mut req = ditto_llm::GenerateRequest::from(messages);
+    req.model = Some(model.to_string());
+    req.tool_choice = Some(ditto_llm::ToolChoice::None);
 
-    let resp = match tokio::time::timeout(max_openai_request_duration, openai.create_response(&req))
-        .await
-    {
+    let resp = match tokio::time::timeout(max_openai_request_duration, llm.generate(req)).await {
         Ok(Ok(resp)) => resp,
         Ok(Err(_)) => return Ok(false),
         Err(_) => return Ok(false),
     };
 
-    if max_total_tokens > 0 {
-        if let Some(tokens) = resp.usage.as_ref().and_then(usage_total_tokens) {
-            *total_tokens_used = total_tokens_used.saturating_add(tokens);
-            if *total_tokens_used > max_total_tokens {
-                return Err(
-                    AgentTurnError::TokenBudgetExceeded {
-                        used: *total_tokens_used,
-                        limit: max_total_tokens,
-                    }
-                    .into(),
-                );
-            }
+    if max_total_tokens > 0
+        && let Some(usage) = token_usage_from_ditto_usage(&resp.usage)
+        && let Some(tokens) = usage_total_tokens(&usage)
+    {
+        *total_tokens_used = total_tokens_used.saturating_add(tokens);
+        if *total_tokens_used > max_total_tokens {
+            return Err(
+                AgentTurnError::TokenBudgetExceeded {
+                    used: *total_tokens_used,
+                    limit: max_total_tokens,
+                }
+                .into(),
+            );
         }
     }
 
-    let summary_text = extract_assistant_text(&resp.output);
+    let summary_text = resp.text();
     let summary_text = summary_text.trim();
     if summary_text.is_empty() {
         return Ok(false);

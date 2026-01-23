@@ -11,7 +11,7 @@
 > 1. CodePM v0.2.x 当前用到的“路由/配置层”：provider profile 配置 + OpenAI-compatible `/models` 发现 + `thinking`(reasoning.effort) 配置。
 > 2. “统一 LLM SDK 层”：`LanguageModel` / `EmbeddingModel` traits + 多 provider 适配（OpenAI/Anthropic/Google，含 streaming/tools/embeddings）+ examples/tests。
 >
-> CodePM 主程序目前仍通过 `crates/openai` 直接调用 Responses API；统一 SDK 层尚未接入 app-server 的业务流，但已可独立使用并作为后续迁移目标。
+> CodePM 主程序已在 `pm-app-server` agent loop 中接入 `ditto-llm::LanguageModel`（默认 OpenAI Responses；可通过 provider capabilities 切换到 OpenAI-compatible Chat Completions）。`crates/openai` 目前仍保留用于 legacy types / SSE 解析等。
 
 已实现（`ditto-llm` crate）：
 

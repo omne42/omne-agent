@@ -71,7 +71,7 @@
 
 ### P5（CodePM 接入）
 
-- [ ] **CodePM 主流程接入 ditto-llm（替代部分 `crates/openai` 直连）**
+- [x] **CodePM 主流程接入 ditto-llm（替代部分 `crates/openai` 直连）**
   - DoD:
     - 不改变现有事件/审计语义（tool events / approvals / JSONL 落盘）
     - 迁移路径明确：先 provider/model 选择 → 再调用层替换

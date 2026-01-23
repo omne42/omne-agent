@@ -166,6 +166,7 @@
 
 ### Changed
 - `pm-app-server`：移除 legacy project config 字段 `openai.base_url`/`openai.auth_command`/`openai.model_reasoning_effort`；改用 `openai.providers.<profile>.base_url`/`openai.providers.<profile>.auth` 与 `openai.models."<pattern>".thinking`。
+- `pm-app-server`：agent loop 的 LLM 调用改为通过 `ditto-llm`（`LanguageModel`）；默认 OpenAI Responses，可通过 provider capabilities 切换到 OpenAI-compatible Chat Completions。
 
 ### Fixed
 - `pm-app-server`/`pm`/`code-pm`/`pm-core::orchestrator`：拆分超大 Rust 源文件（保持行为不变），避免单文件超过 1000 行，降低 review/IDE 压力。
