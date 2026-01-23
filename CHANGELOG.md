@@ -118,6 +118,7 @@
 - 更新 `docs/ditto_llm_todos.md`：标记已完成的 ditto-llm TODO，并作为后续推进清单。
 - 更新 `docs/ditto_llm_todos.md`：标记 `provider_options`（reasoning/response_format）已落地并完成。
 - 更新 `docs/ditto_llm_todos.md`：完成 P2（`finish_reason` 对齐、tool-call streaming 细节）。
+- 更新 `docs/ditto_llm_todos.md`：完成 P3（JSON Schema → OpenAPI schema 转换）。
 - 重写 `docs/implementation_plan.md`：以 Agent CLI（tool/sandbox/approvals + 事件流）为核心基建，Git 降级为交付适配层，并明确 RTS 控制面最小能力集。
 - 更新 `docs/development_process.md`：补齐 RTS 风格交互要求（attention/inbox、pause/interrupt/step），并把 workspace hooks（setup/run/archive）与 artifacts/preview 明确进里程碑。
 - `docs/workflow.md` 标注为 `v0.1.1` legacy，`docs/start.md` 增加 vNext 文档导航。

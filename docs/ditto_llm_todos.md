@@ -58,7 +58,7 @@
 
 ### P3（范围扩展）
 
-- [ ] **JSON Schema → OpenAPI schema 转换补齐**（工具 schema 的关键字子集）
+- [x] **JSON Schema → OpenAPI schema 转换补齐**（工具 schema 的关键字子集）
   - DoD:
     - 明确支持范围（文档 + tests）
     - 覆盖常见关键字（例如 number/string 约束、object 约束等）
