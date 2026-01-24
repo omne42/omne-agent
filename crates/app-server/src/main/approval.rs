@@ -88,14 +88,13 @@ async fn handle_approval_list(
 }
 
 async fn ensure_approval(
-    server: &Server,
+    thread_store: &ThreadStore,
     thread_id: ThreadId,
     approval_id: pm_protocol::ApprovalId,
     expected_action: &str,
     expected_params: &serde_json::Value,
 ) -> anyhow::Result<()> {
-    let events = server
-        .thread_store
+    let events = thread_store
         .read_events_since(thread_id, EventSeq::ZERO)
         .await?
         .ok_or_else(|| anyhow::anyhow!("thread not found: {}", thread_id))?;
@@ -244,9 +243,30 @@ async fn gate_approval(
     approval_policy: pm_protocol::ApprovalPolicy,
     request: ApprovalRequest<'_>,
 ) -> anyhow::Result<ApprovalGate> {
+    gate_approval_with_deps(
+        &server.thread_store,
+        &server.exec_policy,
+        thread_rt,
+        thread_id,
+        turn_id,
+        approval_policy,
+        request,
+    )
+    .await
+}
+
+async fn gate_approval_with_deps(
+    thread_store: &ThreadStore,
+    exec_policy: &pm_execpolicy::Policy,
+    thread_rt: &Arc<ThreadRuntime>,
+    thread_id: ThreadId,
+    turn_id: Option<TurnId>,
+    approval_policy: pm_protocol::ApprovalPolicy,
+    request: ApprovalRequest<'_>,
+) -> anyhow::Result<ApprovalGate> {
     if let Some(approval_id) = request.approval_id {
         ensure_approval(
-            server,
+            thread_store,
             thread_id,
             approval_id,
             request.action,
@@ -295,7 +315,7 @@ async fn gate_approval(
     }
 
     if let Some(decision) =
-        remembered_approval_decision(server, thread_id, request.action, request.params).await?
+        remembered_approval_decision(thread_store, thread_id, request.action, request.params).await?
     {
         let approval_id = pm_protocol::ApprovalId::new();
         let reason = match decision {
@@ -377,7 +397,7 @@ async fn gate_approval(
                     if argv.is_empty() {
                         false
                     } else {
-                        let exec_matches = server.exec_policy.matches_for_command(&argv, None);
+                        let exec_matches = exec_policy.matches_for_command(&argv, None);
                         let exec_decision = exec_matches.iter().map(ExecRuleMatch::decision).max();
                         let effective_exec_decision = match exec_decision {
                             Some(ExecDecision::Forbidden) => ExecDecision::Forbidden,
@@ -510,14 +530,13 @@ fn approval_rule_key(action: &str, params: &serde_json::Value) -> anyhow::Result
 }
 
 async fn remembered_approval_decision(
-    server: &Server,
+    thread_store: &ThreadStore,
     thread_id: ThreadId,
     expected_action: &str,
     expected_params: &serde_json::Value,
 ) -> anyhow::Result<Option<pm_protocol::ApprovalDecision>> {
     let expected_key = approval_rule_key(expected_action, expected_params)?;
-    let events = server
-        .thread_store
+    let events = thread_store
         .read_events_since(thread_id, EventSeq::ZERO)
         .await?
         .ok_or_else(|| anyhow::anyhow!("thread not found: {}", thread_id))?;

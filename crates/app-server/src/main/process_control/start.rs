@@ -410,20 +410,90 @@ async fn handle_process_start_inner(
     let stdout_path = process_dir.join("stdout.log");
     let stderr_path = process_dir.join("stderr.log");
 
+    let mut combined_env = std::collections::BTreeMap::<String, String>::new();
+    if let Some(extra_env) = extra_env {
+        combined_env.extend(extra_env.clone());
+    }
+
+    let mut execve_gate: Option<ExecveGateHandle> = None;
+    #[cfg(unix)]
+    {
+        fn is_bash(argv0: &str) -> bool {
+            let mut name = Path::new(argv0)
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or(argv0)
+                .to_ascii_lowercase();
+            if let Some(stripped) = name.strip_suffix(".exe") {
+                name = stripped.to_string();
+            }
+            name == "bash"
+        }
+
+        if is_bash(&params.argv[0])
+            && let Ok(wrapper_path) = std::env::var("CODE_PM_EXECVE_WRAPPER")
+        {
+            let wrapper_path = wrapper_path.trim().to_string();
+            if wrapper_path.is_empty() {
+                anyhow::bail!("CODE_PM_EXECVE_WRAPPER must not be empty");
+            }
+            if wrapper_path.chars().any(|c| c.is_whitespace()) {
+                anyhow::bail!("CODE_PM_EXECVE_WRAPPER must not contain whitespace");
+            }
+
+            let token = pm_protocol::ApprovalId::new().to_string();
+            let socket_path = process_dir.join("execve-gate.sock");
+
+            execve_gate = Some(
+                spawn_execve_gate(
+                    ExecveGateContext {
+                        thread_id: params.thread_id,
+                        turn_id: params.turn_id,
+                        token: token.clone(),
+                        thread_root: thread_root.clone(),
+                        thread_store: server.thread_store.clone(),
+                        exec_policy: server.exec_policy.clone(),
+                        thread_rt: thread_rt.clone(),
+                    },
+                    socket_path.clone(),
+                )
+                .await?,
+            );
+
+            combined_env.insert("BASH_EXEC_WRAPPER".to_string(), wrapper_path);
+            combined_env.insert(
+                "CODE_PM_EXECVE_SOCKET".to_string(),
+                socket_path.display().to_string(),
+            );
+            combined_env.insert("CODE_PM_EXECVE_TOKEN".to_string(), token);
+            combined_env.insert("CODE_PM_THREAD_ID".to_string(), params.thread_id.to_string());
+            if let Some(turn_id) = params.turn_id {
+                combined_env.insert("CODE_PM_TURN_ID".to_string(), turn_id.to_string());
+            }
+        }
+    }
+
     let mut cmd = Command::new(&params.argv[0]);
     cmd.args(params.argv.iter().skip(1));
     cmd.current_dir(&cwd_path);
     cmd.stdin(Stdio::null());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
-    if let Some(extra_env) = extra_env {
-        cmd.envs(extra_env.iter());
+    let combined_env_opt = (!combined_env.is_empty()).then_some(&combined_env);
+    if let Some(env) = combined_env_opt {
+        cmd.envs(env.iter());
     }
-    apply_child_process_env_defaults(&mut cmd, extra_env);
+    apply_child_process_env_defaults(&mut cmd, combined_env_opt);
     scrub_child_process_env(&mut cmd);
-    let mut child = cmd
-        .spawn()
-        .with_context(|| format!("spawn {:?}", params.argv))?;
+    let mut child = match cmd.spawn() {
+        Ok(child) => child,
+        Err(err) => {
+            if let Some(gate) = execve_gate.take() {
+                shutdown_execve_gate(gate).await;
+            }
+            return Err(err).with_context(|| format!("spawn {:?}", params.argv));
+        }
+    };
 
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
@@ -485,15 +555,16 @@ async fn handle_process_start_inner(
         .await
         .insert(process_id, entry.clone());
 
-    tokio::spawn(run_process_actor(
+    tokio::spawn(run_process_actor(ProcessActorArgs {
         thread_rt,
         process_id,
         child,
         cmd_rx,
         stdout_task,
         stderr_task,
-        entry.info.clone(),
-    ));
+        execve_gate,
+        info: entry.info.clone(),
+    }));
 
     Ok(serde_json::json!({
         "process_id": process_id,

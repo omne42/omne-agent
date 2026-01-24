@@ -1,12 +1,25 @@
-async fn run_process_actor(
+struct ProcessActorArgs {
     thread_rt: Arc<ThreadRuntime>,
     process_id: ProcessId,
-    mut child: tokio::process::Child,
-    mut cmd_rx: mpsc::Receiver<ProcessCommand>,
+    child: tokio::process::Child,
+    cmd_rx: mpsc::Receiver<ProcessCommand>,
     stdout_task: Option<tokio::task::JoinHandle<anyhow::Result<()>>>,
     stderr_task: Option<tokio::task::JoinHandle<anyhow::Result<()>>>,
+    execve_gate: Option<ExecveGateHandle>,
     info: Arc<tokio::sync::Mutex<ProcessInfo>>,
-) {
+}
+
+async fn run_process_actor(args: ProcessActorArgs) {
+    let ProcessActorArgs {
+        thread_rt,
+        process_id,
+        mut child,
+        mut cmd_rx,
+        stdout_task,
+        stderr_task,
+        mut execve_gate,
+        info,
+    } = args;
     fn try_send_interrupt(child: &tokio::process::Child) -> anyhow::Result<()> {
         #[cfg(unix)]
         {
@@ -32,10 +45,16 @@ async fn run_process_actor(
     let mut kill_reason: Option<String> = None;
     let mut kill_logged = false;
 
+    async fn cleanup_execve_gate(execve_gate: &mut Option<ExecveGateHandle>) {
+        if let Some(gate) = execve_gate.take() {
+            shutdown_execve_gate(gate).await;
+        }
+    }
+
     loop {
         tokio::select! {
             cmd = cmd_rx.recv() => {
-                let Some(cmd) = cmd else { /* sender dropped */ return; };
+                let Some(cmd) = cmd else { /* sender dropped */ cleanup_execve_gate(&mut execve_gate).await; return; };
                 match cmd {
                     ProcessCommand::Interrupt { reason } => {
                         if interrupt_reason.is_none() {
@@ -98,10 +117,14 @@ async fn run_process_actor(
                         info.last_update_at = ts;
                     }
                 }
+                cleanup_execve_gate(&mut execve_gate).await;
                 return;
             }
             Ok(None) => {}
-            Err(_) => return,
+            Err(_) => {
+                cleanup_execve_gate(&mut execve_gate).await;
+                return;
+            }
         }
     }
 }

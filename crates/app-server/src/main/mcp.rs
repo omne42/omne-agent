@@ -545,15 +545,16 @@ async fn spawn_mcp_connection(
         .await
         .insert(process_id, entry.clone());
 
-    tokio::spawn(run_process_actor(
-        thread_rt.clone(),
+    tokio::spawn(run_process_actor(ProcessActorArgs {
+        thread_rt: thread_rt.clone(),
         process_id,
         child,
         cmd_rx,
-        Some(stdout_task),
-        Some(stderr_task),
-        entry.info.clone(),
-    ));
+        stdout_task: Some(stdout_task),
+        stderr_task: Some(stderr_task),
+        execve_gate: None,
+        info: entry.info.clone(),
+    }));
 
     let mut client = McpJsonRpcClient {
         stdin,

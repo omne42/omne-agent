@@ -163,6 +163,7 @@
 - `pm-app-server`：当 `sandbox_policy=read_only` 时，`file/write`/`file/patch`/`file/edit`/`file/delete`/`fs/mkdir`/`process/start` 会直接拒绝（ToolStatus=Denied）。
 - `pm-app-server approvals`：`approval/decide` 支持 `remember=true`（session 内记忆 approve/deny），同类操作无需重复弹审批；拒绝也会被记住并直接拦截。
 - `pm-app-server process/start`：引入 `pm-execpolicy` gate（`prefix_rule`）：`forbidden` 直接拒绝并写入 `ToolStatus::Denied`；`manual` 策略下仅当 `prompt`/未匹配时才要求 approval（用 allowlist 降低骚扰）。
+- `pm-app-server process/start`：当启动 `bash` 且设置 `CODE_PM_EXECVE_WRAPPER` 时，启用 patched bash 的 `BASH_EXEC_WRAPPER` 机制并启动 per-process execve gate（MCP over unix socket）拦截 shell 内部 `execve`（新增 `pm-execve-wrapper`；见 `docs/execve_wrapper.md` 与 `docs/patches/bash-exec-wrapper.patch`）。
 - `pm-execpolicy`：新增 decision `prompt_strict`；`process/start` 命中后会触发 Escalate（强制人工审批，不受 `auto_approve/on_request/unless_trusted` 与 remembered approvals 影响）。
 - `pm-app-server turn/interrupt`：会先对同一 turn 下仍在运行的后台进程发送 `process/interrupt`（SIGINT，best-effort），随后再 fallback `process/kill`（避免直接硬杀导致环境残留）。
 - `pm-app-server turn/interrupt`：当 turn 被中断时，`TurnCompleted` 会携带 `reason`（与 `TurnInterruptRequested` 一致），便于 resume 拼合历史与审计。
