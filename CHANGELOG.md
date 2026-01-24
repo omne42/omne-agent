@@ -185,6 +185,7 @@
 
 ### Fixed
 - docs：`docs/v0.2.0_parity.md` 更新 Transformers 状态，标记 ditto-llm 接入已落地。
+- docs(research)：修正 `docs/research/claude-code-router.md` 中对 CCR 文档的引用路径，指向 `example/claude-code-router/...` 快照目录。
 - `pm-app-server`/`pm`/`code-pm`/`pm-core::orchestrator`：拆分超大 Rust 源文件（保持行为不变），避免单文件超过 1000 行，降低 review/IDE 压力。
 - `pm-app-server`：进一步拆分接近上限的模块（`agent/tools`、`process_control`），为后续扩展 tools/hooks 留出空间并保持单文件 < 1000 行。
 - `pm-app-server`：拆分 JSON-RPC router（`main/app.rs`）为按域 handler 的小文件（`main/app/*.rs`），避免入口路由继续膨胀。

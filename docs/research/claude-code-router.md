@@ -20,7 +20,7 @@
 
 ### 2.1 Server：统一入口 + API 能力
 
-从 `docs/docs/server/intro.md` 与 API 文档可归纳：
+从 `example/claude-code-router/docs/docs/server/intro.md` 与 API 文档可归纳：
 
 - 兼容 Anthropic Messages API：
   - `POST /v1/messages`（支持 SSE streaming）。
@@ -38,7 +38,7 @@
 
 ### 2.2 CLI：把服务运维/配置产品化
 
-从 `docs/docs/cli/intro.md` + 根 README 可归纳：
+从 `example/claude-code-router/docs/docs/cli/intro.md` + 根 README 可归纳：
 
 - `ccr start/stop/restart/status`：服务控制。
 - `ccr code`：启动 Claude Code 并自动把请求路由到 CCR。
@@ -60,7 +60,7 @@
 
 补充（project-level routing）：
 
-- CCR 支持“按项目覆盖路由规则”：`~/.claude/projects/<project-id>/claude-code-router.json`（见 `docs/docs/cli/config/project-level.md`）。
+- CCR 支持“按项目覆盖路由规则”：`~/.claude/projects/<project-id>/claude-code-router.json`（见 `example/claude-code-router/docs/docs/cli/config/project-level.md`）。
 - 路由优先级（高→低）：
   1. `CUSTOM_ROUTER_PATH`
   2. project-level config
