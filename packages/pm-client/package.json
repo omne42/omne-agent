@@ -1,0 +1,12 @@
+{
+  "name": "@codepm/pm-client",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Minimal Node.js client for pm-app-server (JSON-RPC over stdio).",
+  "exports": "./src/index.js",
+  "engines": {
+    "node": ">=18"
+  }
+}
+

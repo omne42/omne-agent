@@ -12,3 +12,4 @@
 /.github-agent-data/
 /.codex/
 /bitto-llm/
+node_modules/

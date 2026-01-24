@@ -23,19 +23,23 @@
 
 ### 待办项（建议拆分）
 
-- [ ] Node 交付形态：
-  - A) npm 包内 vendoring 多平台 Rust binaries（Codex `codex-cli/bin/codex.js` 模式）
-- [ ] 定义 Node 目录布局（建议 `packages/*`，与 Rust `crates/*` 平行；不污染 Rust workspace）
-- [ ] 生成并发布协议 TS types（单一真源：`crates/app-server-protocol`）：
-  - `pm-app-server generate-ts --out <dir>`
-  - `pm-app-server generate-json-schema --out <dir>`（可选，供 GUI 校验/调试）
-- [ ] Node launcher：
-  - 复刻 `example/codex/codex-cli/bin/codex.js` 的模式：target triple 映射 + `spawn()` + 信号转发
-  - vendor layout 建议：`vendor/<targetTriple>/pm/pm[.exe]`、`vendor/<targetTriple>/pm/pm-app-server[.exe]`
-- [ ] Node client：
-  - 负责 spawn/连接 `pm-app-server`（stdio JSON-RPC/JSONL）并提供订阅/重连能力（`since_seq`）
+- [x] Node 交付形态：先落地 **B（thin launcher/client）**，vendoring（A）作为后续增强
+  - B) 不打包 Rust binaries：Node 只做“启动/连接/协议封装”，二进制来自 PATH 或显式指定
+  - A) npm 包内 vendoring 多平台 Rust binaries（Codex `codex-cli/bin/codex.js` 模式；后续再做）
+- [x] 定义 Node 目录布局（`packages/*`，与 Rust `crates/*` 平行；不污染 Rust workspace）
+  - 已新增：`packages/pm`（launcher）、`packages/pm-client`（stdio JSON-RPC client）
+- [ ] 生成并发布协议 TS types（单一真源：`crates/app-server-protocol`）
+  - [x] 已支持生成：`pm-app-server generate-ts --out <dir>` / `pm-app-server generate-json-schema --out <dir>`
+  - [ ] 产物以 Node package 形态发布（例如 `packages/pm-app-server-protocol`），避免 consumers 依赖 Rust toolchain
+- [x] Node launcher（`packages/pm/bin/pm.js`）
+  - target triple 映射 + vendored layout 探测（预留）+ env override + PATH fallback
+  - 信号转发（SIGINT/SIGTERM/SIGHUP）+ exit code 透传
+- [x] Node client（`packages/pm-client`）
+  - stdio JSON-RPC client：`call(method, params)` + notifications 解析
+  - 示例：`examples/basic.mjs` 跑通 `initialize → thread/start → thread/subscribe(wait_ms=0)`（不触发 LLM）
   - 严禁在 Node 侧“补齐权限逻辑”（所有权限/审批语义只来自 server 返回）
-- [ ] GUI（可选；仅在 protocol/types 稳定后启动）：
+- [ ] Node client（增强）：订阅/重连能力（`since_seq` 断点续读）+ 断线重连策略
+- [ ] GUI（可选；仅在 protocol/types 稳定后启动）
   - 建议 TypeScript（React）实现，作为 app-server client；与 TUI 一样只消费事件流
   - 打包形态可选 Electron/Tauri（后者仍应把业务逻辑留在 Rust server，而不是搬进 GUI 进程）
 
@@ -43,12 +47,11 @@
 
 > 这是一条“能跑”的验收，不是设计文档验收。
 
-- Node launcher 模式（A）：
-  - `node ./packages/<pkg>/bin/pm.js --help`
-  - `node ./packages/<pkg>/bin/pm.js app-server --help`（或等价方式启动 server）
+- Node launcher（当前为 B：PATH/env override；A vendoring 后续再补）：
+  - `CODE_PM_PM_BIN=target/debug/pm node ./packages/pm/bin/pm.js --help`
+  - `CODE_PM_APP_SERVER_BIN=target/debug/pm-app-server node ./packages/pm/bin/pm.js app-server --help`
 - Node SDK 模式（B）：
-  - `pm-app-server --help`（先确保用户机器已有二进制）
-  - `node ./packages/<client>/examples/basic.mjs`（跑通 `initialize → thread/start → turn/start`）
+  - `CODE_PM_APP_SERVER_BIN=target/debug/pm-app-server node ./packages/pm-client/examples/basic.mjs`
 
 ---
 

@@ -1,0 +1,13 @@
+{
+  "name": "@codepm/pm",
+  "private": true,
+  "version": "0.0.0",
+  "description": "CodePM Node launcher (thin wrapper around Rust binaries).",
+  "bin": {
+    "pm": "./bin/pm.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
+
