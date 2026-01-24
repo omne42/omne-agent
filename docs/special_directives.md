@@ -80,6 +80,8 @@ v0.2.0 最小建议（先钉死 4 个 at，别继续扩面）：
 - `@pdf <path|url>`
   - 语义：把 PDF 作为输入附件（file attachment，`media_type="application/pdf"`）。
   - v0.2.0 实现：同 `@image`，但注入为 file content part。
+    - local path 默认会读取文件并 base64 编码后发送；
+    - 当 `CODE_PM_AGENT_PDF_FILE_ID_UPLOAD_MIN_BYTES>0` 且 PDF 大小达到阈值时，agent 会优先尝试上传到 provider 的 `/files` 获取 `file_id`，并将附件以 `file_id` 形式注入（上传失败会回退到 base64）。
   - 安全边界（写死）：同 `@image`。
 
 关联规范：

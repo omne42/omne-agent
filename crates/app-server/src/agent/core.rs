@@ -3,6 +3,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use anyhow::Context;
+use async_trait::async_trait;
 use crate::project_config::ProjectOpenAiOverrides;
 use base64::Engine;
 use futures_util::stream::{self, StreamExt};
@@ -41,6 +42,8 @@ const DEFAULT_AGENT_MAX_ATTACHMENTS: usize = 4;
 const MAX_AGENT_MAX_ATTACHMENTS: usize = 32;
 const DEFAULT_AGENT_MAX_ATTACHMENT_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_AGENT_MAX_ATTACHMENT_BYTES: u64 = 200 * 1024 * 1024;
+const DEFAULT_AGENT_PDF_FILE_ID_UPLOAD_MIN_BYTES: u64 = 0;
+const MAX_AGENT_PDF_FILE_ID_UPLOAD_MIN_BYTES: u64 = MAX_AGENT_MAX_ATTACHMENT_BYTES;
 
 const MAX_MAX_AGENT_STEPS: usize = 10_000;
 const MAX_MAX_TOOL_CALLS: usize = 10_000;
@@ -548,6 +551,26 @@ fn response_items_to_ditto_messages(
     out
 }
 
+fn apply_attachments_to_messages(
+    mut messages: Vec<ditto_llm::Message>,
+    attachments: &[ditto_llm::ContentPart],
+) -> Vec<ditto_llm::Message> {
+    if attachments.is_empty() {
+        return messages;
+    }
+
+    if let Some(idx) = messages.iter().rposition(|msg| msg.role == ditto_llm::Role::User) {
+        messages[idx].content.extend_from_slice(attachments);
+    } else {
+        messages.push(ditto_llm::Message {
+            role: ditto_llm::Role::User,
+            content: attachments.to_vec(),
+        });
+    }
+
+    messages
+}
+
 fn tool_specs_to_ditto_tools(specs: &[Value]) -> anyhow::Result<Vec<ditto_llm::Tool>> {
     let mut out = Vec::<ditto_llm::Tool>::new();
     for spec in specs {
@@ -594,11 +617,35 @@ fn log_llm_warnings(thread_id: ThreadId, turn_id: TurnId, warnings: &[ditto_llm:
     );
 }
 
+#[async_trait]
+trait FileUploader: Send + Sync {
+    async fn upload_file(&self, filename: String, bytes: Vec<u8>) -> anyhow::Result<String>;
+}
+
+#[async_trait]
+impl FileUploader for ditto_llm::OpenAI {
+    async fn upload_file(&self, filename: String, bytes: Vec<u8>) -> anyhow::Result<String> {
+        ditto_llm::OpenAI::upload_file(self, filename, bytes)
+            .await
+            .map_err(anyhow::Error::new)
+    }
+}
+
+#[async_trait]
+impl FileUploader for ditto_llm::OpenAICompatible {
+    async fn upload_file(&self, filename: String, bytes: Vec<u8>) -> anyhow::Result<String> {
+        ditto_llm::OpenAICompatible::upload_file(self, filename, bytes)
+            .await
+            .map_err(anyhow::Error::new)
+    }
+}
+
 #[derive(Clone)]
 struct ProviderRuntime {
     config: ditto_llm::ProviderConfig,
     capabilities: ditto_llm::ProviderCapabilities,
     client: Arc<dyn ditto_llm::LanguageModel>,
+    file_uploader: Option<Arc<dyn FileUploader>>,
 }
 
 fn parse_csv_list(raw: &str) -> Vec<String> {
@@ -748,24 +795,32 @@ async fn build_provider_runtime(
         capabilities: Some(provider_capabilities),
     };
 
-    let client: Arc<dyn ditto_llm::LanguageModel> = if provider_capabilities.reasoning {
-        Arc::new(
+    let (client, file_uploader): (
+        Arc<dyn ditto_llm::LanguageModel>,
+        Option<Arc<dyn FileUploader>>,
+    ) = if provider_capabilities.reasoning {
+        let client = Arc::new(
             ditto_llm::OpenAI::from_config(&provider_for_llm, env)
                 .await
                 .context("build OpenAI Responses client")?,
-        )
+        );
+        let file_uploader: Arc<dyn FileUploader> = client.clone();
+        (client, Some(file_uploader))
     } else {
-        Arc::new(
+        let client = Arc::new(
             ditto_llm::OpenAICompatible::from_config(&provider_for_llm, env)
                 .await
                 .context("build OpenAI-compatible Chat Completions client")?,
-        )
+        );
+        let file_uploader: Arc<dyn FileUploader> = client.clone();
+        (client, Some(file_uploader))
     };
 
     Ok(ProviderRuntime {
         config: provider_for_llm,
         capabilities: provider_capabilities,
         client,
+        file_uploader,
     })
 }
 
@@ -1018,18 +1073,25 @@ pub async fn run_agent_turn(
         auth: provider_config.auth.clone(),
         capabilities: Some(provider_capabilities),
     };
-    let model_client: Arc<dyn ditto_llm::LanguageModel> = if provider_capabilities.reasoning {
-        Arc::new(
+    let (model_client, file_uploader): (
+        Arc<dyn ditto_llm::LanguageModel>,
+        Option<Arc<dyn FileUploader>>,
+    ) = if provider_capabilities.reasoning {
+        let model_client = Arc::new(
             ditto_llm::OpenAI::from_config(&provider_for_llm, &env)
                 .await
                 .context("build OpenAI Responses client")?,
-        )
+        );
+        let file_uploader: Arc<dyn FileUploader> = model_client.clone();
+        (model_client, Some(file_uploader))
     } else {
-        Arc::new(
+        let model_client = Arc::new(
             ditto_llm::OpenAICompatible::from_config(&provider_for_llm, &env)
                 .await
                 .context("build OpenAI-compatible Chat Completions client")?,
-        )
+        );
+        let file_uploader: Arc<dyn FileUploader> = model_client.clone();
+        (model_client, Some(file_uploader))
     };
 
     let fallbacks = std::env::var("CODE_PM_OPENAI_FALLBACK_PROVIDERS")
@@ -1044,6 +1106,7 @@ pub async fn run_agent_turn(
             config: provider_for_llm,
             capabilities: provider_capabilities,
             client: model_client.clone(),
+            file_uploader,
         },
     );
 
@@ -1218,10 +1281,16 @@ pub async fn run_agent_turn(
         0,
         MAX_AGENT_MAX_ATTACHMENT_BYTES,
     );
-    let attachment_parts = if attachments.is_empty() {
+    let pdf_file_id_upload_min_bytes = parse_env_u64(
+        "CODE_PM_AGENT_PDF_FILE_ID_UPLOAD_MIN_BYTES",
+        DEFAULT_AGENT_PDF_FILE_ID_UPLOAD_MIN_BYTES,
+        0,
+        MAX_AGENT_PDF_FILE_ID_UPLOAD_MIN_BYTES,
+    );
+    let resolved_attachments = if attachments.is_empty() {
         Vec::new()
     } else {
-        attachments_to_ditto_parts(
+        resolve_turn_attachments(
             thread_root.as_deref(),
             thread_mode.as_str(),
             allowed_tools.as_deref(),
@@ -1331,6 +1400,8 @@ pub async fn run_agent_turn(
     let mut finished = false;
     let started_at = tokio::time::Instant::now();
     let mut active_provider_idx = 0usize;
+    let mut attachment_parts_cache =
+        std::collections::BTreeMap::<String, Vec<ditto_llm::ContentPart>>::new();
 
     for _step in 0..max_agent_steps {
         if cancel.is_cancelled() {
@@ -1343,22 +1414,11 @@ pub async fn run_agent_turn(
             .into());
         }
 
-        let messages =
-            response_items_to_ditto_messages(&instructions, &input_items, &attachment_parts);
-        let mut req_base = ditto_llm::GenerateRequest::from(messages);
-        req_base.model = Some(model.clone());
+        let base_messages = response_items_to_ditto_messages(&instructions, &input_items, &[]);
 
         let tools_enabled = tool_model.is_none() || tool_phase_active;
         let emit_deltas = tool_model.is_none() || !tool_phase_active;
         let keep_assistant_messages = emit_deltas;
-
-        if tools_enabled {
-            req_base.tools = Some(tools.clone());
-            req_base.tool_choice = Some(ditto_llm::ToolChoice::Auto);
-        } else {
-            req_base.tools = None;
-            req_base.tool_choice = Some(ditto_llm::ToolChoice::None);
-        }
 
         let mut provider_index = active_provider_idx.min(provider_candidates.len().saturating_sub(1));
         let mut attempts = 0usize;
@@ -1384,7 +1444,6 @@ pub async fn run_agent_turn(
                     let prev = model.clone();
                     model_idx += 1;
                     model = model_candidates[model_idx].clone();
-                    req_base.model = Some(model.clone());
                     provider_index = 0;
                     attempts = 0;
                     failure_count = 0;
@@ -1472,8 +1531,37 @@ pub async fn run_agent_turn(
                 response_format: response_format.clone(),
                 parallel_tool_calls: Some(parallel_tool_calls),
             };
+            if !resolved_attachments.is_empty() && !attachment_parts_cache.contains_key(&provider_name)
+            {
+                let parts = attachments_to_ditto_parts_for_provider(
+                    thread_id,
+                    turn_id,
+                    provider_name.as_str(),
+                    &runtime,
+                    &resolved_attachments,
+                    pdf_file_id_upload_min_bytes,
+                )
+                .await?;
+                attachment_parts_cache.insert(provider_name.clone(), parts);
+            }
+
+            let attachment_parts = attachment_parts_cache
+                .get(&provider_name)
+                .map(|parts| parts.as_slice())
+                .unwrap_or(&[]);
+            let messages =
+                apply_attachments_to_messages(base_messages.clone(), attachment_parts);
+            let mut req_base = ditto_llm::GenerateRequest::from(messages);
+            req_base.model = Some(model.clone());
+            if tools_enabled {
+                req_base.tools = Some(tools.clone());
+                req_base.tool_choice = Some(ditto_llm::ToolChoice::Auto);
+            } else {
+                req_base.tools = None;
+                req_base.tool_choice = Some(ditto_llm::ToolChoice::None);
+            }
+
             let req = req_base
-                .clone()
                 .with_provider_options(provider_options)
                 .context("encode provider_options")?;
 
@@ -1516,7 +1604,6 @@ pub async fn run_agent_turn(
                             let prev = model.clone();
                             model_idx += 1;
                             model = model_candidates[model_idx].clone();
-                            req_base.model = Some(model.clone());
                             provider_index = 0;
                             attempts = 0;
                             failure_count = 0;
@@ -1576,7 +1663,6 @@ pub async fn run_agent_turn(
                             let prev = model.clone();
                             model_idx += 1;
                             model = model_candidates[model_idx].clone();
-                            req_base.model = Some(model.clone());
                             provider_index = 0;
                             attempts = 0;
                             failure_count = 0;
@@ -2509,11 +2595,11 @@ fn filename_from_url(url: &str) -> Option<String> {
         .map(|name| name.to_string())
 }
 
-async fn read_attachment_bytes(
+async fn resolve_attachment_path_and_size(
     thread_root: &Path,
     path: &str,
     max_bytes: u64,
-) -> anyhow::Result<Vec<u8>> {
+) -> anyhow::Result<(PathBuf, u64)> {
     let rel = Path::new(path);
     if rel.file_name() == Some(std::ffi::OsStr::new(".env")) {
         anyhow::bail!("refusing to attach secrets file (.env)");
@@ -2530,27 +2616,44 @@ async fn read_attachment_bytes(
     let metadata = tokio::fs::metadata(&resolved)
         .await
         .with_context(|| format!("stat {}", resolved.display()))?;
-    if metadata.len() > max_bytes {
+    let size_bytes = metadata.len();
+    if size_bytes > max_bytes {
         anyhow::bail!(
             "attachment too large: path={} bytes={} max_bytes={}",
             rel.display(),
-            metadata.len(),
+            size_bytes,
             max_bytes
         );
     }
 
-    tokio::fs::read(&resolved)
-        .await
-        .with_context(|| format!("read {}", resolved.display()))
+    Ok((resolved, size_bytes))
 }
 
-async fn attachments_to_ditto_parts(
+#[derive(Debug, Clone)]
+enum ResolvedAttachment {
+    ImageUrl { url: String },
+    ImageBytes { media_type: String, bytes: Vec<u8> },
+    FileUrl {
+        url: String,
+        filename: Option<String>,
+        media_type: String,
+    },
+    FilePath {
+        path: String,
+        resolved: PathBuf,
+        filename: Option<String>,
+        media_type: String,
+        size_bytes: u64,
+    },
+}
+
+async fn resolve_turn_attachments(
     thread_root: Option<&Path>,
     mode_name: &str,
     allowed_tools: Option<&[String]>,
     attachments: &[pm_protocol::TurnAttachment],
     max_bytes: u64,
-) -> anyhow::Result<Vec<ditto_llm::ContentPart>> {
+) -> anyhow::Result<Vec<ResolvedAttachment>> {
     if max_bytes == 0 {
         anyhow::bail!("attachments are disabled (max_bytes=0)");
     }
@@ -2629,9 +2732,7 @@ async fn attachments_to_ditto_parts(
         match attachment {
             pm_protocol::TurnAttachment::Image(image) => match &image.source {
                 pm_protocol::AttachmentSource::Url { url } => {
-                    out.push(ditto_llm::ContentPart::Image {
-                        source: ditto_llm::ImageSource::Url { url: url.clone() },
-                    });
+                    out.push(ResolvedAttachment::ImageUrl { url: url.clone() });
                 }
                 pm_protocol::AttachmentSource::Path { path } => {
                     let Some(thread_root) = thread_root else {
@@ -2647,13 +2748,14 @@ async fn attachments_to_ditto_parts(
                                 "unsupported image type: path={path} (expected: png/jpg/jpeg/webp/gif)"
                             )
                         })?;
-                    let bytes = read_attachment_bytes(thread_root, path, max_bytes).await?;
-                    let data = base64::engine::general_purpose::STANDARD.encode(bytes);
-                    out.push(ditto_llm::ContentPart::Image {
-                        source: ditto_llm::ImageSource::Base64 {
-                            media_type: media_type.to_string(),
-                            data,
-                        },
+                    let (resolved, _size_bytes) =
+                        resolve_attachment_path_and_size(thread_root, path, max_bytes).await?;
+                    let bytes = tokio::fs::read(&resolved)
+                        .await
+                        .with_context(|| format!("read {}", resolved.display()))?;
+                    out.push(ResolvedAttachment::ImageBytes {
+                        media_type: media_type.to_string(),
+                        bytes,
                     });
                 }
             },
@@ -2663,29 +2765,133 @@ async fn attachments_to_ditto_parts(
                         .filename
                         .clone()
                         .or_else(|| filename_from_url(url));
-                    out.push(ditto_llm::ContentPart::File {
+                    out.push(ResolvedAttachment::FileUrl {
+                        url: url.clone(),
                         filename,
                         media_type: file.media_type.clone(),
-                        source: ditto_llm::FileSource::Url { url: url.clone() },
                     });
                 }
                 pm_protocol::AttachmentSource::Path { path } => {
                     let Some(thread_root) = thread_root else {
                         anyhow::bail!("cannot attach local files without thread cwd/root");
                     };
-                    let bytes = read_attachment_bytes(thread_root, path, max_bytes).await?;
-                    let data = base64::engine::general_purpose::STANDARD.encode(bytes);
+                    let (resolved, size_bytes) =
+                        resolve_attachment_path_and_size(thread_root, path, max_bytes).await?;
                     let filename = file
                         .filename
                         .clone()
                         .or_else(|| filename_from_path(path));
-                    out.push(ditto_llm::ContentPart::File {
+                    out.push(ResolvedAttachment::FilePath {
+                        path: path.clone(),
+                        resolved,
                         filename,
                         media_type: file.media_type.clone(),
-                        source: ditto_llm::FileSource::Base64 { data },
+                        size_bytes,
                     });
                 }
             },
+        }
+    }
+
+    Ok(out)
+}
+
+async fn attachments_to_ditto_parts_for_provider(
+    thread_id: ThreadId,
+    turn_id: TurnId,
+    provider_name: &str,
+    runtime: &ProviderRuntime,
+    attachments: &[ResolvedAttachment],
+    pdf_file_id_upload_min_bytes: u64,
+) -> anyhow::Result<Vec<ditto_llm::ContentPart>> {
+    let mut out = Vec::new();
+
+    for attachment in attachments {
+        match attachment {
+            ResolvedAttachment::ImageUrl { url } => {
+                out.push(ditto_llm::ContentPart::Image {
+                    source: ditto_llm::ImageSource::Url { url: url.clone() },
+                });
+            }
+            ResolvedAttachment::ImageBytes { media_type, bytes } => {
+                let data = base64::engine::general_purpose::STANDARD.encode(bytes);
+                out.push(ditto_llm::ContentPart::Image {
+                    source: ditto_llm::ImageSource::Base64 {
+                        media_type: media_type.clone(),
+                        data,
+                    },
+                });
+            }
+            ResolvedAttachment::FileUrl {
+                url,
+                filename,
+                media_type,
+            } => {
+                out.push(ditto_llm::ContentPart::File {
+                    filename: filename.clone(),
+                    media_type: media_type.clone(),
+                    source: ditto_llm::FileSource::Url { url: url.clone() },
+                });
+            }
+            ResolvedAttachment::FilePath {
+                path,
+                resolved,
+                filename,
+                media_type,
+                size_bytes,
+            } => {
+                let should_upload_as_file_id = media_type == "application/pdf"
+                    && pdf_file_id_upload_min_bytes > 0
+                    && *size_bytes >= pdf_file_id_upload_min_bytes;
+
+                if should_upload_as_file_id {
+                    if let Some(uploader) = runtime.file_uploader.as_ref() {
+                        let filename = filename
+                            .clone()
+                            .unwrap_or_else(|| "file.pdf".to_string());
+                        let bytes = tokio::fs::read(resolved)
+                            .await
+                            .with_context(|| {
+                                format!("read attachment path={path} resolved={}", resolved.display())
+                            })?;
+                        match uploader
+                            .upload_file(filename.clone(), bytes)
+                            .await
+                        {
+                            Ok(file_id) => {
+                                out.push(ditto_llm::ContentPart::File {
+                                    filename: Some(filename),
+                                    media_type: media_type.clone(),
+                                    source: ditto_llm::FileSource::FileId { file_id },
+                                });
+                                continue;
+                            }
+                            Err(err) => {
+                                tracing::warn!(
+                                    thread_id = %thread_id,
+                                    turn_id = %turn_id,
+                                    provider = provider_name,
+                                    path = path,
+                                    error = %err,
+                                    "failed to upload pdf attachment; falling back to base64"
+                                );
+                            }
+                        }
+                    }
+                }
+
+                let bytes = tokio::fs::read(resolved)
+                    .await
+                    .with_context(|| {
+                        format!("read attachment path={path} resolved={}", resolved.display())
+                    })?;
+                let data = base64::engine::general_purpose::STANDARD.encode(bytes);
+                out.push(ditto_llm::ContentPart::File {
+                    filename: filename.clone(),
+                    media_type: media_type.clone(),
+                    source: ditto_llm::FileSource::Base64 { data },
+                });
+            }
         }
     }
 
@@ -3218,6 +3424,169 @@ mod llm_retry_tests {
         assert!(llm_error_is_retryable(&timed_out));
         assert!(llm_error_prefers_provider_fallback(&timed_out));
         assert!(!llm_error_prefers_model_fallback(&timed_out));
+    }
+}
+
+#[cfg(test)]
+mod attachment_upload_tests {
+    use super::*;
+    use async_trait::async_trait;
+
+    #[derive(Clone)]
+    struct DummyLanguageModel;
+
+    #[async_trait]
+    impl ditto_llm::LanguageModel for DummyLanguageModel {
+        fn provider(&self) -> &str {
+            "dummy"
+        }
+
+        fn model_id(&self) -> &str {
+            "dummy-model"
+        }
+
+        async fn generate(
+            &self,
+            _request: ditto_llm::GenerateRequest,
+        ) -> ditto_llm::Result<ditto_llm::GenerateResponse> {
+            unimplemented!()
+        }
+
+        async fn stream(
+            &self,
+            _request: ditto_llm::GenerateRequest,
+        ) -> ditto_llm::Result<ditto_llm::StreamResult> {
+            unimplemented!()
+        }
+    }
+
+    #[derive(Clone)]
+    struct StubUploader {
+        file_id: Option<String>,
+    }
+
+    #[async_trait]
+    impl FileUploader for StubUploader {
+        async fn upload_file(&self, _filename: String, _bytes: Vec<u8>) -> anyhow::Result<String> {
+            match self.file_id.as_deref() {
+                Some(file_id) => Ok(file_id.to_string()),
+                None => Err(anyhow::anyhow!("upload failed")),
+            }
+        }
+    }
+
+    fn dummy_runtime(file_uploader: Option<Arc<dyn FileUploader>>) -> ProviderRuntime {
+        ProviderRuntime {
+            config: ditto_llm::ProviderConfig {
+                base_url: Some("http://example.com/v1".to_string()),
+                default_model: Some("gpt-4.1".to_string()),
+                model_whitelist: Vec::new(),
+                http_headers: Default::default(),
+                auth: None,
+                capabilities: Some(ditto_llm::ProviderCapabilities::openai_responses()),
+            },
+            capabilities: ditto_llm::ProviderCapabilities::openai_responses(),
+            client: Arc::new(DummyLanguageModel),
+            file_uploader,
+        }
+    }
+
+    fn temp_pdf(bytes: &[u8]) -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let path = dir.path().join("a.pdf");
+        std::fs::write(&path, bytes).expect("write temp pdf");
+        (dir, path)
+    }
+
+    #[tokio::test]
+    async fn pdf_upload_min_bytes_zero_never_uploads() {
+        let (_dir, path) = temp_pdf(b"hello");
+        let runtime = dummy_runtime(Some(Arc::new(StubUploader {
+            file_id: Some("file_123".to_string()),
+        })));
+        let parts = attachments_to_ditto_parts_for_provider(
+            ThreadId::new(),
+            TurnId::new(),
+            "provider",
+            &runtime,
+            &[ResolvedAttachment::FilePath {
+                path: "a.pdf".to_string(),
+                resolved: path,
+                filename: Some("a.pdf".to_string()),
+                media_type: "application/pdf".to_string(),
+                size_bytes: 5,
+            }],
+            0,
+        )
+        .await
+        .expect("build attachment parts");
+
+        assert_eq!(parts.len(), 1);
+        let ditto_llm::ContentPart::File { source, .. } = &parts[0] else {
+            panic!("expected file part");
+        };
+        assert!(matches!(source, ditto_llm::FileSource::Base64 { .. }));
+    }
+
+    #[tokio::test]
+    async fn pdf_upload_uses_file_id_when_above_threshold() {
+        let (_dir, path) = temp_pdf(b"hello");
+        let runtime = dummy_runtime(Some(Arc::new(StubUploader {
+            file_id: Some("file_123".to_string()),
+        })));
+        let parts = attachments_to_ditto_parts_for_provider(
+            ThreadId::new(),
+            TurnId::new(),
+            "provider",
+            &runtime,
+            &[ResolvedAttachment::FilePath {
+                path: "a.pdf".to_string(),
+                resolved: path,
+                filename: Some("a.pdf".to_string()),
+                media_type: "application/pdf".to_string(),
+                size_bytes: 5,
+            }],
+            1,
+        )
+        .await
+        .expect("build attachment parts");
+
+        assert_eq!(parts.len(), 1);
+        let ditto_llm::ContentPart::File { source, .. } = &parts[0] else {
+            panic!("expected file part");
+        };
+        assert!(matches!(
+            source,
+            ditto_llm::FileSource::FileId { file_id } if file_id == "file_123"
+        ));
+    }
+
+    #[tokio::test]
+    async fn pdf_upload_falls_back_to_base64_on_error() {
+        let (_dir, path) = temp_pdf(b"hello");
+        let runtime = dummy_runtime(Some(Arc::new(StubUploader { file_id: None })));
+        let parts = attachments_to_ditto_parts_for_provider(
+            ThreadId::new(),
+            TurnId::new(),
+            "provider",
+            &runtime,
+            &[ResolvedAttachment::FilePath {
+                path: "a.pdf".to_string(),
+                resolved: path,
+                filename: Some("a.pdf".to_string()),
+                media_type: "application/pdf".to_string(),
+                size_bytes: 5,
+            }],
+            1,
+        )
+        .await
+        .expect("build attachment parts");
+
+        assert_eq!(parts.len(), 1);
+        let ditto_llm::ContentPart::File { source, .. } = &parts[0] else {
+            panic!("expected file part");
+        };
+        assert!(matches!(source, ditto_llm::FileSource::Base64 { .. }));
     }
 }
 

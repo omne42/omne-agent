@@ -1865,6 +1865,7 @@ name = "pm-app-server"
 version = "0.1.1"
 dependencies = [
  "anyhow",
+ "async-trait",
  "base64",
  "clap",
  "diffy",
