@@ -12,9 +12,9 @@
 
 ## Done（验收标准）
 
-- `cd ditto-llm && cargo fmt --check`
-- `cd ditto-llm && cargo test -p ditto-llm --all-features`
-- `cd ditto-llm && cargo clippy -p ditto-llm --all-targets --all-features -- -D warnings`
+- `cd ../ditto-llm && cargo fmt --check`
+- `cd ../ditto-llm && cargo test --all-features`
+- `cd ../ditto-llm && cargo clippy --all-targets --all-features -- -D warnings`
 - 至少一个 OpenAI-compatible provider 可通过环境变量跑通示例（推荐 LiteLLM）：
   - `OPENAI_COMPAT_BASE_URL`
   - `OPENAI_COMPAT_API_KEY`（或空，取决于 provider）

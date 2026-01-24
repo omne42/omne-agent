@@ -39,7 +39,7 @@
 - `docs/subagents.md`：Subagents（fan-out/fan-in；当前仅有 `thread/fork` + `agent_spawn` 原语）
 - `docs/repo_index.md`：repo/index + repo/search（把搜索结果写成 artifact）
 - `docs/model_routing.md`：Model routing（Router TODO；现状含 config explain）
-- `docs/ditto_llm.md`：Ditto-LLM（统一 LLM SDK 方案草案；本仓库现状仅实现 provider profile + `/models` 发现）
+- `docs/ditto_llm.md`：Ditto-LLM（统一 LLM SDK 方案草案；ditto-llm 为独立仓库，本仓库通过 path 依赖引用）
 - `docs/presets.md`：Presets（导入/导出 TODO；现状可手工用 `thread/configure` 达成）
 - `docs/mcp.md`：MCP client/server（TODO）
 - `docs/execve_wrapper.md`：execve wrapper（TODO）

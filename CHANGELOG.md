@@ -11,7 +11,7 @@
 - 新增 Agent-first 重新开发流程文档：`docs/development_process.md`。
 - 新增 vNext 目标态“RTS 风格使用流程”文档：`docs/rts_workflow.md`。
 - 新增 v0.2.x 文档索引与 v0.2.0 口径补充（approval/attention/event model/runtime/execpolicy 等，详见 `docs/README.md`）。
-- 新增 Ditto-LLM 方案草案：`docs/ditto_llm.md`；并将 `ditto-llm` 拆为独立仓库（本地 checkout：`./bitto-llm/ditto-llm`，CodePM 通过 path 依赖引用）。
+- 新增 Ditto-LLM 方案草案：`docs/ditto_llm.md`；并将 `ditto-llm` 拆为独立仓库（本地 checkout：`../ditto-llm`，CodePM 通过 path 依赖引用）。
 - 新增 Ditto-LLM TODO 跟踪文档：`docs/ditto_llm_todos.md`。
 - 新增项目级数据根与运行时目录约定文档：`docs/codepm_data.md`、`docs/runtime_layout.md`，并补齐 daemon/TUI 设计草案：`docs/daemon.md`、`docs/tui.md`。
 - 补齐 Subagents/Fan-out 文档：加入 Codex/OpenCode/Claude Code/Antigravity 对照、v0.2.x 务实 DoD 与 A/B/C 选型建议（`docs/subagents.md`）。

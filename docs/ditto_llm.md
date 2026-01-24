@@ -6,7 +6,7 @@
 
 ## 在 CodePM 仓库中的定位（v0.2.x 现状）
 
-> 本仓库依赖的 `ditto-llm`（本地 checkout：`./bitto-llm/ditto-llm`）目前包含两层能力：
+> 本仓库依赖的 `ditto-llm`（本地 checkout：`../ditto-llm`）目前包含两层能力：
 >
 > 1. CodePM v0.2.x 当前用到的“路由/配置层”：provider profile 配置 + OpenAI-compatible `/models` 发现 + `thinking`(reasoning.effort) 配置。
 > 2. “统一 LLM SDK 层”：`LanguageModel` / `EmbeddingModel` traits + 多 provider 适配（OpenAI/Anthropic/Google，含 streaming/tools/embeddings）+ examples/tests。
