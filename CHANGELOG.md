@@ -23,7 +23,8 @@
 - `pm-app-server`：支持 per-mode execpolicy rules（`.codepm_data/spec/modes.yaml` 的 `permissions.command.execpolicy_rules`），并在 `process/start` 入口 fail-closed 执行（加载失败即拒绝）。
 - `pm-app-server thread/config-explain`：追加 mode 可解释性（mode catalog 来源/路径/加载错误、可用 modes、当前 mode 的权限摘要与 glob 列表）。
 - 更新仓库级 `AGENTS.md`：补齐 `crates/*` 结构、Rust gates 与 `pm*` 入口说明。
-- 新增 `pm-jsonrpc`：最小 JSON-RPC over stdio client，用于驱动 `pm-app-server`；并支持接收/转发 JSON-RPC notifications（用于 `item/delta` 等流式事件）。
+- 新增并拆分 `pm-jsonrpc`/`pm-mcp-kit`：最小 JSON-RPC/MCP client（独立仓库：`shiertier/mcp-kit`；本地 checkout：`../mcp-kit`，CodePM 通过 path 依赖引用）。
+- 新增并拆分 `safe-fs-tools`：带显式 `SandboxPolicy/Root/SecretRules` 的 filesystem tools（独立仓库：`shiertier/safe-fs-tools`；本地 checkout：`../safe-fs-tools`；`pm-app-server file/glob` 复用其实现）。
 - 新增 `pm-app-server-protocol`：导出 app-server 协议的 TypeScript types 与 JSON Schema；`pm-app-server generate-ts --out <dir>` / `pm-app-server generate-json-schema --out <dir>` 可生成对应产物。
 - 新增 Node.js packages 雏形：`packages/pm`（launcher）与 `packages/pm-client`（stdio JSON-RPC client），作为 v0.3.0 Node.js 分发/集成方向的最小落地。
 - 新增 `pm-protocol`/`pm-eventlog`：为 v0.2.0 落地 Thread/Turn 事件类型与 append-only JSONL event log（thread_id 一致性校验、`seq` 连续、`since_seq` 断点续读、尾部半行自动截断，并提供 `ThreadState` 纯事件派生）。

@@ -516,6 +516,7 @@ async fn handle_file_glob(server: &Server, params: FileGlobParams) -> anyhow::Re
         .await?;
 
     let pattern = params.pattern.clone();
+    let root_id = file_root.as_str().to_string();
     let root = match file_root {
         FileRoot::Workspace => thread_root.clone(),
         FileRoot::Reference => match resolve_reference_repo_root(&thread_root).await {
@@ -537,36 +538,55 @@ async fn handle_file_glob(server: &Server, params: FileGlobParams) -> anyhow::Re
         },
     };
     let outcome = tokio::task::spawn_blocking(move || -> anyhow::Result<(Vec<String>, bool)> {
-        let matcher = Glob::new(&pattern)
-            .with_context(|| format!("invalid glob pattern: {pattern}"))?
-            .compile_matcher();
+        let mut secrets = safe_fs_tools::policy::SecretRules::default();
+        secrets.deny_globs.extend([
+            ".codepm_data/**",
+            "**/.codepm_data/**",
+            ".codepm/**",
+            "**/.codepm/**",
+            ".code_pm/**",
+            "**/.code_pm/**",
+            "target/**",
+            "**/target/**",
+            "node_modules/**",
+            "**/node_modules/**",
+            "example/**",
+            "**/example/**",
+        ].into_iter().map(ToString::to_string));
 
-        let mut paths = Vec::new();
-        let mut truncated = false;
+        let policy = safe_fs_tools::policy::SandboxPolicy {
+            roots: vec![safe_fs_tools::policy::Root {
+                id: root_id.clone(),
+                path: root,
+                mode: safe_fs_tools::policy::RootMode::ReadOnly,
+            }],
+            permissions: safe_fs_tools::policy::Permissions {
+                glob: true,
+                ..Default::default()
+            },
+            limits: safe_fs_tools::policy::Limits {
+                max_results,
+                ..Default::default()
+            },
+            secrets,
+        };
+        let ctx = safe_fs_tools::ops::Context::new(policy)
+            .map_err(|err| anyhow::anyhow!(err.to_string()))?;
+        let resp = safe_fs_tools::ops::glob_paths(
+            &ctx,
+            safe_fs_tools::ops::GlobRequest {
+                root_id,
+                pattern,
+            },
+        )
+        .map_err(|err| anyhow::anyhow!(err.to_string()))?;
 
-        for entry in WalkDir::new(&root)
-            .follow_links(false)
+        let paths = resp
+            .matches
             .into_iter()
-            .filter_entry(should_walk_entry)
-        {
-            let entry = entry?;
-            if !entry.file_type().is_file() {
-                continue;
-            }
-            let rel = entry.path().strip_prefix(&root).unwrap_or(entry.path());
-            if rel_path_is_secret(rel) {
-                continue;
-            }
-            if matcher.is_match(rel) {
-                paths.push(rel.to_string_lossy().to_string());
-                if paths.len() >= max_results {
-                    truncated = true;
-                    break;
-                }
-            }
-        }
-
-        Ok((paths, truncated))
+            .map(|path| path.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        Ok((paths, resp.truncated))
     })
     .await
     .context("join glob task")?;

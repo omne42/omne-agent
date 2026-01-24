@@ -1,45 +1,13 @@
 const CODE_PM_ENABLE_MCP_ENV: &str = "CODE_PM_ENABLE_MCP";
 const CODE_PM_MCP_FILE_ENV: &str = "CODE_PM_MCP_FILE";
 
-const MCP_CONFIG_VERSION: u32 = 1;
 const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
 
 const MCP_RESULT_ARTIFACT_THRESHOLD_BYTES: usize = 256 * 1024;
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct McpConfigFile {
-    version: u32,
-    servers: BTreeMap<String, McpServerConfigFile>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct McpServerConfigFile {
-    transport: McpTransport,
-    argv: Vec<String>,
-    #[serde(default)]
-    env: BTreeMap<String, String>,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-enum McpTransport {
-    Stdio,
-}
-
-#[derive(Debug, Clone)]
-struct McpConfig {
-    path: Option<PathBuf>,
-    servers: BTreeMap<String, McpServerConfig>,
-}
-
-#[derive(Debug, Clone)]
-struct McpServerConfig {
-    transport: McpTransport,
-    argv: Vec<String>,
-    env: BTreeMap<String, String>,
-}
+type McpConfig = pm_mcp_kit::Config;
+type McpServerConfig = pm_mcp_kit::ServerConfig;
+type McpTransport = pm_mcp_kit::Transport;
 
 fn parse_bool_env_value(raw: &str) -> Option<bool> {
     match raw.trim().to_ascii_lowercase().as_str() {
@@ -78,64 +46,7 @@ async fn load_mcp_config_inner(
     thread_root: &Path,
     override_path: Option<PathBuf>,
 ) -> anyhow::Result<McpConfig> {
-    let from_env = override_path.is_some();
-    let path = match override_path {
-        Some(path) if path.is_absolute() => path,
-        Some(path) => thread_root.join(path),
-        None => thread_root
-            .join(".codepm_data")
-            .join("spec")
-            .join("mcp.json"),
-    };
-
-    let contents = match tokio::fs::read_to_string(&path).await {
-        Ok(contents) => contents,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound && !from_env => {
-            return Ok(McpConfig {
-                path: None,
-                servers: BTreeMap::new(),
-            });
-        }
-        Err(err) => return Err(err).with_context(|| format!("read {}", path.display())),
-    };
-
-    let cfg: McpConfigFile = serde_json::from_str(&contents)
-        .with_context(|| format!("parse {}", path.display()))?;
-    if cfg.version != MCP_CONFIG_VERSION {
-        anyhow::bail!(
-            "unsupported mcp.json version {} (expected {})",
-            cfg.version,
-            MCP_CONFIG_VERSION
-        );
-    }
-
-    let mut servers = BTreeMap::<String, McpServerConfig>::new();
-    for (name, server) in cfg.servers {
-        if !is_valid_mcp_server_name(&name) {
-            anyhow::bail!("invalid mcp server name: {name}");
-        }
-        if server.argv.is_empty() {
-            anyhow::bail!("mcp server {name}: argv must not be empty");
-        }
-        for (idx, arg) in server.argv.iter().enumerate() {
-            if arg.trim().is_empty() {
-                anyhow::bail!("mcp server {name}: argv[{idx}] must not be empty");
-            }
-        }
-        servers.insert(
-            name,
-            McpServerConfig {
-                transport: server.transport,
-                argv: server.argv,
-                env: server.env,
-            },
-        );
-    }
-
-    Ok(McpConfig {
-        path: Some(path),
-        servers,
-    })
+    pm_mcp_kit::Config::load(thread_root, override_path).await
 }
 
 #[derive(Debug, Deserialize)]
@@ -196,252 +107,32 @@ struct McpManager {
 
 struct McpConnection {
     process_id: ProcessId,
-    client: tokio::sync::Mutex<McpJsonRpcClient>,
+    client: tokio::sync::Mutex<pm_jsonrpc::Client>,
 }
 
-#[derive(Debug, thiserror::Error)]
-enum McpRpcError {
-    #[error("io error: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("json error: {0}")]
-    Json(#[from] serde_json::Error),
-    #[error("json-rpc error {code}: {message}")]
-    Rpc {
-        code: i64,
-        message: String,
-        data: Option<Value>,
-    },
-    #[error("protocol error: {0}")]
-    Protocol(String),
+const MCP_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+async fn mcp_request(
+    client: &mut pm_jsonrpc::Client,
+    method: &str,
+    params: Option<Value>,
+) -> anyhow::Result<Value> {
+    let params = params.unwrap_or(Value::Null);
+    let outcome = tokio::time::timeout(MCP_REQUEST_TIMEOUT, client.request(method, params)).await;
+    outcome
+        .with_context(|| format!("mcp request timed out: {method}"))?
+        .with_context(|| format!("mcp request failed: {method}"))
 }
 
-type McpPendingRequests =
-    std::sync::Arc<
-        tokio::sync::Mutex<
-            HashMap<u64, tokio::sync::oneshot::Sender<Result<Value, McpRpcError>>>,
-        >,
-    >;
-
-struct McpJsonRpcClient {
-    stdin: tokio::process::ChildStdin,
-    next_id: u64,
-    pending: McpPendingRequests,
-}
-
-impl McpJsonRpcClient {
-    async fn request(&mut self, method: &str, params: Option<Value>) -> Result<Value, McpRpcError> {
-        let id = self.next_id;
-        self.next_id = self.next_id.saturating_add(1);
-
-        let (tx, rx) = tokio::sync::oneshot::channel::<Result<Value, McpRpcError>>();
-        {
-            let mut pending = self.pending.lock().await;
-            pending.insert(id, tx);
-        }
-
-        let req = serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": method,
-            "params": params,
-        });
-
-        let mut line = serde_json::to_string(&req)?;
-        line.push('\n');
-        if let Err(err) = self.write_line(&line).await {
-            let mut pending = self.pending.lock().await;
-            pending.remove(&id);
-            return Err(err);
-        }
-
-        match rx.await {
-            Ok(result) => result,
-            Err(_) => Err(McpRpcError::Protocol("response channel closed".to_string())),
-        }
-    }
-
-    async fn notify(&mut self, method: &str, params: Option<Value>) -> Result<(), McpRpcError> {
-        let msg = serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": method,
-            "params": params,
-        });
-        let mut line = serde_json::to_string(&msg)?;
-        line.push('\n');
-        self.write_line(&line).await
-    }
-
-    async fn write_line(&mut self, line: &str) -> Result<(), McpRpcError> {
-        self.stdin.write_all(line.as_bytes()).await?;
-        self.stdin.flush().await?;
-        Ok(())
-    }
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct McpJsonRpcResponse {
-    id: Value,
-    #[serde(default)]
-    result: Option<Value>,
-    #[serde(default)]
-    error: Option<McpJsonRpcError>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct McpJsonRpcError {
-    code: i64,
-    message: String,
-    #[serde(default)]
-    data: Option<Value>,
-}
-
-async fn drain_mcp_pending(pending: &McpPendingRequests, err: McpRpcError) {
-    let pending = {
-        let mut pending = pending.lock().await;
-        std::mem::take(&mut *pending)
-    };
-
-    for (_id, tx) in pending {
-        let _ = tx.send(Err(McpRpcError::Protocol(err.to_string())));
-    }
-}
-
-fn spawn_mcp_stdout_reader_task<R>(
-    mut reader: R,
-    log_path: PathBuf,
-    max_bytes_per_part: u64,
-    pending: McpPendingRequests,
-) -> tokio::task::JoinHandle<anyhow::Result<()>>
-where
-    R: tokio::io::AsyncRead + Unpin + Send + 'static,
-{
-    tokio::spawn(async move {
-        let max_bytes_per_part = max_bytes_per_part.max(1);
-        if let Some(parent) = log_path.parent() {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .with_context(|| format!("create dir {}", parent.display()))?;
-        }
-
-        let mut file = tokio::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&log_path)
-            .await
-            .with_context(|| format!("open {}", log_path.display()))?;
-        let mut current_len = file.metadata().await.map(|m| m.len()).unwrap_or(0);
-        let mut next_part = next_rotating_log_part(&log_path).await?;
-
-        let mut buf = vec![0u8; 8192];
-        let mut pending_line = Vec::<u8>::new();
-        loop {
-            let n = reader
-                .read(&mut buf)
-                .await
-                .with_context(|| format!("read mcp stdout into {}", log_path.display()))?;
-            if n == 0 {
-                drain_mcp_pending(
-                    &pending,
-                    McpRpcError::Protocol("server closed connection".to_string()),
-                )
-                .await;
-                return Ok(());
-            }
-
-            // Write raw bytes to rotating log first.
-            let mut offset = 0usize;
-            while offset < n {
-                let remaining = max_bytes_per_part.saturating_sub(current_len);
-                if remaining == 0 {
-                    file.flush()
-                        .await
-                        .with_context(|| format!("flush {}", log_path.display()))?;
-                    drop(file);
-                    next_part = rotate_log_file(&log_path, next_part).await?;
-                    file = tokio::fs::OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open(&log_path)
-                        .await
-                        .with_context(|| format!("open {}", log_path.display()))?;
-                    current_len = 0;
-                    continue;
-                }
-
-                let take = usize::try_from(remaining.min((n - offset) as u64)).unwrap_or(n - offset);
-                file.write_all(&buf[offset..(offset + take)])
-                    .await
-                    .with_context(|| format!("write {}", log_path.display()))?;
-                current_len = current_len.saturating_add(take as u64);
-                offset = offset.saturating_add(take);
-            }
-
-            pending_line.extend_from_slice(&buf[..n]);
-            loop {
-                let Some(pos) = pending_line.iter().position(|b| *b == b'\n') else {
-                    break;
-                };
-
-                let line = pending_line.drain(..=pos).collect::<Vec<_>>();
-                let line = String::from_utf8_lossy(&line);
-                let line = line.trim();
-                if line.is_empty() {
-                    continue;
-                }
-
-                let value: Value = match serde_json::from_str(line) {
-                    Ok(value) => value,
-                    Err(_) => continue,
-                };
-
-                let Some(method) = value.get("method").and_then(|v| v.as_str()) else {
-                    if value.get("id").is_none() {
-                        continue;
-                    }
-
-                    let response: McpJsonRpcResponse = match serde_json::from_value(value) {
-                        Ok(resp) => resp,
-                        Err(err) => {
-                            drain_mcp_pending(&pending, McpRpcError::Protocol(err.to_string()))
-                                .await;
-                            return Ok(());
-                        }
-                    };
-
-                    let Some(id) = response.id.as_u64() else {
-                        continue;
-                    };
-
-                    let tx = {
-                        let mut pending = pending.lock().await;
-                        pending.remove(&id)
-                    };
-                    let Some(tx) = tx else {
-                        continue;
-                    };
-
-                    if let Some(err) = response.error {
-                        let _ = tx.send(Err(McpRpcError::Rpc {
-                            code: err.code,
-                            message: err.message,
-                            data: err.data,
-                        }));
-                        continue;
-                    }
-
-                    let Some(result) = response.result else {
-                        let _ = tx.send(Err(McpRpcError::Protocol("missing result".to_string())));
-                        continue;
-                    };
-                    let _ = tx.send(Ok(result));
-                    continue;
-                };
-
-                let _ = method;
-                // notifications are ignored for now
-            }
-        }
-    })
+async fn mcp_notify(
+    client: &mut pm_jsonrpc::Client,
+    method: &str,
+    params: Option<Value>,
+) -> anyhow::Result<()> {
+    let outcome = tokio::time::timeout(MCP_REQUEST_TIMEOUT, client.notify(method, params)).await;
+    outcome
+        .with_context(|| format!("mcp notification timed out: {method}"))?
+        .with_context(|| format!("mcp notification failed: {method}"))
 }
 
 async fn spawn_mcp_connection(
@@ -476,37 +167,36 @@ async fn spawn_mcp_connection(
     let mut cmd = Command::new(&server_cfg.argv[0]);
     cmd.args(server_cfg.argv.iter().skip(1));
     cmd.current_dir(thread_root);
-    cmd.stdin(std::process::Stdio::piped());
-    cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
     cmd.envs(server_cfg.env.iter());
     apply_child_process_env_defaults(&mut cmd, Some(&server_cfg.env));
     scrub_child_process_env(&mut cmd);
-    let mut child = cmd
-        .spawn()
-        .with_context(|| format!("spawn mcp server {:?} ({server_name})", server_cfg.argv))?;
+    let max_bytes_per_part = process_log_max_bytes_per_part();
+    cmd.kill_on_drop(true);
 
-    let stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| anyhow::anyhow!("mcp server stdin not captured"))?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| anyhow::anyhow!("mcp server stdout not captured"))?;
+    let stdout_log = pm_jsonrpc::StdoutLog {
+        path: stdout_path.clone(),
+        max_bytes_per_part,
+    };
+    let mut client = pm_jsonrpc::Client::spawn_command_with_options(
+        cmd,
+        pm_jsonrpc::SpawnOptions {
+            stdout_log: Some(stdout_log),
+        },
+    )
+    .await
+    .with_context(|| format!("spawn mcp server {:?} ({server_name})", server_cfg.argv))?;
+    let _ = client.take_notifications();
+    let mut child = client
+        .take_child()
+        .ok_or_else(|| anyhow::anyhow!("mcp transport does not expose a child process"))?;
     let stderr = child
         .stderr
         .take()
         .ok_or_else(|| anyhow::anyhow!("mcp server stderr not captured"))?;
-
-    let max_bytes_per_part = process_log_max_bytes_per_part();
-    let pending: McpPendingRequests = std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new()));
-    let stdout_task =
-        spawn_mcp_stdout_reader_task(stdout, stdout_path.clone(), max_bytes_per_part, pending.clone());
     let stderr_path_for_task = stderr_path.clone();
-    let stderr_task = tokio::spawn(async move {
-        capture_rotating_log(stderr, stderr_path_for_task, max_bytes_per_part).await
-    });
+    let stderr_task =
+        tokio::spawn(async move { capture_rotating_log(stderr, stderr_path_for_task, max_bytes_per_part).await });
 
     let started = thread_rt
         .append_event(pm_protocol::ThreadEventKind::ProcessStarted {
@@ -550,17 +240,11 @@ async fn spawn_mcp_connection(
         process_id,
         child,
         cmd_rx,
-        stdout_task: Some(stdout_task),
+        stdout_task: None,
         stderr_task: Some(stderr_task),
         execve_gate: None,
         info: entry.info.clone(),
     }));
-
-    let mut client = McpJsonRpcClient {
-        stdin,
-        next_id: 1,
-        pending,
-    };
 
     let initialize_params = serde_json::json!({
         "protocolVersion": MCP_PROTOCOL_VERSION,
@@ -570,7 +254,7 @@ async fn spawn_mcp_connection(
         },
         "capabilities": {},
     });
-    if let Err(err) = client.request("initialize", Some(initialize_params)).await {
+    if let Err(err) = mcp_request(&mut client, "initialize", Some(initialize_params)).await {
         let _ = entry
             .cmd_tx
             .send(ProcessCommand::Kill {
@@ -579,7 +263,7 @@ async fn spawn_mcp_connection(
             .await;
         return Err(anyhow::anyhow!("mcp initialize failed: {err}"));
     }
-    if let Err(err) = client.notify("notifications/initialized", None).await {
+    if let Err(err) = mcp_notify(&mut client, "notifications/initialized", None).await {
         let _ = entry
             .cmd_tx
             .send(ProcessCommand::Kill {
@@ -1343,10 +1027,7 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
     let result: anyhow::Result<Value> = async {
         let v = {
             let mut client = conn.client.lock().await;
-            client
-                .request(req.mcp_method, req.mcp_params)
-                .await
-                .map_err(|err| anyhow::anyhow!(err.to_string()))?
+            mcp_request(&mut client, req.mcp_method, req.mcp_params).await?
         };
         if let Some(artifact) = maybe_write_mcp_result_artifact(
             server,
