@@ -608,6 +608,10 @@ impl ThreadRuntime {
             | pm_protocol::ThreadEventKind::AssistantMessage { .. } => {
                 self.emit_notification("item/completed", event);
             }
+            pm_protocol::ThreadEventKind::AgentStep { .. } => {
+                self.emit_notification("item/completed", event);
+                self.emit_notification("agent/step", event);
+            }
             _ => {}
         }
     }

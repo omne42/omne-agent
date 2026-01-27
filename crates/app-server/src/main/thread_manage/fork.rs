@@ -52,6 +52,7 @@ async fn handle_thread_fork(server: &Server, params: ThreadForkParams) -> anyhow
             }
             pm_protocol::ThreadEventKind::ToolStarted { .. }
             | pm_protocol::ThreadEventKind::ToolCompleted { .. }
+            | pm_protocol::ThreadEventKind::AgentStep { .. }
             | pm_protocol::ThreadEventKind::ProcessStarted { .. }
             | pm_protocol::ThreadEventKind::ProcessInterruptRequested { .. }
             | pm_protocol::ThreadEventKind::ProcessKillRequested { .. }

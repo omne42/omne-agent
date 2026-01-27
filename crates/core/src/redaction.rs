@@ -272,6 +272,33 @@ pub(crate) fn redact_thread_event_kind(kind: &mut ThreadEventKind) {
                 redact_json_value(result);
             }
         }
+        ThreadEventKind::AgentStep {
+            model,
+            response_id,
+            text,
+            tool_calls,
+            tool_results,
+            token_usage,
+            ..
+        } => {
+            *model = redact_text(model);
+            *response_id = redact_text(response_id);
+            if let Some(text) = text.as_mut() {
+                *text = redact_text(text);
+            }
+            for call in tool_calls {
+                call.name = redact_text(&call.name);
+                call.call_id = redact_text(&call.call_id);
+                call.arguments = redact_text(&call.arguments);
+            }
+            for result in tool_results {
+                result.call_id = redact_text(&result.call_id);
+                result.output = redact_text(&result.output);
+            }
+            if let Some(token_usage) = token_usage.as_mut() {
+                redact_json_value(token_usage);
+            }
+        }
         ThreadEventKind::AssistantMessage { text, .. } => {
             *text = redact_text(text);
         }

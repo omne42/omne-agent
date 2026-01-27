@@ -457,6 +457,21 @@ pub enum TurnAttachment {
     File(TurnAttachmentFile),
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(deny_unknown_fields)]
+pub struct AgentStepToolCall {
+    pub name: String,
+    pub call_id: String,
+    pub arguments: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(deny_unknown_fields)]
+pub struct AgentStepToolResult {
+    pub call_id: String,
+    pub output: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ThreadEventKind {
@@ -571,6 +586,24 @@ pub enum ThreadEventKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(type = "any")]
         result: Option<serde_json::Value>,
+    },
+
+    AgentStep {
+        turn_id: TurnId,
+        step: u32,
+        model: String,
+        response_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        tool_calls: Vec<AgentStepToolCall>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        tool_results: Vec<AgentStepToolResult>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(type = "any")]
+        token_usage: Option<serde_json::Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        warnings_count: Option<u32>,
     },
 
     AssistantMessage {

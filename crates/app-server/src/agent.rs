@@ -2,4 +2,5 @@
 // Follow-up refactors can convert these into proper modules.
 
 include!("agent/core.rs");
+include!("agent/tool_loop.rs");
 include!("agent/tools.rs");

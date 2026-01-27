@@ -122,6 +122,7 @@
 - `pm` CLI：新增 Workflow/Commands（Markdown + frontmatter）：`pm command {list,show,run}`（读取 `./.codepm_data/spec/commands/*.md`，执行 context steps，并以渲染后的正文启动 turn；见 `docs/workflow_commands.md`）。
 - `pm` CLI：`pm command run --fan-out` 支持从 command body 的 `## Task:` 段落 fan-out 并发只读子任务；支持 `--fan-out-early-return` 在子任务未完成时先启动主 turn；执行期间会持续更新 `artifact_type="fan_in_summary"`（含 rough ETA），结束后写入最终汇总（见 `docs/workflow_commands.md`、`docs/subagents.md`）。
 - `pm-app-server`：thread-level `allowed_tools`（`thread/configure.allowed_tools`）落盘与强制执行（覆盖 `file/*`、`fs/mkdir`、`repo/*`、`artifact/*`、`process/*`），并在 `thread/state`/`thread/config-explain` 可观测。
+- `pm-protocol`/`pm-app-server`/`pm`：新增 `AgentStep` 事件与 `agent/step` JSON-RPC 通知，用于按 step 记录模型输出/工具调用与结果；并将 agent tool loop 抽为可复用模块以便观测与维护。
 
 ### Changed
 - `pm`/`pm-app-server`：`pm_root` 默认目录改为 `./.codepm_data/`（可用 `--pm-root` 或 `CODE_PM_ROOT` 覆盖）。

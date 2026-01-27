@@ -56,6 +56,7 @@ async fn handle_thread_models(server: &Server, params: ThreadModelsParams) -> an
         default_model: provider_config.default_model,
         model_whitelist: provider_config.model_whitelist.clone(),
         http_headers: provider_config.http_headers,
+        http_query_params: provider_config.http_query_params,
         auth: provider_config.auth,
         capabilities: provider_config.capabilities,
     };
@@ -93,6 +94,7 @@ fn builtin_openai_provider_config(provider: &str) -> Option<ditto_llm::ProviderC
             default_model: None,
             model_whitelist: Vec::new(),
             http_headers: Default::default(),
+            http_query_params: Default::default(),
             auth: Some(ditto_llm::ProviderAuth::ApiKeyEnv { keys: Vec::new() }),
             capabilities: None,
         }),
@@ -101,6 +103,7 @@ fn builtin_openai_provider_config(provider: &str) -> Option<ditto_llm::ProviderC
             default_model: None,
             model_whitelist: Vec::new(),
             http_headers: Default::default(),
+            http_query_params: Default::default(),
             auth: Some(ditto_llm::ProviderAuth::Command { command: Vec::new() }),
             capabilities: None,
         }),
@@ -133,6 +136,10 @@ fn merge_provider_config(
     }
     if !overrides.http_headers.is_empty() {
         base.http_headers.extend(overrides.http_headers.clone());
+    }
+    if !overrides.http_query_params.is_empty() {
+        base.http_query_params
+            .extend(overrides.http_query_params.clone());
     }
     if let Some(auth) = overrides.auth.clone() {
         base.auth = Some(auth);

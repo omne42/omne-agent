@@ -139,6 +139,25 @@ fn render_event(event: &ThreadEvent) {
                 error.as_deref().unwrap_or("")
             );
         }
+        pm_protocol::ThreadEventKind::AgentStep {
+            turn_id,
+            step,
+            model,
+            response_id,
+            text,
+            tool_calls,
+            tool_results,
+            ..
+        } => {
+            println!(
+                "[{ts}] step {step} turn_id={turn_id} model={model} response_id={response_id} tool_calls={} tool_results={}",
+                tool_calls.len(),
+                tool_results.len()
+            );
+            if let Some(text) = text.as_deref().filter(|s| !s.trim().is_empty()) {
+                println!("{text}");
+            }
+        }
         pm_protocol::ThreadEventKind::AssistantMessage { text, model, .. } => {
             if let Some(model) = model {
                 println!("[{ts}] assistant (model={model}):");
