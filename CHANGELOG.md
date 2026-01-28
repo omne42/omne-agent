@@ -190,6 +190,8 @@
 - `pm` TUI：启动阶段先渲染 “connecting...” 并将 `thread/start`/`thread/resume` 启动上限固定为 5s（`CODE_PM_TUI_STARTUP_TIMEOUT_MS` 仅允许缩短），避免卡死黑屏。
 - `pm` TUI：状态栏信息移至底部并移除全局/主视图边框，呈现终端式布局。
 - `pm` TUI：状态栏仅在错误时使用红色，避免 `loading models...` 等正常状态出现红字。
+- `pm` TUI：`Ctrl-C` 行为调整为等同 `Esc`（关闭/返回），不再触发中断。
+- `ditto-llm`：OpenAI Responses 请求现在会携带 `instructions`（来自 system message），修复部分 provider 返回 “Instructions are required”。
 - `pm-app-server`：项目配置现在会读取 `openai.base_url`（`config.toml`/`config_local.toml`）并允许 `.env` 覆盖，`thread/models` 与 `thread/config-explain` 使用该值。
 - `pm-app-server`/`pm`/`code-pm`/`pm-core::orchestrator`：拆分超大 Rust 源文件（保持行为不变），避免单文件超过 1000 行，降低 review/IDE 压力。
 - `pm-app-server`：进一步拆分接近上限的模块（`agent/tools`、`process_control`），为后续扩展 tools/hooks 留出空间并保持单文件 < 1000 行。

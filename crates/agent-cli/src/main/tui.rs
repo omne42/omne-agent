@@ -799,7 +799,7 @@ mod tui {
         out.push_str("  Ctrl-K           command palette\n");
         out.push_str("  /                command palette\n");
         out.push_str("  Ctrl-Q           quit\n");
-        out.push_str("  Ctrl-C           interrupt active turn / quit when idle\n\n");
+        out.push_str("  Ctrl-C           same as Esc (close/back)\n\n");
         out.push_str("thread view:\n\n");
         out.push_str("  Enter            send input\n");
         out.push_str("  Esc              back to thread picker\n");
@@ -1380,22 +1380,28 @@ mod tui {
             key: KeyEvent,
         ) -> anyhow::Result<bool> {
             self.status = None;
+            if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+                if !self.overlays.is_empty() {
+                    let closing_palette =
+                        matches!(self.overlays.last(), Some(Overlay::CommandPalette(_)));
+                    if closing_palette {
+                        self.cancel_model_fetch();
+                    }
+                    self.overlays.pop();
+                    return Ok(false);
+                }
+                if self.active_thread.is_some() {
+                    self.return_to_thread_picker(app).await?;
+                    return Ok(false);
+                }
+                return Ok(true);
+            }
             if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('q') {
                 return Ok(true);
             }
             if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('k') {
                 self.toggle_command_palette();
                 return Ok(false);
-            }
-            if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
-                if let (Some(thread_id), Some(turn_id)) = (self.active_thread, self.active_turn_id)
-                {
-                    app.turn_interrupt(thread_id, turn_id, Some("tui ctrl-c".to_string()))
-                        .await?;
-                    self.status = Some(format!("interrupt requested: {turn_id}"));
-                    return Ok(false);
-                }
-                return Ok(true);
             }
             if self.overlays.is_empty()
                 && !key.modifiers.contains(KeyModifiers::CONTROL)
@@ -1514,19 +1520,7 @@ mod tui {
                     self.transcript_follow = true;
                 }
                 KeyCode::Esc => {
-                    self.active_thread = None;
-                    self.header = HeaderState::default();
-                    self.header_needs_refresh = false;
-                    self.overlays.clear();
-                    self.input.clear();
-                    self.streaming = None;
-                    self.active_turn_id = None;
-                    self.pending_action = None;
-                    self.transcript_scroll = 0;
-                    self.transcript_follow = true;
-                    self.transcript_max_scroll = 0;
-                    self.transcript_viewport_height = 0;
-                    self.refresh_threads(app).await?;
+                    self.return_to_thread_picker(app).await?;
                 }
                 KeyCode::Enter => {
                     let input = self.input.trim().to_string();
@@ -1551,6 +1545,23 @@ mod tui {
                 _ => {}
             }
             Ok(false)
+        }
+
+        async fn return_to_thread_picker(&mut self, app: &mut super::App) -> anyhow::Result<()> {
+            self.active_thread = None;
+            self.header = HeaderState::default();
+            self.header_needs_refresh = false;
+            self.overlays.clear();
+            self.input.clear();
+            self.streaming = None;
+            self.active_turn_id = None;
+            self.pending_action = None;
+            self.transcript_scroll = 0;
+            self.transcript_follow = true;
+            self.transcript_max_scroll = 0;
+            self.transcript_viewport_height = 0;
+            self.refresh_threads(app).await?;
+            Ok(())
         }
 
         fn toggle_command_palette(&mut self) {
