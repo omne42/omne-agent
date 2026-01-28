@@ -177,11 +177,13 @@ async fn spawn_mcp_connection(
     let stdout_log = pm_jsonrpc::StdoutLog {
         path: stdout_path.clone(),
         max_bytes_per_part,
+        max_parts: None,
     };
     let mut client = pm_jsonrpc::Client::spawn_command_with_options(
         cmd,
         pm_jsonrpc::SpawnOptions {
             stdout_log: Some(stdout_log),
+            limits: Default::default(),
         },
     )
     .await

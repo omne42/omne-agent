@@ -227,7 +227,7 @@ fn render_event(event: &ThreadEvent) {
 
 struct App {
     rpc: pm_jsonrpc::Client,
-    notifications: Option<tokio::sync::mpsc::UnboundedReceiver<pm_jsonrpc::Notification>>,
+    notifications: Option<tokio::sync::mpsc::Receiver<pm_jsonrpc::Notification>>,
 }
 
 struct RepoSearchRequest {
@@ -480,8 +480,12 @@ impl App {
 
     fn take_notifications(
         &mut self,
-    ) -> Option<tokio::sync::mpsc::UnboundedReceiver<pm_jsonrpc::Notification>> {
+    ) -> Option<tokio::sync::mpsc::Receiver<pm_jsonrpc::Notification>> {
         self.notifications.take()
+    }
+
+    fn rpc_handle(&self) -> pm_jsonrpc::ClientHandle {
+        self.rpc.handle()
     }
 
     async fn thread_start(&mut self, cwd: Option<String>) -> anyhow::Result<Value> {

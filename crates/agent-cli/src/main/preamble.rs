@@ -31,7 +31,7 @@ struct Cli {
     #[arg(long = "execpolicy-rules", value_name = "PATH", global = true)]
     execpolicy_rules: Vec<PathBuf>,
 
-    /// When omitted, starts an interactive REPL.
+    /// When omitted, starts the full-screen TUI.
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -63,8 +63,9 @@ enum Command {
     },
     /// Start a full-screen TUI (thin client over JSON-RPC).
     Tui(TuiArgs),
-    /// Start an interactive REPL.
-    Repl,
+    /// Start an interactive CLI (REPL-style).
+    #[command(alias = "repl")]
+    Cli,
     Thread {
         #[command(subcommand)]
         command: ThreadCommand,

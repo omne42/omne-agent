@@ -57,9 +57,14 @@
 $ cargo run -p pm -- --help
 $ cargo run -p pm-app-server -- --help
 
-# 交互式对话/执行环境（REPL）
+# 全屏 TUI（默认新建 thread）
 $ cargo run -p pm
 # 或显式：
+$ cargo run -p pm -- tui
+
+# 交互式 CLI（REPL 风格）
+$ cargo run -p pm -- cli
+# 兼容别名：
 $ cargo run -p pm -- repl
 ```
 

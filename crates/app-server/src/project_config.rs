@@ -63,6 +63,8 @@ struct ProjectOpenAiSection {
     #[serde(default)]
     provider: Option<String>,
     #[serde(default)]
+    base_url: Option<String>,
+    #[serde(default)]
     model: Option<String>,
     #[serde(default)]
     fallback_providers: Vec<String>,
@@ -196,6 +198,7 @@ pub async fn load_project_config(thread_root: &Path) -> LoadedProjectConfig {
 
     let mut enabled = false;
     let mut config_openai_provider: Option<String> = None;
+    let mut config_openai_base_url: Option<String> = None;
     let mut config_openai_model: Option<String> = None;
     let mut config_openai_fallback_providers: Vec<String> = Vec::new();
     let mut config_openai_providers: BTreeMap<String, ProviderConfig> = BTreeMap::new();
@@ -206,6 +209,7 @@ pub async fn load_project_config(thread_root: &Path) -> LoadedProjectConfig {
             Ok(parsed) => {
                 enabled = parsed.project_config.enabled;
                 config_openai_provider = clean_string_opt(parsed.openai.provider);
+                config_openai_base_url = clean_string_opt(parsed.openai.base_url);
                 config_openai_model = clean_string_opt(parsed.openai.model);
                 config_openai_fallback_providers =
                     clean_string_list(parsed.openai.fallback_providers);
@@ -271,7 +275,7 @@ pub async fn load_project_config(thread_root: &Path) -> LoadedProjectConfig {
 
     let openai = ProjectOpenAiOverrides {
         provider: clean_string_opt(dotenv_provider).or(config_openai_provider),
-        base_url: clean_string_opt(dotenv_base_url),
+        base_url: clean_string_opt(dotenv_base_url).or(config_openai_base_url),
         model: clean_string_opt(dotenv_model).or(config_openai_model),
         fallback_providers,
         providers: config_openai_providers,
@@ -376,6 +380,34 @@ thinking = "xhigh"
     }
 
     #[tokio::test]
+    async fn loads_base_url_from_config_toml() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let root = tmp.path();
+        let codepm_data = root.join(".codepm_data");
+        tokio::fs::create_dir_all(&codepm_data).await?;
+
+        tokio::fs::write(
+            codepm_data.join("config.toml"),
+            r#"
+[project_config]
+enabled = true
+
+[openai]
+base_url = "https://example.org/v1"
+"#,
+        )
+        .await?;
+
+        let loaded = load_project_config(root).await;
+        assert!(loaded.enabled);
+        assert_eq!(
+            loaded.openai.base_url.as_deref(),
+            Some("https://example.org/v1")
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn dotenv_provider_overrides_config_provider_when_enabled() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let root = tmp.path();
@@ -406,6 +438,41 @@ CODE_PM_OPENAI_PROVIDER=openai-auth-command
         assert_eq!(
             loaded.openai.provider.as_deref(),
             Some("openai-auth-command")
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn dotenv_base_url_overrides_config_when_enabled() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let root = tmp.path();
+        let codepm_data = root.join(".codepm_data");
+        tokio::fs::create_dir_all(&codepm_data).await?;
+
+        tokio::fs::write(
+            codepm_data.join("config.toml"),
+            r#"
+[project_config]
+enabled = true
+
+[openai]
+base_url = "https://config.example/v1"
+"#,
+        )
+        .await?;
+        tokio::fs::write(
+            codepm_data.join(".env"),
+            r#"
+CODE_PM_OPENAI_BASE_URL=https://env.example/v1
+"#,
+        )
+        .await?;
+
+        let loaded = load_project_config(root).await;
+        assert!(loaded.enabled);
+        assert_eq!(
+            loaded.openai.base_url.as_deref(),
+            Some("https://env.example/v1")
         );
         Ok(())
     }

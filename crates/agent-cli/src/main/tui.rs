@@ -10,6 +10,7 @@ mod tui {
     };
     use crossterm::{execute, ExecutableCommand};
     use futures_util::StreamExt;
+    use pm_jsonrpc::ClientHandle;
     use pm_protocol::{
         ApprovalDecision, ApprovalId, ArtifactId, ArtifactMetadata, ModelRoutingRuleSource,
         ProcessId, ThreadEvent, ThreadEventKind, ThreadId, TurnId, TurnStatus,
@@ -22,6 +23,123 @@ mod tui {
     use ratatui::Terminal;
     use serde::Deserialize;
     use serde_json::Value;
+    use super::SubscribeResponse;
+    use unicode_width::UnicodeWidthStr;
+
+    enum PollOutcome {
+        Response(SubscribeResponse),
+        Timeout,
+    }
+
+    struct ModelFetchInFlight {
+        thread_id: ThreadId,
+        handle: tokio::task::JoinHandle<anyhow::Result<Vec<String>>>,
+    }
+
+    struct PollInFlight {
+        thread_id: ThreadId,
+        handle: tokio::task::JoinHandle<anyhow::Result<PollOutcome>>,
+    }
+
+    fn spawn_poll(
+        handle: ClientHandle,
+        thread_id: ThreadId,
+        since_seq: u64,
+        poll_timeout: Duration,
+    ) -> PollInFlight {
+        let task = tokio::spawn(async move {
+            let request = async {
+                let value = handle
+                    .request(
+                        "thread/subscribe",
+                        serde_json::json!({
+                            "thread_id": thread_id,
+                            "since_seq": since_seq,
+                            "max_events": 10_000,
+                            "wait_ms": 0,
+                        }),
+                    )
+                    .await?;
+                Ok(serde_json::from_value::<SubscribeResponse>(value)?)
+            };
+
+            match tokio::time::timeout(poll_timeout, request).await {
+                Ok(Ok(resp)) => Ok(PollOutcome::Response(resp)),
+                Ok(Err(err)) => Err(err),
+                Err(_) => Ok(PollOutcome::Timeout),
+            }
+        });
+
+        PollInFlight {
+            thread_id,
+            handle: task,
+        }
+    }
+
+    fn spawn_model_fetch(
+        handle: ClientHandle,
+        thread_id: ThreadId,
+        timeout: Duration,
+    ) -> ModelFetchInFlight {
+        let task = tokio::spawn(async move {
+            let request = async {
+                let value = handle
+                    .request(
+                        "thread/models",
+                        serde_json::json!({
+                            "thread_id": thread_id,
+                        }),
+                    )
+                    .await?;
+                let models = value
+                    .get("models")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(str::to_string))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                Ok(models)
+            };
+            match tokio::time::timeout(timeout, request).await {
+                Ok(result) => result,
+                Err(_) => Err(anyhow::anyhow!("thread/models timeout")),
+            }
+        });
+
+        ModelFetchInFlight { thread_id, handle: task }
+    }
+
+    async fn handle_tick(
+        state: &mut UiState,
+        app: &mut super::App,
+        header_timeout: Duration,
+        last_threads_refresh: &mut Instant,
+    ) {
+        if let Some(thread_id) = state.active_thread {
+            if state.header_needs_refresh {
+                match tokio::time::timeout(header_timeout, state.refresh_header(app, thread_id))
+                    .await
+                {
+                    Ok(Ok(())) => state.header_needs_refresh = false,
+                    Ok(Err(err)) => {
+                        state.set_status(format!("header refresh error: {err}"));
+                    }
+                    Err(_) => {}
+                }
+            }
+        }
+
+        if state.active_thread.is_none() && last_threads_refresh.elapsed() >= Duration::from_secs(2)
+        {
+            if let Err(err) = state.refresh_threads(app).await {
+                state.set_status(format!("refresh error: {err}"));
+            } else {
+                *last_threads_refresh = Instant::now();
+            }
+        }
+    }
 
     pub(super) async fn run_tui(
         app: &mut super::App,
@@ -35,50 +153,182 @@ mod tui {
         let _guard = TerminalGuard::enter().context("enter terminal mode")?;
 
         let mut state = UiState::new(args.include_archived);
-        state.refresh_threads(app).await?;
+        state.status = Some("connecting...".to_string());
+        terminal.draw(|f| draw_ui(f, &mut state))?;
 
-        if let Some(thread_id) = args.thread_id {
-            state.open_thread(app, thread_id).await?;
+        let startup_timeout = std::env::var("CODE_PM_TUI_STARTUP_TIMEOUT_MS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|value| *value > 0)
+            .map(Duration::from_millis)
+            .unwrap_or_else(|| Duration::from_secs(5))
+            .min(Duration::from_secs(5));
+        if let Err(err) =
+            initialize_startup(&mut state, app, args.thread_id, startup_timeout).await
+        {
+            state.set_status(format!("startup error: {err}"));
+        } else {
+            state.status = None;
         }
 
+        let rpc_handle = app.rpc_handle();
         let mut event_stream = EventStream::new();
         let mut tick = tokio::time::interval(Duration::from_millis(100));
-        let mut last_threads_refresh = Instant::now();
+        let mut last_threads_refresh = Instant::now() - Duration::from_secs(2);
+        let header_timeout = Duration::from_millis(500);
+        let poll_timeout = Duration::from_secs(1);
+        let poll_interval = Duration::from_millis(200);
+        let mut last_poll = Instant::now() - poll_interval;
+        let mut poll_inflight: Option<PollInFlight> = None;
+        let mut last_active_thread: Option<ThreadId> = None;
 
         loop {
-            terminal.draw(|f| draw_ui(f, &state))?;
+            terminal.draw(|f| draw_ui(f, &mut state))?;
 
-            tokio::select! {
-                Some(note) = notifications.recv() => {
-                    if let Err(err) = state.handle_notification(note) {
-                        state.status = Some(format!("notification error: {err}"));
+            if state.active_thread != last_active_thread {
+                last_active_thread = state.active_thread;
+                if let Some(inflight) = poll_inflight.take() {
+                    inflight.handle.abort();
+                }
+                state.cancel_model_fetch();
+                last_poll = Instant::now() - poll_interval;
+            }
+
+            let mut poll_result = None::<(
+                ThreadId,
+                Result<anyhow::Result<PollOutcome>, tokio::task::JoinError>,
+            )>;
+
+            if let Some(inflight) = poll_inflight.as_mut() {
+                let poll_thread_id = inflight.thread_id;
+                tokio::select! {
+                    result = &mut inflight.handle => {
+                        poll_result = Some((poll_thread_id, result));
+                    }
+                    Some(note) = notifications.recv() => {
+                        if let Err(err) = state.handle_notification(note) {
+                            state.set_status(format!("notification error: {err}"));
+                        }
+                    }
+                    Some(Ok(event)) = event_stream.next() => {
+                        match event {
+                            Event::Key(key) => {
+                                if key.kind != crossterm::event::KeyEventKind::Press {
+                                    continue;
+                                }
+                                if state.handle_key(app, key).await? {
+                                    return Ok(());
+                                }
+                            }
+                            Event::Resize(_, _) => {}
+                            _ => {}
+                        }
+                    }
+                    _ = tick.tick() => {
+                        handle_tick(&mut state, app, header_timeout, &mut last_threads_refresh).await;
                     }
                 }
-                Some(Ok(event)) = event_stream.next() => {
-                    match event {
-                        Event::Key(key) => {
-                            if key.kind != crossterm::event::KeyEventKind::Press {
-                                continue;
-                            }
-                            if state.handle_key(app, key).await? {
-                                return Ok(());
-                            }
+            } else {
+                tokio::select! {
+                    Some(note) = notifications.recv() => {
+                        if let Err(err) = state.handle_notification(note) {
+                            state.set_status(format!("notification error: {err}"));
                         }
-                        Event::Resize(_, _) => {}
-                        _ => {}
+                    }
+                    Some(Ok(event)) = event_stream.next() => {
+                        match event {
+                            Event::Key(key) => {
+                                if key.kind != crossterm::event::KeyEventKind::Press {
+                                    continue;
+                                }
+                                if state.handle_key(app, key).await? {
+                                    return Ok(());
+                                }
+                            }
+                            Event::Resize(_, _) => {}
+                            _ => {}
+                        }
+                    }
+                    _ = tick.tick() => {
+                        handle_tick(&mut state, app, header_timeout, &mut last_threads_refresh).await;
+                        if let Some(thread_id) = state.active_thread
+                            && last_poll.elapsed() >= poll_interval
+                        {
+                            poll_inflight = Some(spawn_poll(
+                                rpc_handle.clone(),
+                                thread_id,
+                                state.last_seq,
+                                poll_timeout,
+                            ));
+                            last_poll = Instant::now();
+                        }
                     }
                 }
-                _ = tick.tick() => {
-                    if state.active_thread.is_some() {
-                        if let Err(err) = state.poll_thread(app).await {
-                            state.status = Some(format!("poll error: {err}"));
+            }
+
+            if let Some((thread_id, result)) = poll_result {
+                poll_inflight = None;
+                match result {
+                    Ok(Ok(PollOutcome::Response(resp))) => {
+                        if state.active_thread == Some(thread_id) {
+                            state.last_seq = resp.last_seq;
+                            for event in resp.events {
+                                state.apply_event(&event);
+                            }
+                            if resp.has_more {
+                                last_poll = Instant::now() - poll_interval;
+                            }
                         }
                     }
-                    if state.active_thread.is_none() && last_threads_refresh.elapsed() >= Duration::from_secs(2) {
-                        if let Err(err) = state.refresh_threads(app).await {
-                            state.status = Some(format!("refresh error: {err}"));
+                    Ok(Ok(PollOutcome::Timeout)) => {}
+                    Ok(Err(err)) => {
+                        state.set_status(format!("poll error: {err}"));
+                    }
+                    Err(err) => {
+                        state.set_status(format!("poll task error: {err}"));
+                    }
+                }
+            }
+
+            if state
+                .model_fetch
+                .as_ref()
+                .is_some_and(|fetch| fetch.handle.is_finished())
+            {
+                let fetch = state.model_fetch.take().expect("checked model fetch");
+                let result = fetch.handle.await;
+                match result {
+                    Ok(Ok(models)) => {
+                        if state.active_thread == Some(fetch.thread_id) {
+                            state.apply_model_list(models);
                         } else {
-                            last_threads_refresh = Instant::now();
+                            state.model_fetch_pending = false;
+                        }
+                    }
+                    Ok(Err(err)) => {
+                        state.model_fetch_pending = false;
+                        state.set_status(format!("thread/models error: {err}"));
+                        let show_error_palette = matches!(
+                            state.overlays.last(),
+                            Some(Overlay::CommandPalette(view)) if view.title == "Set model"
+                        );
+                        if show_error_palette {
+                            state.replace_top_command_palette(build_model_error_palette(
+                                &err.to_string(),
+                            ));
+                        }
+                    }
+                    Err(err) => {
+                        state.model_fetch_pending = false;
+                        state.set_status(format!("thread/models task error: {err}"));
+                        let show_error_palette = matches!(
+                            state.overlays.last(),
+                            Some(Overlay::CommandPalette(view)) if view.title == "Set model"
+                        );
+                        if show_error_palette {
+                            state.replace_top_command_palette(build_model_error_palette(
+                                &err.to_string(),
+                            ));
                         }
                     }
                 }
@@ -113,6 +363,33 @@ mod tui {
         Ok(Terminal::new(backend)?)
     }
 
+    async fn initialize_startup(
+        state: &mut UiState,
+        app: &mut super::App,
+        thread_id: Option<ThreadId>,
+        timeout: Duration,
+    ) -> anyhow::Result<()> {
+        match thread_id {
+            Some(thread_id) => {
+                let resume = tokio::time::timeout(timeout, app.thread_resume(thread_id))
+                    .await
+                    .context("thread/resume timeout")??;
+                let last_seq = resume["last_seq"].as_u64().unwrap_or(0);
+                state.activate_thread(thread_id, last_seq);
+            }
+            None => {
+                let started = tokio::time::timeout(timeout, app.thread_start(None))
+                    .await
+                    .context("thread/start timeout")??;
+                let thread_id: ThreadId = serde_json::from_value(started["thread_id"].clone())
+                    .context("thread_id missing")?;
+                let last_seq = started["last_seq"].as_u64().unwrap_or(0);
+                state.activate_thread(thread_id, last_seq);
+            }
+        }
+        Ok(())
+    }
+
     #[derive(Debug, Clone, Deserialize)]
     struct ThreadListMetaResponse {
         #[serde(default)]
@@ -143,6 +420,7 @@ mod tui {
         User,
         Assistant,
         System,
+        Error,
     }
 
     #[derive(Debug, Clone)]
@@ -157,6 +435,7 @@ mod tui {
         Processes(ProcessesOverlay),
         Artifacts(ArtifactsOverlay),
         Text(TextOverlay),
+        CommandPalette(CommandPaletteOverlay),
     }
 
     #[derive(Debug, Clone)]
@@ -186,6 +465,355 @@ mod tui {
         title: String,
         text: String,
         scroll: u16,
+    }
+
+    #[derive(Debug, Clone)]
+    struct CommandPaletteOverlay {
+        title: String,
+        query: String,
+        items: Vec<PaletteItem>,
+        filtered: Vec<usize>,
+        selected: usize,
+    }
+
+    #[derive(Debug, Clone)]
+    struct PaletteItem {
+        label: String,
+        action: PaletteCommand,
+    }
+
+    #[derive(Debug, Clone)]
+    enum PaletteCommand {
+        Quit,
+        OpenRoot,
+        Help,
+        NewThread,
+        ThreadPicker,
+        RefreshThreads,
+        OpenApprovals,
+        OpenProcesses,
+        OpenArtifacts,
+        PickMode,
+        PickModel,
+        PickApprovalPolicy,
+        PickSandboxPolicy,
+        PickSandboxNetworkAccess,
+        SetMode(String),
+        SetModel(String),
+        SetApprovalPolicy(super::CliApprovalPolicy),
+        SetSandboxPolicy(super::CliSandboxPolicy),
+        SetSandboxNetworkAccess(super::CliSandboxNetworkAccess),
+        Noop,
+    }
+
+    impl CommandPaletteOverlay {
+        fn new(title: impl Into<String>, items: Vec<PaletteItem>) -> Self {
+            let mut out = Self {
+                title: title.into(),
+                query: String::new(),
+                items,
+                filtered: Vec::new(),
+                selected: 0,
+            };
+            out.rebuild_filter();
+            out
+        }
+
+        fn rebuild_filter(&mut self) {
+            let query = self.query.trim().to_ascii_lowercase();
+            let tokens = query
+                .split_whitespace()
+                .filter(|t| !t.is_empty())
+                .collect::<Vec<_>>();
+
+            self.filtered = if tokens.is_empty() {
+                (0..self.items.len()).collect::<Vec<_>>()
+            } else {
+                self.items
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(idx, item)| {
+                        let hay = item.label.to_ascii_lowercase();
+                        if tokens.iter().all(|token| hay.contains(token)) {
+                            Some(idx)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            };
+
+            if self.filtered.is_empty() {
+                self.selected = 0;
+            } else if self.selected >= self.filtered.len() {
+                self.selected = self.filtered.len() - 1;
+            }
+        }
+
+        fn selected_action(&self) -> Option<PaletteCommand> {
+            let idx = *self.filtered.get(self.selected)?;
+            self.items.get(idx).map(|item| item.action.clone())
+        }
+    }
+
+    fn build_root_palette(state: &UiState) -> CommandPaletteOverlay {
+        let mut items = Vec::<PaletteItem>::new();
+
+        items.push(PaletteItem {
+            label: "New conversation".to_string(),
+            action: PaletteCommand::NewThread,
+        });
+        items.push(PaletteItem {
+            label: "Thread picker".to_string(),
+            action: PaletteCommand::ThreadPicker,
+        });
+        items.push(PaletteItem {
+            label: "Refresh threads".to_string(),
+            action: PaletteCommand::RefreshThreads,
+        });
+
+        if state.active_thread.is_some() {
+            let mode = state.header.mode.as_deref().unwrap_or("-");
+            let model = state.header.model.as_deref().unwrap_or("-");
+
+            items.push(PaletteItem {
+                label: "Approvals".to_string(),
+                action: PaletteCommand::OpenApprovals,
+            });
+            items.push(PaletteItem {
+                label: "Processes".to_string(),
+                action: PaletteCommand::OpenProcesses,
+            });
+            items.push(PaletteItem {
+                label: "Artifacts".to_string(),
+                action: PaletteCommand::OpenArtifacts,
+            });
+            items.push(PaletteItem {
+                label: format!("Set agent/mode (current: {mode})"),
+                action: PaletteCommand::PickMode,
+            });
+            items.push(PaletteItem {
+                label: format!("Set model (current: {model})"),
+                action: PaletteCommand::PickModel,
+            });
+            items.push(PaletteItem {
+                label: "Set approval policy".to_string(),
+                action: PaletteCommand::PickApprovalPolicy,
+            });
+            items.push(PaletteItem {
+                label: "Set sandbox policy".to_string(),
+                action: PaletteCommand::PickSandboxPolicy,
+            });
+            items.push(PaletteItem {
+                label: "Set sandbox network access".to_string(),
+                action: PaletteCommand::PickSandboxNetworkAccess,
+            });
+        }
+
+        items.push(PaletteItem {
+            label: "Help".to_string(),
+            action: PaletteCommand::Help,
+        });
+        items.push(PaletteItem {
+            label: "Quit".to_string(),
+            action: PaletteCommand::Quit,
+        });
+
+        CommandPaletteOverlay::new("Commands", items)
+    }
+
+    fn build_mode_palette(modes: Vec<String>, current: Option<&str>) -> CommandPaletteOverlay {
+        let mut items = Vec::<PaletteItem>::new();
+        items.push(PaletteItem {
+            label: "← Back".to_string(),
+            action: PaletteCommand::OpenRoot,
+        });
+        for mode in modes {
+            let is_current = current.is_some_and(|c| c == mode);
+            let label = if is_current {
+                format!("{mode} (current)")
+            } else {
+                mode.clone()
+            };
+            items.push(PaletteItem {
+                label,
+                action: PaletteCommand::SetMode(mode),
+            });
+        }
+        CommandPaletteOverlay::new("Set agent/mode", items)
+    }
+
+    fn build_model_palette(mut models: Vec<String>, current: Option<&str>) -> CommandPaletteOverlay {
+        models.sort();
+        let mut items = Vec::<PaletteItem>::new();
+        items.push(PaletteItem {
+            label: "← Back".to_string(),
+            action: PaletteCommand::OpenRoot,
+        });
+        for model in models {
+            let is_current = current.is_some_and(|c| c == model);
+            let label = if is_current {
+                format!("{model} (current)")
+            } else {
+                model.clone()
+            };
+            items.push(PaletteItem {
+                label,
+                action: PaletteCommand::SetModel(model),
+            });
+        }
+        CommandPaletteOverlay::new("Set model", items)
+    }
+
+    fn build_model_loading_palette() -> CommandPaletteOverlay {
+        let items = vec![
+            PaletteItem {
+                label: "loading models...".to_string(),
+                action: PaletteCommand::Noop,
+            },
+            PaletteItem {
+                label: "type model and press Enter".to_string(),
+                action: PaletteCommand::Noop,
+            },
+        ];
+        CommandPaletteOverlay::new("Set model", items)
+    }
+
+    fn build_model_error_palette(error: &str) -> CommandPaletteOverlay {
+        let items = vec![
+            PaletteItem {
+                label: format!("error: {error}"),
+                action: PaletteCommand::Noop,
+            },
+            PaletteItem {
+                label: "retry list".to_string(),
+                action: PaletteCommand::PickModel,
+            },
+            PaletteItem {
+                label: "type model and press Enter".to_string(),
+                action: PaletteCommand::Noop,
+            },
+            PaletteItem {
+                label: "← Back".to_string(),
+                action: PaletteCommand::OpenRoot,
+            },
+        ];
+        CommandPaletteOverlay::new("Set model", items)
+    }
+
+    fn build_approval_policy_palette() -> CommandPaletteOverlay {
+        let mut items = Vec::<PaletteItem>::new();
+        items.push(PaletteItem {
+            label: "← Back".to_string(),
+            action: PaletteCommand::OpenRoot,
+        });
+
+        let policies = [
+            super::CliApprovalPolicy::AutoApprove,
+            super::CliApprovalPolicy::OnRequest,
+            super::CliApprovalPolicy::Manual,
+            super::CliApprovalPolicy::UnlessTrusted,
+            super::CliApprovalPolicy::AutoDeny,
+        ];
+        for policy in policies {
+            items.push(PaletteItem {
+                label: format!("approval_policy={}", approval_policy_label(policy)),
+                action: PaletteCommand::SetApprovalPolicy(policy),
+            });
+        }
+        CommandPaletteOverlay::new("Set approval policy", items)
+    }
+
+    fn build_sandbox_policy_palette() -> CommandPaletteOverlay {
+        let mut items = Vec::<PaletteItem>::new();
+        items.push(PaletteItem {
+            label: "← Back".to_string(),
+            action: PaletteCommand::OpenRoot,
+        });
+
+        let policies = [
+            super::CliSandboxPolicy::ReadOnly,
+            super::CliSandboxPolicy::WorkspaceWrite,
+            super::CliSandboxPolicy::DangerFullAccess,
+        ];
+        for policy in policies {
+            items.push(PaletteItem {
+                label: format!("sandbox_policy={}", sandbox_policy_label(policy)),
+                action: PaletteCommand::SetSandboxPolicy(policy),
+            });
+        }
+        CommandPaletteOverlay::new("Set sandbox policy", items)
+    }
+
+    fn build_sandbox_network_access_palette() -> CommandPaletteOverlay {
+        let mut items = Vec::<PaletteItem>::new();
+        items.push(PaletteItem {
+            label: "← Back".to_string(),
+            action: PaletteCommand::OpenRoot,
+        });
+
+        let values = [
+            super::CliSandboxNetworkAccess::Deny,
+            super::CliSandboxNetworkAccess::Allow,
+        ];
+        for value in values {
+            items.push(PaletteItem {
+                label: format!(
+                    "sandbox_network_access={}",
+                    sandbox_network_access_label(value)
+                ),
+                action: PaletteCommand::SetSandboxNetworkAccess(value),
+            });
+        }
+        CommandPaletteOverlay::new("Set sandbox network access", items)
+    }
+
+    fn approval_policy_label(value: super::CliApprovalPolicy) -> &'static str {
+        match value {
+            super::CliApprovalPolicy::AutoApprove => "auto_approve",
+            super::CliApprovalPolicy::OnRequest => "on_request",
+            super::CliApprovalPolicy::Manual => "manual",
+            super::CliApprovalPolicy::UnlessTrusted => "unless_trusted",
+            super::CliApprovalPolicy::AutoDeny => "auto_deny",
+        }
+    }
+
+    fn sandbox_policy_label(value: super::CliSandboxPolicy) -> &'static str {
+        match value {
+            super::CliSandboxPolicy::ReadOnly => "read_only",
+            super::CliSandboxPolicy::WorkspaceWrite => "workspace_write",
+            super::CliSandboxPolicy::DangerFullAccess => "danger_full_access",
+        }
+    }
+
+    fn sandbox_network_access_label(value: super::CliSandboxNetworkAccess) -> &'static str {
+        match value {
+            super::CliSandboxNetworkAccess::Deny => "deny",
+            super::CliSandboxNetworkAccess::Allow => "allow",
+        }
+    }
+
+    fn tui_help_text() -> String {
+        let mut out = String::new();
+        out.push_str("keys:\n\n");
+        out.push_str("  Ctrl-K           command palette\n");
+        out.push_str("  /                command palette\n");
+        out.push_str("  Ctrl-Q           quit\n");
+        out.push_str("  Ctrl-C           interrupt active turn / quit when idle\n\n");
+        out.push_str("thread view:\n\n");
+        out.push_str("  Enter            send input\n");
+        out.push_str("  Esc              back to thread picker\n");
+        out.push_str("  ↑/↓              scroll transcript\n");
+        out.push_str("  PageUp/PageDown  scroll transcript (page)\n");
+        out.push_str("  Home/End         top/bottom + follow\n");
+        out.push_str("  Ctrl-A           approvals overlay\n");
+        out.push_str("  Ctrl-P           processes overlay\n");
+        out.push_str("  Ctrl-O           artifacts overlay\n\n");
+        out.push_str("thread picker:\n\n");
+        out.push_str("  n                new thread\n");
+        out.push_str("  r                refresh\n");
+        out.push_str("  ↑/↓ Enter        open\n");
+        out
     }
 
     #[derive(Debug, Clone)]
@@ -323,19 +951,43 @@ mod tui {
         bytes: u64,
     }
 
+    #[derive(Debug, Clone, Default)]
+    struct HeaderState {
+        mode: Option<String>,
+        provider: Option<String>,
+        model: Option<String>,
+        thinking: Option<String>,
+        mcp_enabled: bool,
+    }
+
+    fn env_truthy(key: &str) -> bool {
+        std::env::var(key)
+            .ok()
+            .map(|v| v.trim().to_ascii_lowercase())
+            .is_some_and(|v| matches!(v.as_str(), "1" | "true" | "yes" | "on"))
+    }
+
     struct UiState {
         include_archived: bool,
         threads: Vec<ThreadMeta>,
         selected_thread: usize,
         active_thread: Option<ThreadId>,
+        header: HeaderState,
+        header_needs_refresh: bool,
         overlays: Vec<Overlay>,
         last_seq: u64,
         transcript: VecDeque<TranscriptEntry>,
+        transcript_scroll: u16,
+        transcript_follow: bool,
+        transcript_max_scroll: u16,
+        transcript_viewport_height: u16,
         streaming: Option<StreamingState>,
         active_turn_id: Option<TurnId>,
         input: String,
         status: Option<String>,
         pending_action: Option<PendingAction>,
+        model_fetch: Option<ModelFetchInFlight>,
+        model_fetch_pending: bool,
     }
 
     impl UiState {
@@ -345,15 +997,28 @@ mod tui {
                 threads: Vec::new(),
                 selected_thread: 0,
                 active_thread: None,
+                header: HeaderState::default(),
+                header_needs_refresh: false,
                 overlays: Vec::new(),
                 last_seq: 0,
                 transcript: VecDeque::new(),
+                transcript_scroll: 0,
+                transcript_follow: true,
+                transcript_max_scroll: 0,
+                transcript_viewport_height: 0,
                 streaming: None,
                 active_turn_id: None,
                 input: String::new(),
                 status: None,
                 pending_action: None,
+                model_fetch: None,
+                model_fetch_pending: false,
             }
+        }
+
+        fn activate_thread(&mut self, thread_id: ThreadId, last_seq: u64) {
+            let since_seq = last_seq.saturating_sub(2_000);
+            self.reset_thread_state(thread_id, since_seq);
         }
 
         async fn refresh_threads(&mut self, app: &mut super::App) -> anyhow::Result<()> {
@@ -381,31 +1046,75 @@ mod tui {
                 .await
                 .context("subscribe initial events")?;
 
-            self.active_thread = Some(thread_id);
-            self.overlays.clear();
-            self.last_seq = resp.last_seq;
-            self.transcript.clear();
-            self.streaming = None;
-            self.active_turn_id = None;
-            self.pending_action = None;
+            self.reset_thread_state(thread_id, resp.last_seq);
             for event in resp.events {
                 self.apply_event(&event);
+            }
+            if let Err(err) = self.refresh_header(app, thread_id).await {
+                self.set_status(format!("header refresh error: {err}"));
+            } else {
+                self.header_needs_refresh = false;
             }
             Ok(())
         }
 
-        async fn poll_thread(&mut self, app: &mut super::App) -> anyhow::Result<()> {
-            let Some(thread_id) = self.active_thread else {
-                return Ok(());
-            };
-            let resp = app
-                .thread_subscribe(thread_id, self.last_seq, Some(10_000), Some(0))
-                .await?;
-            self.last_seq = resp.last_seq;
-            for event in resp.events {
-                self.apply_event(&event);
-            }
+        fn reset_thread_state(&mut self, thread_id: ThreadId, last_seq: u64) {
+            self.active_thread = Some(thread_id);
+            self.header = HeaderState::default();
+            self.header_needs_refresh = true;
+            self.overlays.clear();
+            self.last_seq = last_seq;
+            self.transcript.clear();
+            self.transcript_scroll = 0;
+            self.transcript_follow = true;
+            self.transcript_max_scroll = 0;
+            self.transcript_viewport_height = 0;
+            self.streaming = None;
+            self.active_turn_id = None;
+            self.pending_action = None;
+            self.cancel_model_fetch();
+        }
+
+        async fn refresh_header(
+            &mut self,
+            app: &mut super::App,
+            thread_id: ThreadId,
+        ) -> anyhow::Result<()> {
+            let config = app.thread_config_explain(thread_id).await?;
+
+            self.header.mode = config
+                .get("effective")
+                .and_then(|v| v.get("mode"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+
+            self.header.provider = Self::extract_openai_provider(&config);
+            self.header.model = config
+                .get("effective")
+                .and_then(|v| v.get("model"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+            self.header.thinking = self
+                .header
+                .thinking
+                .clone()
+                .filter(|s| !s.trim().is_empty());
+
+            self.header.mcp_enabled = env_truthy("CODE_PM_ENABLE_MCP");
             Ok(())
+        }
+
+        fn extract_openai_provider(config: &Value) -> Option<String> {
+            let layers = config.get("layers")?.as_array()?;
+            for layer in layers.iter().rev() {
+                let provider = layer.get("openai_provider").and_then(|v| v.as_str());
+                if let Some(provider) = provider.map(str::trim).filter(|s| !s.is_empty()) {
+                    return Some(provider.to_string());
+                }
+            }
+            None
         }
 
         fn apply_event(&mut self, event: &ThreadEvent) {
@@ -434,6 +1143,7 @@ mod tui {
                     reason,
                     ..
                 } => {
+                    self.header.model = Some(selected_model.clone());
                     let mut line = format!(
                         "[model] {selected_model} ({})",
                         model_routing_rule_source_str(*rule_source)
@@ -455,6 +1165,14 @@ mod tui {
                         text: format!("[turn] {turn_id} {}", turn_status_str(*status)),
                     });
                 }
+                ThreadEventKind::ThreadConfigUpdated { mode, model, .. } => {
+                    if let Some(mode) = mode.as_deref().filter(|s| !s.trim().is_empty()) {
+                        self.header.mode = Some(mode.to_string());
+                    }
+                    if let Some(model) = model.as_deref().filter(|s| !s.trim().is_empty()) {
+                        self.header.model = Some(model.to_string());
+                    }
+                }
                 _ => {}
             }
         }
@@ -465,6 +1183,54 @@ mod tui {
                 self.transcript.pop_front();
             }
             self.transcript.push_back(entry);
+        }
+
+        fn set_status(&mut self, msg: String) {
+            if Self::is_error_message(&msg) {
+                self.report_error(msg);
+            } else {
+                self.status = Some(msg);
+            }
+        }
+
+        fn report_error(&mut self, msg: String) {
+            self.status = Some(msg.clone());
+            if self.active_thread.is_some() {
+                self.push_transcript(TranscriptEntry {
+                    role: TranscriptRole::Error,
+                    text: msg,
+                });
+            }
+        }
+
+        fn cancel_model_fetch(&mut self) {
+            if let Some(fetch) = self.model_fetch.take() {
+                fetch.handle.abort();
+            }
+            self.model_fetch_pending = false;
+        }
+
+        fn apply_model_list(&mut self, models: Vec<String>) {
+            if !self.model_fetch_pending {
+                return;
+            }
+            self.model_fetch_pending = false;
+            if models.is_empty() {
+                self.set_status("thread/models error: empty model list".to_string());
+                return;
+            }
+            let palette = build_model_palette(models, self.header.model.as_deref());
+            if matches!(self.overlays.last(), Some(Overlay::CommandPalette(_))) {
+                self.replace_top_command_palette(palette);
+            }
+        }
+
+        fn is_error_message(msg: &str) -> bool {
+            let lower = msg.to_ascii_lowercase();
+            lower.contains("error")
+                || lower.contains("timeout")
+                || lower.contains("failed")
+                || lower.contains("denied")
         }
 
         fn handle_notification(&mut self, note: pm_jsonrpc::Notification) -> anyhow::Result<()> {
@@ -534,9 +1300,17 @@ mod tui {
             let mut status = None::<String>;
             let mut decided = None::<ApprovalId>;
             let mut set_pending_action = None::<PendingAction>;
+            let mut palette_command = None::<PaletteCommand>;
             let op;
 
-            if key.code == KeyCode::Esc || key.code == KeyCode::Char('q') {
+            let close_with_q =
+                key.code == KeyCode::Char('q')
+                    && !matches!(self.overlays.last(), Some(Overlay::CommandPalette(_)));
+            let closing_palette = matches!(self.overlays.last(), Some(Overlay::CommandPalette(_)));
+            if key.code == KeyCode::Esc || close_with_q {
+                if closing_palette {
+                    self.cancel_model_fetch();
+                }
                 self.overlays.pop();
                 return Ok(false);
             }
@@ -561,11 +1335,15 @@ mod tui {
                     Overlay::Text(view) => {
                         op = handle_key_text_overlay(key, view);
                     }
+                    Overlay::CommandPalette(view) => {
+                        palette_command = handle_key_command_palette(key, view);
+                        op = OverlayOp::None;
+                    }
                 }
             }
 
             if let Some(msg) = status {
-                self.status = Some(msg);
+                self.set_status(msg);
             }
 
             if let Some(pending) = set_pending_action {
@@ -589,6 +1367,10 @@ mod tui {
                 }
             }
 
+            if let Some(command) = palette_command {
+                return self.execute_palette_command(app, command).await;
+            }
+
             Ok(false)
         }
 
@@ -601,13 +1383,26 @@ mod tui {
             if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('q') {
                 return Ok(true);
             }
+            if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('k') {
+                self.toggle_command_palette();
+                return Ok(false);
+            }
             if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
                 if let (Some(thread_id), Some(turn_id)) = (self.active_thread, self.active_turn_id)
                 {
                     app.turn_interrupt(thread_id, turn_id, Some("tui ctrl-c".to_string()))
                         .await?;
                     self.status = Some(format!("interrupt requested: {turn_id}"));
+                    return Ok(false);
                 }
+                return Ok(true);
+            }
+            if self.overlays.is_empty()
+                && !key.modifiers.contains(KeyModifiers::CONTROL)
+                && key.code == KeyCode::Char('/')
+                && self.input.trim().is_empty()
+            {
+                self.toggle_command_palette();
                 return Ok(false);
             }
 
@@ -682,13 +1477,55 @@ mod tui {
             }
 
             match key.code {
+                KeyCode::Up => {
+                    self.transcript_follow = false;
+                    self.transcript_scroll = self.transcript_scroll.saturating_sub(1);
+                }
+                KeyCode::Down => {
+                    self.transcript_follow = false;
+                    self.transcript_scroll = self.transcript_scroll.saturating_add(1);
+                    if self.transcript_scroll >= self.transcript_max_scroll {
+                        self.transcript_scroll = self.transcript_max_scroll;
+                        self.transcript_follow = true;
+                    }
+                }
+                KeyCode::PageUp => {
+                    self.transcript_follow = false;
+                    self.transcript_scroll = self
+                        .transcript_scroll
+                        .saturating_sub(self.transcript_page());
+                }
+                KeyCode::PageDown => {
+                    self.transcript_follow = false;
+                    self.transcript_scroll = self
+                        .transcript_scroll
+                        .saturating_add(self.transcript_page());
+                    if self.transcript_scroll >= self.transcript_max_scroll {
+                        self.transcript_scroll = self.transcript_max_scroll;
+                        self.transcript_follow = true;
+                    }
+                }
+                KeyCode::Home => {
+                    self.transcript_follow = false;
+                    self.transcript_scroll = 0;
+                }
+                KeyCode::End => {
+                    self.transcript_scroll = self.transcript_max_scroll;
+                    self.transcript_follow = true;
+                }
                 KeyCode::Esc => {
                     self.active_thread = None;
+                    self.header = HeaderState::default();
+                    self.header_needs_refresh = false;
                     self.overlays.clear();
                     self.input.clear();
                     self.streaming = None;
                     self.active_turn_id = None;
                     self.pending_action = None;
+                    self.transcript_scroll = 0;
+                    self.transcript_follow = true;
+                    self.transcript_max_scroll = 0;
+                    self.transcript_viewport_height = 0;
                     self.refresh_threads(app).await?;
                 }
                 KeyCode::Enter => {
@@ -714,6 +1551,294 @@ mod tui {
                 _ => {}
             }
             Ok(false)
+        }
+
+        fn toggle_command_palette(&mut self) {
+            if matches!(self.overlays.last(), Some(Overlay::CommandPalette(_))) {
+                self.cancel_model_fetch();
+                self.overlays.pop();
+                return;
+            }
+
+            self.overlays
+                .push(Overlay::CommandPalette(build_root_palette(self)));
+        }
+
+        fn replace_top_command_palette(&mut self, palette: CommandPaletteOverlay) {
+            match self.overlays.last_mut() {
+                Some(Overlay::CommandPalette(view)) => {
+                    *view = palette;
+                }
+                _ => {
+                    self.overlays.push(Overlay::CommandPalette(palette));
+                }
+            }
+        }
+
+        async fn execute_palette_command(
+            &mut self,
+            app: &mut super::App,
+            command: PaletteCommand,
+        ) -> anyhow::Result<bool> {
+            match command {
+                PaletteCommand::Quit => return Ok(true),
+                PaletteCommand::Noop => {}
+                PaletteCommand::OpenRoot => {
+                    self.replace_top_command_palette(build_root_palette(self));
+                }
+                PaletteCommand::Help => {
+                    self.overlays.pop();
+                    self.overlays.push(Overlay::Text(TextOverlay {
+                        title: "Help".to_string(),
+                        text: tui_help_text(),
+                        scroll: 0,
+                    }));
+                }
+                PaletteCommand::NewThread => {
+                    let started = match app.thread_start(None).await {
+                        Ok(v) => v,
+                        Err(err) => {
+                            self.set_status(format!("thread/start error: {err}"));
+                            return Ok(false);
+                        }
+                    };
+                    let thread_id: ThreadId =
+                        serde_json::from_value(started["thread_id"].clone()).context("thread_id missing")?;
+                    self.open_thread(app, thread_id).await?;
+                }
+                PaletteCommand::ThreadPicker => {
+                    if self.active_thread.is_none() {
+                        self.overlays.pop();
+                        self.refresh_threads(app).await?;
+                        return Ok(false);
+                    }
+
+                    self.active_thread = None;
+                    self.header = HeaderState::default();
+                    self.header_needs_refresh = false;
+                    self.overlays.clear();
+                    self.input.clear();
+                    self.streaming = None;
+                    self.active_turn_id = None;
+                    self.pending_action = None;
+                    self.transcript_scroll = 0;
+                    self.transcript_follow = true;
+                    self.transcript_max_scroll = 0;
+                    self.transcript_viewport_height = 0;
+                    self.refresh_threads(app).await?;
+                }
+                PaletteCommand::RefreshThreads => {
+                    if let Err(err) = self.refresh_threads(app).await {
+                        self.set_status(format!("refresh error: {err}"));
+                    } else {
+                        self.set_status("refreshed".to_string());
+                    }
+                }
+                PaletteCommand::OpenApprovals => {
+                    self.overlays.pop();
+                    self.open_approvals_overlay(app).await?;
+                }
+                PaletteCommand::OpenProcesses => {
+                    self.overlays.pop();
+                    self.open_processes_overlay(app).await?;
+                }
+                PaletteCommand::OpenArtifacts => {
+                    self.overlays.pop();
+                    self.open_artifacts_overlay(app).await?;
+                }
+                PaletteCommand::PickMode => {
+                    let Some(thread_id) = self.active_thread else {
+                        self.set_status("no active thread".to_string());
+                        return Ok(false);
+                    };
+                    let config = match app.thread_config_explain(thread_id).await {
+                        Ok(v) => v,
+                        Err(err) => {
+                            self.set_status(format!("thread/config/explain error: {err}"));
+                            return Ok(false);
+                        }
+                    };
+                    let modes = config
+                        .get("mode_catalog")
+                        .and_then(|v| v.get("modes"))
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str().map(str::to_string))
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    self.replace_top_command_palette(build_mode_palette(
+                        modes,
+                        self.header.mode.as_deref(),
+                    ));
+                }
+                PaletteCommand::PickModel => {
+                    let Some(thread_id) = self.active_thread else {
+                        self.set_status("no active thread".to_string());
+                        return Ok(false);
+                    };
+                    if self.model_fetch.is_some() {
+                        self.set_status("model list already loading".to_string());
+                        return Ok(false);
+                    }
+                    let rpc_handle = app.rpc_handle();
+                    self.model_fetch_pending = true;
+                    self.replace_top_command_palette(build_model_loading_palette());
+                    self.model_fetch = Some(spawn_model_fetch(
+                        rpc_handle,
+                        thread_id,
+                        Duration::from_secs(2),
+                    ));
+                    self.set_status("loading models...".to_string());
+                }
+                PaletteCommand::PickApprovalPolicy => {
+                    self.replace_top_command_palette(build_approval_policy_palette());
+                }
+                PaletteCommand::PickSandboxPolicy => {
+                    self.replace_top_command_palette(build_sandbox_policy_palette());
+                }
+                PaletteCommand::PickSandboxNetworkAccess => {
+                    self.replace_top_command_palette(build_sandbox_network_access_palette());
+                }
+                PaletteCommand::SetMode(mode) => {
+                    let Some(thread_id) = self.active_thread else {
+                        self.set_status("no active thread".to_string());
+                        return Ok(false);
+                    };
+                    self.overlays.pop();
+                    if let Err(err) = app
+                        .thread_configure(super::ThreadConfigureArgs {
+                            thread_id,
+                            approval_policy: None,
+                            sandbox_policy: None,
+                            sandbox_writable_roots: None,
+                            sandbox_network_access: None,
+                            mode: Some(mode.clone()),
+                            model: None,
+                            openai_base_url: None,
+                        })
+                        .await
+                    {
+                        self.set_status(format!("set mode error: {err}"));
+                    } else {
+                        self.set_status(format!("mode={mode}"));
+                        let _ = self.refresh_header(app, thread_id).await;
+                    }
+                }
+                PaletteCommand::SetModel(model) => {
+                    let Some(thread_id) = self.active_thread else {
+                        self.set_status("no active thread".to_string());
+                        return Ok(false);
+                    };
+                    self.overlays.pop();
+                    if let Err(err) = app
+                        .thread_configure(super::ThreadConfigureArgs {
+                            thread_id,
+                            approval_policy: None,
+                            sandbox_policy: None,
+                            sandbox_writable_roots: None,
+                            sandbox_network_access: None,
+                            mode: None,
+                            model: Some(model.clone()),
+                            openai_base_url: None,
+                        })
+                        .await
+                    {
+                        self.set_status(format!("set model error: {err}"));
+                    } else {
+                        self.set_status(format!("model={model}"));
+                        let _ = self.refresh_header(app, thread_id).await;
+                    }
+                }
+                PaletteCommand::SetApprovalPolicy(approval_policy) => {
+                    let Some(thread_id) = self.active_thread else {
+                        self.set_status("no active thread".to_string());
+                        return Ok(false);
+                    };
+                    self.overlays.pop();
+                    if let Err(err) = app
+                        .thread_configure(super::ThreadConfigureArgs {
+                            thread_id,
+                            approval_policy: Some(approval_policy),
+                            sandbox_policy: None,
+                            sandbox_writable_roots: None,
+                            sandbox_network_access: None,
+                            mode: None,
+                            model: None,
+                            openai_base_url: None,
+                        })
+                        .await
+                    {
+                        self.set_status(format!("set approval_policy error: {err}"));
+                    } else {
+                        self.set_status(format!(
+                            "approval_policy={}",
+                            approval_policy_label(approval_policy)
+                        ));
+                    }
+                }
+                PaletteCommand::SetSandboxPolicy(sandbox_policy) => {
+                    let Some(thread_id) = self.active_thread else {
+                        self.set_status("no active thread".to_string());
+                        return Ok(false);
+                    };
+                    self.overlays.pop();
+                    if let Err(err) = app
+                        .thread_configure(super::ThreadConfigureArgs {
+                            thread_id,
+                            approval_policy: None,
+                            sandbox_policy: Some(sandbox_policy),
+                            sandbox_writable_roots: None,
+                            sandbox_network_access: None,
+                            mode: None,
+                            model: None,
+                            openai_base_url: None,
+                        })
+                        .await
+                    {
+                        self.set_status(format!("set sandbox_policy error: {err}"));
+                    } else {
+                        self.set_status(format!(
+                            "sandbox_policy={}",
+                            sandbox_policy_label(sandbox_policy)
+                        ));
+                    }
+                }
+                PaletteCommand::SetSandboxNetworkAccess(sandbox_network_access) => {
+                    let Some(thread_id) = self.active_thread else {
+                        self.set_status("no active thread".to_string());
+                        return Ok(false);
+                    };
+                    self.overlays.pop();
+                    if let Err(err) = app
+                        .thread_configure(super::ThreadConfigureArgs {
+                            thread_id,
+                            approval_policy: None,
+                            sandbox_policy: None,
+                            sandbox_writable_roots: None,
+                            sandbox_network_access: Some(sandbox_network_access),
+                            mode: None,
+                            model: None,
+                            openai_base_url: None,
+                        })
+                        .await
+                    {
+                        self.set_status(format!("set sandbox_network_access error: {err}"));
+                    } else {
+                        self.set_status(format!(
+                            "sandbox_network_access={}",
+                            sandbox_network_access_label(sandbox_network_access)
+                        ));
+                    }
+                }
+            }
+
+            Ok(false)
+        }
+
+        fn transcript_page(&self) -> u16 {
+            self.transcript_viewport_height.saturating_sub(1).max(1)
         }
     }
 
@@ -1288,6 +2413,63 @@ mod tui {
         OverlayOp::None
     }
 
+    fn handle_key_command_palette(
+        key: KeyEvent,
+        view: &mut CommandPaletteOverlay,
+    ) -> Option<PaletteCommand> {
+        match key.code {
+            KeyCode::Up => {
+                view.selected = view.selected.saturating_sub(1);
+            }
+            KeyCode::Down => {
+                if !view.filtered.is_empty() {
+                    view.selected = (view.selected + 1).min(view.filtered.len() - 1);
+                }
+            }
+            KeyCode::Enter => {
+                let selected = view.selected_action();
+                if let Some(action) = selected {
+                    if matches!(action, PaletteCommand::Noop)
+                        && view.title == "Set model"
+                        && !view.query.trim().is_empty()
+                    {
+                        return Some(PaletteCommand::SetModel(
+                            view.query.trim().to_string(),
+                        ));
+                    }
+                    return Some(action);
+                }
+                if view.title == "Set model" {
+                    let query = view.query.trim();
+                    if !query.is_empty() {
+                        return Some(PaletteCommand::SetModel(query.to_string()));
+                    }
+                }
+                return None;
+            }
+            KeyCode::Backspace => {
+                view.query.pop();
+                view.selected = 0;
+                view.rebuild_filter();
+            }
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                view.query.clear();
+                view.selected = 0;
+                view.rebuild_filter();
+            }
+            KeyCode::Char(c) => {
+                if !key.modifiers.contains(KeyModifiers::CONTROL) {
+                    view.query.push(c);
+                    view.selected = 0;
+                    view.rebuild_filter();
+                }
+            }
+            _ => {}
+        }
+
+        None
+    }
+
     impl UiState {
         async fn open_approvals_overlay(&mut self, app: &mut super::App) -> anyhow::Result<()> {
             let Some(thread_id) = self.active_thread else {
@@ -1367,19 +2549,19 @@ mod tui {
                     thread_id,
                     approval_id,
                 });
-                self.status = Some(format!("artifact/list needs approval: {approval_id}"));
+                self.set_status(format!("artifact/list needs approval: {approval_id}"));
                 return Ok(());
             }
 
             if is_denied(&value) {
-                self.status = Some(format!("artifact/list denied: {}", summarize_json(&value)));
+                self.set_status(format!("artifact/list denied: {}", summarize_json(&value)));
                 return Ok(());
             }
 
             let parsed = serde_json::from_value::<ArtifactListResponse>(value)
                 .context("parse artifact/list response")?;
             if !parsed.errors.is_empty() {
-                self.status = Some(format!("artifact/list errors: {}", parsed.errors.len()));
+                self.set_status(format!("artifact/list errors: {}", parsed.errors.len()));
             }
             self.overlays.push(Overlay::Artifacts(ArtifactsOverlay {
                 thread_id,
@@ -1418,11 +2600,11 @@ mod tui {
                             max_lines,
                             approval_id,
                         });
-                        self.status = Some("process/inspect still needs approval".to_string());
+                        self.set_status("process/inspect still needs approval".to_string());
                         return Ok(());
                     }
                     if is_denied(&value) {
-                        self.status = Some(format!(
+                        self.set_status(format!(
                             "process/inspect denied: {}",
                             summarize_json(&value)
                         ));
@@ -1458,17 +2640,17 @@ mod tui {
                             process_id,
                             approval_id,
                         });
-                        self.status = Some("process/kill still needs approval".to_string());
+                        self.set_status("process/kill still needs approval".to_string());
                         return Ok(());
                     }
                     if is_denied(&value) {
-                        self.status = Some(format!(
+                        self.set_status(format!(
                             "process/kill denied: {}",
                             summarize_json(&value)
                         ));
                         return Ok(());
                     }
-                    self.status = Some(format!("kill requested: {process_id}"));
+                    self.set_status(format!("kill requested: {process_id}"));
                     self.refresh_processes_overlay(app, thread_id).await?;
                 }
                 PendingAction::ProcessInterrupt {
@@ -1492,18 +2674,17 @@ mod tui {
                             process_id,
                             approval_id,
                         });
-                        self.status =
-                            Some("process/interrupt still needs approval".to_string());
+                        self.set_status("process/interrupt still needs approval".to_string());
                         return Ok(());
                     }
                     if is_denied(&value) {
-                        self.status = Some(format!(
+                        self.set_status(format!(
                             "process/interrupt denied: {}",
                             summarize_json(&value)
                         ));
                         return Ok(());
                     }
-                    self.status = Some(format!("interrupt requested: {process_id}"));
+                    self.set_status(format!("interrupt requested: {process_id}"));
                     self.refresh_processes_overlay(app, thread_id).await?;
                 }
                 PendingAction::ArtifactList {
@@ -1524,11 +2705,11 @@ mod tui {
                             thread_id,
                             approval_id,
                         });
-                        self.status = Some("artifact/list still needs approval".to_string());
+                        self.set_status("artifact/list still needs approval".to_string());
                         return Ok(());
                     }
                     if is_denied(&value) {
-                        self.status = Some(format!(
+                        self.set_status(format!(
                             "artifact/list denied: {}",
                             summarize_json(&value)
                         ));
@@ -1538,7 +2719,7 @@ mod tui {
                     let parsed = serde_json::from_value::<ArtifactListResponse>(value)
                         .context("parse artifact/list response")?;
                     if !parsed.errors.is_empty() {
-                        self.status = Some(format!("artifact/list errors: {}", parsed.errors.len()));
+                        self.set_status(format!("artifact/list errors: {}", parsed.errors.len()));
                     }
                     self.refresh_artifacts_overlay(thread_id, parsed.artifacts);
                 }
@@ -1566,11 +2747,11 @@ mod tui {
                             max_bytes,
                             approval_id,
                         });
-                        self.status = Some("artifact/read still needs approval".to_string());
+                        self.set_status("artifact/read still needs approval".to_string());
                         return Ok(());
                     }
                     if is_denied(&value) {
-                        self.status = Some(format!(
+                        self.set_status(format!(
                             "artifact/read denied: {}",
                             summarize_json(&value)
                         ));
@@ -1636,30 +2817,76 @@ mod tui {
         }
     }
 
-    fn draw_ui(f: &mut ratatui::Frame, state: &UiState) {
-        let outer = Block::default().borders(Borders::ALL).title("pm tui");
-        let area = outer.inner(f.area());
-        f.render_widget(outer, f.area());
-
+    fn draw_ui(f: &mut ratatui::Frame, state: &mut UiState) {
+        let area = f.area();
         let layout = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Min(1), Constraint::Length(3), Constraint::Length(1)])
+            .constraints([
+                Constraint::Min(1),
+                Constraint::Length(1),
+                Constraint::Length(1),
+            ])
             .split(area);
 
         match state.active_thread {
             None => draw_thread_list(f, state, layout[0]),
-            Some(thread_id) => draw_thread_view(f, state, thread_id, layout[0]),
+            Some(_) => draw_thread_view(f, state, layout[0]),
         }
 
         draw_input(f, state, layout[1]);
-        draw_status(f, state, layout[2]);
+        draw_footer(f, state, layout[2]);
 
         if let Some(overlay) = state.overlays.last() {
             draw_overlay(f, overlay);
         }
     }
 
+    fn draw_footer(f: &mut ratatui::Frame, state: &UiState, area: ratatui::layout::Rect) {
+        let msg = match state.active_thread {
+            Some(thread_id) => {
+                let short = super::thread_id_short(thread_id);
+                let mode = state.header.mode.as_deref().unwrap_or("-");
+                let provider = state.header.provider.as_deref().unwrap_or("-");
+                let model = state.header.model.as_deref().unwrap_or("-");
+                let thinking = state.header.thinking.as_deref().unwrap_or("-");
+                let mcp = if state.header.mcp_enabled { "on" } else { "off" };
+
+                if area.width < 80 {
+                    format!("th={short} mode={mode} model={model} (Ctrl-K)")
+                } else {
+                    format!(
+                        "thread={short} agent={mode} provider={provider} model={model} thinking={thinking} mcp={mcp} (Ctrl-K=commands)"
+                    )
+                }
+            }
+            None => "threads (Ctrl-K=commands)".to_string(),
+        };
+
+        let style = Style::default().fg(Color::Gray);
+        let paragraph = match state.status.as_deref().filter(|s| !s.trim().is_empty()) {
+            Some(status) => Paragraph::new(Line::from(vec![
+                Span::styled(msg, style),
+                Span::styled(" | ", style),
+                Span::styled(status, Style::default().fg(Color::Red)),
+            ])),
+            None => Paragraph::new(msg).style(style),
+        };
+
+        f.render_widget(paragraph, area);
+    }
+
     fn draw_thread_list(f: &mut ratatui::Frame, state: &UiState, area: ratatui::layout::Rect) {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Min(1)])
+            .split(area);
+
+        let header = "threads (↑↓ Enter=open n=new r=refresh q/Ctrl-C=quit)";
+        f.render_widget(
+            Paragraph::new(header).style(Style::default().fg(Color::Gray)),
+            chunks[0],
+        );
+
         let items = state
             .threads
             .iter()
@@ -1689,11 +2916,6 @@ mod tui {
             .collect::<Vec<_>>();
 
         let list = List::new(items)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title("Threads (↑↓ Enter=open n=new r=refresh q=quit)"),
-            )
             .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
             .highlight_symbol("▶ ");
 
@@ -1702,7 +2924,7 @@ mod tui {
         } else {
             Some(state.selected_thread)
         };
-        f.render_stateful_widget(list, area, &mut list_state(selected));
+        f.render_stateful_widget(list, chunks[1], &mut list_state(selected));
     }
 
     fn list_state(selected: Option<usize>) -> ratatui::widgets::ListState {
@@ -1713,8 +2935,7 @@ mod tui {
 
     fn draw_thread_view(
         f: &mut ratatui::Frame,
-        state: &UiState,
-        thread_id: ThreadId,
+        state: &mut UiState,
         area: ratatui::layout::Rect,
     ) {
         let mut lines = Vec::<Line>::new();
@@ -1729,16 +2950,24 @@ mod tui {
         }
 
         let text = Text::from(lines);
-        let paragraph = Paragraph::new(text)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(format!(
-                        "Thread {thread_id} (Esc=back Ctrl-Q=quit Ctrl-A=approvals Ctrl-P=processes Ctrl-O=artifacts Ctrl-C=interrupt)"
-                    )),
-            )
-            .wrap(Wrap { trim: false });
-        f.render_widget(paragraph, area);
+        let width = area.width.max(1);
+        let base_paragraph = Paragraph::new(text).wrap(Wrap { trim: false });
+        let line_count: u16 = base_paragraph
+            .line_count(width)
+            .try_into()
+            .unwrap_or(u16::MAX);
+        let max_scroll = line_count.saturating_sub(area.height);
+        state.transcript_max_scroll = max_scroll;
+        state.transcript_viewport_height = area.height;
+
+        let scroll = if state.transcript_follow {
+            max_scroll
+        } else {
+            state.transcript_scroll.min(max_scroll)
+        };
+        state.transcript_scroll = scroll;
+
+        f.render_widget(base_paragraph.scroll((scroll, 0)), area);
     }
 
     fn format_transcript_entry(entry: &TranscriptEntry) -> Line<'_> {
@@ -1753,6 +2982,10 @@ mod tui {
             ]),
             TranscriptRole::System => Line::from(vec![
                 Span::styled("system: ", Style::default().fg(Color::Cyan)),
+                Span::raw(entry.text.as_str()),
+            ]),
+            TranscriptRole::Error => Line::from(vec![
+                Span::styled("error: ", Style::default().fg(Color::Red)),
                 Span::raw(entry.text.as_str()),
             ]),
         }
@@ -1779,41 +3012,28 @@ mod tui {
     }
 
     fn draw_input(f: &mut ratatui::Frame, state: &UiState, area: ratatui::layout::Rect) {
-        let input = Paragraph::new(state.input.as_str())
-            .block(Block::default().borders(Borders::ALL).title("Input"))
-            .wrap(Wrap { trim: false });
+        let prompt = if state.active_thread.is_some() { "› " } else { "" };
+        let line = format!("{prompt}{}", state.input);
+        let input = Paragraph::new(line).wrap(Wrap { trim: false });
         f.render_widget(input, area);
 
         if state.active_thread.is_some() && state.overlays.is_empty() {
-            let x = area
-                .x
-                .saturating_add(1)
-                .saturating_add(state.input.len() as u16);
-            let y = area.y.saturating_add(1);
-            f.set_cursor_position((x.min(area.x + area.width - 2), y));
+            let prompt_width = UnicodeWidthStr::width(prompt);
+            let input_width = UnicodeWidthStr::width(state.input.as_str());
+            let cursor_offset = prompt_width.saturating_add(input_width);
+            let cursor_offset = u16::try_from(cursor_offset).unwrap_or(u16::MAX);
+            let x = area.x.saturating_add(cursor_offset);
+            let y = area.y;
+            let max_x = area.x.saturating_add(area.width.saturating_sub(1));
+            f.set_cursor_position((x.min(max_x), y));
         }
     }
 
-    fn draw_status(f: &mut ratatui::Frame, state: &UiState, area: ratatui::layout::Rect) {
-        let msg = match (&state.active_thread, &state.status) {
-            (_, Some(status)) => status.clone(),
-            (Some(thread_id), None) => format!(
-                "connected; thread={thread_id}; last_seq={}",
-                state.last_seq
-            ),
-            (None, None) => "connected".to_string(),
-        };
-        let style = if state.status.is_some() {
-            Style::default().fg(Color::Red)
-        } else {
-            Style::default().fg(Color::Gray)
-        };
-        let paragraph = Paragraph::new(msg).style(style);
-        f.render_widget(paragraph, area);
-    }
-
     fn draw_overlay(f: &mut ratatui::Frame, overlay: &Overlay) {
-        let area = centered_rect(90, 80, f.area());
+        let area = match overlay {
+            Overlay::CommandPalette(_) => centered_rect(80, 60, f.area()),
+            _ => centered_rect(90, 80, f.area()),
+        };
         f.render_widget(Clear, area);
 
         match overlay {
@@ -1821,7 +3041,54 @@ mod tui {
             Overlay::Processes(view) => draw_processes_overlay(f, area, view),
             Overlay::Artifacts(view) => draw_artifacts_overlay(f, area, view),
             Overlay::Text(view) => draw_text_overlay(f, area, view),
+            Overlay::CommandPalette(view) => draw_command_palette_overlay(f, area, view),
         }
+    }
+
+    fn draw_command_palette_overlay(
+        f: &mut ratatui::Frame,
+        area: ratatui::layout::Rect,
+        view: &CommandPaletteOverlay,
+    ) {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(format!("{} (Esc=close Enter=run)", view.title.as_str()));
+        let inner = block.inner(area);
+        f.render_widget(block, area);
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Min(1)])
+            .split(inner);
+
+        let query = if view.query.trim().is_empty() {
+            "filter: (type to search)".to_string()
+        } else {
+            format!("filter: {}", view.query)
+        };
+        f.render_widget(
+            Paragraph::new(query).style(Style::default().fg(Color::Gray)),
+            chunks[0],
+        );
+
+        let items = view
+            .filtered
+            .iter()
+            .filter_map(|idx| view.items.get(*idx))
+            .map(|item| ListItem::new(item.label.as_str()))
+            .collect::<Vec<_>>();
+
+        let list = List::new(items)
+            .block(Block::default().borders(Borders::ALL).title("Commands"))
+            .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+            .highlight_symbol("▶ ");
+
+        let selected = if view.filtered.is_empty() {
+            None
+        } else {
+            Some(view.selected)
+        };
+        f.render_stateful_widget(list, chunks[1], &mut list_state(selected));
     }
 
     fn draw_approvals_overlay(
@@ -2077,7 +3344,11 @@ mod tui {
 
         use super::*;
 
-        fn render_to_string(state: &UiState, width: u16, height: u16) -> anyhow::Result<String> {
+        fn render_to_string(
+            state: &mut UiState,
+            width: u16,
+            height: u16,
+        ) -> anyhow::Result<String> {
             let backend = TestBackend::new(width, height);
             let mut terminal = Terminal::new(backend)?;
             terminal.draw(|f| draw_ui(f, state))?;
@@ -2116,19 +3387,19 @@ mod tui {
             ];
             state.selected_thread = 1;
 
-            let actual = render_to_string(&state, 64, 12)?;
-            let expected = r#"┌pm tui────────────────────────────────────────────────────────┐
-│┌Threads (↑↓ Enter=open n=new r=refresh q=quit)──────────────┐│
-││  [idle] 00000000-0000-0000-0000-000000000001  cwd=/repo  mo││
-││▶ [running] 00000000-0000-0000-0000-000000000002  cwd=/repo ││
-││                                                            ││
-││                                                            ││
-│└────────────────────────────────────────────────────────────┘│
-│┌Input───────────────────────────────────────────────────────┐│
-││                                                            ││
-│└────────────────────────────────────────────────────────────┘│
-│connected                                                     │
-└──────────────────────────────────────────────────────────────┘"#;
+            let actual = render_to_string(&mut state, 64, 12)?;
+            let expected = r#"threads (↑↓ Enter=open n=new r=refresh q/Ctrl-C=quit)           
+  [idle] 00000000-0000-0000-0000-000000000001  cwd=/repo  model=
+▶ [running] 00000000-0000-0000-0000-000000000002  cwd=/repo  mod
+                                                                
+                                                                
+                                                                
+                                                                
+                                                                
+                                                                
+                                                                
+                                                                
+threads (Ctrl-K=commands)                                       "#;
             assert_eq!(actual, expected);
             Ok(())
         }
@@ -2140,6 +3411,8 @@ mod tui {
 
             let mut state = UiState::new(false);
             state.active_thread = Some(thread_id);
+            state.header.mode = Some("coder".to_string());
+            state.header.model = Some("gpt-4.1".to_string());
             state.last_seq = 12;
             state.push_transcript(TranscriptEntry {
                 role: TranscriptRole::System,
@@ -2159,19 +3432,19 @@ mod tui {
             });
             state.input = "next".to_string();
 
-            let actual = render_to_string(&state, 64, 12)?;
-            let expected = r#"┌pm tui────────────────────────────────────────────────────────┐
-│┌Thread 00000000-0000-0000-0000-000000000001 (Esc=back Ctrl-Q┐│
-││system: [model] gpt-4.1 (global_default)                    ││
-││user: Hello                                                 ││
-││assistant: Hi!                                              ││
-││assistant: Streaming...                                     ││
-│└────────────────────────────────────────────────────────────┘│
-│┌Input───────────────────────────────────────────────────────┐│
-││next                                                        ││
-│└────────────────────────────────────────────────────────────┘│
-│connected; thread=00000000-0000-0000-0000-000000000001; last_s│
-└──────────────────────────────────────────────────────────────┘"#;
+            let actual = render_to_string(&mut state, 64, 12)?;
+            let expected = r#"system: [model] gpt-4.1 (global_default)                        
+user: Hello                                                     
+assistant: Hi!                                                  
+assistant: Streaming...                                         
+                                                                
+                                                                
+                                                                
+                                                                
+                                                                
+                                                                
+› next                                                          
+th=00000000 mode=coder model=gpt-4.1 (Ctrl-K)                   "#;
             assert_eq!(actual, expected);
             Ok(())
         }

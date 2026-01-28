@@ -51,6 +51,10 @@ async fn handle_thread_models(server: &Server, params: ThreadModelsParams) -> an
         .or(provider_config.default_model.clone())
         .unwrap_or_else(|| "gpt-4.1".to_string());
 
+    let thinking = ditto_llm::select_model_config(&project.models, &current_model)
+        .map(|cfg| cfg.thinking)
+        .unwrap_or_default();
+
     let provider_for_listing = ditto_llm::ProviderConfig {
         base_url: Some(base_url.clone()),
         default_model: provider_config.default_model,
@@ -80,6 +84,7 @@ async fn handle_thread_models(server: &Server, params: ThreadModelsParams) -> an
         "provider": provider,
         "base_url": base_url,
         "current_model": current_model,
+        "thinking": thinking,
         "default_model": provider_for_listing.default_model,
         "model_whitelist": provider_for_listing.model_whitelist,
         "capabilities": capabilities,

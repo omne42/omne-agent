@@ -5,22 +5,13 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let mut cli = Cli::parse();
-    if let Some(Command::Init(args)) = cli.command.take() {
-        return run_init(args).await;
-    }
-    if let Some(Command::Reference { command }) = cli.command.take() {
-        return run_reference(&cli, command).await;
-    }
-    if let Some(Command::Workflow { command }) = cli.command.take() {
+    if let Some(command) = take_preconnect_command(&mut cli) {
         match command {
-            CommandCommand::List { json } => return run_command_list(&cli, json).await,
-            CommandCommand::Show { name, json } => {
+            PreConnectCommand::Init(args) => return run_init(args).await,
+            PreConnectCommand::Reference(command) => return run_reference(&cli, command).await,
+            PreConnectCommand::CommandList { json } => return run_command_list(&cli, json).await,
+            PreConnectCommand::CommandShow { name, json } => {
                 return run_command_show(&cli, &name, json).await;
-            }
-            CommandCommand::Run(args) => {
-                cli.command = Some(Command::Workflow {
-                    command: CommandCommand::Run(args),
-                });
             }
         }
     }
@@ -28,9 +19,17 @@ async fn main() -> anyhow::Result<()> {
     let mut app = App::connect(&cli).await?;
 
     match cli.command {
-        None | Some(Command::Repl) => {
-            run_repl(&mut app).await?;
+        None => {
+            run_tui(
+                &mut app,
+                TuiArgs {
+                    thread_id: None,
+                    include_archived: false,
+                },
+            )
+            .await?;
         }
+        Some(Command::Cli) => run_repl(&mut app).await?,
         Some(Command::Init(_)) => unreachable!("handled before App::connect"),
         Some(Command::Reference { .. }) => unreachable!("handled before App::connect"),
         Some(Command::Preset { ref command }) => {
@@ -515,4 +514,69 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+enum PreConnectCommand {
+    Init(InitArgs),
+    Reference(ReferenceCommand),
+    CommandList { json: bool },
+    CommandShow { name: String, json: bool },
+}
+
+fn take_preconnect_command(cli: &mut Cli) -> Option<PreConnectCommand> {
+    let command = cli.command.take()?;
+
+    match command {
+        Command::Init(args) => Some(PreConnectCommand::Init(args)),
+        Command::Reference { command } => Some(PreConnectCommand::Reference(command)),
+        Command::Workflow { command } => match command {
+            CommandCommand::List { json } => Some(PreConnectCommand::CommandList { json }),
+            CommandCommand::Show { name, json } => Some(PreConnectCommand::CommandShow { name, json }),
+            CommandCommand::Run(args) => {
+                cli.command = Some(Command::Workflow {
+                    command: CommandCommand::Run(args),
+                });
+                None
+            }
+        },
+        other => {
+            cli.command = Some(other);
+            None
+        }
+    }
+}
+
+#[cfg(test)]
+mod app_preconnect_tests {
+    use super::*;
+
+    #[test]
+    fn preconnect_command_preserves_tui() -> anyhow::Result<()> {
+        let mut cli = Cli::try_parse_from(["pm", "tui"])?;
+        let preconnect = take_preconnect_command(&mut cli);
+        assert!(preconnect.is_none());
+        assert!(matches!(cli.command, Some(Command::Tui(_))));
+        Ok(())
+    }
+
+    #[test]
+    fn preconnect_command_extracts_init() -> anyhow::Result<()> {
+        let mut cli = Cli::try_parse_from(["pm", "init"])?;
+        let preconnect = take_preconnect_command(&mut cli);
+        assert!(matches!(preconnect, Some(PreConnectCommand::Init(_))));
+        assert!(cli.command.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn preconnect_command_extracts_command_list() -> anyhow::Result<()> {
+        let mut cli = Cli::try_parse_from(["pm", "command", "list"])?;
+        let preconnect = take_preconnect_command(&mut cli);
+        assert!(matches!(
+            preconnect,
+            Some(PreConnectCommand::CommandList { json: false })
+        ));
+        assert!(cli.command.is_none());
+        Ok(())
+    }
 }

@@ -2,7 +2,7 @@
 
 > 结论先行：TUI 不是“另一套 core”，只是 `pm-app-server`（JSON-RPC 事件流）的一个投影。**唯一真相**仍然是 `Thread/Turn/Item` 落盘事件与可重放语义。
 >
-> v0.2.0 现状：已落地 `pm tui`（thread picker + transcript + 输入 + `item/delta` 流式）以及 Approvals/Processes/Artifacts 弹窗（只调用既有 JSON-RPC；无 stdin/PTY 交互）。
+> v0.2.0 现状：已落地 `pm`/`pm tui`（默认新建 thread；Esc 回 thread picker；Ctrl-K 指令菜单；Ctrl-C 中断（空闲退出）；transcript scrollback；`item/delta` 流式）以及 Approvals/Processes/Artifacts 弹窗（只调用既有 JSON-RPC；无 stdin/PTY 交互）。
 
 ## 1) v0.2.0 P0 目标与边界
 
@@ -28,9 +28,9 @@
 
 ### 2.1 进程边界：TUI = `pm` 的一个前端
 
-默认形态与现有 `pm repl` 一致：
+默认形态与现有 `pm cli`（REPL 风格）一致：
 
-- `pm tui` 启动 `pm-app-server` 子进程（stdio），完成 `initialize/initialized`。
+- `pm`/`pm tui` 优先连接 `<pm_root>/daemon.sock`，失败则 spawn `pm-app-server`，并完成 `initialize/initialized`。
 - TUI 只做两件事：
   1. 消费 notifications + `thread/subscribe` 的重放事件，派生出 UI state；
   2. 把用户动作映射为 JSON-RPC request（`thread/*`、`turn/*`、`approval/*`、`process/*`、`artifact/*`）。

@@ -45,7 +45,7 @@
 - `pm-app-server`/`pm`：新增 `thread/models`（`GET /models` + provider whitelist）与 `pm thread models`，用于发现当前 provider 的可用模型。
 - 新增 `pm-app-server`：最小 JSON-RPC over stdio 控制面（`initialize` + `thread/*` + `turn/*`），用于验证 v0.2.0 的 thread/turn/interrupt 与落盘回放。
 - 新增 `pm` CLI：作为 `pm-app-server` 的人类可用客户端，支持 `ask/watch --bell`、`thread/*`、`approval/*`、`process/*`（只读查看 + interrupt/kill），并在 `ask` 中支持 Ctrl-C 触发 `turn/interrupt`。
-- `pm` CLI：新增 `pm tui`（Ratatui thin client）：thread picker + transcript + 输入 + `item/delta` 流式，并添加渲染 snapshot tests（TestBackend）。
+- `pm` CLI：新增 `pm tui`（Ratatui thin client）：默认新建 thread（Esc 回 thread picker）+ transcript + 输入 + `item/delta` 流式，并添加 Ctrl-K 指令菜单、Ctrl-C 中断（空闲退出）与 transcript 滚动。
 - `pm` CLI：`pm tui` 新增 approvals/processes/artifacts 弹窗（Ctrl-A/Ctrl-P/Ctrl-O），支持 approval decide（含 remember）、process inspect/kill/interrupt、artifact list/read，并处理 `needs_approval` 的回跳继续执行。
 - `pm` CLI：新增 preset 导入/导出：`pm preset export/import`（无 secrets；导入仅允许 `<pm_root>/spec/` 下的文件）。
 - `pm` CLI 新增 `pm init`：初始化 `./.codepm_data/`（创建目录、生成 `config.toml`、可选 `.env` 模板与 `spec/`，并写入 `.codepm_data/.gitignore`）。
@@ -55,7 +55,7 @@
 - `pm init`：新增 `--create-config-local`（交互模式也可选），用于生成 `.codepm_data/config_local.toml` 模板。
 - 仓库内提交 `./.codepm_data/config.toml` 与 `./.codepm_data/.gitignore` 作为默认模板（由 `pm init --yes` 生成；`.codepm_data/.gitignore` 会忽略 `config_local.toml` 与 `.env`）。
 - `pm` CLI 新增 `exec`：非交互执行单次 turn（CI/脚本友好），支持 `--json` 输出摘要与 `--on-approval fail|approve|deny` 策略。
-- `pm` CLI 新增交互式 REPL：直接运行 `pm`（或 `pm repl`）进入对话/执行环境，支持 `/help` 等指令。
+- `pm` CLI 新增交互式 CLI（REPL 风格）：运行 `pm cli`（或 `pm repl`）进入对话/执行环境，支持 `/help` 等指令。
 - `pm ask`：消费 `pm-app-server` 的 `item/delta` notifications 并实时输出 assistant 文本流（仅作为 UI 优化；最终仍以 `AssistantMessage` 落盘为准）。
 - `pm` CLI 新增 `inbox`：跨 thread 的 RTS 收件箱视图（可 `--watch` + `--bell` 去重提醒），用于快速发现 `need_approval/failed/running`。
 - `pm inbox --details`：现在会显示 `failed_processes` 摘要（数量 + 部分 id），便于快速定位后台失败。
@@ -187,6 +187,9 @@
 ### Fixed
 - docs：`docs/v0.2.0_parity.md` 更新 Transformers 状态，标记 ditto-llm 接入已落地。
 - docs(research)：修正 `docs/research/claude-code-router.md` 中对 CCR 文档的引用路径，指向 `example/claude-code-router/...` 快照目录。
+- `pm` TUI：启动阶段先渲染 “connecting...” 并将 `thread/start`/`thread/resume` 启动上限固定为 5s（`CODE_PM_TUI_STARTUP_TIMEOUT_MS` 仅允许缩短），避免卡死黑屏。
+- `pm` TUI：状态栏信息移至底部并移除全局/主视图边框，呈现终端式布局。
+- `pm-app-server`：项目配置现在会读取 `openai.base_url`（`config.toml`/`config_local.toml`）并允许 `.env` 覆盖，`thread/models` 与 `thread/config-explain` 使用该值。
 - `pm-app-server`/`pm`/`code-pm`/`pm-core::orchestrator`：拆分超大 Rust 源文件（保持行为不变），避免单文件超过 1000 行，降低 review/IDE 压力。
 - `pm-app-server`：进一步拆分接近上限的模块（`agent/tools`、`process_control`），为后续扩展 tools/hooks 留出空间并保持单文件 < 1000 行。
 - `pm-app-server`：拆分 JSON-RPC router（`main/app.rs`）为按域 handler 的小文件（`main/app/*.rs`），避免入口路由继续膨胀。

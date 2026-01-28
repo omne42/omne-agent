@@ -38,7 +38,7 @@ async fn run_repl(app: &mut App) -> anyhow::Result<()> {
 
     let notification_tx = spawn_repl_notification_hub(app);
 
-    eprintln!("pm repl");
+    eprintln!("pm cli");
     eprintln!("cwd: {cwd}");
     eprintln!("thread: {thread_id}");
     eprintln!("approval_policy: manual (use `/set approval_policy ...` to change)");
@@ -479,9 +479,9 @@ fn parse_reason_flag(args: &[&str]) -> Option<String> {
 
 fn print_repl_help() {
     println!(
-        r#"pm repl commands:
+        r#"pm cli commands:
   /help                         show this help
-  /exit | /quit                 exit repl
+  /exit | /quit                 exit cli
 
   /thread                       show current thread id
   /thread new [cwd]             start a new thread (defaults to current dir)

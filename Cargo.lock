@@ -1636,6 +1636,7 @@ dependencies = [
  "time",
  "tokio",
  "tracing-subscriber",
+ "unicode-width",
  "walkdir",
 ]
 
@@ -1786,10 +1787,14 @@ name = "pm-jsonrpc"
 version = "0.1.1"
 dependencies = [
  "anyhow",
+ "bytes",
+ "futures-util",
+ "reqwest",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -1797,8 +1802,8 @@ name = "pm-mcp-kit"
 version = "0.1.1"
 dependencies = [
  "anyhow",
- "clap",
  "pm-jsonrpc",
+ "reqwest",
  "serde",
  "serde_json",
  "tokio",
@@ -2235,14 +2240,11 @@ checksum = "a50f4cf475b65d88e057964e0e9bb1f0aa9bbb2036dc65c64596b42932536984"
 name = "safe-fs-tools"
 version = "0.1.0"
 dependencies = [
- "clap",
  "diffy",
  "globset",
  "regex",
  "serde",
- "serde_json",
  "thiserror 1.0.69",
- "toml",
  "walkdir",
 ]
 
