@@ -2864,11 +2864,18 @@ mod tui {
 
         let style = Style::default().fg(Color::Gray);
         let paragraph = match state.status.as_deref().filter(|s| !s.trim().is_empty()) {
-            Some(status) => Paragraph::new(Line::from(vec![
-                Span::styled(msg, style),
-                Span::styled(" | ", style),
-                Span::styled(status, Style::default().fg(Color::Red)),
-            ])),
+            Some(status) => {
+                let status_style = if UiState::is_error_message(status) {
+                    Style::default().fg(Color::Red)
+                } else {
+                    Style::default()
+                };
+                Paragraph::new(Line::from(vec![
+                    Span::styled(msg, style),
+                    Span::styled(" | ", style),
+                    Span::styled(status, status_style),
+                ]))
+            }
             None => Paragraph::new(msg).style(style),
         };
 
