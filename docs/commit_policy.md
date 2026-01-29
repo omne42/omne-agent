@@ -1,9 +1,10 @@
-# Commit 规则（强制）：Conventional Commits + Rust fmt/check gate
+# Commit 规则（强制）：Conventional Commits + Changelog 绑定 + Rust gates
 
-本项目的所有提交必须满足两类约束：
+本项目的所有提交必须满足三类约束：
 
 1. **Commit message 必须是标准格式（Conventional Commits）**
-2. **提交前必须通过 Rust 的 format 与 type check**（不通过会拒绝提交）
+2. **每次提交必须同时包含 `CHANGELOG.md` 与实际变更**（禁止 changelog-only / non-changelog commit）
+3. **提交前必须通过 Rust gates**（format/type check + 单文件行数上限；不通过会拒绝提交）
 
 > 说明：本规则通过仓库内置的 `githooks/` 强制执行（`pre-commit` + `commit-msg`）。`git commit --no-verify` 可以绕过客户端 hooks，但在我们的自动化流水线（AI Coder/CI/本地 git 服务端 hook）里同样会做强校验，因此不应依赖绕过。
 
@@ -52,7 +53,19 @@
 
 ---
 
-## 2) 提交 gate：Rust format + type check
+## 2) 提交 gate：CHANGELOG + Rust gates
+
+### CHANGELOG 规则（强制）
+
+- 每次提交必须包含 `CHANGELOG.md`，并在 `[Unreleased]` 下追加条目
+- 禁止只提交 `CHANGELOG.md`（changelog-only commit）
+- 默认禁止修改已发布版本的 changelog 段落（例如 `## [0.x.y]` 及以下内容）
+  - 发布时如需改动已发布段落，可显式设置：`CODE_PM_ALLOW_CHANGELOG_RELEASE_EDIT=1 git commit ...`
+
+### Rust 单文件行数上限（强制）
+
+- 任意暂存的 `.rs` 文件行数不得超过 1000 行
+- 超过会拒绝提交，并提示拆分模块/降低复杂度
 
 在 `git commit` 前必须通过：
 
@@ -63,8 +76,6 @@
 
 - hooks 会打印错误原因并退出（commit 被拒绝）
 - 你需要先修复再重新提交
-
-> 对于 codex-based workspace，本仓库的 hooks 会优先在 `codex/codex-rs/` 下执行；否则在 repo root 的 Cargo workspace 执行。
 
 ---
 

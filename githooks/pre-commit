@@ -56,6 +56,27 @@ EOF
   fi
 fi
 
+max_rs_lines=1000
+offenders=()
+staged_rs_files="$(printf '%s\n' "$staged_files" | grep -E '\\.rs$' || true)"
+while IFS= read -r path; do
+  [[ -z "$path" ]] && continue
+  lines="$(git show ":$path" 2>/dev/null | awk 'END{print NR}')"
+  if [[ "${lines:-0}" -gt "$max_rs_lines" ]]; then
+    offenders+=("$path ($lines)")
+  fi
+done <<<"$staged_rs_files"
+
+if [[ "${#offenders[@]}" -gt 0 ]]; then
+  cat >&2 <<EOF
+一个良好的代码仓库不应该有超过1000行的代码文件，这意味着复杂度过度或没有良好的领域分割，修改代码，否则禁止提交
+
+以下 Rust 文件超过 ${max_rs_lines} 行：
+$(printf '  - %s\n' "${offenders[@]}")
+EOF
+  exit 1
+fi
+
 workspace_root=""
 if [[ -f "$repo_root/Cargo.toml" ]]; then
   workspace_root="$repo_root"
