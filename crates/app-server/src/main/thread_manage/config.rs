@@ -11,6 +11,7 @@ async fn handle_thread_configure(
         current_sandbox_writable_roots,
         current_sandbox_network_access,
         current_mode,
+        current_openai_provider,
         current_model,
         current_thinking,
         current_openai_base_url,
@@ -24,6 +25,7 @@ async fn handle_thread_configure(
             state.sandbox_writable_roots.clone(),
             state.sandbox_network_access,
             state.mode.clone(),
+            state.openai_provider.clone(),
             state.model.clone(),
             state.thinking.clone(),
             state.openai_base_url.clone(),
@@ -67,6 +69,20 @@ async fn handle_thread_configure(
             anyhow::bail!("unknown mode: {mode} (available: {available})");
         }
     }
+    let openai_provider = params
+        .openai_provider
+        .map(|p| p.trim().to_string())
+        .filter(|p| !p.is_empty());
+    if let Some(provider) = openai_provider.as_deref() {
+        let project = crate::project_config::load_project_openai_overrides(&thread_root).await;
+        let builtin = matches!(provider, "openai-codex-apikey" | "openai-auth-command");
+        let configured = project.providers.contains_key(provider);
+        if !builtin && !configured {
+            anyhow::bail!(
+                "unknown openai provider: {provider} (expected: openai-codex-apikey, openai-auth-command; or define [openai.providers.{provider}] in project config)"
+            );
+        }
+    }
     let model = params.model.filter(|s| !s.trim().is_empty());
     let thinking = params
         .thinking
@@ -102,6 +118,7 @@ async fn handle_thread_configure(
         || sandbox_network_access
             .is_some_and(|access| access != current_sandbox_network_access)
         || mode.as_ref().is_some_and(|m| m != &current_mode)
+        || openai_provider.as_ref() != current_openai_provider.as_ref()
         || model.as_ref() != current_model.as_ref()
         || thinking.as_ref() != current_thinking.as_ref()
         || openai_base_url.as_ref() != current_openai_base_url.as_ref()
@@ -114,6 +131,7 @@ async fn handle_thread_configure(
             sandbox_writable_roots,
             sandbox_network_access,
             mode,
+            openai_provider,
             model,
             thinking,
             openai_base_url,
@@ -267,6 +285,26 @@ async fn handle_thread_config_explain(
         }));
     }
 
+    let provider_base_url_for = |provider: &str| -> Option<String> {
+        if project.enabled {
+            if let Some(provider_base_url) = project
+                .openai
+                .providers
+                .get(provider)
+                .and_then(|provider| provider.base_url.clone())
+                .filter(|s| !s.trim().is_empty())
+            {
+                return Some(provider_base_url);
+            }
+        }
+        if matches!(provider, "openai-codex-apikey" | "openai-auth-command") {
+            return Some(default_openai_base_url.clone());
+        }
+        None
+    };
+    let mut openai_base_url_forced = env_openai_base_url.is_some()
+        || (project.enabled && project.openai.base_url.as_ref().is_some_and(|s| !s.trim().is_empty()));
+
     let mut thinking_override: Option<String> = None;
     for event in events {
         if let pm_protocol::ThreadEventKind::ThreadConfigUpdated {
@@ -275,6 +313,7 @@ async fn handle_thread_config_explain(
             sandbox_writable_roots,
             sandbox_network_access,
             mode,
+            openai_provider,
             model,
             thinking,
             openai_base_url,
@@ -295,6 +334,15 @@ async fn handle_thread_config_explain(
             if let Some(mode) = mode {
                 effective_mode = mode;
             }
+            if let Some(provider) = openai_provider {
+                effective_openai_provider = provider;
+                if !openai_base_url_forced
+                    && let Some(provider_base_url) =
+                        provider_base_url_for(&effective_openai_provider)
+                {
+                    effective_openai_base_url = provider_base_url;
+                }
+            }
             if let Some(model) = model {
                 effective_model = model;
                 if thinking_override.is_none() {
@@ -307,6 +355,7 @@ async fn handle_thread_config_explain(
             }
             if let Some(openai_base_url) = openai_base_url {
                 effective_openai_base_url = openai_base_url;
+                openai_base_url_forced = true;
             }
             if let Some(allowed_tools) = allowed_tools {
                 effective_allowed_tools = allowed_tools;
@@ -378,6 +427,7 @@ async fn handle_thread_config_explain(
             "sandbox_writable_roots": effective_sandbox_writable_roots,
             "sandbox_network_access": effective_sandbox_network_access,
             "mode": effective_mode,
+            "openai_provider": effective_openai_provider,
             "model": effective_model,
             "thinking": effective_thinking,
             "openai_base_url": effective_openai_base_url,

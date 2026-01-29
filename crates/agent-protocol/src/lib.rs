@@ -324,6 +324,7 @@ pub enum ModelRoutingRuleSource {
     Subagent,
     ProjectOverride,
     KeywordRule,
+    Skill,
     RoleDefault,
     GlobalDefault,
 }
@@ -542,6 +543,8 @@ pub enum ThreadEventKind {
         sandbox_network_access: Option<SandboxNetworkAccess>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         mode: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        openai_provider: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         model: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]

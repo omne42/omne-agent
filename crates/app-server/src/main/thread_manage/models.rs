@@ -1,15 +1,23 @@
 async fn handle_thread_models(server: &Server, params: ThreadModelsParams) -> anyhow::Result<Value> {
     let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
-    let (thread_model, thread_openai_base_url) = {
+    let (thread_openai_provider, thread_model, thread_openai_base_url) = {
         let handle = thread_rt.handle.lock().await;
         let state = handle.state();
-        (state.model.clone(), state.openai_base_url.clone())
+        (
+            state.openai_provider.clone(),
+            state.model.clone(),
+            state.openai_base_url.clone(),
+        )
     };
 
     let project = crate::project_config::load_project_openai_overrides(&thread_root).await;
+    let project_provider = project.provider.clone();
+    let project_base_url = project.base_url.clone();
+    let project_model = project.model.clone();
 
-    let provider = project
-        .provider
+    let provider = thread_openai_provider
+        .clone()
+        .or(project_provider)
         .or_else(|| {
             std::env::var("CODE_PM_OPENAI_PROVIDER")
                 .ok()
@@ -31,7 +39,8 @@ async fn handle_thread_models(server: &Server, params: ThreadModelsParams) -> an
     }
 
     let base_url = thread_openai_base_url
-        .or(project.base_url)
+        .clone()
+        .or(project_base_url)
         .or_else(|| {
             std::env::var("CODE_PM_OPENAI_BASE_URL")
                 .ok()
@@ -42,7 +51,8 @@ async fn handle_thread_models(server: &Server, params: ThreadModelsParams) -> an
         .ok_or_else(|| anyhow::anyhow!("openai provider {provider} is missing base_url"))?;
 
     let current_model = thread_model
-        .or(project.model)
+        .clone()
+        .or(project_model.clone())
         .or_else(|| {
             std::env::var("CODE_PM_OPENAI_MODEL")
                 .ok()
@@ -57,12 +67,7 @@ async fn handle_thread_models(server: &Server, params: ThreadModelsParams) -> an
 
     let provider_for_listing = ditto_llm::ProviderConfig {
         base_url: Some(base_url.clone()),
-        default_model: provider_config.default_model,
-        model_whitelist: provider_config.model_whitelist.clone(),
-        http_headers: provider_config.http_headers,
-        http_query_params: provider_config.http_query_params,
-        auth: provider_config.auth,
-        capabilities: provider_config.capabilities,
+        ..provider_config
     };
 
     let env = ditto_llm::Env {
@@ -76,9 +81,69 @@ async fn handle_thread_models(server: &Server, params: ThreadModelsParams) -> an
     .await
     .context("build provider client")?;
     let capabilities = ditto_llm::Provider::capabilities(&provider_client);
-    let models = ditto_llm::Provider::list_models(&provider_client)
-        .await
-        .context("list /models")?;
+
+    let list_models = async {
+        ditto_llm::Provider::list_models(&provider_client)
+            .await
+            .context("list /models")
+    };
+    let models_timeout = std::time::Duration::from_secs(2);
+    let mut models_error: Option<String> = None;
+    let models = match tokio::time::timeout(models_timeout, list_models).await {
+        Ok(Ok(models)) => models,
+        Ok(Err(err)) => {
+            models_error = Some(err.to_string());
+            Vec::new()
+        }
+        Err(_) => {
+            models_error = Some("list /models timeout".to_string());
+            Vec::new()
+        }
+    };
+
+    let models = if models.is_empty() {
+        let mut out = Vec::<String>::new();
+        let mut seen = std::collections::HashSet::<String>::new();
+        let mut push = |value: Option<String>| {
+            let Some(value) = value else { return };
+            let value = value.trim().to_string();
+            if value.is_empty() {
+                return;
+            }
+            if seen.insert(value.clone()) {
+                out.push(value);
+            }
+        };
+
+        if !provider_for_listing.model_whitelist.is_empty() {
+            for model in &provider_for_listing.model_whitelist {
+                push(Some(model.clone()));
+            }
+        } else {
+            push(thread_model);
+            push(project_model);
+            push(provider_for_listing.default_model.clone());
+            push(Some(current_model.clone()));
+        }
+        out
+    } else if provider_for_listing.model_whitelist.is_empty() {
+        models
+    } else {
+        let allow = provider_for_listing
+            .model_whitelist
+            .iter()
+            .map(|m| m.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        let filtered = models
+            .into_iter()
+            .filter(|model| allow.contains(model.as_str()))
+            .collect::<Vec<_>>();
+        if filtered.is_empty() {
+            provider_for_listing.model_whitelist.clone()
+        } else {
+            filtered
+        }
+    };
 
     Ok(serde_json::json!({
         "provider": provider,
@@ -89,6 +154,7 @@ async fn handle_thread_models(server: &Server, params: ThreadModelsParams) -> an
         "model_whitelist": provider_for_listing.model_whitelist,
         "capabilities": capabilities,
         "models": models,
+        "models_error": models_error,
     }))
 }
 

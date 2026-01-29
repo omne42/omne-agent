@@ -568,6 +568,8 @@ struct ThreadConfigureArgs {
     #[arg(long)]
     mode: Option<String>,
     #[arg(long)]
+    openai_provider: Option<String>,
+    #[arg(long)]
     model: Option<String>,
     #[arg(long)]
     openai_base_url: Option<String>,

@@ -31,6 +31,7 @@ async fn run_repl(app: &mut App) -> anyhow::Result<()> {
         sandbox_writable_roots: None,
         sandbox_network_access: None,
         mode: None,
+        openai_provider: None,
         model: None,
         openai_base_url: None,
         thinking: None,
@@ -317,6 +318,7 @@ async fn repl_thread_start(
         sandbox_writable_roots: None,
         sandbox_network_access: None,
         mode: None,
+        openai_provider: None,
         model: None,
         openai_base_url: None,
         thinking: None,
@@ -367,6 +369,7 @@ async fn repl_cmd_set(app: &mut App, state: &mut ReplState, args: &[&str]) -> an
         sandbox_writable_roots: None,
         sandbox_network_access: None,
         mode: None,
+        openai_provider: None,
         model: None,
         openai_base_url: None,
         thinking: None,
@@ -388,6 +391,9 @@ async fn repl_cmd_set(app: &mut App, state: &mut ReplState, args: &[&str]) -> an
         "model" => {
             cfg.model = Some(value.to_string());
         }
+        "openai_provider" => {
+            cfg.openai_provider = Some(value.to_string());
+        }
         "openai_base_url" => {
             cfg.openai_base_url = Some(value.to_string());
         }
@@ -396,7 +402,7 @@ async fn repl_cmd_set(app: &mut App, state: &mut ReplState, args: &[&str]) -> an
         }
         _ => {
             anyhow::bail!(
-                "unknown key: {key} (try: approval_policy|sandbox_policy|sandbox_network_access|mode|model|openai_base_url|thinking)"
+                "unknown key: {key} (try: approval_policy|sandbox_policy|sandbox_network_access|mode|openai_provider|model|openai_base_url|thinking)"
             );
         }
     }

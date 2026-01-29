@@ -246,6 +246,8 @@ impl ModeCatalog {
 #[derive(Debug, Clone)]
 pub struct ModeDef {
     pub description: String,
+    pub model: Option<String>,
+    pub thinking: Option<String>,
     pub permissions: ModePermissions,
     pub command_execpolicy_rules: Vec<String>,
     pub tool_overrides: BTreeMap<String, Decision>,
@@ -255,6 +257,8 @@ impl ModeDef {
     fn builtin(description: &str, permissions: ModePermissions) -> Self {
         Self {
             description: description.to_string(),
+            model: None,
+            thinking: None,
             permissions,
             command_execpolicy_rules: Vec::new(),
             tool_overrides: BTreeMap::new(),
@@ -262,6 +266,27 @@ impl ModeDef {
     }
 
     fn try_from_raw(name: &str, raw: RawModeDef) -> anyhow::Result<Self> {
+        let model = raw.model.and_then(|value| {
+            let value = value.trim();
+            if value.is_empty() {
+                None
+            } else {
+                Some(value.to_string())
+            }
+        });
+        let thinking = raw.thinking.and_then(|value| {
+            let value = value.trim().to_ascii_lowercase();
+            if value.is_empty() { None } else { Some(value) }
+        });
+        if let Some(thinking) = thinking.as_deref() {
+            match thinking {
+                "unsupported" | "small" | "medium" | "high" | "xhigh" => {}
+                other => anyhow::bail!(
+                    "mode {name}: invalid thinking: {other} (expected: unsupported|small|medium|high|xhigh)"
+                ),
+            }
+        }
+
         let command_execpolicy_rules = raw
             .permissions
             .command
@@ -279,6 +304,8 @@ impl ModeDef {
 
         Ok(Self {
             description: raw.description.unwrap_or_default(),
+            model,
+            thinking,
             permissions,
             command_execpolicy_rules,
             tool_overrides,
@@ -566,6 +593,10 @@ struct RawModesFile {
 struct RawModeDef {
     #[serde(default)]
     description: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    thinking: Option<String>,
     permissions: RawPermissions,
     #[serde(default)]
     tool_overrides: Option<Vec<RawToolOverride>>,

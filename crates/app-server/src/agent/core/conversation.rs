@@ -733,12 +733,13 @@ fn format_event_for_context(kind: &ThreadEventKind) -> Option<String> {
             sandbox_writable_roots,
             sandbox_network_access,
             mode,
+            openai_provider,
             model,
             thinking,
             openai_base_url,
             allowed_tools,
         } => Some(format!(
-            "[thread/config] approval_policy={approval_policy:?} sandbox_policy={} sandbox_writable_roots={} sandbox_network_access={} mode={} model={} thinking={} openai_base_url={} allowed_tools={}",
+            "[thread/config] approval_policy={approval_policy:?} sandbox_policy={} sandbox_writable_roots={} sandbox_network_access={} mode={} openai_provider={} model={} thinking={} openai_base_url={} allowed_tools={}",
             sandbox_policy
                 .as_ref()
                 .map(|v| format!("{v:?}"))
@@ -752,6 +753,7 @@ fn format_event_for_context(kind: &ThreadEventKind) -> Option<String> {
                 .map(|access| format!("{access:?}"))
                 .unwrap_or_else(|| "<unchanged>".to_string()),
             mode.as_deref().unwrap_or("<unchanged>"),
+            openai_provider.as_deref().unwrap_or("<unchanged>"),
             model.as_deref().unwrap_or("<unchanged>"),
             thinking.as_deref().unwrap_or("<unchanged>"),
             openai_base_url.as_deref().unwrap_or("<unchanged>"),
@@ -895,4 +897,3 @@ fn extract_assistant_text(items: &[OpenAiItem]) -> String {
     }
     out
 }
-

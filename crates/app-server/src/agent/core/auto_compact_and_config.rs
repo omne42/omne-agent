@@ -212,7 +212,143 @@ fn home_dir() -> Option<PathBuf> {
         })
 }
 
-async fn load_skills_from_input(input: &str, thread_cwd: Option<&str>) -> anyhow::Result<Option<String>> {
+#[derive(Debug, Default)]
+struct SkillOverrides {
+    model: Option<String>,
+    thinking: Option<String>,
+    model_sources: Vec<String>,
+    thinking_sources: Vec<String>,
+}
+
+#[derive(Debug)]
+struct LoadedSkillsFromInput {
+    markdown: String,
+    overrides: SkillOverrides,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+struct SkillFrontmatter {
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    thinking: Option<String>,
+}
+
+#[derive(Debug)]
+struct LoadedSkill {
+    path: PathBuf,
+    body: String,
+    model: Option<String>,
+    thinking: Option<String>,
+}
+
+fn split_skill_frontmatter(contents: &str) -> anyhow::Result<(Option<&str>, &str)> {
+    let mut lines = contents.split_inclusive('\n');
+    let first = lines.next().unwrap_or("");
+    if first.trim_end() != "---" {
+        return Ok((None, contents));
+    }
+
+    let mut yaml_end_offset = None::<usize>;
+    let mut offset = first.len();
+    for line in lines {
+        let trimmed = line.trim_end_matches(&['\r', '\n'][..]).trim_end();
+        if trimmed == "---" {
+            yaml_end_offset = Some(offset);
+            offset += line.len();
+            break;
+        }
+        offset += line.len();
+    }
+    let Some(yaml_end_offset) = yaml_end_offset else {
+        anyhow::bail!("skill file frontmatter is missing closing ---");
+    };
+
+    let yaml = &contents[first.len()..yaml_end_offset];
+    let body = &contents[offset..];
+    Ok((Some(yaml), body))
+}
+
+fn normalize_optional_string(value: Option<String>) -> Option<String> {
+    value
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+fn normalize_optional_thinking(value: Option<String>) -> anyhow::Result<Option<String>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    let value = value.to_ascii_lowercase();
+    match value.as_str() {
+        "unsupported" | "small" | "medium" | "high" | "xhigh" => Ok(Some(value)),
+        other => anyhow::bail!(
+            "invalid thinking: {other} (expected: unsupported|small|medium|high|xhigh)"
+        ),
+    }
+}
+
+async fn load_skill(name: &str, thread_root: PathBuf) -> anyhow::Result<Option<LoadedSkill>> {
+    let mut roots = Vec::<PathBuf>::new();
+
+    if let Ok(dir) = std::env::var("CODE_PM_SKILLS_DIR") {
+        let dir = dir.trim();
+        if !dir.is_empty() {
+            roots.push(PathBuf::from(dir));
+        }
+    }
+
+    roots.push(thread_root.join(".codepm_data").join("spec").join("skills"));
+    roots.push(thread_root.join(".codex").join("skills"));
+
+    if let Some(home) = home_dir() {
+        roots.push(home.join(".codepm_data").join("spec").join("skills"));
+    }
+
+    let candidates = [name.to_string(), name.to_ascii_lowercase()];
+    for root in roots {
+        for candidate in candidates.iter() {
+            let path = root.join(candidate).join("SKILL.md");
+            let raw = match tokio::fs::read_to_string(&path).await {
+                Ok(contents) => contents,
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(err) => return Err(err).with_context(|| format!("read {}", path.display())),
+            };
+
+            let (yaml, body) = split_skill_frontmatter(&raw)
+                .with_context(|| format!("parse skill frontmatter {}", path.display()))?;
+            let frontmatter = match yaml {
+                Some(yaml) if !yaml.trim().is_empty() => serde_yaml::from_str::<SkillFrontmatter>(yaml)
+                    .with_context(|| format!("parse skill frontmatter yaml {}", path.display()))?,
+                _ => SkillFrontmatter::default(),
+            };
+
+            let model = normalize_optional_string(frontmatter.model);
+            let thinking = normalize_optional_thinking(frontmatter.thinking)
+                .with_context(|| format!("parse skill thinking {}", path.display()))?;
+            let body = pm_core::redact_text(body);
+
+            return Ok(Some(LoadedSkill {
+                path,
+                body,
+                model,
+                thinking,
+            }));
+        }
+    }
+
+    Ok(None)
+}
+
+async fn load_skills_from_input(
+    input: &str,
+    thread_cwd: Option<&str>,
+) -> anyhow::Result<Option<LoadedSkillsFromInput>> {
+
     let skill_names = parse_skill_names(input);
     if skill_names.is_empty() {
         return Ok(None);
@@ -223,12 +359,47 @@ async fn load_skills_from_input(input: &str, thread_cwd: Option<&str>) -> anyhow
     };
 
     let mut out = String::new();
+    let mut overrides = SkillOverrides::default();
+
     for name in skill_names {
-        if let Some((path, contents)) = load_skill(&name, PathBuf::from(thread_cwd)).await? {
+        if let Some(loaded) = load_skill(&name, PathBuf::from(thread_cwd)).await? {
+            if let Some(model) = loaded.model.as_deref() {
+                match overrides.model.as_deref() {
+                    None => {
+                        overrides.model = Some(model.to_string());
+                        overrides.model_sources.push(name.clone());
+                    }
+                    Some(existing) if existing == model => {
+                        overrides.model_sources.push(name.clone());
+                    }
+                    Some(existing) => {
+                        anyhow::bail!(
+                            "conflicting skill model overrides: existing={existing} new={model} (skill={name})"
+                        );
+                    }
+                }
+            }
+            if let Some(thinking) = loaded.thinking.as_deref() {
+                match overrides.thinking.as_deref() {
+                    None => {
+                        overrides.thinking = Some(thinking.to_string());
+                        overrides.thinking_sources.push(name.clone());
+                    }
+                    Some(existing) if existing == thinking => {
+                        overrides.thinking_sources.push(name.clone());
+                    }
+                    Some(existing) => {
+                        anyhow::bail!(
+                            "conflicting skill thinking overrides: existing={existing} new={thinking} (skill={name})"
+                        );
+                    }
+                }
+            }
+
             out.push_str("\n\n# Skill\n\n");
             out.push_str(&format!("_Name: `{}`_\n\n", name));
-            out.push_str(&format!("_Source: {}_\n\n", path.display()));
-            out.push_str(&contents);
+            out.push_str(&format!("_Source: {}_\n\n", loaded.path.display()));
+            out.push_str(&loaded.body);
         } else {
             out.push_str("\n\n# Skill (missing)\n\n");
             out.push_str(&format!("_Name: `{}`_\n\n", name));
@@ -236,7 +407,10 @@ async fn load_skills_from_input(input: &str, thread_cwd: Option<&str>) -> anyhow
         }
     }
 
-    Ok(Some(out))
+    Ok(Some(LoadedSkillsFromInput {
+        markdown: out,
+        overrides,
+    }))
 }
 
 fn parse_skill_names(input: &str) -> Vec<String> {
@@ -272,40 +446,6 @@ fn parse_skill_names(input: &str) -> Vec<String> {
     out
 }
 
-async fn load_skill(name: &str, thread_root: PathBuf) -> anyhow::Result<Option<(PathBuf, String)>> {
-    let mut roots = Vec::<PathBuf>::new();
-
-    if let Ok(dir) = std::env::var("CODE_PM_SKILLS_DIR") {
-        let dir = dir.trim();
-        if !dir.is_empty() {
-            roots.push(PathBuf::from(dir));
-        }
-    }
-
-    roots.push(thread_root.join(".codepm_data").join("spec").join("skills"));
-    roots.push(thread_root.join(".codex").join("skills"));
-
-    if let Some(home) = home_dir() {
-        roots.push(home.join(".codepm_data").join("spec").join("skills"));
-    }
-
-    let candidates = [name.to_string(), name.to_ascii_lowercase()];
-    for root in roots {
-        for candidate in candidates.iter() {
-            let path = root.join(candidate).join("SKILL.md");
-            match tokio::fs::read_to_string(&path).await {
-                Ok(contents) => {
-                    let contents = pm_core::redact_text(&contents);
-                    return Ok(Some((path, contents)));
-                }
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(err) => return Err(err).with_context(|| format!("read {}", path.display())),
-            }
-        }
-    }
-
-    Ok(None)
-}
 
 fn parse_env_usize(key: &str, default: usize, min: usize, max: usize) -> usize {
     std::env::var(key)
@@ -438,4 +578,3 @@ async fn load_latest_summary_artifact(
         .with_context(|| format!("read {}", content_path.display()))?;
     Ok(Some((meta, text)))
 }
-

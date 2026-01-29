@@ -191,7 +191,13 @@ pub struct ThreadConfigureParams {
     pub mode: Option<String>,
     #[serde(default)]
     #[ts(optional)]
+    pub openai_provider: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
     pub model: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub thinking: Option<String>,
     #[serde(default)]
     #[ts(optional)]
     pub openai_base_url: Option<String>,

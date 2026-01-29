@@ -428,12 +428,13 @@ impl App {
                     "approval_policy": approval_policy,
                     "sandbox_policy": sandbox_policy,
                     "sandbox_writable_roots": args.sandbox_writable_roots,
-                "sandbox_network_access": sandbox_network_access,
-                "mode": args.mode,
-                "model": args.model,
-                "openai_base_url": args.openai_base_url,
-                "thinking": args.thinking,
-            }),
+                    "sandbox_network_access": sandbox_network_access,
+                    "mode": args.mode,
+                    "openai_provider": args.openai_provider,
+                    "model": args.model,
+                    "openai_base_url": args.openai_base_url,
+                    "thinking": args.thinking,
+                }),
             )
             .await?;
         Ok(())

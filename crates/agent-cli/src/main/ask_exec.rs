@@ -45,6 +45,7 @@ async fn run_ask(app: &mut App, args: AskArgs) -> anyhow::Result<()> {
             sandbox_writable_roots: None,
             sandbox_network_access: None,
             mode: args.mode,
+            openai_provider: None,
             model: args.model,
             openai_base_url: args.openai_base_url,
             thinking: None,
@@ -201,6 +202,7 @@ where
             sandbox_writable_roots: None,
             sandbox_network_access: None,
             mode: args.mode,
+            openai_provider: None,
             model: args.model,
             openai_base_url: args.openai_base_url,
             thinking: None,
@@ -350,6 +352,7 @@ async fn run_exec(app: &mut App, args: ExecArgs) -> anyhow::Result<i32> {
             sandbox_writable_roots: None,
             sandbox_network_access: None,
             mode: args.mode,
+            openai_provider: None,
             model: args.model,
             openai_base_url: args.openai_base_url,
             thinking: None,
@@ -587,6 +590,7 @@ fn render_event_to<W: std::io::Write>(
             sandbox_writable_roots,
             sandbox_network_access,
             mode,
+            openai_provider,
             model,
             thinking,
             openai_base_url,
@@ -594,8 +598,9 @@ fn render_event_to<W: std::io::Write>(
         } => {
             let _ = writeln!(
                 writer,
-                "[{ts}] config approval_policy={approval_policy:?} sandbox_policy={sandbox_policy:?} sandbox_writable_roots={sandbox_writable_roots:?} sandbox_network_access={sandbox_network_access:?} mode={} model={} thinking={} openai_base_url={} allowed_tools={allowed_tools:?}",
+                "[{ts}] config approval_policy={approval_policy:?} sandbox_policy={sandbox_policy:?} sandbox_writable_roots={sandbox_writable_roots:?} sandbox_network_access={sandbox_network_access:?} mode={} openai_provider={} model={} thinking={} openai_base_url={} allowed_tools={allowed_tools:?}",
                 mode.as_deref().unwrap_or(""),
+                openai_provider.as_deref().unwrap_or(""),
                 model.as_deref().unwrap_or(""),
                 thinking.as_deref().unwrap_or(""),
                 openai_base_url.as_deref().unwrap_or("")

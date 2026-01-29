@@ -450,6 +450,7 @@
             ModelRoutingRuleSource::Subagent => "subagent",
             ModelRoutingRuleSource::ProjectOverride => "project_override",
             ModelRoutingRuleSource::KeywordRule => "keyword_rule",
+            ModelRoutingRuleSource::Skill => "skill",
             ModelRoutingRuleSource::RoleDefault => "role_default",
             ModelRoutingRuleSource::GlobalDefault => "global_default",
         }
@@ -483,4 +484,3 @@
             TurnStatus::Stuck => "stuck",
         }
     }
-

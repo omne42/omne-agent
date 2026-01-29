@@ -248,7 +248,11 @@ struct AgentSpawnTaskArgs {
     #[serde(default)]
     workspace_mode: Option<AgentSpawnWorkspaceMode>,
     #[serde(default)]
+    openai_provider: Option<String>,
+    #[serde(default)]
     model: Option<String>,
+    #[serde(default)]
+    thinking: Option<String>,
     #[serde(default)]
     openai_base_url: Option<String>,
     #[serde(default)]
@@ -264,7 +268,11 @@ struct AgentSpawnArgs {
     #[serde(default)]
     workspace_mode: Option<AgentSpawnWorkspaceMode>,
     #[serde(default)]
+    openai_provider: Option<String>,
+    #[serde(default)]
     model: Option<String>,
+    #[serde(default)]
+    thinking: Option<String>,
     #[serde(default)]
     openai_base_url: Option<String>,
     #[serde(default)]

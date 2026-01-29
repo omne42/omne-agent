@@ -178,6 +178,7 @@ modes:
                 sandbox_writable_roots: None,
                 sandbox_network_access: None,
                 mode: Some("prompt-mode".to_string()),
+                openai_provider: None,
                 model: None,
                 thinking: None,
                 openai_base_url: None,

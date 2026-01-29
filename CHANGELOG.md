@@ -19,6 +19,7 @@
 - 新增 `v0.2.0` 功能对齐与 TODO 汇总：`docs/v0.2.0_parity.md`。
 - 新增 Mode（角色权限边界）规范：`docs/modes.md`（配置发现顺序、`deny/prompt/allow` 语义、`prompt+auto_approve` 的落盘审计规则）。
 - `pm-core`/`pm-app-server`：落地 ModeCatalog（`.codepm_data/spec/modes.yaml` / `CODE_PM_MODES_FILE`），并在 `file/*` 与 `process/start` 工具入口强制执行 `mode` 的 `deny` 边界（未知 mode 也会拒绝并返回可用列表）。
+- `pm-core`：ModeCatalog 支持可选 `model`/`thinking` 字段（`thinking` 会校验为 `unsupported|small|medium|high|xhigh`）；当 thread 未显式指定 `model/thinking` 时，`pm-app-server` agent loop 会将其作为默认值参与模型路由与 `reasoning.effort` 计算。
 - `pm-core`/`pm-app-server`：新增 `subagent.spawn` 权限边界，并在 `agent_spawn` 入口强制执行（默认子 thread `sandbox_policy=read_only` + `mode=reviewer`，并支持 `CODE_PM_MAX_CONCURRENT_SUBAGENTS` 并发上限，超限拒绝并返回原因）。
 - `pm-app-server`：支持 per-mode execpolicy rules（`.codepm_data/spec/modes.yaml` 的 `permissions.command.execpolicy_rules`），并在 `process/start` 入口 fail-closed 执行（加载失败即拒绝）。
 - `pm-app-server thread/config-explain`：追加 mode 可解释性（mode catalog 来源/路径/加载错误、可用 modes、当前 mode 的权限摘要与 glob 列表）。
@@ -79,7 +80,7 @@
 - `pm-app-server` 新增 `thread/list_meta`：批量返回 threads 的派生状态（支持 `include_archived`），减少 UI/CLI 人肉遍历与重复读取 event log。
 - `pm-app-server` 新增 Responses-first agent loop：`turn/start` 会调用 OpenAI Responses API 执行 tool calling（阻塞等待 approval 决策并复跑同一 tool call），并将 assistant 输出落盘为 `AssistantMessage` 事件以支持 resume。
 - `pm-app-server` agent loop：会读取 `<thread cwd>/AGENTS.md` 并追加到 instructions（写入前自动脱敏），让项目级规范从第一天就能约束 agent。
-- `pm-app-server` agent loop：支持 instructions layering（base/user/project）与按需加载 skills（`$skill` → `SKILL.md`），并提供 `CODE_PM_USER_INSTRUCTIONS_FILE`/`CODE_PM_SKILLS_DIR`。
+- `pm-app-server` agent loop：支持 instructions layering（base/user/project）与按需加载 skills（`$skill` → `SKILL.md`），并支持在 `SKILL.md` 顶部用 YAML frontmatter 指定 `model`/`thinking` 覆盖（会校验冲突），以及 `CODE_PM_USER_INSTRUCTIONS_FILE`/`CODE_PM_SKILLS_DIR`。
 - `pm-app-server`：支持项目级 OpenAI 配置覆盖（默认关闭）：当 `.codepm_data/config.toml` 的 `[project_config].enabled=true` 时，从 `.codepm_data/config.toml` + `.codepm_data/.env` 加载 `base_url/model/api_key` 覆盖。
 - `pm-app-server` agent loop：构建对话上下文时会把 tool/approval/process/turn-status 事件注入 history（resume 更接近 Codex 语义，减少重复执行与“失忆”）。
 - 新增 `pm-core::threads`：`ThreadStore` + `ThreadHandle`，基于 JSONL event log 实现 thread 创建/列举/resume（resume 会修复未完成 turn/进程并落盘）。
@@ -95,8 +96,9 @@
 - `pm-app-server` 新增 thread 清理 API：`thread/delete(force?)` 与 `thread/clear_artifacts(force?)`，用于一键清除 history 与中间态产物。
 - `pm-app-server` 新增 approvals 控制面：`thread/configure(approval_policy,sandbox_policy?)`、`approval/list`、`approval/decide`。
 - `pm-protocol`/`pm-app-server`：新增 `ApprovalPolicy::AutoDeny`（仍会落盘 `ApprovalRequested/ApprovalDecided`，但会自动拒绝并返回 `denied=true`），便于非交互/保守模式下避免卡在 NeedApproval。
-- `pm-app-server` 新增 `thread/config/explain`：返回最小 config layer stack（当前覆盖 `approval_policy`/`sandbox_policy`/`model`/`openai_base_url`），用于回答“为什么生效的是这个值”。
+- `pm-app-server` 新增 `thread/config/explain`：返回最小 config layer stack（当前覆盖 `approval_policy`/`sandbox_policy`/`mode`/`openai_provider`/`model`/`thinking`/`openai_base_url`/`allowed_tools`），用于回答“为什么生效的是这个值”。
 - `pm-protocol`/`pm-eventlog` 新增 thread-level 模型配置：`ThreadConfigUpdated.model/openai_base_url` + `ThreadState.model/openai_base_url`。
+- `pm-protocol`/`pm-eventlog`：新增 thread-level OpenAI provider 配置：`ThreadConfigUpdated.openai_provider` + `ThreadState.openai_provider`。
 - `pm-app-server` 新增 `thread/attention`：派生 RTS “收件箱”视图（pending approvals + running processes），减少 UI/CLI 人肉扫描 event log。
 - `pm-app-server` 新增 `thread/disk_usage` 与 `thread/disk_report`：返回 thread 目录磁盘占用，并可生成 `disk_report` markdown artifact 便于清理。
 - `pm-app-server`：订阅 `thread/subscribe` 时会按阈值检测 thread 磁盘占用并生成 `disk_report` 告警 artifact（默认 10GiB；`CODE_PM_THREAD_DISK_WARNING_BYTES=0` 可关闭；频率可用 `CODE_PM_THREAD_DISK_CHECK_DEBOUNCE_MS`/`CODE_PM_THREAD_DISK_REPORT_DEBOUNCE_MS` 控制）。
@@ -107,6 +109,7 @@
 - `pm-app-server` 新增 `artifact/*`：`artifact/write`（`.md + .metadata.json` 落盘并自动脱敏）、`artifact/list`、`artifact/read`、`artifact/delete`。
 - `pm-app-server` agent loop tool 覆盖：补齐 `file/edit`、`file/delete`、`process/tail`、`process/follow`、`artifact/list`、`artifact/read`、`artifact/delete`。
 - `pm-app-server agent loop`：新增 `agent_spawn`（fork + 启动子 agent turn）与 `thread_state`/`thread_events`（fan-in 读状态与事件）。
+- `pm-app-server agent_spawn`：支持在 request/task 级指定 `openai_provider`/`model`/`thinking`/`openai_base_url` 并透传到子 thread 的 `thread/configure`。
 - `pm-app-server`：`file/read|glob|grep` 支持 `root="reference"`（读取 `.codepm_data/reference/repo` 的只读快照），并确保 workspace 的 `glob/grep` 默认不扫描 `.codepm_data/reference`。
 - `pm-app-server`：新增 `repo/search` 与 `repo/index`：将搜索结果/文件清单写入 `repo_search`/`repo_index` user artifact（结果可引用/可回放；tool 事件只记录摘要 + `artifact_id`）。
 - `pm-app-server`：新增 `repo/symbols`：使用 tree-sitter（Rust）提取符号并写入 `repo_symbols` user artifact（用于 Reviewer/Architect 上下文构建）。
@@ -198,6 +201,7 @@
 - `pm` TUI：提升 transcript 缓冲上限，超出屏幕不再丢历史。
 - `ditto-llm`：OpenAI Responses 请求现在会携带 `instructions`（来自 system message），修复部分 provider 返回 “Instructions are required”。
 - `pm-app-server`：项目配置现在会读取 `openai.base_url`（`config.toml`/`config_local.toml`）并允许 `.env` 覆盖，`thread/models` 与 `thread/config-explain` 使用该值。
+- `pm-app-server thread/models`：`GET /models` 增加 2s 超时并在失败时降级返回候选模型列表，同时返回 `models_error` 供 UI 持久展示错误。
 - `pm-app-server`/`pm`/`code-pm`/`pm-core::orchestrator`：拆分超大 Rust 源文件（保持行为不变），避免单文件超过 1000 行，降低 review/IDE 压力。
 - `pm-app-server`：进一步拆分接近上限的模块（`agent/tools`、`process_control`），为后续扩展 tools/hooks 留出空间并保持单文件 < 1000 行。
 - `pm-app-server`：拆分 JSON-RPC router（`main/app.rs`）为按域 handler 的小文件（`main/app/*.rs`），避免入口路由继续膨胀。

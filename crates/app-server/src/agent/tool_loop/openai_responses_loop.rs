@@ -24,6 +24,7 @@ async fn run_openai_responses_codex_parity_loop(
     pdf_file_id_upload_min_bytes: u64,
     rule_source: pm_protocol::ModelRoutingRuleSource,
     rule_id: Option<String>,
+    thinking_override: Option<String>,
     cfg: ToolLoopConfig,
 ) -> anyhow::Result<ToolLoopOutcome> {
     fn content_part_to_openai_user_item(part: &ditto_llm::ContentPart) -> Option<Value> {
@@ -498,16 +499,11 @@ async fn run_openai_responses_codex_parity_loop(
                 continue;
             }
 
-            let reasoning_effort = match ditto_llm::select_model_config(&project_overrides.models, &model)
-                .map(|cfg| cfg.thinking)
-                .unwrap_or_default()
-            {
-                ThinkingIntensity::Unsupported => None,
-                ThinkingIntensity::Small => Some(ditto_llm::ReasoningEffort::Low),
-                ThinkingIntensity::Medium => Some(ditto_llm::ReasoningEffort::Medium),
-                ThinkingIntensity::High => Some(ditto_llm::ReasoningEffort::High),
-                ThinkingIntensity::XHigh => Some(ditto_llm::ReasoningEffort::XHigh),
-            };
+            let reasoning_effort = resolve_reasoning_effort(
+                thinking_override.as_deref(),
+                &project_overrides.models,
+                &model,
+            );
             let tool_choice = if tools_enabled {
                 ditto_llm::ToolChoice::Auto
             } else {

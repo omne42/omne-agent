@@ -6,13 +6,24 @@ pub async fn run_agent_turn(
     cancel: CancellationToken,
     turn_priority: pm_protocol::TurnPriority,
 ) -> anyhow::Result<()> {
-    let (thread_id, thread_mode, thread_model, thread_openai_base_url, thread_cwd, allowed_tools) = {
+    let (
+        thread_id,
+        thread_mode,
+        thread_openai_provider,
+        thread_model,
+        thread_thinking,
+        thread_openai_base_url,
+        thread_cwd,
+        allowed_tools,
+    ) = {
         let handle = thread_rt.handle.lock().await;
         let state = handle.state();
         (
             handle.thread_id(),
             state.mode.clone(),
+            state.openai_provider.clone(),
             state.model.clone(),
+            state.thinking.clone(),
             state.openai_base_url.clone(),
             state.cwd.clone(),
             state.allowed_tools.clone(),
@@ -30,9 +41,9 @@ pub async fn run_agent_turn(
         ProjectOpenAiOverrides::default()
     };
 
-    let provider = project_overrides
-        .provider
+    let provider = thread_openai_provider
         .clone()
+        .or(project_overrides.provider.clone())
         .or_else(|| {
             std::env::var("CODE_PM_OPENAI_PROVIDER")
                 .ok()
@@ -52,17 +63,6 @@ pub async fn run_agent_turn(
     if let Some(overrides) = provider_overrides {
         provider_config = merge_provider_config(provider_config, overrides);
     }
-
-    let forced_model = thread_model.is_some();
-    let global_default_model = thread_model
-        .or(project_overrides.model.clone())
-        .or_else(|| {
-            std::env::var("CODE_PM_OPENAI_MODEL")
-                .ok()
-                .filter(|s| !s.trim().is_empty())
-        })
-        .or(provider_config.default_model.clone())
-        .unwrap_or_else(|| DEFAULT_MODEL.to_string());
 
     let base_url_override = thread_openai_base_url
         .clone()
@@ -258,8 +258,10 @@ pub async fn run_agent_turn(
         }
     }
 
+    let mut skill_overrides = SkillOverrides::default();
     if let Some(skills) = load_skills_from_input(&input, thread_cwd.as_deref()).await? {
-        instructions.push_str(&skills);
+        skill_overrides = skills.overrides;
+        instructions.push_str(&skills.markdown);
     }
 
     let session_start_hook_contexts =
@@ -337,18 +339,64 @@ pub async fn run_agent_turn(
     };
     let context_tokens_estimate = estimate_context_tokens(&instructions, &input_items);
 
+    let (mode_default_model, mode_default_thinking) = match thread_root.as_deref() {
+        Some(thread_root) => {
+            let catalog = pm_core::modes::ModeCatalog::load(thread_root).await;
+            let def = catalog.mode(&thread_mode);
+            (
+                def.and_then(|mode| mode.model.clone()),
+                def.and_then(|mode| mode.thinking.clone()),
+            )
+        }
+        None => (None, None),
+    };
+
     let router_config = match thread_root.as_deref() {
         Some(thread_root) => pm_core::router::load_router_config(thread_root).await?,
         None => None,
     };
-    let routed = pm_core::router::route_model(
-        router_config.as_ref().map(|loaded| &loaded.config),
-        Some(thread_mode.as_str()),
-        &input,
-        &global_default_model,
-        forced_model,
-        context_tokens_estimate,
-    );
+    let thread_forced_model = thread_model.is_some();
+    let global_default_model = thread_model
+        .clone()
+        .or(mode_default_model.clone())
+        .or(project_overrides.model.clone())
+        .or_else(|| {
+            std::env::var("CODE_PM_OPENAI_MODEL")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+        })
+        .or(provider_config.default_model.clone())
+        .unwrap_or_else(|| DEFAULT_MODEL.to_string());
+
+    let routed = if thread_forced_model {
+        pm_core::router::route_model(
+            router_config.as_ref().map(|loaded| &loaded.config),
+            Some(thread_mode.as_str()),
+            &input,
+            &global_default_model,
+            true,
+            context_tokens_estimate,
+        )
+    } else if let Some(skill_model) = skill_overrides.model.clone() {
+        pm_core::router::ModelRouteDecision {
+            selected_model: skill_model,
+            rule_source: pm_protocol::ModelRoutingRuleSource::Skill,
+            reason: Some(format!(
+                "model forced by skill: {}",
+                skill_overrides.model_sources.join(", ")
+            )),
+            rule_id: None,
+        }
+    } else {
+        pm_core::router::route_model(
+            router_config.as_ref().map(|loaded| &loaded.config),
+            Some(thread_mode.as_str()),
+            &input,
+            &global_default_model,
+            false,
+            context_tokens_estimate,
+        )
+    };
     let pm_core::router::ModelRouteDecision {
         selected_model,
         rule_source,
@@ -363,6 +411,7 @@ pub async fn run_agent_turn(
         );
     }
 
+    let forced_model = thread_forced_model || skill_overrides.model.is_some();
     let tool_model = if forced_model {
         None
     } else {
@@ -413,6 +462,18 @@ pub async fn run_agent_turn(
             })
             .await;
     }
+    let thinking_override = thread_thinking
+        .and_then(|value| {
+            let value = value.trim();
+            if value.is_empty() {
+                None
+            } else {
+                Some(value.to_ascii_lowercase())
+            }
+        })
+        .or(skill_overrides.thinking.clone())
+        .or(mode_default_thinking);
+
     let model_config = ditto_llm::select_model_config(&project_overrides.models, &final_model);
     let limits = resolve_model_limits(&final_model, model_config);
     let starting_total_tokens_used =
@@ -477,6 +538,7 @@ pub async fn run_agent_turn(
         pdf_file_id_upload_min_bytes,
         rule_source,
         rule_id,
+        thinking_override,
         cfg,
     }
     .run()
@@ -515,4 +577,3 @@ struct AutoCompactSummaryConfig {
     source_max_chars: usize,
     tail_items: usize,
 }
-

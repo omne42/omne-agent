@@ -52,7 +52,40 @@ struct ToolLoop {
     pdf_file_id_upload_min_bytes: u64,
     rule_source: pm_protocol::ModelRoutingRuleSource,
     rule_id: Option<String>,
+    thinking_override: Option<String>,
     cfg: ToolLoopConfig,
+}
+
+fn parse_thinking_override(value: Option<&str>) -> Option<ThinkingIntensity> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .and_then(|value| match value.to_ascii_lowercase().as_str() {
+            "unsupported" => Some(ThinkingIntensity::Unsupported),
+            "small" => Some(ThinkingIntensity::Small),
+            "medium" => Some(ThinkingIntensity::Medium),
+            "high" => Some(ThinkingIntensity::High),
+            "xhigh" => Some(ThinkingIntensity::XHigh),
+            _ => None,
+        })
+}
+
+fn resolve_reasoning_effort(
+    thinking_override: Option<&str>,
+    project_models: &std::collections::BTreeMap<String, ditto_llm::ModelConfig>,
+    model: &str,
+) -> Option<ditto_llm::ReasoningEffort> {
+    let thinking = parse_thinking_override(thinking_override)
+        .or_else(|| ditto_llm::select_model_config(project_models, model).map(|cfg| cfg.thinking))
+        .unwrap_or_default();
+
+    match thinking {
+        ThinkingIntensity::Unsupported => None,
+        ThinkingIntensity::Small => Some(ditto_llm::ReasoningEffort::Low),
+        ThinkingIntensity::Medium => Some(ditto_llm::ReasoningEffort::Medium),
+        ThinkingIntensity::High => Some(ditto_llm::ReasoningEffort::High),
+        ThinkingIntensity::XHigh => Some(ditto_llm::ReasoningEffort::XHigh),
+    }
 }
 
 impl ToolLoop {
@@ -83,6 +116,7 @@ impl ToolLoop {
             pdf_file_id_upload_min_bytes,
             rule_source,
             rule_id,
+            thinking_override,
             cfg,
         } = self;
 
@@ -117,6 +151,7 @@ impl ToolLoop {
                 pdf_file_id_upload_min_bytes,
                 rule_source,
                 rule_id,
+                thinking_override,
                 cfg,
             )
             .await;
@@ -288,16 +323,11 @@ impl ToolLoop {
                 }
 
                 let reasoning_effort = if runtime.capabilities.reasoning {
-                    match ditto_llm::select_model_config(&project_overrides.models, &model)
-                        .map(|cfg| cfg.thinking)
-                        .unwrap_or_default()
-                    {
-                        ThinkingIntensity::Unsupported => None,
-                        ThinkingIntensity::Small => Some(ditto_llm::ReasoningEffort::Low),
-                        ThinkingIntensity::Medium => Some(ditto_llm::ReasoningEffort::Medium),
-                        ThinkingIntensity::High => Some(ditto_llm::ReasoningEffort::High),
-                        ThinkingIntensity::XHigh => Some(ditto_llm::ReasoningEffort::XHigh),
-                    }
+                    resolve_reasoning_effort(
+                        thinking_override.as_deref(),
+                        &project_overrides.models,
+                        &model,
+                    )
                 } else {
                     None
                 };

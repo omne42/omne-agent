@@ -463,13 +463,31 @@ async fn run_tool_call_once(
                     .map(|v| v.trim().to_string())
                     .filter(|v| !v.is_empty())
             };
+            let normalize_thinking = |value: Option<String>| -> anyhow::Result<Option<String>> {
+                let Some(value) = value else {
+                    return Ok(None);
+                };
+                let value = value.trim();
+                if value.is_empty() {
+                    return Ok(None);
+                }
+                let value = value.to_ascii_lowercase();
+                match value.as_str() {
+                    "small" | "medium" | "high" | "xhigh" | "unsupported" => Ok(Some(value)),
+                    other => anyhow::bail!(
+                        "invalid thinking: {other} (expected: small|medium|high|xhigh|unsupported)"
+                    ),
+                }
+            };
 
             let default_spawn_mode = args.spawn_mode.unwrap_or(AgentSpawnMode::New);
             let default_mode =
                 normalize_optional(args.mode).unwrap_or_else(|| "reviewer".to_string());
             let default_workspace_mode =
                 args.workspace_mode.unwrap_or(AgentSpawnWorkspaceMode::ReadOnly);
+            let default_openai_provider = normalize_optional(args.openai_provider);
             let default_model = normalize_optional(args.model);
+            let default_thinking = normalize_thinking(args.thinking)?;
             let default_openai_base_url = normalize_optional(args.openai_base_url);
             let default_expected_artifact_type =
                 normalize_optional(args.expected_artifact_type)
@@ -513,7 +531,11 @@ async fn run_tool_call_once(
                 let workspace_mode = task
                     .workspace_mode
                     .unwrap_or(default_workspace_mode);
+                let openai_provider = normalize_optional(task.openai_provider)
+                    .or_else(|| default_openai_provider.clone());
                 let model = normalize_optional(task.model).or_else(|| default_model.clone());
+                let thinking =
+                    normalize_thinking(task.thinking)?.or_else(|| default_thinking.clone());
                 let openai_base_url =
                     normalize_optional(task.openai_base_url).or_else(|| default_openai_base_url.clone());
                 let expected_artifact_type = normalize_optional(task.expected_artifact_type)
@@ -527,7 +549,9 @@ async fn run_tool_call_once(
                     spawn_mode,
                     mode,
                     workspace_mode,
+                    openai_provider,
                     model,
+                    thinking,
                     openai_base_url,
                     expected_artifact_type,
                 });
@@ -587,6 +611,10 @@ async fn run_tool_call_once(
                         "mode": task.mode.clone(),
                         "workspace_mode": workspace_mode_label(task.workspace_mode),
                         "depends_on": task.depends_on.clone(),
+                        "openai_provider": task.openai_provider.clone(),
+                        "model": task.model.clone(),
+                        "thinking": task.thinking.clone(),
+                        "openai_base_url": task.openai_base_url.clone(),
                         "input_chars": task.input.chars().count(),
                         "input_preview": input_preview,
                     })
@@ -600,7 +628,9 @@ async fn run_tool_call_once(
                 "default_mode": default_mode,
                 "default_workspace_mode": workspace_mode_label(default_workspace_mode),
                 "default_expected_artifact_type": default_expected_artifact_type,
+                "openai_provider": default_openai_provider,
                 "model": default_model,
+                "thinking": default_thinking,
                 "openai_base_url": default_openai_base_url,
             });
 
@@ -889,8 +919,9 @@ async fn run_tool_call_once(
                             sandbox_writable_roots: None,
                             sandbox_network_access: None,
                             mode: Some(plan.mode.clone()),
+                            openai_provider: plan.openai_provider.clone(),
                             model: plan.model.clone(),
-                            thinking: None,
+                            thinking: plan.thinking.clone(),
                             openai_base_url: plan.openai_base_url.clone(),
                             allowed_tools: None,
                         },
@@ -905,7 +936,9 @@ async fn run_tool_call_once(
                         spawn_mode: plan.spawn_mode,
                         mode: plan.mode,
                         workspace_mode: plan.workspace_mode,
+                        openai_provider: plan.openai_provider,
                         model: plan.model,
+                        thinking: plan.thinking,
                         openai_base_url: plan.openai_base_url,
                         expected_artifact_type: plan.expected_artifact_type,
                         thread_id: spawned.thread_id,
@@ -913,14 +946,13 @@ async fn run_tool_call_once(
                         last_seq: spawned.last_seq,
                         turn_id: None,
                         status: SubagentTaskStatus::Pending,
-                        error: None,
-                    });
-                }
-
-                let external_active = active_threads
-                    .into_iter()
-                    .collect::<std::collections::HashSet<_>>();
-                let mut schedule = SubagentSpawnSchedule::new(
+	                        error: None,
+	                    });
+	                }
+	                let external_active = active_threads
+	                    .into_iter()
+	                    .collect::<std::collections::HashSet<_>>();
+	                let mut schedule = SubagentSpawnSchedule::new(
                     tasks,
                     external_active,
                     max_concurrent_subagents,

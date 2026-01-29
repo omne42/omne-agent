@@ -221,6 +221,7 @@ pub struct ThreadState {
     pub sandbox_writable_roots: Vec<String>,
     pub sandbox_network_access: SandboxNetworkAccess,
     pub mode: String,
+    pub openai_provider: Option<String>,
     pub model: Option<String>,
     pub thinking: Option<String>,
     pub openai_base_url: Option<String>,
@@ -253,6 +254,7 @@ impl ThreadState {
             sandbox_writable_roots: Vec::new(),
             sandbox_network_access: SandboxNetworkAccess::Deny,
             mode: "coder".to_string(),
+            openai_provider: None,
             model: None,
             thinking: None,
             openai_base_url: None,
@@ -316,6 +318,7 @@ impl ThreadState {
                 sandbox_writable_roots,
                 sandbox_network_access,
                 mode,
+                openai_provider,
                 model,
                 thinking,
                 openai_base_url,
@@ -333,6 +336,9 @@ impl ThreadState {
                 }
                 if let Some(mode) = mode {
                     self.mode = mode.clone();
+                }
+                if let Some(provider) = openai_provider {
+                    self.openai_provider = Some(provider.clone());
                 }
                 if let Some(model) = model {
                     self.model = Some(model.clone());

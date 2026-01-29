@@ -312,12 +312,18 @@
                 }
                 ThreadEventKind::ThreadConfigUpdated {
                     mode,
+                    openai_provider,
                     model,
                     thinking,
                     ..
                 } => {
                     if let Some(mode) = mode.as_deref().filter(|s| !s.trim().is_empty()) {
                         self.header.mode = Some(mode.to_string());
+                    }
+                    if let Some(provider) =
+                        openai_provider.as_deref().filter(|s| !s.trim().is_empty())
+                    {
+                        self.header.provider = Some(provider.to_string());
                     }
                     if let Some(model) = model.as_deref().filter(|s| !s.trim().is_empty()) {
                         self.header.model = Some(model.to_string());

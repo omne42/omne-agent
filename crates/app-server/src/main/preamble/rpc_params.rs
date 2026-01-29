@@ -166,6 +166,8 @@ struct ThreadConfigureParams {
     #[serde(default)]
     mode: Option<String>,
     #[serde(default)]
+    openai_provider: Option<String>,
+    #[serde(default)]
     model: Option<String>,
     #[serde(default)]
     thinking: Option<String>,

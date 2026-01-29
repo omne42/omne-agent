@@ -16,6 +16,148 @@ mod thread_manage_tests {
         }
     }
 
+    async fn write_project_config(repo_dir: &Path, contents: &str) -> anyhow::Result<()> {
+        let config_dir = repo_dir.join(".codepm_data");
+        tokio::fs::create_dir_all(&config_dir).await?;
+        tokio::fs::write(config_dir.join("config.toml"), contents).await?;
+        Ok(())
+    }
+
+    async fn spawn_models_endpoint(models: &[&str]) -> anyhow::Result<String> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let addr = listener.local_addr()?;
+
+        let body = {
+            let items = models
+                .iter()
+                .map(|id| format!(r#"{{"id":"{}"}}"#, id))
+                .collect::<Vec<_>>()
+                .join(",");
+            format!(r#"{{"data":[{}]}}"#, items)
+        };
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+            body.len(),
+            body
+        );
+
+        tokio::spawn(async move {
+            let Ok((mut socket, _peer)) = listener.accept().await else {
+                return;
+            };
+            let mut buf = vec![0u8; 4096];
+            let _ = socket.read(&mut buf).await;
+            let _ = socket.write_all(response.as_bytes()).await;
+        });
+
+        Ok(format!("http://{}/v1", addr))
+    }
+
+    #[tokio::test]
+    async fn thread_models_filters_by_model_whitelist() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let base_url = spawn_models_endpoint(&["gpt-4.1", "gpt-4.1-mini", "gpt-4o-mini"]).await?;
+        write_project_config(
+            &repo_dir,
+            &format!(
+                r#"
+[project_config]
+enabled = true
+
+[openai]
+provider = "test"
+
+[openai.providers.test]
+base_url = "{base_url}"
+model_whitelist = ["gpt-4.1-mini"]
+"#
+            ),
+        )
+        .await?;
+
+        let server = build_test_server(tmp.path().join(".codepm_data"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let result = handle_thread_models(&server, ThreadModelsParams { thread_id }).await?;
+        let models = result["models"]
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("missing models"))?
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(models, vec!["gpt-4.1-mini"]);
+        assert!(result["models_error"].is_null());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn thread_models_falls_back_when_list_models_fails() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        write_project_config(
+            &repo_dir,
+            r#"
+[project_config]
+enabled = true
+
+[openai]
+provider = "test"
+model = "project-model"
+
+[openai.providers.test]
+base_url = "http://127.0.0.1:1/v1"
+default_model = "default-model"
+"#,
+        )
+        .await?;
+
+        let server = build_test_server(tmp.path().join(".codepm_data"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        handle_thread_configure(
+            &server,
+            ThreadConfigureParams {
+                thread_id,
+                approval_policy: None,
+                sandbox_policy: None,
+                sandbox_writable_roots: None,
+                sandbox_network_access: None,
+                mode: None,
+                openai_provider: None,
+                model: Some("thread-model".to_string()),
+                thinking: None,
+                openai_base_url: None,
+                allowed_tools: None,
+            },
+        )
+        .await?;
+
+        let result = handle_thread_models(&server, ThreadModelsParams { thread_id }).await?;
+        let models = result["models"]
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("missing models"))?
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(models, vec!["thread-model", "project-model", "default-model"]);
+        let models_error = result["models_error"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing models_error"))?;
+        assert!(!models_error.trim().is_empty());
+        Ok(())
+    }
+
     #[tokio::test]
     async fn thread_hook_run_skips_when_config_missing() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
@@ -228,6 +370,7 @@ hooks:
                 sandbox_writable_roots: None,
                 sandbox_network_access: None,
                 mode: None,
+                openai_provider: None,
                 model: None,
                 thinking: None,
                 openai_base_url: None,
