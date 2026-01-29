@@ -1,19 +1,17 @@
 mod tui {
-    use std::collections::VecDeque;
+    use std::collections::{HashMap, HashSet, VecDeque};
     use std::io::{Stdout, Write};
+    use std::path::PathBuf;
     use std::time::{Duration, Instant};
 
     use anyhow::Context;
     use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyModifiers};
-    use crossterm::terminal::{
-        disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
-    };
-    use crossterm::{execute, ExecutableCommand};
+    use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
     use futures_util::StreamExt;
     use pm_jsonrpc::ClientHandle;
     use pm_protocol::{
         ApprovalDecision, ApprovalId, ArtifactId, ArtifactMetadata, ModelRoutingRuleSource,
-        ProcessId, ThreadEvent, ThreadEventKind, ThreadId, TurnId, TurnStatus,
+        ProcessId, ThreadEvent, ThreadEventKind, ThreadId, ToolId, ToolStatus, TurnId, TurnStatus,
     };
     use ratatui::backend::CrosstermBackend;
     use ratatui::layout::{Constraint, Direction, Layout};
@@ -24,7 +22,9 @@ mod tui {
     use serde::Deserialize;
     use serde_json::Value;
     use super::SubscribeResponse;
-    use unicode_width::UnicodeWidthStr;
+    use time::format_description::well_known::Rfc3339;
+    use time::OffsetDateTime;
+    use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
     enum PollOutcome {
         Response(SubscribeResponse),
@@ -34,6 +34,12 @@ mod tui {
     struct ModelFetchInFlight {
         thread_id: ThreadId,
         handle: tokio::task::JoinHandle<anyhow::Result<Vec<String>>>,
+    }
+
+    struct TurnStartInFlight {
+        thread_id: ThreadId,
+        input: String,
+        handle: tokio::task::JoinHandle<anyhow::Result<TurnId>>,
     }
 
     struct PollInFlight {
@@ -111,20 +117,55 @@ mod tui {
         ModelFetchInFlight { thread_id, handle: task }
     }
 
+    fn spawn_turn_start(
+        handle: ClientHandle,
+        thread_id: ThreadId,
+        input: String,
+        priority: Option<pm_protocol::TurnPriority>,
+    ) -> anyhow::Result<TurnStartInFlight> {
+        let (input, context_refs, attachments) = super::split_special_directives(&input)?;
+        let input_for_request = input.clone();
+        let task = tokio::spawn(async move {
+            let value = handle
+                .request(
+                    "turn/start",
+                    serde_json::json!({
+                        "thread_id": thread_id,
+                        "input": input_for_request,
+                        "context_refs": context_refs,
+                        "attachments": attachments,
+                        "priority": priority,
+                    }),
+                )
+                .await?;
+            serde_json::from_value(value["turn_id"].clone()).context("turn_id missing in result")
+        });
+        Ok(TurnStartInFlight {
+            thread_id,
+            input,
+            handle: task,
+        })
+    }
+
     async fn handle_tick(
         state: &mut UiState,
         app: &mut super::App,
         header_timeout: Duration,
         last_threads_refresh: &mut Instant,
-    ) {
+    ) -> bool {
+        let mut changed = false;
         if let Some(thread_id) = state.active_thread {
             if state.header_needs_refresh {
                 match tokio::time::timeout(header_timeout, state.refresh_header(app, thread_id))
                     .await
                 {
-                    Ok(Ok(())) => state.header_needs_refresh = false,
+                    Ok(Ok(())) => {
+                        state.header_needs_refresh = false;
+                        changed = true;
+                    }
                     Ok(Err(err)) => {
                         state.set_status(format!("header refresh error: {err}"));
+                        changed = true;
                     }
                     Err(_) => {}
                 }
@@ -135,10 +176,13 @@ mod tui {
         {
             if let Err(err) = state.refresh_threads(app).await {
                 state.set_status(format!("refresh error: {err}"));
+                changed = true;
             } else {
                 *last_threads_refresh = Instant::now();
+                changed = true;
             }
         }
+        changed
     }
 
     pub(super) async fn run_tui(
@@ -151,6 +195,7 @@ mod tui {
 
         let mut terminal = setup_terminal().context("setup terminal")?;
         let _guard = TerminalGuard::enter().context("enter terminal mode")?;
+        terminal.clear().context("clear terminal")?;
 
         let mut state = UiState::new(args.include_archived);
         state.status = Some("connecting...".to_string());
@@ -181,9 +226,13 @@ mod tui {
         let mut last_poll = Instant::now() - poll_interval;
         let mut poll_inflight: Option<PollInFlight> = None;
         let mut last_active_thread: Option<ThreadId> = None;
+        let mut needs_draw = true;
 
         loop {
-            terminal.draw(|f| draw_ui(f, &mut state))?;
+            if needs_draw {
+                terminal.draw(|f| draw_ui(f, &mut state))?;
+                needs_draw = false;
+            }
 
             if state.active_thread != last_active_thread {
                 last_active_thread = state.active_thread;
@@ -192,6 +241,7 @@ mod tui {
                 }
                 state.cancel_model_fetch();
                 last_poll = Instant::now() - poll_interval;
+                needs_draw = true;
             }
 
             let mut poll_result = None::<(
@@ -209,6 +259,7 @@ mod tui {
                         if let Err(err) = state.handle_notification(note) {
                             state.set_status(format!("notification error: {err}"));
                         }
+                        needs_draw = true;
                     }
                     Some(Ok(event)) = event_stream.next() => {
                         match event {
@@ -219,13 +270,19 @@ mod tui {
                                 if state.handle_key(app, key).await? {
                                     return Ok(());
                                 }
+                                needs_draw = true;
                             }
-                            Event::Resize(_, _) => {}
+                            Event::Resize(_, _) => {
+                                needs_draw = true;
+                            }
                             _ => {}
                         }
                     }
                     _ = tick.tick() => {
-                        handle_tick(&mut state, app, header_timeout, &mut last_threads_refresh).await;
+                        if handle_tick(&mut state, app, header_timeout, &mut last_threads_refresh).await
+                        {
+                            needs_draw = true;
+                        }
                     }
                 }
             } else {
@@ -234,6 +291,7 @@ mod tui {
                         if let Err(err) = state.handle_notification(note) {
                             state.set_status(format!("notification error: {err}"));
                         }
+                        needs_draw = true;
                     }
                     Some(Ok(event)) = event_stream.next() => {
                         match event {
@@ -244,13 +302,19 @@ mod tui {
                                 if state.handle_key(app, key).await? {
                                     return Ok(());
                                 }
+                                needs_draw = true;
                             }
-                            Event::Resize(_, _) => {}
+                            Event::Resize(_, _) => {
+                                needs_draw = true;
+                            }
                             _ => {}
                         }
                     }
                     _ = tick.tick() => {
-                        handle_tick(&mut state, app, header_timeout, &mut last_threads_refresh).await;
+                        if handle_tick(&mut state, app, header_timeout, &mut last_threads_refresh).await
+                        {
+                            needs_draw = true;
+                        }
                         if let Some(thread_id) = state.active_thread
                             && last_poll.elapsed() >= poll_interval
                         {
@@ -272,8 +336,12 @@ mod tui {
                     Ok(Ok(PollOutcome::Response(resp))) => {
                         if state.active_thread == Some(thread_id) {
                             state.last_seq = resp.last_seq;
+                            let has_events = !resp.events.is_empty();
                             for event in resp.events {
                                 state.apply_event(&event);
+                            }
+                            if has_events {
+                                needs_draw = true;
                             }
                             if resp.has_more {
                                 last_poll = Instant::now() - poll_interval;
@@ -283,9 +351,11 @@ mod tui {
                     Ok(Ok(PollOutcome::Timeout)) => {}
                     Ok(Err(err)) => {
                         state.set_status(format!("poll error: {err}"));
+                        needs_draw = true;
                     }
                     Err(err) => {
                         state.set_status(format!("poll task error: {err}"));
+                        needs_draw = true;
                     }
                 }
             }
@@ -304,32 +374,80 @@ mod tui {
                         } else {
                             state.model_fetch_pending = false;
                         }
+                        needs_draw = true;
                     }
                     Ok(Err(err)) => {
                         state.model_fetch_pending = false;
                         state.set_status(format!("thread/models error: {err}"));
                         let show_error_palette = matches!(
                             state.overlays.last(),
-                            Some(Overlay::CommandPalette(view)) if view.title == "Set model"
+                            Some(Overlay::CommandPalette(view)) if view.title == "model"
                         );
                         if show_error_palette {
                             state.replace_top_command_palette(build_model_error_palette(
                                 &err.to_string(),
                             ));
                         }
+                        if let Some(inline) = state.inline_palette.as_mut() {
+                            if inline.kind == InlinePaletteKind::Model {
+                                inline.view = build_model_error_palette(&err.to_string());
+                            }
+                        }
+                        needs_draw = true;
                     }
                     Err(err) => {
                         state.model_fetch_pending = false;
                         state.set_status(format!("thread/models task error: {err}"));
                         let show_error_palette = matches!(
                             state.overlays.last(),
-                            Some(Overlay::CommandPalette(view)) if view.title == "Set model"
+                            Some(Overlay::CommandPalette(view)) if view.title == "model"
                         );
                         if show_error_palette {
                             state.replace_top_command_palette(build_model_error_palette(
                                 &err.to_string(),
                             ));
                         }
+                        if let Some(inline) = state.inline_palette.as_mut() {
+                            if inline.kind == InlinePaletteKind::Model {
+                                inline.view = build_model_error_palette(&err.to_string());
+                            }
+                        }
+                        needs_draw = true;
+                    }
+                }
+            }
+
+            if state
+                .turn_start
+                .as_ref()
+                .is_some_and(|pending| pending.handle.is_finished())
+            {
+                let pending = state.turn_start.take().expect("checked turn start");
+                let result = pending.handle.await;
+                match result {
+                    Ok(Ok(turn_id)) => {
+                        if state.active_thread == Some(pending.thread_id) {
+                            state.active_turn_id = Some(turn_id);
+                        }
+                        needs_draw = true;
+                    }
+                    Ok(Err(err)) => {
+                        if state.active_thread == Some(pending.thread_id)
+                            && state.input.trim().is_empty()
+                        {
+                            state.input = pending.input;
+                        }
+                        state.set_status(format!("turn/start error: {err}"));
+                        needs_draw = true;
+                    }
+                    Err(err) => {
+                        if state.active_thread == Some(pending.thread_id)
+                            && state.input.trim().is_empty()
+                        {
+                            state.input = pending.input;
+                        }
+                        state.set_status(format!("turn/start task error: {err}"));
+                        needs_draw = true;
                     }
                 }
             }
@@ -342,7 +460,6 @@ mod tui {
         fn enter() -> anyhow::Result<Self> {
             enable_raw_mode()?;
             let mut stdout = std::io::stdout();
-            execute!(stdout, EnterAlternateScreen)?;
             stdout.flush().ok();
             Ok(Self)
         }
@@ -352,7 +469,6 @@ mod tui {
         fn drop(&mut self) {
             let _ = disable_raw_mode();
             let mut stdout = std::io::stdout();
-            let _ = stdout.execute(LeaveAlternateScreen);
             let _ = stdout.flush();
         }
     }
@@ -376,6 +492,17 @@ mod tui {
                     .context("thread/resume timeout")??;
                 let last_seq = resume["last_seq"].as_u64().unwrap_or(0);
                 state.activate_thread(thread_id, last_seq);
+                if let Ok(value) = app.thread_state(thread_id).await {
+                    state.thread_cwd = value
+                        .get("cwd")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty());
+                    state.total_tokens_used = value
+                        .get("total_tokens_used")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                }
             }
             None => {
                 let started = tokio::time::timeout(timeout, app.thread_start(None))
@@ -385,6 +512,17 @@ mod tui {
                     .context("thread_id missing")?;
                 let last_seq = started["last_seq"].as_u64().unwrap_or(0);
                 state.activate_thread(thread_id, last_seq);
+                if let Ok(value) = app.thread_state(thread_id).await {
+                    state.thread_cwd = value
+                        .get("cwd")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty());
+                    state.total_tokens_used = value
+                        .get("total_tokens_used")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                }
             }
         }
         Ok(())
@@ -402,11 +540,13 @@ mod tui {
         #[serde(default)]
         cwd: Option<String>,
         #[serde(default)]
-        model: Option<String>,
+        created_at: Option<String>,
         #[serde(default)]
-        attention_state: String,
+        updated_at: Option<String>,
         #[serde(default)]
-        last_seq: u64,
+        title: Option<String>,
+        #[serde(default)]
+        first_message: Option<String>,
     }
 
     #[derive(Debug, Clone)]
@@ -421,6 +561,7 @@ mod tui {
         Assistant,
         System,
         Error,
+        Tool,
     }
 
     #[derive(Debug, Clone)]
@@ -436,6 +577,23 @@ mod tui {
         Artifacts(ArtifactsOverlay),
         Text(TextOverlay),
         CommandPalette(CommandPaletteOverlay),
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum InlinePaletteKind {
+        Command,
+        Role,
+        Skill,
+        Model,
+        ApprovalPolicy,
+        SandboxPolicy,
+        SandboxNetworkAccess,
+    }
+
+    #[derive(Debug, Clone)]
+    struct InlinePalette {
+        kind: InlinePaletteKind,
+        view: CommandPaletteOverlay,
     }
 
     #[derive(Debug, Clone)]
@@ -479,6 +637,7 @@ mod tui {
     #[derive(Debug, Clone)]
     struct PaletteItem {
         label: String,
+        detail: Option<String>,
         action: PaletteCommand,
     }
 
@@ -503,7 +662,30 @@ mod tui {
         SetApprovalPolicy(super::CliApprovalPolicy),
         SetSandboxPolicy(super::CliSandboxPolicy),
         SetSandboxNetworkAccess(super::CliSandboxNetworkAccess),
+        InsertSkill(String),
         Noop,
+    }
+
+    impl PaletteItem {
+        fn new(label: impl Into<String>, action: PaletteCommand) -> Self {
+            Self {
+                label: label.into(),
+                detail: None,
+                action,
+            }
+        }
+
+        fn with_detail(
+            label: impl Into<String>,
+            detail: impl Into<String>,
+            action: PaletteCommand,
+        ) -> Self {
+            Self {
+                label: label.into(),
+                detail: Some(detail.into()),
+                action,
+            }
+        }
     }
 
     impl CommandPaletteOverlay {
@@ -533,7 +715,13 @@ mod tui {
                     .iter()
                     .enumerate()
                     .filter_map(|(idx, item)| {
-                        let hay = item.label.to_ascii_lowercase();
+                        let hay = match item.detail.as_deref() {
+                            Some(detail) if !detail.trim().is_empty() => {
+                                format!("{} {}", item.label, detail)
+                            }
+                            _ => item.label.clone(),
+                        };
+                        let hay = hay.to_ascii_lowercase();
                         if tokens.iter().all(|token| hay.contains(token)) {
                             Some(idx)
                         } else {
@@ -559,154 +747,127 @@ mod tui {
     fn build_root_palette(state: &UiState) -> CommandPaletteOverlay {
         let mut items = Vec::<PaletteItem>::new();
 
-        items.push(PaletteItem {
-            label: "New conversation".to_string(),
-            action: PaletteCommand::NewThread,
-        });
-        items.push(PaletteItem {
-            label: "Thread picker".to_string(),
-            action: PaletteCommand::ThreadPicker,
-        });
-        items.push(PaletteItem {
-            label: "Refresh threads".to_string(),
-            action: PaletteCommand::RefreshThreads,
-        });
+        items.push(PaletteItem::with_detail(
+            "new",
+            "new thread",
+            PaletteCommand::NewThread,
+        ));
+        items.push(PaletteItem::with_detail(
+            "threads",
+            "thread picker",
+            PaletteCommand::ThreadPicker,
+        ));
+        items.push(PaletteItem::with_detail(
+            "refresh",
+            "refresh threads",
+            PaletteCommand::RefreshThreads,
+        ));
 
         if state.active_thread.is_some() {
             let mode = state.header.mode.as_deref().unwrap_or("-");
             let model = state.header.model.as_deref().unwrap_or("-");
 
-            items.push(PaletteItem {
-                label: "Approvals".to_string(),
-                action: PaletteCommand::OpenApprovals,
-            });
-            items.push(PaletteItem {
-                label: "Processes".to_string(),
-                action: PaletteCommand::OpenProcesses,
-            });
-            items.push(PaletteItem {
-                label: "Artifacts".to_string(),
-                action: PaletteCommand::OpenArtifacts,
-            });
-            items.push(PaletteItem {
-                label: format!("Set agent/mode (current: {mode})"),
-                action: PaletteCommand::PickMode,
-            });
-            items.push(PaletteItem {
-                label: format!("Set model (current: {model})"),
-                action: PaletteCommand::PickModel,
-            });
-            items.push(PaletteItem {
-                label: "Set approval policy".to_string(),
-                action: PaletteCommand::PickApprovalPolicy,
-            });
-            items.push(PaletteItem {
-                label: "Set sandbox policy".to_string(),
-                action: PaletteCommand::PickSandboxPolicy,
-            });
-            items.push(PaletteItem {
-                label: "Set sandbox network access".to_string(),
-                action: PaletteCommand::PickSandboxNetworkAccess,
-            });
+            items.push(PaletteItem::with_detail(
+                "approvals",
+                "approval list",
+                PaletteCommand::OpenApprovals,
+            ));
+            items.push(PaletteItem::with_detail(
+                "processes",
+                "process list",
+                PaletteCommand::OpenProcesses,
+            ));
+            items.push(PaletteItem::with_detail(
+                "artifacts",
+                "artifact list",
+                PaletteCommand::OpenArtifacts,
+            ));
+            items.push(PaletteItem::with_detail(
+                format!("mode={}", normalize_label(mode)),
+                "select role",
+                PaletteCommand::PickMode,
+            ));
+            items.push(PaletteItem::with_detail(
+                format!("model={model}"),
+                "select model",
+                PaletteCommand::PickModel,
+            ));
+            items.push(PaletteItem::with_detail(
+                "approval-policy",
+                "approval policy",
+                PaletteCommand::PickApprovalPolicy,
+            ));
+            items.push(PaletteItem::with_detail(
+                "sandbox-policy",
+                "sandbox policy",
+                PaletteCommand::PickSandboxPolicy,
+            ));
+            items.push(PaletteItem::with_detail(
+                "sandbox-network",
+                "network access",
+                PaletteCommand::PickSandboxNetworkAccess,
+            ));
         }
 
-        items.push(PaletteItem {
-            label: "Help".to_string(),
-            action: PaletteCommand::Help,
-        });
-        items.push(PaletteItem {
-            label: "Quit".to_string(),
-            action: PaletteCommand::Quit,
-        });
+        items.push(PaletteItem::with_detail(
+            "help",
+            "show help",
+            PaletteCommand::Help,
+        ));
+        items.push(PaletteItem::with_detail("quit", "quit", PaletteCommand::Quit));
 
-        CommandPaletteOverlay::new("Commands", items)
+        CommandPaletteOverlay::new("commands", items)
     }
 
     fn build_mode_palette(modes: Vec<String>, current: Option<&str>) -> CommandPaletteOverlay {
         let mut items = Vec::<PaletteItem>::new();
-        items.push(PaletteItem {
-            label: "← Back".to_string(),
-            action: PaletteCommand::OpenRoot,
-        });
+        items.push(PaletteItem::new("back", PaletteCommand::OpenRoot));
         for mode in modes {
             let is_current = current.is_some_and(|c| c == mode);
-            let label = if is_current {
-                format!("{mode} (current)")
-            } else {
-                mode.clone()
-            };
-            items.push(PaletteItem {
-                label,
-                action: PaletteCommand::SetMode(mode),
-            });
+            let label = normalize_label(&mode);
+            let label = if is_current { format!("{label}*") } else { label };
+            items.push(PaletteItem::new(label, PaletteCommand::SetMode(mode)));
         }
-        CommandPaletteOverlay::new("Set agent/mode", items)
+        CommandPaletteOverlay::new("mode", items)
     }
 
     fn build_model_palette(mut models: Vec<String>, current: Option<&str>) -> CommandPaletteOverlay {
         models.sort();
         let mut items = Vec::<PaletteItem>::new();
-        items.push(PaletteItem {
-            label: "← Back".to_string(),
-            action: PaletteCommand::OpenRoot,
-        });
+        items.push(PaletteItem::new("back", PaletteCommand::OpenRoot));
         for model in models {
             let is_current = current.is_some_and(|c| c == model);
             let label = if is_current {
-                format!("{model} (current)")
+                format!("{model}*")
             } else {
                 model.clone()
             };
-            items.push(PaletteItem {
-                label,
-                action: PaletteCommand::SetModel(model),
-            });
+            items.push(PaletteItem::new(label, PaletteCommand::SetModel(model)));
         }
-        CommandPaletteOverlay::new("Set model", items)
+        CommandPaletteOverlay::new("model", items)
     }
 
     fn build_model_loading_palette() -> CommandPaletteOverlay {
         let items = vec![
-            PaletteItem {
-                label: "loading models...".to_string(),
-                action: PaletteCommand::Noop,
-            },
-            PaletteItem {
-                label: "type model and press Enter".to_string(),
-                action: PaletteCommand::Noop,
-            },
+            PaletteItem::new("loading models...", PaletteCommand::Noop),
+            PaletteItem::new("type model and press enter", PaletteCommand::Noop),
         ];
-        CommandPaletteOverlay::new("Set model", items)
+        CommandPaletteOverlay::new("model", items)
     }
 
     fn build_model_error_palette(error: &str) -> CommandPaletteOverlay {
         let items = vec![
-            PaletteItem {
-                label: format!("error: {error}"),
-                action: PaletteCommand::Noop,
-            },
-            PaletteItem {
-                label: "retry list".to_string(),
-                action: PaletteCommand::PickModel,
-            },
-            PaletteItem {
-                label: "type model and press Enter".to_string(),
-                action: PaletteCommand::Noop,
-            },
-            PaletteItem {
-                label: "← Back".to_string(),
-                action: PaletteCommand::OpenRoot,
-            },
+            PaletteItem::new(format!("error: {error}"), PaletteCommand::Noop),
+            PaletteItem::new("retry", PaletteCommand::PickModel),
+            PaletteItem::new("type model and press enter", PaletteCommand::Noop),
+            PaletteItem::new("back", PaletteCommand::OpenRoot),
         ];
-        CommandPaletteOverlay::new("Set model", items)
+        CommandPaletteOverlay::new("model", items)
     }
 
     fn build_approval_policy_palette() -> CommandPaletteOverlay {
         let mut items = Vec::<PaletteItem>::new();
-        items.push(PaletteItem {
-            label: "← Back".to_string(),
-            action: PaletteCommand::OpenRoot,
-        });
+        items.push(PaletteItem::new("back", PaletteCommand::OpenRoot));
 
         let policies = [
             super::CliApprovalPolicy::AutoApprove,
@@ -716,20 +877,17 @@ mod tui {
             super::CliApprovalPolicy::AutoDeny,
         ];
         for policy in policies {
-            items.push(PaletteItem {
-                label: format!("approval_policy={}", approval_policy_label(policy)),
-                action: PaletteCommand::SetApprovalPolicy(policy),
-            });
+            items.push(PaletteItem::new(
+                format!("approval-policy={}", approval_policy_label(policy)),
+                PaletteCommand::SetApprovalPolicy(policy),
+            ));
         }
-        CommandPaletteOverlay::new("Set approval policy", items)
+        CommandPaletteOverlay::new("approval-policy", items)
     }
 
     fn build_sandbox_policy_palette() -> CommandPaletteOverlay {
         let mut items = Vec::<PaletteItem>::new();
-        items.push(PaletteItem {
-            label: "← Back".to_string(),
-            action: PaletteCommand::OpenRoot,
-        });
+        items.push(PaletteItem::new("back", PaletteCommand::OpenRoot));
 
         let policies = [
             super::CliSandboxPolicy::ReadOnly,
@@ -737,35 +895,200 @@ mod tui {
             super::CliSandboxPolicy::DangerFullAccess,
         ];
         for policy in policies {
-            items.push(PaletteItem {
-                label: format!("sandbox_policy={}", sandbox_policy_label(policy)),
-                action: PaletteCommand::SetSandboxPolicy(policy),
-            });
+            items.push(PaletteItem::new(
+                format!("sandbox-policy={}", sandbox_policy_label(policy)),
+                PaletteCommand::SetSandboxPolicy(policy),
+            ));
         }
-        CommandPaletteOverlay::new("Set sandbox policy", items)
+        CommandPaletteOverlay::new("sandbox-policy", items)
     }
 
     fn build_sandbox_network_access_palette() -> CommandPaletteOverlay {
         let mut items = Vec::<PaletteItem>::new();
-        items.push(PaletteItem {
-            label: "← Back".to_string(),
-            action: PaletteCommand::OpenRoot,
-        });
+        items.push(PaletteItem::new("back", PaletteCommand::OpenRoot));
 
         let values = [
             super::CliSandboxNetworkAccess::Deny,
             super::CliSandboxNetworkAccess::Allow,
         ];
         for value in values {
-            items.push(PaletteItem {
-                label: format!(
-                    "sandbox_network_access={}",
+            items.push(PaletteItem::new(
+                format!(
+                    "sandbox-network={}",
                     sandbox_network_access_label(value)
                 ),
-                action: PaletteCommand::SetSandboxNetworkAccess(value),
-            });
+                PaletteCommand::SetSandboxNetworkAccess(value),
+            ));
         }
-        CommandPaletteOverlay::new("Set sandbox network access", items)
+        CommandPaletteOverlay::new("sandbox-network", items)
+    }
+
+    fn build_inline_command_palette(active_thread: bool) -> CommandPaletteOverlay {
+        let mut items = Vec::<PaletteItem>::new();
+        items.push(PaletteItem::with_detail(
+            "/new",
+            "new thread",
+            PaletteCommand::NewThread,
+        ));
+        items.push(PaletteItem::with_detail(
+            "/threads",
+            "thread picker",
+            PaletteCommand::ThreadPicker,
+        ));
+        items.push(PaletteItem::with_detail(
+            "/refresh",
+            "refresh threads",
+            PaletteCommand::RefreshThreads,
+        ));
+        if active_thread {
+            items.push(PaletteItem::with_detail(
+                "/approvals",
+                "approval list",
+                PaletteCommand::OpenApprovals,
+            ));
+            items.push(PaletteItem::with_detail(
+                "/processes",
+                "process list",
+                PaletteCommand::OpenProcesses,
+            ));
+            items.push(PaletteItem::with_detail(
+                "/artifacts",
+                "artifact list",
+                PaletteCommand::OpenArtifacts,
+            ));
+            items.push(PaletteItem::with_detail(
+                "/mode",
+                "select role",
+                PaletteCommand::PickMode,
+            ));
+            items.push(PaletteItem::with_detail(
+                "/model",
+                "select model",
+                PaletteCommand::PickModel,
+            ));
+            items.push(PaletteItem::with_detail(
+                "/approval-policy",
+                "approval policy",
+                PaletteCommand::PickApprovalPolicy,
+            ));
+            items.push(PaletteItem::with_detail(
+                "/sandbox-policy",
+                "sandbox policy",
+                PaletteCommand::PickSandboxPolicy,
+            ));
+            items.push(PaletteItem::with_detail(
+                "/sandbox-network",
+                "network access",
+                PaletteCommand::PickSandboxNetworkAccess,
+            ));
+        }
+        items.push(PaletteItem::with_detail(
+            "/help",
+            "show help",
+            PaletteCommand::Help,
+        ));
+        items.push(PaletteItem::with_detail("/quit", "quit", PaletteCommand::Quit));
+        CommandPaletteOverlay::new("commands", items)
+    }
+
+    fn build_inline_role_palette(
+        mut modes: Vec<String>,
+        current: Option<&str>,
+    ) -> CommandPaletteOverlay {
+        modes.sort();
+        let mut items = Vec::<PaletteItem>::new();
+        for mode in modes {
+            let is_current = current.is_some_and(|c| c == mode);
+            let label = normalize_label(&mode);
+            let label = if is_current { format!("{label}*") } else { label };
+            items.push(PaletteItem::with_detail(
+                format!("@{label}"),
+                "role",
+                PaletteCommand::SetMode(mode),
+            ));
+        }
+        CommandPaletteOverlay::new("roles", items)
+    }
+
+    fn build_inline_skill_palette(mut skills: Vec<String>) -> CommandPaletteOverlay {
+        skills.sort();
+        let mut items = Vec::<PaletteItem>::new();
+        for skill in skills {
+            let label = normalize_label(&skill);
+            items.push(PaletteItem::with_detail(
+                format!("${label}"),
+                "skill",
+                PaletteCommand::InsertSkill(skill),
+            ));
+        }
+        CommandPaletteOverlay::new("skills", items)
+    }
+
+    fn build_inline_model_palette(
+        mut models: Vec<String>,
+        current: Option<&str>,
+    ) -> CommandPaletteOverlay {
+        models.sort();
+        let mut items = Vec::<PaletteItem>::new();
+        for model in models {
+            let is_current = current.is_some_and(|c| c == model);
+            let label = if is_current {
+                format!("{model}*")
+            } else {
+                model.clone()
+            };
+            items.push(PaletteItem::new(label, PaletteCommand::SetModel(model)));
+        }
+        CommandPaletteOverlay::new("model", items)
+    }
+
+    fn build_inline_approval_policy_palette() -> CommandPaletteOverlay {
+        let mut items = Vec::<PaletteItem>::new();
+        let policies = [
+            super::CliApprovalPolicy::AutoApprove,
+            super::CliApprovalPolicy::OnRequest,
+            super::CliApprovalPolicy::Manual,
+            super::CliApprovalPolicy::UnlessTrusted,
+            super::CliApprovalPolicy::AutoDeny,
+        ];
+        for policy in policies {
+            items.push(PaletteItem::new(
+                format!("approval-policy={}", approval_policy_label(policy)),
+                PaletteCommand::SetApprovalPolicy(policy),
+            ));
+        }
+        CommandPaletteOverlay::new("approval-policy", items)
+    }
+
+    fn build_inline_sandbox_policy_palette() -> CommandPaletteOverlay {
+        let mut items = Vec::<PaletteItem>::new();
+        let policies = [
+            super::CliSandboxPolicy::ReadOnly,
+            super::CliSandboxPolicy::WorkspaceWrite,
+            super::CliSandboxPolicy::DangerFullAccess,
+        ];
+        for policy in policies {
+            items.push(PaletteItem::new(
+                format!("sandbox-policy={}", sandbox_policy_label(policy)),
+                PaletteCommand::SetSandboxPolicy(policy),
+            ));
+        }
+        CommandPaletteOverlay::new("sandbox-policy", items)
+    }
+
+    fn build_inline_sandbox_network_access_palette() -> CommandPaletteOverlay {
+        let mut items = Vec::<PaletteItem>::new();
+        let values = [
+            super::CliSandboxNetworkAccess::Deny,
+            super::CliSandboxNetworkAccess::Allow,
+        ];
+        for value in values {
+            items.push(PaletteItem::new(
+                format!("sandbox-network={}", sandbox_network_access_label(value)),
+                PaletteCommand::SetSandboxNetworkAccess(value),
+            ));
+        }
+        CommandPaletteOverlay::new("sandbox-network", items)
     }
 
     fn approval_policy_label(value: super::CliApprovalPolicy) -> &'static str {
@@ -793,17 +1116,31 @@ mod tui {
         }
     }
 
+    fn normalize_label(value: &str) -> String {
+        value
+            .trim()
+            .to_ascii_lowercase()
+            .split_whitespace()
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join("-")
+    }
+
     fn tui_help_text() -> String {
         let mut out = String::new();
         out.push_str("keys:\n\n");
         out.push_str("  Ctrl-K           command palette\n");
         out.push_str("  /                command palette\n");
         out.push_str("  Ctrl-Q           quit\n");
-        out.push_str("  Ctrl-C           same as Esc (close/back)\n\n");
+        out.push_str("  Esc/Ctrl-C       clear input / quit when empty\n\n");
         out.push_str("thread view:\n\n");
         out.push_str("  Enter            send input\n");
-        out.push_str("  Esc              back to thread picker\n");
-        out.push_str("  ↑/↓              scroll transcript\n");
+        out.push_str("  Ctrl/Cmd-Enter   newline\n");
+        out.push_str("  Tab              cycle thinking intensity\n");
+        out.push_str("  @                roles\n");
+        out.push_str("  $                skills\n");
+        out.push_str("  ↑/↓              scroll transcript (menu closed)\n");
+        out.push_str("  Ctrl+↑/↓         scroll transcript (menu open)\n");
         out.push_str("  PageUp/PageDown  scroll transcript (page)\n");
         out.push_str("  Home/End         top/bottom + follow\n");
         out.push_str("  Ctrl-A           approvals overlay\n");
@@ -958,6 +1295,7 @@ mod tui {
         model: Option<String>,
         thinking: Option<String>,
         mcp_enabled: bool,
+        model_context_window: Option<u64>,
     }
 
     fn env_truthy(key: &str) -> bool {
@@ -975,19 +1313,32 @@ mod tui {
         header: HeaderState,
         header_needs_refresh: bool,
         overlays: Vec<Overlay>,
+        inline_palette: Option<InlinePalette>,
         last_seq: u64,
         transcript: VecDeque<TranscriptEntry>,
         transcript_scroll: u16,
         transcript_follow: bool,
         transcript_max_scroll: u16,
         transcript_viewport_height: u16,
+        tool_events: HashMap<ToolId, String>,
         streaming: Option<StreamingState>,
         active_turn_id: Option<TurnId>,
         input: String,
         status: Option<String>,
+        total_tokens_used: u64,
+        counted_usage_responses: HashSet<String>,
+        skip_token_usage_before_seq: Option<u64>,
         pending_action: Option<PendingAction>,
         model_fetch: Option<ModelFetchInFlight>,
         model_fetch_pending: bool,
+        model_list: Vec<String>,
+        model_list_loaded: bool,
+        thread_cwd: Option<String>,
+        mode_catalog: Vec<String>,
+        mode_catalog_loaded: bool,
+        skill_catalog: Vec<String>,
+        skill_catalog_loaded: bool,
+        turn_start: Option<TurnStartInFlight>,
     }
 
     impl UiState {
@@ -1000,19 +1351,32 @@ mod tui {
                 header: HeaderState::default(),
                 header_needs_refresh: false,
                 overlays: Vec::new(),
+                inline_palette: None,
                 last_seq: 0,
                 transcript: VecDeque::new(),
                 transcript_scroll: 0,
                 transcript_follow: true,
                 transcript_max_scroll: 0,
                 transcript_viewport_height: 0,
+                tool_events: HashMap::new(),
                 streaming: None,
                 active_turn_id: None,
                 input: String::new(),
                 status: None,
+                total_tokens_used: 0,
+                counted_usage_responses: HashSet::new(),
+                skip_token_usage_before_seq: None,
                 pending_action: None,
                 model_fetch: None,
                 model_fetch_pending: false,
+                model_list: Vec::new(),
+                model_list_loaded: false,
+                thread_cwd: None,
+                mode_catalog: Vec::new(),
+                mode_catalog_loaded: false,
+                skill_catalog: Vec::new(),
+                skill_catalog_loaded: false,
+                turn_start: None,
             }
         }
 
@@ -1047,6 +1411,17 @@ mod tui {
                 .context("subscribe initial events")?;
 
             self.reset_thread_state(thread_id, resp.last_seq);
+            if let Ok(state) = app.thread_state(thread_id).await {
+                self.thread_cwd = state
+                    .get("cwd")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty());
+                if let Some(tokens) = state.get("total_tokens_used").and_then(|v| v.as_u64()) {
+                    self.total_tokens_used = tokens;
+                    self.skip_token_usage_before_seq = Some(resp.last_seq);
+                }
+            }
             for event in resp.events {
                 self.apply_event(&event);
             }
@@ -1063,16 +1438,29 @@ mod tui {
             self.header = HeaderState::default();
             self.header_needs_refresh = true;
             self.overlays.clear();
+            self.inline_palette = None;
             self.last_seq = last_seq;
             self.transcript.clear();
             self.transcript_scroll = 0;
             self.transcript_follow = true;
             self.transcript_max_scroll = 0;
             self.transcript_viewport_height = 0;
+            self.tool_events.clear();
             self.streaming = None;
             self.active_turn_id = None;
+            self.total_tokens_used = 0;
+            self.counted_usage_responses.clear();
+            self.skip_token_usage_before_seq = None;
             self.pending_action = None;
             self.cancel_model_fetch();
+            self.cancel_turn_start();
+            self.model_list.clear();
+            self.model_list_loaded = false;
+            self.thread_cwd = None;
+            self.mode_catalog.clear();
+            self.mode_catalog_loaded = false;
+            self.skill_catalog.clear();
+            self.skill_catalog_loaded = false;
         }
 
         async fn refresh_header(
@@ -1096,11 +1484,16 @@ mod tui {
                 .and_then(|v| v.as_str())
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty());
-            self.header.thinking = self
-                .header
-                .thinking
-                .clone()
-                .filter(|s| !s.trim().is_empty());
+            self.header.thinking = config
+                .get("effective")
+                .and_then(|v| v.get("thinking"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+            self.header.model_context_window = config
+                .get("effective")
+                .and_then(|v| v.get("model_context_window"))
+                .and_then(|v| v.as_u64());
 
             self.header.mcp_enabled = env_truthy("CODE_PM_ENABLE_MCP");
             Ok(())
@@ -1120,22 +1513,61 @@ mod tui {
         fn apply_event(&mut self, event: &ThreadEvent) {
             match &event.kind {
                 ThreadEventKind::TurnStarted { turn_id, input, .. } => {
+                    self.cancel_turn_start();
                     self.active_turn_id = Some(*turn_id);
                     self.push_transcript(TranscriptEntry {
                         role: TranscriptRole::User,
                         text: input.clone(),
                     });
                 }
-                ThreadEventKind::AssistantMessage { turn_id, text, .. } => {
+                ThreadEventKind::AssistantMessage {
+                    turn_id,
+                    text,
+                    response_id,
+                    token_usage,
+                    ..
+                } => {
+                    self.record_token_usage(
+                        response_id.as_deref(),
+                        token_usage.as_ref(),
+                        event.seq.0,
+                    );
+                    let mut streamed = None::<String>;
                     if let Some(turn_id) = turn_id
                         && self.streaming.as_ref().is_some_and(|s| s.turn_id == *turn_id)
                     {
+                        streamed = self.streaming.as_ref().map(|s| s.text.clone());
                         self.streaming = None;
                     }
-                    self.push_transcript(TranscriptEntry {
-                        role: TranscriptRole::Assistant,
-                        text: text.clone(),
-                    });
+                    if let Some(streamed) = streamed {
+                        let streamed_trim = streamed.trim();
+                        let final_trim = text.trim();
+                        if !streamed_trim.is_empty()
+                            && (final_trim.is_empty() || !final_trim.starts_with(streamed_trim))
+                        {
+                            self.push_transcript(TranscriptEntry {
+                                role: TranscriptRole::Assistant,
+                                text: streamed,
+                            });
+                        }
+                    }
+                    if !text.trim().is_empty() {
+                        self.push_transcript(TranscriptEntry {
+                            role: TranscriptRole::Assistant,
+                            text: text.clone(),
+                        });
+                    }
+                }
+                ThreadEventKind::AgentStep {
+                    response_id,
+                    token_usage,
+                    ..
+                } => {
+                    self.record_token_usage(
+                        Some(response_id.as_str()),
+                        token_usage.as_ref(),
+                        event.seq.0,
+                    );
                 }
                 ThreadEventKind::ModelRouted {
                     selected_model,
@@ -1165,24 +1597,112 @@ mod tui {
                         text: format!("[turn] {turn_id} {}", turn_status_str(*status)),
                     });
                 }
-                ThreadEventKind::ThreadConfigUpdated { mode, model, .. } => {
+                ThreadEventKind::ToolStarted { tool_id, tool, params, .. } => {
+                    self.tool_events.insert(*tool_id, tool.clone());
+                    if !should_suppress_tool_started(tool) {
+                        if let Some(line) = format_tool_started_line(tool, params.as_ref()) {
+                            self.push_transcript(TranscriptEntry {
+                                role: TranscriptRole::Tool,
+                                text: line,
+                            });
+                        }
+                    }
+                }
+                ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status,
+                    error,
+                    result,
+                    ..
+                } => {
+                    let info = self.tool_events.remove(tool_id);
+                    let name = info.as_deref().unwrap_or("tool");
+                    if *status == ToolStatus::Completed {
+                        if should_suppress_tool_completed(name)
+                            || should_suppress_tool_started(name)
+                        {
+                            return;
+                        }
+                        if let Some(result) = result.as_ref().filter(|v| !v.is_null())
+                            && let Some(line) = format_tool_result_line(name, result)
+                        {
+                            self.push_transcript(TranscriptEntry {
+                                role: TranscriptRole::Tool,
+                                text: line,
+                            });
+                        }
+                    } else {
+                        let mut line = format!("{name} {}", tool_status_str(*status));
+                        if let Some(err) = error.as_deref().filter(|s| !s.trim().is_empty()) {
+                            line.push_str(": ");
+                            line.push_str(err);
+                        }
+                        self.push_transcript(TranscriptEntry {
+                            role: TranscriptRole::Error,
+                            text: line,
+                        });
+                    }
+                }
+                ThreadEventKind::ProcessStarted { argv, cwd, .. } => {
+                    if let Some(line) =
+                        format_process_started_line(argv, cwd, self.thread_cwd.as_deref())
+                    {
+                        self.push_transcript(TranscriptEntry {
+                            role: TranscriptRole::Tool,
+                            text: line,
+                        });
+                    }
+                }
+                ThreadEventKind::ThreadConfigUpdated {
+                    mode,
+                    model,
+                    thinking,
+                    ..
+                } => {
                     if let Some(mode) = mode.as_deref().filter(|s| !s.trim().is_empty()) {
                         self.header.mode = Some(mode.to_string());
                     }
                     if let Some(model) = model.as_deref().filter(|s| !s.trim().is_empty()) {
                         self.header.model = Some(model.to_string());
                     }
+                    if let Some(thinking) = thinking.as_deref().filter(|s| !s.trim().is_empty())
+                    {
+                        self.header.thinking = Some(thinking.to_string());
+                    }
+                    self.header_needs_refresh = true;
                 }
                 _ => {}
             }
         }
 
         fn push_transcript(&mut self, entry: TranscriptEntry) {
-            const MAX_TRANSCRIPT_ITEMS: usize = 500;
+            const MAX_TRANSCRIPT_ITEMS: usize = 5000;
             if self.transcript.len() >= MAX_TRANSCRIPT_ITEMS {
                 self.transcript.pop_front();
             }
             self.transcript.push_back(entry);
+        }
+
+        fn record_token_usage(
+            &mut self,
+            response_id: Option<&str>,
+            usage: Option<&Value>,
+            event_seq: u64,
+        ) {
+            let Some(tokens) = usage.and_then(usage_total_tokens) else {
+                return;
+            };
+            if let Some(skip_before) = self.skip_token_usage_before_seq {
+                if event_seq <= skip_before {
+                    return;
+                }
+            }
+            if let Some(response_id) = response_id.filter(|s| !s.trim().is_empty()) {
+                if !self.counted_usage_responses.insert(response_id.to_string()) {
+                    return;
+                }
+            }
+            self.total_tokens_used = self.total_tokens_used.saturating_add(tokens);
         }
 
         fn set_status(&mut self, msg: String) {
@@ -1210,17 +1730,500 @@ mod tui {
             self.model_fetch_pending = false;
         }
 
+        fn set_inline_palette(&mut self, kind: InlinePaletteKind, view: CommandPaletteOverlay) {
+            self.inline_palette = Some(InlinePalette { kind, view });
+        }
+
+        fn update_inline_query(&mut self, query: &str) {
+            if let Some(inline) = self.inline_palette.as_mut() {
+                if inline.view.query != query {
+                    inline.view.query = query.to_string();
+                    inline.view.rebuild_filter();
+                }
+            }
+        }
+
+        fn inline_selected_action(&self) -> Option<PaletteCommand> {
+            self.inline_palette
+                .as_ref()
+                .and_then(|inline| inline.view.selected_action())
+        }
+
+        fn insert_command_trigger(&mut self) {
+            if self.input.is_empty()
+                || self
+                    .input
+                    .chars()
+                    .last()
+                    .is_some_and(char::is_whitespace)
+            {
+                self.input.push('/');
+            } else {
+                self.input.push(' ');
+                self.input.push('/');
+            }
+            self.transcript_follow = true;
+        }
+
+        fn move_inline_selection(&mut self, delta: i32) {
+            let Some(inline) = self.inline_palette.as_mut() else {
+                return;
+            };
+            if inline.view.filtered.is_empty() {
+                inline.view.selected = 0;
+                return;
+            }
+            if delta < 0 {
+                inline.view.selected = inline.view.selected.saturating_sub(1);
+            } else if delta > 0 {
+                inline.view.selected =
+                    (inline.view.selected + 1).min(inline.view.filtered.len() - 1);
+            }
+        }
+
+        fn clear_inline_line(&mut self) {
+            let (line_start, _) = last_line_bounds(&self.input);
+            self.input.truncate(line_start);
+        }
+
+        fn replace_inline_token(&mut self, trigger: char, replacement: &str, trailing_space: bool) {
+            if let Some((start, end)) = inline_token_span(&self.input, trigger) {
+                let mut value = replacement.to_string();
+                if trailing_space {
+                    value.push(' ');
+                }
+                self.input.replace_range(start..end, &value);
+            }
+        }
+
+        fn cancel_turn_start(&mut self) {
+            if let Some(pending) = self.turn_start.take() {
+                pending.handle.abort();
+            }
+        }
+
+        async fn refresh_mode_catalog(&mut self, app: &mut super::App) -> anyhow::Result<()> {
+            let Some(thread_id) = self.active_thread else {
+                return Ok(());
+            };
+            let config = app.thread_config_explain(thread_id).await?;
+            let modes = config
+                .get("mode_catalog")
+                .and_then(|v| v.get("modes"))
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.trim().to_string()))
+                        .filter(|s| !s.is_empty())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            self.mode_catalog = modes;
+            self.mode_catalog_loaded = true;
+            Ok(())
+        }
+
+        async fn refresh_skill_catalog(&mut self) -> anyhow::Result<()> {
+            fn home_dir() -> Option<PathBuf> {
+                std::env::var_os("HOME")
+                    .filter(|s| !s.is_empty())
+                    .map(PathBuf::from)
+                    .or_else(|| {
+                        std::env::var_os("USERPROFILE")
+                            .filter(|s| !s.is_empty())
+                            .map(PathBuf::from)
+                    })
+            }
+
+            let mut roots = Vec::<PathBuf>::new();
+            if let Ok(dir) = std::env::var("CODE_PM_SKILLS_DIR") {
+                let dir = dir.trim();
+                if !dir.is_empty() {
+                    roots.push(PathBuf::from(dir));
+                }
+            }
+            if let Some(thread_cwd) = self.thread_cwd.as_deref() {
+                let root = PathBuf::from(thread_cwd);
+                roots.push(root.join(".codepm_data").join("spec").join("skills"));
+                roots.push(root.join(".codex").join("skills"));
+            }
+            if let Some(home) = home_dir() {
+                roots.push(home.join(".codepm_data").join("spec").join("skills"));
+            }
+
+            let mut names = std::collections::BTreeSet::<String>::new();
+            for root in roots {
+                let mut dir = match tokio::fs::read_dir(&root).await {
+                    Ok(dir) => dir,
+                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+                    Err(err) => return Err(err).with_context(|| format!("read {}", root.display())),
+                };
+                while let Some(entry) = dir.next_entry().await? {
+                    let file_type = entry.file_type().await?;
+                    if !file_type.is_dir() {
+                        continue;
+                    }
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    let path = entry.path().join("SKILL.md");
+                    if tokio::fs::metadata(&path).await.is_ok() {
+                        names.insert(name);
+                    }
+                }
+            }
+
+            self.skill_catalog = names.into_iter().collect();
+            self.skill_catalog_loaded = true;
+            Ok(())
+        }
+
+        async fn update_inline_palette(&mut self, app: &mut super::App) -> anyhow::Result<()> {
+            let Some(context) = parse_inline_context(&self.input) else {
+                self.inline_palette = None;
+                return Ok(());
+            };
+
+            match context.kind {
+                InlinePaletteKind::Command => {
+                    if self
+                        .inline_palette
+                        .as_ref()
+                        .is_none_or(|inline| inline.kind != InlinePaletteKind::Command)
+                    {
+                        let palette =
+                            build_inline_command_palette(self.active_thread.is_some());
+                        self.set_inline_palette(InlinePaletteKind::Command, palette);
+                    }
+                    self.update_inline_query(context.query.trim());
+                }
+                InlinePaletteKind::Role => {
+                    if !self.mode_catalog_loaded {
+                        self.refresh_mode_catalog(app).await?;
+                    }
+                    if self
+                        .inline_palette
+                        .as_ref()
+                        .is_none_or(|inline| inline.kind != InlinePaletteKind::Role)
+                    {
+                        let palette = build_inline_role_palette(
+                            self.mode_catalog.clone(),
+                            self.header.mode.as_deref(),
+                        );
+                        self.set_inline_palette(InlinePaletteKind::Role, palette);
+                    }
+                    self.update_inline_query(context.query.trim());
+                }
+                InlinePaletteKind::Skill => {
+                    if !self.skill_catalog_loaded {
+                        self.refresh_skill_catalog().await?;
+                    }
+                    if self
+                        .inline_palette
+                        .as_ref()
+                        .is_none_or(|inline| inline.kind != InlinePaletteKind::Skill)
+                    {
+                        let palette = build_inline_skill_palette(self.skill_catalog.clone());
+                        self.set_inline_palette(InlinePaletteKind::Skill, palette);
+                    }
+                    self.update_inline_query(context.query.trim());
+                }
+                InlinePaletteKind::Model => {
+                    if self
+                        .inline_palette
+                        .as_ref()
+                        .is_none_or(|inline| inline.kind != InlinePaletteKind::Model)
+                    {
+                        let palette = if self.model_list_loaded {
+                            build_inline_model_palette(
+                                self.model_list.clone(),
+                                self.header.model.as_deref(),
+                            )
+                        } else {
+                            build_model_loading_palette()
+                        };
+                        self.set_inline_palette(InlinePaletteKind::Model, palette);
+                    }
+                    if !self.model_list_loaded && !self.model_fetch_pending {
+                        if let Some(thread_id) = self.active_thread {
+                            self.model_fetch_pending = true;
+                            self.model_fetch = Some(spawn_model_fetch(
+                                app.rpc_handle(),
+                                thread_id,
+                                Duration::from_secs(5),
+                            ));
+                        }
+                    }
+                    self.update_inline_query(context.query.trim());
+                }
+                InlinePaletteKind::ApprovalPolicy => {
+                    if self.inline_palette.as_ref().is_none_or(|inline| {
+                        inline.kind != InlinePaletteKind::ApprovalPolicy
+                    }) {
+                        self.set_inline_palette(
+                            InlinePaletteKind::ApprovalPolicy,
+                            build_inline_approval_policy_palette(),
+                        );
+                    }
+                    self.update_inline_query(context.query.trim());
+                }
+                InlinePaletteKind::SandboxPolicy => {
+                    if self.inline_palette.as_ref().is_none_or(|inline| {
+                        inline.kind != InlinePaletteKind::SandboxPolicy
+                    }) {
+                        self.set_inline_palette(
+                            InlinePaletteKind::SandboxPolicy,
+                            build_inline_sandbox_policy_palette(),
+                        );
+                    }
+                    self.update_inline_query(context.query.trim());
+                }
+                InlinePaletteKind::SandboxNetworkAccess => {
+                    if self.inline_palette.as_ref().is_none_or(|inline| {
+                        inline.kind != InlinePaletteKind::SandboxNetworkAccess
+                    }) {
+                        self.set_inline_palette(
+                            InlinePaletteKind::SandboxNetworkAccess,
+                            build_inline_sandbox_network_access_palette(),
+                        );
+                    }
+                    self.update_inline_query(context.query.trim());
+                }
+            }
+
+            Ok(())
+        }
+
+        async fn execute_inline_command(
+            &mut self,
+            app: &mut super::App,
+            command: PaletteCommand,
+        ) -> anyhow::Result<bool> {
+            match command {
+                PaletteCommand::InsertSkill(skill) => {
+                    self.replace_inline_token('$', &format!("${skill}"), true);
+                    self.inline_palette = None;
+                    Ok(false)
+                }
+                PaletteCommand::SetMode(mode) => {
+                    let Some(thread_id) = self.active_thread else {
+                        self.set_status("no active thread".to_string());
+                        return Ok(false);
+                    };
+                    app.thread_configure(super::ThreadConfigureArgs {
+                        thread_id,
+                        approval_policy: None,
+                        sandbox_policy: None,
+                        sandbox_writable_roots: None,
+                        sandbox_network_access: None,
+                        mode: Some(mode.clone()),
+                        model: None,
+                        openai_base_url: None,
+                        thinking: None,
+                    })
+                    .await?;
+                    self.header.mode = Some(mode.clone());
+                    self.set_status(format!("mode={}", normalize_label(&mode)));
+                    self.clear_inline_line();
+                    self.inline_palette = None;
+                    Ok(false)
+                }
+                PaletteCommand::SetModel(model) => {
+                    let Some(thread_id) = self.active_thread else {
+                        self.set_status("no active thread".to_string());
+                        return Ok(false);
+                    };
+                    app.thread_configure(super::ThreadConfigureArgs {
+                        thread_id,
+                        approval_policy: None,
+                        sandbox_policy: None,
+                        sandbox_writable_roots: None,
+                        sandbox_network_access: None,
+                        mode: None,
+                        model: Some(model.clone()),
+                        openai_base_url: None,
+                        thinking: None,
+                    })
+                    .await?;
+                    self.header.model = Some(model.clone());
+                    self.set_status(format!("model={model}"));
+                    self.clear_inline_line();
+                    self.inline_palette = None;
+                    Ok(false)
+                }
+                PaletteCommand::SetApprovalPolicy(policy) => {
+                    let Some(thread_id) = self.active_thread else {
+                        self.set_status("no active thread".to_string());
+                        return Ok(false);
+                    };
+                    app.thread_configure(super::ThreadConfigureArgs {
+                        thread_id,
+                        approval_policy: Some(policy),
+                        sandbox_policy: None,
+                        sandbox_writable_roots: None,
+                        sandbox_network_access: None,
+                        mode: None,
+                        model: None,
+                        openai_base_url: None,
+                        thinking: None,
+                    })
+                    .await?;
+                    self.set_status(format!(
+                        "approval-policy={}",
+                        approval_policy_label(policy)
+                    ));
+                    self.clear_inline_line();
+                    self.inline_palette = None;
+                    Ok(false)
+                }
+                PaletteCommand::SetSandboxPolicy(policy) => {
+                    let Some(thread_id) = self.active_thread else {
+                        self.set_status("no active thread".to_string());
+                        return Ok(false);
+                    };
+                    app.thread_configure(super::ThreadConfigureArgs {
+                        thread_id,
+                        approval_policy: None,
+                        sandbox_policy: Some(policy),
+                        sandbox_writable_roots: None,
+                        sandbox_network_access: None,
+                        mode: None,
+                        model: None,
+                        openai_base_url: None,
+                        thinking: None,
+                    })
+                    .await?;
+                    self.set_status(format!(
+                        "sandbox-policy={}",
+                        sandbox_policy_label(policy)
+                    ));
+                    self.clear_inline_line();
+                    self.inline_palette = None;
+                    Ok(false)
+                }
+                PaletteCommand::SetSandboxNetworkAccess(access) => {
+                    let Some(thread_id) = self.active_thread else {
+                        self.set_status("no active thread".to_string());
+                        return Ok(false);
+                    };
+                    app.thread_configure(super::ThreadConfigureArgs {
+                        thread_id,
+                        approval_policy: None,
+                        sandbox_policy: None,
+                        sandbox_writable_roots: None,
+                        sandbox_network_access: Some(access),
+                        mode: None,
+                        model: None,
+                        openai_base_url: None,
+                        thinking: None,
+                    })
+                    .await?;
+                    self.set_status(format!(
+                        "sandbox-network={}",
+                        sandbox_network_access_label(access)
+                    ));
+                    self.clear_inline_line();
+                    self.inline_palette = None;
+                    Ok(false)
+                }
+                PaletteCommand::PickMode => {
+                    self.input = "/mode ".to_string();
+                    self.inline_palette = None;
+                    self.update_inline_palette(app).await?;
+                    Ok(false)
+                }
+                PaletteCommand::PickModel => {
+                    self.input = "/model ".to_string();
+                    self.inline_palette = None;
+                    self.update_inline_palette(app).await?;
+                    Ok(false)
+                }
+                PaletteCommand::PickApprovalPolicy => {
+                    self.input = "/approval-policy ".to_string();
+                    self.inline_palette = None;
+                    self.update_inline_palette(app).await?;
+                    Ok(false)
+                }
+                PaletteCommand::PickSandboxPolicy => {
+                    self.input = "/sandbox-policy ".to_string();
+                    self.inline_palette = None;
+                    self.update_inline_palette(app).await?;
+                    Ok(false)
+                }
+                PaletteCommand::PickSandboxNetworkAccess => {
+                    self.input = "/sandbox-network ".to_string();
+                    self.inline_palette = None;
+                    self.update_inline_palette(app).await?;
+                    Ok(false)
+                }
+                PaletteCommand::OpenRoot => {
+                    self.input = "/".to_string();
+                    self.inline_palette = None;
+                    self.update_inline_palette(app).await?;
+                    Ok(false)
+                }
+                PaletteCommand::Noop => Ok(false),
+                _ => {
+                    let exit = self.execute_palette_command(app, command).await?;
+                    self.clear_inline_line();
+                    self.inline_palette = None;
+                    Ok(exit)
+                }
+            }
+        }
+
+        async fn cycle_thinking(&mut self, app: &mut super::App) -> anyhow::Result<()> {
+            let Some(thread_id) = self.active_thread else {
+                return Ok(());
+            };
+            let levels = ["small", "medium", "high", "xhigh"];
+            let current = self
+                .header
+                .thinking
+                .as_deref()
+                .map(|v| v.trim().to_ascii_lowercase())
+                .unwrap_or_else(|| "medium".to_string());
+            let current = levels
+                .iter()
+                .position(|level| *level == current)
+                .unwrap_or(1);
+            let next = levels[(current + 1) % levels.len()];
+            app.thread_configure(super::ThreadConfigureArgs {
+                thread_id,
+                approval_policy: None,
+                sandbox_policy: None,
+                sandbox_writable_roots: None,
+                sandbox_network_access: None,
+                mode: None,
+                model: None,
+                openai_base_url: None,
+                thinking: Some(next.to_string()),
+            })
+            .await?;
+            self.header.thinking = Some(next.to_string());
+            self.set_status(format!("thinking={next}"));
+            Ok(())
+        }
+
         fn apply_model_list(&mut self, models: Vec<String>) {
             if !self.model_fetch_pending {
                 return;
             }
             self.model_fetch_pending = false;
-            if models.is_empty() {
+            self.model_list = models;
+            self.model_list_loaded = !self.model_list.is_empty();
+            if self.model_list.is_empty() {
                 self.set_status("thread/models error: empty model list".to_string());
-                return;
             }
-            let palette = build_model_palette(models, self.header.model.as_deref());
+            if let Some(inline) = self.inline_palette.as_mut() {
+                if inline.kind == InlinePaletteKind::Model {
+                    inline.view = build_inline_model_palette(
+                        self.model_list.clone(),
+                        self.header.model.as_deref(),
+                    );
+                }
+            }
             if matches!(self.overlays.last(), Some(Overlay::CommandPalette(_))) {
+                let palette =
+                    build_model_palette(self.model_list.clone(), self.header.model.as_deref());
                 self.replace_top_command_palette(palette);
             }
         }
@@ -1379,8 +2382,19 @@ mod tui {
             app: &mut super::App,
             key: KeyEvent,
         ) -> anyhow::Result<bool> {
-            self.status = None;
+            if let Some(status) = self.status.take() {
+                if Self::is_error_message(&status) {
+                    self.status = Some(status);
+                }
+            }
             if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+                let mut cleared_input = false;
+                if self.active_thread.is_some() && !self.input.trim().is_empty() {
+                    self.input.clear();
+                    self.transcript_follow = true;
+                    self.update_inline_palette(app).await?;
+                    cleared_input = true;
+                }
                 if !self.overlays.is_empty() {
                     let closing_palette =
                         matches!(self.overlays.last(), Some(Overlay::CommandPalette(_)));
@@ -1391,8 +2405,10 @@ mod tui {
                     return Ok(false);
                 }
                 if self.active_thread.is_some() {
-                    self.return_to_thread_picker(app).await?;
-                    return Ok(false);
+                    if cleared_input {
+                        return Ok(false);
+                    }
+                    return Ok(true);
                 }
                 return Ok(true);
             }
@@ -1400,13 +2416,18 @@ mod tui {
                 return Ok(true);
             }
             if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('k') {
-                self.toggle_command_palette();
+                if self.active_thread.is_some() {
+                    self.insert_command_trigger();
+                    self.update_inline_palette(app).await?;
+                } else {
+                    self.toggle_command_palette();
+                }
                 return Ok(false);
             }
-            if self.overlays.is_empty()
+            if self.active_thread.is_none()
+                && self.overlays.is_empty()
                 && !key.modifiers.contains(KeyModifiers::CONTROL)
                 && key.code == KeyCode::Char('/')
-                && self.input.trim().is_empty()
             {
                 self.toggle_command_palette();
                 return Ok(false);
@@ -1482,17 +2503,43 @@ mod tui {
                 }
             }
 
+            let inline_active = self.inline_palette.is_some();
+            let mut input_changed = false;
+
             match key.code {
-                KeyCode::Up => {
+                KeyCode::Tab if key.modifiers.is_empty() => {
+                    self.cycle_thinking(app).await?;
+                }
+                KeyCode::Up if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     self.transcript_follow = false;
                     self.transcript_scroll = self.transcript_scroll.saturating_sub(1);
                 }
-                KeyCode::Down => {
+                KeyCode::Down if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     self.transcript_follow = false;
                     self.transcript_scroll = self.transcript_scroll.saturating_add(1);
                     if self.transcript_scroll >= self.transcript_max_scroll {
                         self.transcript_scroll = self.transcript_max_scroll;
                         self.transcript_follow = true;
+                    }
+                }
+                KeyCode::Up => {
+                    if inline_active {
+                        self.move_inline_selection(-1);
+                    } else {
+                        self.transcript_follow = false;
+                        self.transcript_scroll = self.transcript_scroll.saturating_sub(1);
+                    }
+                }
+                KeyCode::Down => {
+                    if inline_active {
+                        self.move_inline_selection(1);
+                    } else {
+                        self.transcript_follow = false;
+                        self.transcript_scroll = self.transcript_scroll.saturating_add(1);
+                        if self.transcript_scroll >= self.transcript_max_scroll {
+                            self.transcript_scroll = self.transcript_max_scroll;
+                            self.transcript_follow = true;
+                        }
                     }
                 }
                 KeyCode::PageUp => {
@@ -1520,29 +2567,78 @@ mod tui {
                     self.transcript_follow = true;
                 }
                 KeyCode::Esc => {
-                    self.return_to_thread_picker(app).await?;
+                    if !self.input.trim().is_empty() {
+                        self.input.clear();
+                        self.transcript_follow = true;
+                        input_changed = true;
+                    } else {
+                        return Ok(true);
+                    }
+                }
+                KeyCode::Enter
+                    if key.modifiers.contains(KeyModifiers::CONTROL)
+                        || key.modifiers.contains(KeyModifiers::SUPER) =>
+                {
+                    self.input.push('\n');
+                    input_changed = true;
                 }
                 KeyCode::Enter => {
-                    let input = self.input.trim().to_string();
-                    if input.is_empty() {
+                    if inline_active {
+                        if let Some(command) = self.inline_selected_action() {
+                            return self.execute_inline_command(app, command).await;
+                        }
+                        if let Some(inline) = self.inline_palette.as_ref() {
+                            if inline.kind == InlinePaletteKind::Model {
+                                let query = inline.view.query.trim();
+                                if !query.is_empty() {
+                                    return self
+                                        .execute_inline_command(
+                                            app,
+                                            PaletteCommand::SetModel(query.to_string()),
+                                        )
+                                        .await;
+                                }
+                            }
+                        }
+                        return Ok(false);
+                    }
+                    let input = self.input.clone();
+                    if input.trim().is_empty() {
                         return Ok(false);
                     }
                     let Some(thread_id) = self.active_thread else {
                         return Ok(false);
                     };
+                    if self.turn_start.is_some() {
+                        self.set_status("turn/start pending".to_string());
+                        return Ok(false);
+                    }
+                    let rpc_handle = app.rpc_handle();
+                    let pending = match spawn_turn_start(rpc_handle, thread_id, input, None) {
+                        Ok(pending) => pending,
+                        Err(err) => {
+                            self.set_status(format!("turn/start error: {err}"));
+                            return Ok(false);
+                        }
+                    };
                     self.input.clear();
-                    let turn_id = app.turn_start(thread_id, input, None).await?;
-                    self.active_turn_id = Some(turn_id);
+                    self.turn_start = Some(pending);
                 }
                 KeyCode::Backspace => {
                     self.input.pop();
+                    input_changed = true;
                 }
                 KeyCode::Char(c) => {
                     if !key.modifiers.contains(KeyModifiers::CONTROL) {
                         self.input.push(c);
+                        input_changed = true;
                     }
                 }
                 _ => {}
+            }
+            if input_changed {
+                self.transcript_follow = true;
+                self.update_inline_palette(app).await?;
             }
             Ok(false)
         }
@@ -1552,14 +2648,26 @@ mod tui {
             self.header = HeaderState::default();
             self.header_needs_refresh = false;
             self.overlays.clear();
+            self.inline_palette = None;
             self.input.clear();
             self.streaming = None;
             self.active_turn_id = None;
+            self.total_tokens_used = 0;
+            self.counted_usage_responses.clear();
+            self.skip_token_usage_before_seq = None;
             self.pending_action = None;
+            self.cancel_turn_start();
             self.transcript_scroll = 0;
             self.transcript_follow = true;
             self.transcript_max_scroll = 0;
             self.transcript_viewport_height = 0;
+            self.model_list.clear();
+            self.model_list_loaded = false;
+            self.thread_cwd = None;
+            self.mode_catalog.clear();
+            self.mode_catalog_loaded = false;
+            self.skill_catalog.clear();
+            self.skill_catalog_loaded = false;
             self.refresh_threads(app).await?;
             Ok(())
         }
@@ -1571,6 +2679,7 @@ mod tui {
                 return;
             }
 
+            self.transcript_follow = true;
             self.overlays
                 .push(Overlay::CommandPalette(build_root_palette(self)));
         }
@@ -1618,25 +2727,7 @@ mod tui {
                     self.open_thread(app, thread_id).await?;
                 }
                 PaletteCommand::ThreadPicker => {
-                    if self.active_thread.is_none() {
-                        self.overlays.pop();
-                        self.refresh_threads(app).await?;
-                        return Ok(false);
-                    }
-
-                    self.active_thread = None;
-                    self.header = HeaderState::default();
-                    self.header_needs_refresh = false;
-                    self.overlays.clear();
-                    self.input.clear();
-                    self.streaming = None;
-                    self.active_turn_id = None;
-                    self.pending_action = None;
-                    self.transcript_scroll = 0;
-                    self.transcript_follow = true;
-                    self.transcript_max_scroll = 0;
-                    self.transcript_viewport_height = 0;
-                    self.refresh_threads(app).await?;
+                    self.return_to_thread_picker(app).await?;
                 }
                 PaletteCommand::RefreshThreads => {
                     if let Err(err) = self.refresh_threads(app).await {
@@ -1728,6 +2819,7 @@ mod tui {
                             mode: Some(mode.clone()),
                             model: None,
                             openai_base_url: None,
+                            thinking: None,
                         })
                         .await
                     {
@@ -1753,6 +2845,7 @@ mod tui {
                             mode: None,
                             model: Some(model.clone()),
                             openai_base_url: None,
+                            thinking: None,
                         })
                         .await
                     {
@@ -1778,6 +2871,7 @@ mod tui {
                             mode: None,
                             model: None,
                             openai_base_url: None,
+                            thinking: None,
                         })
                         .await
                     {
@@ -1805,6 +2899,7 @@ mod tui {
                             mode: None,
                             model: None,
                             openai_base_url: None,
+                            thinking: None,
                         })
                         .await
                     {
@@ -1832,6 +2927,7 @@ mod tui {
                             mode: None,
                             model: None,
                             openai_base_url: None,
+                            thinking: None,
                         })
                         .await
                     {
@@ -1843,6 +2939,7 @@ mod tui {
                         ));
                     }
                 }
+                PaletteCommand::InsertSkill(_) => {}
             }
 
             Ok(false)
@@ -2356,6 +3453,431 @@ mod tui {
         }
     }
 
+    fn summarize_tool_kv(value: &Value) -> String {
+        const MAX_ITEMS: usize = 6;
+        match value {
+            Value::Object(map) => {
+                let mut parts = Vec::new();
+                for (key, value) in map {
+                    if let Some(summary) = summarize_tool_value(value) {
+                        if !summary.trim().is_empty() {
+                            parts.push(format!("{key}={summary}"));
+                        }
+                    }
+                    if parts.len() >= MAX_ITEMS {
+                        break;
+                    }
+                }
+                if parts.is_empty() {
+                    String::new()
+                } else {
+                    format!("[{}]", parts.join(", "))
+                }
+            }
+            _ => summarize_tool_value(value).unwrap_or_default(),
+        }
+    }
+
+    fn summarize_tool_value(value: &Value) -> Option<String> {
+        match value {
+            Value::Null => None,
+            Value::Bool(value) => Some(value.to_string()),
+            Value::Number(value) => Some(value.to_string()),
+            Value::String(value) => {
+                let normalized = normalize_single_line(value);
+                if normalized.is_empty() {
+                    None
+                } else {
+                    Some(truncate_tool_text(&normalized))
+                }
+            }
+            Value::Array(value) => Some(format!("[{}]", value.len())),
+            Value::Object(value) => Some(format!("{{{}}}", value.len())),
+        }
+    }
+
+    fn truncate_tool_text(value: &str) -> String {
+        const MAX_CHARS: usize = 120;
+        if value.chars().count() <= MAX_CHARS {
+            return value.to_string();
+        }
+        let mut out: String = value.chars().take(MAX_CHARS).collect();
+        out.push('…');
+        out
+    }
+
+    fn should_suppress_tool_started(tool: &str) -> bool {
+        matches!(
+            tool,
+            "process/start" | "process/inspect" | "process/tail" | "process/follow"
+        )
+    }
+
+    fn should_suppress_tool_completed(tool: &str) -> bool {
+        matches!(tool, "process/inspect" | "process/tail" | "process/follow")
+    }
+
+    fn format_tool_started_line(tool: &str, params: Option<&Value>) -> Option<String> {
+        let line = match tool {
+            "file/read" => format_file_action("read", params),
+            "file/write" => format_file_action("write", params),
+            "file/edit" => format_file_action("edit", params),
+            "file/patch" => format_file_action("patch", params),
+            "file/delete" => format_file_action("delete", params),
+            "file/glob" => format_file_glob(params),
+            "file/grep" => format_file_grep(params),
+            "repo/search" => format_repo_search(params),
+            "repo/index" => format_repo_index(params),
+            "repo/symbols" => format_repo_symbols(params),
+            "fs/mkdir" => format_fs_mkdir(params),
+            "process/kill" => format_process_kill(params),
+            "process/interrupt" => format_process_interrupt(params),
+            "artifact/list" => Some("artifact list".to_string()),
+            "artifact/read" => format_artifact_read(params),
+            "artifact/write" => format_artifact_write(params),
+            "artifact/delete" => format_artifact_delete(params),
+            "mcp/list_servers" => Some("mcp list servers".to_string()),
+            "mcp/list_tools" => format_mcp_list_tools(params),
+            "mcp/list_resources" => format_mcp_list_resources(params),
+            "mcp/call" => format_mcp_call(params),
+            "subagent/spawn" => Some("subagent spawn".to_string()),
+            _ => None,
+        };
+        if let Some(line) = line {
+            return Some(line);
+        }
+        let summary = params.map(summarize_tool_kv).unwrap_or_default();
+        if summary.trim().is_empty() {
+            Some(tool.to_string())
+        } else {
+            Some(format!("{tool} {summary}"))
+        }
+    }
+
+    fn format_tool_result_line(tool: &str, result: &Value) -> Option<String> {
+        if should_suppress_tool_completed(tool) || tool == "process/start" {
+            return None;
+        }
+        let summary = summarize_tool_kv(result);
+        if summary.trim().is_empty() {
+            None
+        } else {
+            Some(format!("{tool} → {summary}"))
+        }
+    }
+
+    fn format_process_started_line(
+        argv: &[String],
+        cwd: &str,
+        thread_cwd: Option<&str>,
+    ) -> Option<String> {
+        let cmd = extract_shell_command(argv).unwrap_or_else(|| format_argv(argv));
+        if cmd.is_empty() {
+            return None;
+        }
+        let mut line = format!("$ {cmd}");
+        if let Some(cwd_display) = format_cwd_display(cwd, thread_cwd) {
+            line.push_str(&format!(" (cwd={cwd_display})"));
+        }
+        Some(line)
+    }
+
+    fn format_argv(argv: &[String]) -> String {
+        argv.iter()
+            .map(|arg| format_shell_arg(arg))
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    fn extract_shell_command(argv: &[String]) -> Option<String> {
+        if argv.len() >= 3 && is_shell_wrapper(&argv[0]) && argv[1] == "-lc" {
+            let cmd = argv[2].trim();
+            return if cmd.is_empty() {
+                None
+            } else {
+                Some(cmd.to_string())
+            };
+        }
+        if argv.len() >= 4
+            && argv[0] == "/usr/bin/env"
+            && is_shell_wrapper(&argv[1])
+            && argv[2] == "-lc"
+        {
+            let cmd = argv[3].trim();
+            return if cmd.is_empty() {
+                None
+            } else {
+                Some(cmd.to_string())
+            };
+        }
+        None
+    }
+
+    fn is_shell_wrapper(cmd: &str) -> bool {
+        matches!(
+            cmd,
+            "bash" | "sh" | "zsh" | "/bin/bash" | "/bin/sh" | "/bin/zsh"
+        )
+    }
+
+    fn format_shell_arg(value: &str) -> String {
+        if value.is_empty() {
+            return "\"\"".to_string();
+        }
+        let safe = value.chars().all(|c| matches!(c, 'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | '.' | '/' | ':' ));
+        if safe {
+            value.to_string()
+        } else {
+            format!("{value:?}")
+        }
+    }
+
+    fn format_cwd_display(cwd: &str, thread_cwd: Option<&str>) -> Option<String> {
+        let trimmed = cwd.trim();
+        if trimmed.is_empty() || trimmed == "." {
+            return None;
+        }
+        if let Some(thread_cwd) = thread_cwd.map(str::trim).filter(|s| !s.is_empty()) {
+            if trimmed == thread_cwd {
+                return None;
+            }
+        }
+        Some(trimmed.to_string())
+    }
+
+    fn format_file_action(action: &str, params: Option<&Value>) -> Option<String> {
+        let path = param_str(params, "path")?;
+        let root = param_str(params, "root");
+        let path = format_path_with_root(root, path);
+        Some(format!("{action} {path}"))
+    }
+
+    fn format_file_glob(params: Option<&Value>) -> Option<String> {
+        let pattern = param_str(params, "pattern")?;
+        let root = root_tag(param_str(params, "root"));
+        let mut line = format!("glob \"{pattern}\"");
+        if let Some(root) = root {
+            line.push_str(&format!(" ({root})"));
+        }
+        Some(line)
+    }
+
+    fn format_file_grep(params: Option<&Value>) -> Option<String> {
+        let query = param_str(params, "query")?;
+        let mut line = format!("grep \"{query}\"");
+        if let Some(include) = param_str(params, "include_glob") {
+            line.push_str(&format!(" in {include}"));
+        }
+        if let Some(root) = root_tag(param_str(params, "root")) {
+            line.push_str(&format!(" ({root})"));
+        }
+        Some(line)
+    }
+
+    fn format_repo_search(params: Option<&Value>) -> Option<String> {
+        let query = param_str(params, "query")?;
+        let mut line = format!("search \"{query}\"");
+        if let Some(root) = root_tag(param_str(params, "root")) {
+            line.push_str(&format!(" ({root})"));
+        }
+        Some(line)
+    }
+
+    fn format_repo_index(params: Option<&Value>) -> Option<String> {
+        let mut line = "repo index".to_string();
+        if let Some(root) = root_tag(param_str(params, "root")) {
+            line.push_str(&format!(" ({root})"));
+        }
+        Some(line)
+    }
+
+    fn format_repo_symbols(params: Option<&Value>) -> Option<String> {
+        let mut line = "repo symbols".to_string();
+        if let Some(root) = root_tag(param_str(params, "root")) {
+            line.push_str(&format!(" ({root})"));
+        }
+        Some(line)
+    }
+
+    fn format_fs_mkdir(params: Option<&Value>) -> Option<String> {
+        let path = param_str(params, "path")?;
+        let recursive = param_bool(params, "recursive").unwrap_or(false);
+        if recursive {
+            Some(format!("mkdir -p {path}"))
+        } else {
+            Some(format!("mkdir {path}"))
+        }
+    }
+
+    fn format_process_kill(params: Option<&Value>) -> Option<String> {
+        let process_id = param_str(params, "process_id")?;
+        Some(format!("kill {process_id}"))
+    }
+
+    fn format_process_interrupt(params: Option<&Value>) -> Option<String> {
+        let process_id = param_str(params, "process_id")?;
+        Some(format!("interrupt {process_id}"))
+    }
+
+    fn format_artifact_read(params: Option<&Value>) -> Option<String> {
+        let artifact_id = param_str(params, "artifact_id")?;
+        Some(format!("artifact read {artifact_id}"))
+    }
+
+    fn format_artifact_write(params: Option<&Value>) -> Option<String> {
+        let mut line = "artifact write".to_string();
+        if let Some(artifact_type) = param_str(params, "artifact_type") {
+            line.push(' ');
+            line.push_str(artifact_type);
+        }
+        if let Some(summary) = param_str(params, "summary") {
+            let summary = truncate_tool_text(summary);
+            if !summary.is_empty() {
+                line.push_str(&format!(" \"{summary}\""));
+            }
+        }
+        Some(line)
+    }
+
+    fn format_artifact_delete(params: Option<&Value>) -> Option<String> {
+        let artifact_id = param_str(params, "artifact_id")?;
+        Some(format!("artifact delete {artifact_id}"))
+    }
+
+    fn format_mcp_list_tools(params: Option<&Value>) -> Option<String> {
+        let server = param_str(params, "server")?;
+        Some(format!("mcp list_tools {server}"))
+    }
+
+    fn format_mcp_list_resources(params: Option<&Value>) -> Option<String> {
+        let server = param_str(params, "server")?;
+        Some(format!("mcp list_resources {server}"))
+    }
+
+    fn format_mcp_call(params: Option<&Value>) -> Option<String> {
+        let server = param_str(params, "server").unwrap_or("-");
+        let tool = param_str(params, "tool").unwrap_or("-");
+        Some(format!("mcp {server}.{tool}"))
+    }
+
+    fn param_str<'a>(params: Option<&'a Value>, key: &str) -> Option<&'a str> {
+        params
+            .and_then(|value| value.get(key))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    }
+
+    fn param_bool(params: Option<&Value>, key: &str) -> Option<bool> {
+        params.and_then(|value| value.get(key)).and_then(Value::as_bool)
+    }
+
+    fn root_tag(root: Option<&str>) -> Option<&'static str> {
+        if matches!(root, Some("reference")) {
+            Some("ref")
+        } else {
+            None
+        }
+    }
+
+    fn format_path_with_root(root: Option<&str>, path: &str) -> String {
+        if matches!(root, Some("reference")) {
+            format!("ref:{path}")
+        } else {
+            path.to_string()
+        }
+    }
+
+    struct InlineContext {
+        kind: InlinePaletteKind,
+        query: String,
+    }
+
+    fn last_line_bounds(input: &str) -> (usize, &str) {
+        match input.rfind('\n') {
+            Some(idx) => (idx + 1, &input[idx + 1..]),
+            None => (0, input),
+        }
+    }
+
+    fn parse_inline_context(input: &str) -> Option<InlineContext> {
+        let ends_with_whitespace = input.chars().last().is_some_and(char::is_whitespace);
+        let (_line_start, line) = last_line_bounds(input);
+        let line = line.trim_end();
+        if line.is_empty() {
+            return None;
+        }
+
+        if line.starts_with('/') {
+            let body = line.trim_start_matches('/');
+            let body = body.trim_start();
+            if body.is_empty() {
+                return Some(InlineContext {
+                    kind: InlinePaletteKind::Command,
+                    query: String::new(),
+                });
+            }
+            let mut parts = body.splitn(2, char::is_whitespace);
+            let token = parts.next().unwrap_or("").trim();
+            let rest = parts.next().unwrap_or("").trim_start();
+            if token.is_empty() {
+                return Some(InlineContext {
+                    kind: InlinePaletteKind::Command,
+                    query: String::new(),
+                });
+            }
+            let kind = match token {
+                "mode" => InlinePaletteKind::Role,
+                "model" => InlinePaletteKind::Model,
+                "approval-policy" => InlinePaletteKind::ApprovalPolicy,
+                "sandbox-policy" => InlinePaletteKind::SandboxPolicy,
+                "sandbox-network" => InlinePaletteKind::SandboxNetworkAccess,
+                _ => InlinePaletteKind::Command,
+            };
+            let query = match kind {
+                InlinePaletteKind::Command => token.to_string(),
+                _ => rest.to_string(),
+            };
+            return Some(InlineContext { kind, query });
+        }
+
+        if ends_with_whitespace {
+            return None;
+        }
+
+        let token = line
+            .split_whitespace()
+            .last()
+            .unwrap_or("")
+            .trim_end_matches('\n');
+        let mut token_chars = token.chars();
+        let prefix = token_chars.next()?;
+        let query: String = token_chars.collect();
+        let kind = match prefix {
+            '@' => InlinePaletteKind::Role,
+            '$' => InlinePaletteKind::Skill,
+            _ => return None,
+        };
+        Some(InlineContext { kind, query })
+    }
+
+    fn inline_token_span(input: &str, trigger: char) -> Option<(usize, usize)> {
+        let (line_start, line) = last_line_bounds(input);
+        let line_trimmed = line.trim_end();
+        if line_trimmed.is_empty() {
+            return None;
+        }
+        let token_start = line_trimmed
+            .rfind(|c: char| c.is_whitespace())
+            .map(|idx| idx + 1)
+            .unwrap_or(0);
+        let token = &line_trimmed[token_start..];
+        if !token.starts_with(trigger) {
+            return None;
+        }
+        Some((line_start + token_start, line_start + line_trimmed.len()))
+    }
+
     fn build_process_inspect_text(resp: &ProcessInspectResponse) -> String {
         let mut out = String::new();
         out.push_str(&format!("process_id: {}\n", resp.process.process_id));
@@ -2441,7 +3963,7 @@ mod tui {
                 let selected = view.selected_action();
                 if let Some(action) = selected {
                     if matches!(action, PaletteCommand::Noop)
-                        && view.title == "Set model"
+                        && view.title == "model"
                         && !view.query.trim().is_empty()
                     {
                         return Some(PaletteCommand::SetModel(
@@ -2450,7 +3972,7 @@ mod tui {
                     }
                     return Some(action);
                 }
-                if view.title == "Set model" {
+                if view.title == "model" {
                     let query = view.query.trim();
                     if !query.is_empty() {
                         return Some(PaletteCommand::SetModel(query.to_string()));
@@ -2830,29 +4352,64 @@ mod tui {
 
     fn draw_ui(f: &mut ratatui::Frame, state: &mut UiState) {
         let area = f.area();
-        let layout = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Min(1),
-                Constraint::Length(1),
-                Constraint::Length(1),
-            ])
-            .split(area);
-
+        f.render_widget(Clear, area);
         match state.active_thread {
-            None => draw_thread_list(f, state, layout[0]),
-            Some(_) => draw_thread_view(f, state, layout[0]),
+            None => {
+                let show_footer = !matches!(state.overlays.last(), Some(Overlay::CommandPalette(_)));
+                if show_footer {
+                    let layout = Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([Constraint::Min(1), Constraint::Length(1)])
+                        .split(area);
+                    draw_thread_list(f, state, layout[0]);
+                    draw_footer(f, state, layout[1]);
+                } else {
+                    draw_thread_list(f, state, area);
+                }
+            }
+            Some(_) => draw_thread_view(f, state, area),
         }
 
-        draw_input(f, state, layout[1]);
-        draw_footer(f, state, layout[2]);
-
         if let Some(overlay) = state.overlays.last() {
-            draw_overlay(f, overlay);
+            match overlay {
+                Overlay::CommandPalette(_) if state.active_thread.is_none() => {
+                    draw_overlay(f, overlay);
+                }
+                Overlay::CommandPalette(_) => {}
+                _ => draw_overlay(f, overlay),
+            }
         }
     }
 
-    fn draw_footer(f: &mut ratatui::Frame, state: &UiState, area: ratatui::layout::Rect) {
+    const BASELINE_TOKENS: u64 = 12_000;
+
+    fn percent_of_context_window_remaining(total_tokens_used: u64, context_window: u64) -> u64 {
+        if context_window <= BASELINE_TOKENS {
+            return 0;
+        }
+        let effective_window = context_window.saturating_sub(BASELINE_TOKENS);
+        let used = total_tokens_used.saturating_sub(BASELINE_TOKENS);
+        let remaining = effective_window.saturating_sub(used);
+        (remaining as f64 / effective_window as f64 * 100.0)
+            .clamp(0.0, 100.0)
+            .round() as u64
+    }
+
+    fn build_footer_line(state: &UiState, width: u16) -> Line<'static> {
+        let context_left = match state.header.model_context_window {
+            Some(window) => {
+                let pct = percent_of_context_window_remaining(state.total_tokens_used, window);
+                format!("{pct}% context left")
+            }
+            None => {
+                if state.total_tokens_used > 0 {
+                    format!("{} used", state.total_tokens_used)
+                } else {
+                    "100% context left".to_string()
+                }
+            }
+        };
+
         let msg = match state.active_thread {
             Some(thread_id) => {
                 let short = super::thread_id_short(thread_id);
@@ -2862,38 +4419,136 @@ mod tui {
                 let thinking = state.header.thinking.as_deref().unwrap_or("-");
                 let mcp = if state.header.mcp_enabled { "on" } else { "off" };
 
-                if area.width < 80 {
-                    format!("th={short} mode={mode} model={model} (Ctrl-K)")
+                if width < 80 {
+                    format!("{context_left}  th={short} mode={mode} model={model} (Ctrl-K)")
                 } else {
                     format!(
-                        "thread={short} agent={mode} provider={provider} model={model} thinking={thinking} mcp={mcp} (Ctrl-K=commands)"
+                        "{context_left}  thread={short} agent={mode} provider={provider} model={model} thinking={thinking} mcp={mcp} (Ctrl-K=commands)"
                     )
                 }
             }
-            None => "threads (Ctrl-K=commands)".to_string(),
+            None => format!("{context_left}  threads (Ctrl-K=commands)"),
         };
 
         let style = Style::default().fg(Color::Gray);
-        let paragraph = match state.status.as_deref().filter(|s| !s.trim().is_empty()) {
+        match state.status.as_deref().filter(|s| !s.trim().is_empty()) {
             Some(status) => {
                 let status_style = if UiState::is_error_message(status) {
                     Style::default().fg(Color::Red)
                 } else {
-                    Style::default()
+                    Style::default().fg(Color::Gray)
                 };
-                Paragraph::new(Line::from(vec![
+                Line::from(vec![
                     Span::styled(msg, style),
                     Span::styled(" | ", style),
-                    Span::styled(status, status_style),
-                ]))
+                    Span::styled(status.to_string(), status_style),
+                ])
             }
-            None => Paragraph::new(msg).style(style),
-        };
+            None => Line::from(Span::styled(msg, style)),
+        }
+    }
 
+    fn draw_footer(f: &mut ratatui::Frame, state: &UiState, area: ratatui::layout::Rect) {
+        let paragraph = Paragraph::new(build_footer_line(state, area.width));
         f.render_widget(paragraph, area);
     }
 
+    fn parse_rfc3339_timestamp(value: &str) -> Option<OffsetDateTime> {
+        OffsetDateTime::parse(value, &Rfc3339).ok()
+    }
+
+    fn human_time_ago(ts: OffsetDateTime) -> String {
+        let now = OffsetDateTime::now_utc();
+        let delta = now - ts;
+        let secs = delta.whole_seconds().max(0);
+        if secs < 60 {
+            if secs == 1 {
+                format!("{secs} second ago")
+            } else {
+                format!("{secs} seconds ago")
+            }
+        } else if secs < 60 * 60 {
+            let mins = secs / 60;
+            if mins == 1 {
+                format!("{mins} minute ago")
+            } else {
+                format!("{mins} minutes ago")
+            }
+        } else if secs < 60 * 60 * 24 {
+            let hours = secs / 3600;
+            if hours == 1 {
+                format!("{hours} hour ago")
+            } else {
+                format!("{hours} hours ago")
+            }
+        } else {
+            let days = secs / (60 * 60 * 24);
+            if days == 1 {
+                format!("{days} day ago")
+            } else {
+                format!("{days} days ago")
+            }
+        }
+    }
+
+    fn format_updated_label(meta: &ThreadMeta) -> String {
+        let updated = meta
+            .updated_at
+            .as_deref()
+            .and_then(parse_rfc3339_timestamp)
+            .or_else(|| meta.created_at.as_deref().and_then(parse_rfc3339_timestamp));
+        updated.map(human_time_ago).unwrap_or_else(|| "-".to_string())
+    }
+
+    fn normalize_single_line(text: &str) -> String {
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            return "-".to_string();
+        }
+        trimmed
+            .split_whitespace()
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    fn right_elide(value: &str, max_width: usize) -> String {
+        if max_width == 0 {
+            return String::new();
+        }
+        if UnicodeWidthStr::width(value) <= max_width {
+            return value.to_string();
+        }
+        if max_width <= 1 {
+            return "…".to_string();
+        }
+        let tail_len = max_width.saturating_sub(1);
+        let mut out = String::new();
+        out.push('…');
+        let mut tail = String::new();
+        for ch in value.chars().rev() {
+            if UnicodeWidthStr::width(tail.as_str()) >= tail_len {
+                break;
+            }
+            tail.push(ch);
+        }
+        out.push_str(&tail.chars().rev().collect::<String>());
+        out
+    }
+
+    fn pad_to_width(value: &str, width: usize) -> String {
+        let mut out = value.to_string();
+        let pad = width.saturating_sub(UnicodeWidthStr::width(value));
+        if pad > 0 {
+            out.push_str(&" ".repeat(pad));
+        }
+        out
+    }
+
     fn draw_thread_list(f: &mut ratatui::Frame, state: &UiState, area: ratatui::layout::Rect) {
+        const MAX_TITLE_WIDTH: usize = 24;
+        const MAX_CWD_WIDTH: usize = 24;
+
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(1), Constraint::Min(1)])
@@ -2905,29 +4560,72 @@ mod tui {
             chunks[0],
         );
 
-        let items = state
-            .threads
-            .iter()
-            .map(|t| {
-                let cwd = t
-                    .cwd
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or("-");
-                let model = t
-                    .model
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or("-");
+        let mut rows = Vec::with_capacity(state.threads.len());
+        let mut max_updated_width = UnicodeWidthStr::width("Updated");
+        let mut max_title_width = UnicodeWidthStr::width("Title");
+        let mut max_cwd_width = UnicodeWidthStr::width("CWD");
+
+        for thread in &state.threads {
+            let updated = format_updated_label(thread);
+            let title = thread
+                .title
+                .as_deref()
+                .map(normalize_single_line)
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "-".to_string());
+            let title = right_elide(&title, MAX_TITLE_WIDTH);
+            let cwd = thread
+                .cwd
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| right_elide(s, MAX_CWD_WIDTH))
+                .unwrap_or_else(|| "-".to_string());
+            let message = thread
+                .first_message
+                .as_deref()
+                .map(normalize_single_line)
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "-".to_string());
+
+            max_updated_width = max_updated_width.max(UnicodeWidthStr::width(updated.as_str()));
+            max_title_width = max_title_width.max(UnicodeWidthStr::width(title.as_str()));
+            max_cwd_width = max_cwd_width.max(UnicodeWidthStr::width(cwd.as_str()));
+
+            rows.push((updated, title, cwd, message));
+        }
+
+        let column_header = format!(
+            "{}  {}  {}  Message",
+            pad_to_width("Updated", max_updated_width),
+            pad_to_width("Title", max_title_width),
+            pad_to_width("CWD", max_cwd_width),
+        );
+        let header_line = Paragraph::new(column_header).style(Style::default().fg(Color::Gray));
+        let header_area = ratatui::layout::Rect {
+            x: chunks[1].x,
+            y: chunks[1].y,
+            width: chunks[1].width,
+            height: 1,
+        };
+        f.render_widget(header_line, header_area);
+
+        let list_area = ratatui::layout::Rect {
+            x: chunks[1].x,
+            y: chunks[1].y + 1,
+            width: chunks[1].width,
+            height: chunks[1].height.saturating_sub(1),
+        };
+
+        let items = rows
+            .into_iter()
+            .map(|(updated, title, cwd, message)| {
                 let line = format!(
-                    "[{}] {}  cwd={}  model={}  last_seq={}",
-                    t.attention_state.trim(),
-                    t.thread_id,
-                    cwd,
-                    model,
-                    t.last_seq
+                    "{}  {}  {}  {}",
+                    pad_to_width(&updated, max_updated_width),
+                    pad_to_width(&title, max_title_width),
+                    pad_to_width(&cwd, max_cwd_width),
+                    message
                 );
                 ListItem::new(line)
             })
@@ -2942,7 +4640,7 @@ mod tui {
         } else {
             Some(state.selected_thread)
         };
-        f.render_stateful_widget(list, chunks[1], &mut list_state(selected));
+        f.render_stateful_widget(list, list_area, &mut list_state(selected));
     }
 
     fn list_state(selected: Option<usize>) -> ratatui::widgets::ListState {
@@ -2951,61 +4649,450 @@ mod tui {
         state
     }
 
+    struct InputRender {
+        lines: Vec<Line<'static>>,
+        cursor_line: usize,
+        cursor_col: usize,
+    }
+
+    struct PaletteRender {
+        lines: Vec<Line<'static>>,
+    }
+
     fn draw_thread_view(
         f: &mut ratatui::Frame,
         state: &mut UiState,
         area: ratatui::layout::Rect,
     ) {
-        let mut lines = Vec::<Line>::new();
+        let width = area.width.max(1) as usize;
+        let mut transcript_lines = Vec::<Line>::new();
         for entry in &state.transcript {
-            lines.push(format_transcript_entry(entry));
+            transcript_lines.extend(format_transcript_entry_lines(entry, width));
         }
         if let Some(streaming) = &state.streaming {
-            lines.push(Line::from(vec![
-                Span::styled("assistant: ", Style::default().fg(Color::Green)),
-                Span::raw(streaming.text.as_str()),
-            ]));
+            transcript_lines.extend(format_role_lines(
+                TranscriptRole::Assistant,
+                streaming.text.as_str(),
+                width,
+            ));
+        }
+        // 顶部固定留一行空白，避免首条输出把输入框顶线盖住。
+        transcript_lines.insert(0, Line::from(Span::raw("")));
+
+        const MAX_INLINE_PALETTE_ITEMS: usize = 12;
+        const INLINE_PALETTE_MIN_LINES: usize = 4;
+
+        let input_render = build_input_lines(&state.input, width);
+        let input_lines = input_render.lines.len();
+        let total_height = area.height as usize;
+
+        let inline_view = state.inline_palette.as_ref().map(|inline| &inline.view);
+        let footer_lines = if inline_view.is_some() { 0 } else { 1 };
+        let reserved_bottom = input_lines.saturating_add(footer_lines);
+        let palette_target_lines = inline_view
+            .map(|view| {
+                let items = if view.filtered.is_empty() {
+                    1
+                } else {
+                    view.filtered.len().min(MAX_INLINE_PALETTE_ITEMS)
+                };
+                1 + items
+            })
+            .unwrap_or(0);
+        let min_palette_lines = if inline_view.is_some() {
+            INLINE_PALETTE_MIN_LINES
+        } else {
+            0
+        };
+
+        let max_bottom_pct = if inline_view.is_some() { 70 } else { 35 };
+        let mut max_bottom = ((total_height * max_bottom_pct) / 100)
+            .max(4)
+            .min(total_height);
+        let desired_bottom = reserved_bottom.saturating_add(palette_target_lines);
+        let min_bottom_needed = reserved_bottom.saturating_add(min_palette_lines);
+        max_bottom = max_bottom
+            .max(desired_bottom)
+            .max(min_bottom_needed)
+            .min(total_height);
+
+        let available_palette_lines = max_bottom.saturating_sub(reserved_bottom);
+        let max_palette_lines = if inline_view.is_some() {
+            available_palette_lines
+                .min(palette_target_lines)
+                .max(min_palette_lines.min(available_palette_lines))
+        } else {
+            0
+        };
+
+        let palette_render = inline_view
+            .map(|view| build_command_palette_lines(view, width, max_palette_lines));
+
+        let mut bottom_lines = Vec::<Line>::new();
+        let input_start = bottom_lines.len();
+        bottom_lines.extend(input_render.lines);
+        let input_cursor = (
+            input_start + input_render.cursor_line,
+            input_render.cursor_col,
+        );
+        if let Some(palette) = palette_render {
+            bottom_lines.extend(palette.lines);
+        }
+        if footer_lines > 0 {
+            bottom_lines.push(build_footer_line(state, area.width));
         }
 
-        let text = Text::from(lines);
-        let width = area.width.max(1);
-        let base_paragraph = Paragraph::new(text).wrap(Wrap { trim: false });
-        let line_count: u16 = base_paragraph
-            .line_count(width)
-            .try_into()
-            .unwrap_or(u16::MAX);
-        let max_scroll = line_count.saturating_sub(area.height);
-        state.transcript_max_scroll = max_scroll;
-        state.transcript_viewport_height = area.height;
+        let required_bottom = bottom_lines.len().max(1);
+        let bottom_height = required_bottom.min(max_bottom).min(total_height);
+        let max_top = total_height.saturating_sub(bottom_height);
+        let top_height = transcript_lines.len().min(max_top);
+
+        let transcript_area = ratatui::layout::Rect {
+            x: area.x,
+            y: area.y,
+            width: area.width,
+            height: top_height as u16,
+        };
+        let bottom_area = ratatui::layout::Rect {
+            x: area.x,
+            y: area.y.saturating_add(top_height as u16),
+            width: area.width,
+            height: bottom_height as u16,
+        };
+
+        let viewport_height = transcript_area.height as usize;
+        let max_scroll = transcript_lines.len().saturating_sub(viewport_height);
+        state.transcript_max_scroll = u16::try_from(max_scroll).unwrap_or(u16::MAX);
+        state.transcript_viewport_height = transcript_area.height;
 
         let scroll = if state.transcript_follow {
             max_scroll
         } else {
-            state.transcript_scroll.min(max_scroll)
+            usize::from(state.transcript_scroll).min(max_scroll)
         };
-        state.transcript_scroll = scroll;
+        state.transcript_scroll = u16::try_from(scroll).unwrap_or(u16::MAX);
 
-        f.render_widget(base_paragraph.scroll((scroll, 0)), area);
+        if transcript_area.height > 0 {
+            let paragraph = Paragraph::new(Text::from(transcript_lines));
+            f.render_widget(
+                paragraph.scroll((state.transcript_scroll, 0)),
+                transcript_area,
+            );
+        }
+
+        if bottom_area.height > 0 {
+            let bottom_paragraph = Paragraph::new(Text::from(bottom_lines));
+            f.render_widget(bottom_paragraph, bottom_area);
+
+            if state.active_thread.is_some() {
+                let cursor_target = match state.overlays.last() {
+                    Some(_) => None,
+                    None => Some(input_cursor),
+                };
+                if let Some((cursor_line, cursor_col)) = cursor_target {
+                    if cursor_line < bottom_height {
+                        let y = bottom_area.y.saturating_add(cursor_line as u16);
+                        let x = bottom_area.x.saturating_add(cursor_col as u16);
+                        let max_x = bottom_area
+                            .x
+                            .saturating_add(bottom_area.width.saturating_sub(1));
+                        f.set_cursor_position((x.min(max_x), y));
+                    }
+                }
+            }
+        }
     }
 
-    fn format_transcript_entry(entry: &TranscriptEntry) -> Line<'_> {
-        match entry.role {
-            TranscriptRole::User => Line::from(vec![
-                Span::styled("user: ", Style::default().fg(Color::Yellow)),
-                Span::raw(entry.text.as_str()),
-            ]),
-            TranscriptRole::Assistant => Line::from(vec![
-                Span::styled("assistant: ", Style::default().fg(Color::Green)),
-                Span::raw(entry.text.as_str()),
-            ]),
-            TranscriptRole::System => Line::from(vec![
-                Span::styled("system: ", Style::default().fg(Color::Cyan)),
-                Span::raw(entry.text.as_str()),
-            ]),
-            TranscriptRole::Error => Line::from(vec![
-                Span::styled("error: ", Style::default().fg(Color::Red)),
-                Span::raw(entry.text.as_str()),
-            ]),
+    fn format_transcript_entry_lines(entry: &TranscriptEntry, width: usize) -> Vec<Line<'static>> {
+        format_role_lines(entry.role, entry.text.as_str(), width)
+    }
+
+    fn format_role_lines(
+        role: TranscriptRole,
+        text: &str,
+        width: usize,
+    ) -> Vec<Line<'static>> {
+        let (prefix, prefix_style, content_style) = match role {
+            TranscriptRole::User => ("user: ", Style::default().fg(Color::Yellow), None),
+            TranscriptRole::Assistant => ("assistant: ", Style::default().fg(Color::Green), None),
+            TranscriptRole::System => ("system: ", Style::default().fg(Color::Cyan), None),
+            TranscriptRole::Error => ("error: ", Style::default().fg(Color::Red), None),
+            TranscriptRole::Tool => ("tool: ", Style::default().fg(Color::Blue), Some(Style::default().fg(Color::Blue))),
+        };
+        wrap_prefixed_lines(prefix, prefix_style, content_style, text, width)
+    }
+
+    fn wrap_prefixed_lines(
+        prefix: &str,
+        prefix_style: Style,
+        content_style: Option<Style>,
+        text: &str,
+        width: usize,
+    ) -> Vec<Line<'static>> {
+        let width = width.max(1);
+        let prefix_width = UnicodeWidthStr::width(prefix);
+        let available_first = width.saturating_sub(prefix_width).max(1);
+        let available_other = width;
+        let mut out = Vec::<Line>::new();
+
+        let mut first = true;
+        for raw_line in text.split('\n') {
+            let max_width = if first {
+                available_first
+            } else {
+                available_other
+            };
+            let mut segments = wrap_plain_text(raw_line, max_width);
+            if segments.is_empty() {
+                segments.push(String::new());
+            }
+            for segment in segments {
+                let lead = if first { prefix } else { "" };
+                let lead_style = prefix_style;
+                let body_style = content_style.unwrap_or_default();
+                out.push(Line::from(vec![
+                    Span::styled(lead.to_string(), lead_style),
+                    Span::styled(segment, body_style),
+                ]));
+                first = false;
+            }
+            if first {
+                out.push(Line::from(vec![Span::styled(
+                    prefix.to_string(),
+                    prefix_style,
+                )]));
+                first = false;
+            }
+        }
+
+        if out.is_empty() {
+            out.push(Line::from(vec![Span::styled(
+                prefix.to_string(),
+                prefix_style,
+            )]));
+        }
+        out
+    }
+
+    fn wrap_plain_text(text: &str, max_width: usize) -> Vec<String> {
+        let max_width = max_width.max(1);
+        let mut out = Vec::new();
+        let mut current = String::new();
+        let mut current_width = 0usize;
+        for ch in text.chars() {
+            let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+            if current_width + ch_width > max_width && !current.is_empty() {
+                out.push(current);
+                current = String::new();
+                current_width = 0;
+            }
+            current.push(ch);
+            current_width += ch_width;
+        }
+        out.push(current);
+        out
+    }
+
+    fn truncate_to_width(text: &str, max_width: usize) -> String {
+        if max_width == 0 {
+            return String::new();
+        }
+        let mut out = String::new();
+        let mut width = 0usize;
+        let mut truncated = false;
+        for ch in text.chars() {
+            let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+            if width + ch_width > max_width {
+                truncated = true;
+                break;
+            }
+            out.push(ch);
+            width += ch_width;
+        }
+        if truncated && max_width > 1 {
+            if UnicodeWidthStr::width(out.as_str()) >= max_width {
+                out.pop();
+            }
+            out.push('…');
+        }
+        out
+    }
+
+    fn build_palette_item_line(item: &PaletteItem, selected: bool, width: usize) -> Line<'static> {
+        let width = width.max(1);
+        let marker = if selected { ">" } else { " " };
+        let mut base_style = Style::default();
+        let mut detail_style = Style::default().fg(Color::DarkGray);
+        if selected {
+            base_style = base_style.add_modifier(Modifier::REVERSED);
+            detail_style = detail_style.add_modifier(Modifier::REVERSED);
+        }
+
+        let mut spans = Vec::new();
+        let marker_text = format!("{marker} ");
+        let mut used = UnicodeWidthStr::width(marker_text.as_str());
+        spans.push(Span::styled(marker_text, base_style));
+
+        let mut remaining = width.saturating_sub(used);
+        let label = truncate_to_width(item.label.as_str(), remaining);
+        let label_width = UnicodeWidthStr::width(label.as_str());
+        spans.push(Span::styled(label, base_style));
+        used = used.saturating_add(label_width);
+        remaining = width.saturating_sub(used);
+
+        if let Some(detail) = item.detail.as_deref().filter(|d| !d.trim().is_empty()) {
+            if remaining > 0 {
+                let spacer = if remaining >= 2 { "  " } else { " " };
+                let spacer_width = UnicodeWidthStr::width(spacer);
+                if remaining >= spacer_width {
+                    spans.push(Span::styled(spacer.to_string(), base_style));
+                    used = used.saturating_add(spacer_width);
+                    remaining = width.saturating_sub(used);
+                    if remaining > 0 {
+                        let detail = truncate_to_width(detail, remaining);
+                        let detail_width = UnicodeWidthStr::width(detail.as_str());
+                        spans.push(Span::styled(detail, detail_style));
+                        used = used.saturating_add(detail_width);
+                    }
+                }
+            }
+        }
+
+        let pad = width.saturating_sub(used);
+        if pad > 0 {
+            spans.push(Span::styled(" ".repeat(pad), base_style));
+        }
+
+        Line::from(spans)
+    }
+
+    fn build_command_palette_lines(
+        view: &CommandPaletteOverlay,
+        width: usize,
+        max_lines: usize,
+    ) -> PaletteRender {
+        let mut lines = Vec::<Line>::new();
+        if max_lines == 0 {
+            return PaletteRender { lines };
+        }
+        let title = view.title.trim();
+        let label = if title.is_empty() { "commands" } else { title };
+        let label = format!("{}: ", label.to_ascii_lowercase());
+        let query = view.query.as_str();
+        let display_query = if query.trim().is_empty() {
+            "(type to search)"
+        } else {
+            query
+        };
+        let header_text = truncate_to_width(&format!("{label}{display_query}"), width);
+        let header_style = Style::default().fg(Color::Gray);
+        let header_pad = width.saturating_sub(UnicodeWidthStr::width(header_text.as_str()));
+        let mut header_spans = Vec::new();
+        header_spans.push(Span::styled(header_text, header_style));
+        if header_pad > 0 {
+            header_spans.push(Span::styled(" ".repeat(header_pad), header_style));
+        }
+        lines.push(Line::from(header_spans));
+
+        let available_items = max_lines.saturating_sub(1);
+        if view.filtered.is_empty() {
+            if available_items > 0 {
+                let text = "  (no matches)";
+                let style = Style::default().fg(Color::DarkGray);
+                let pad = width.saturating_sub(UnicodeWidthStr::width(text));
+                let mut spans = Vec::new();
+                spans.push(Span::styled(text.to_string(), style));
+                if pad > 0 {
+                    spans.push(Span::styled(" ".repeat(pad), style));
+                }
+                lines.push(Line::from(spans));
+            }
+            return PaletteRender { lines };
+        }
+
+        if available_items == 0 {
+            return PaletteRender { lines };
+        }
+
+        let visible = available_items.min(view.filtered.len()).max(1);
+        let mut start = 0usize;
+        if view.selected >= visible {
+            start = view.selected + 1 - visible;
+        }
+        let end = (start + visible).min(view.filtered.len());
+
+        for (offset, filtered_idx) in view.filtered[start..end].iter().enumerate() {
+            if let Some(item) = view.items.get(*filtered_idx) {
+                let selected = start + offset == view.selected;
+                lines.push(build_palette_item_line(item, selected, width));
+            }
+        }
+
+        PaletteRender { lines }
+    }
+
+    fn build_input_lines(input: &str, width: usize) -> InputRender {
+        const PADDING_LINES: usize = 1;
+        let width = width.max(1);
+        let prompt = "› ";
+        let prompt_width = UnicodeWidthStr::width(prompt);
+        let indent = " ".repeat(prompt_width);
+        let available = width.saturating_sub(prompt_width).max(1);
+        let input_bg = Style::default().bg(Color::Rgb(60, 60, 60));
+        let prompt_style = input_bg.fg(Color::Gray);
+        let input_style = input_bg;
+
+        let mut segments = Vec::<String>::new();
+        for raw_line in input.split('\n') {
+            let wrapped = wrap_plain_text(raw_line, available);
+            if wrapped.is_empty() {
+                segments.push(String::new());
+            } else {
+                segments.extend(wrapped);
+            }
+        }
+        if segments.is_empty() {
+            segments.push(String::new());
+        }
+
+        let cursor_line = segments.len().saturating_sub(1) + PADDING_LINES;
+        let cursor_col = prompt_width
+            .saturating_add(UnicodeWidthStr::width(
+                segments
+                    .last()
+                    .map(|segment| segment.as_str())
+                    .unwrap_or(""),
+            ))
+            .min(width.saturating_sub(1));
+
+        let mut lines = Vec::<Line>::new();
+        let padding = " ".repeat(width);
+        for _ in 0..PADDING_LINES {
+            lines.push(Line::from(Span::styled(padding.clone(), input_style)));
+        }
+        for (idx, segment) in segments.iter().enumerate() {
+            let lead = if idx == 0 { prompt } else { indent.as_str() };
+            let lead_style = prompt_style;
+            let content_style = input_style;
+            let used = UnicodeWidthStr::width(lead)
+                .saturating_add(UnicodeWidthStr::width(segment.as_str()));
+            let pad = width.saturating_sub(used);
+            let mut spans = Vec::new();
+            spans.push(Span::styled(lead.to_string(), lead_style));
+            spans.push(Span::styled(segment.to_string(), content_style));
+            if pad > 0 {
+                spans.push(Span::styled(" ".repeat(pad), content_style));
+            }
+            lines.push(Line::from(spans));
+        }
+        for _ in 0..PADDING_LINES {
+            lines.push(Line::from(Span::styled(padding.clone(), input_style)));
+        }
+
+        InputRender {
+            lines,
+            cursor_line,
+            cursor_col,
         }
     }
 
@@ -3019,6 +5106,25 @@ mod tui {
         }
     }
 
+    fn usage_total_tokens(usage: &Value) -> Option<u64> {
+        let total_tokens = usage.get("total_tokens").and_then(Value::as_u64);
+        let input_tokens = usage.get("input_tokens").and_then(Value::as_u64);
+        let output_tokens = usage.get("output_tokens").and_then(Value::as_u64);
+        total_tokens.or_else(|| match (input_tokens, output_tokens) {
+            (Some(input), Some(output)) => Some(input.saturating_add(output)),
+            _ => None,
+        })
+    }
+
+    fn tool_status_str(value: ToolStatus) -> &'static str {
+        match value {
+            ToolStatus::Completed => "completed",
+            ToolStatus::Failed => "failed",
+            ToolStatus::Denied => "denied",
+            ToolStatus::Cancelled => "cancelled",
+        }
+    }
+
     fn turn_status_str(value: TurnStatus) -> &'static str {
         match value {
             TurnStatus::Completed => "completed",
@@ -3029,37 +5135,22 @@ mod tui {
         }
     }
 
-    fn draw_input(f: &mut ratatui::Frame, state: &UiState, area: ratatui::layout::Rect) {
-        let prompt = if state.active_thread.is_some() { "› " } else { "" };
-        let line = format!("{prompt}{}", state.input);
-        let input = Paragraph::new(line).wrap(Wrap { trim: false });
-        f.render_widget(input, area);
-
-        if state.active_thread.is_some() && state.overlays.is_empty() {
-            let prompt_width = UnicodeWidthStr::width(prompt);
-            let input_width = UnicodeWidthStr::width(state.input.as_str());
-            let cursor_offset = prompt_width.saturating_add(input_width);
-            let cursor_offset = u16::try_from(cursor_offset).unwrap_or(u16::MAX);
-            let x = area.x.saturating_add(cursor_offset);
-            let y = area.y;
-            let max_x = area.x.saturating_add(area.width.saturating_sub(1));
-            f.set_cursor_position((x.min(max_x), y));
-        }
-    }
-
     fn draw_overlay(f: &mut ratatui::Frame, overlay: &Overlay) {
-        let area = match overlay {
-            Overlay::CommandPalette(_) => centered_rect(80, 60, f.area()),
-            _ => centered_rect(90, 80, f.area()),
-        };
-        f.render_widget(Clear, area);
-
         match overlay {
-            Overlay::Approvals(view) => draw_approvals_overlay(f, area, view),
-            Overlay::Processes(view) => draw_processes_overlay(f, area, view),
-            Overlay::Artifacts(view) => draw_artifacts_overlay(f, area, view),
-            Overlay::Text(view) => draw_text_overlay(f, area, view),
-            Overlay::CommandPalette(view) => draw_command_palette_overlay(f, area, view),
+            Overlay::CommandPalette(view) => {
+                draw_command_palette_overlay(f, f.area(), view);
+            }
+            _ => {
+                let area = centered_rect(90, 80, f.area());
+                f.render_widget(Clear, area);
+                match overlay {
+                    Overlay::Approvals(view) => draw_approvals_overlay(f, area, view),
+                    Overlay::Processes(view) => draw_processes_overlay(f, area, view),
+                    Overlay::Artifacts(view) => draw_artifacts_overlay(f, area, view),
+                    Overlay::Text(view) => draw_text_overlay(f, area, view),
+                    Overlay::CommandPalette(_) => {}
+                }
+            }
         }
     }
 
@@ -3068,45 +5159,27 @@ mod tui {
         area: ratatui::layout::Rect,
         view: &CommandPaletteOverlay,
     ) {
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(format!("{} (Esc=close Enter=run)", view.title.as_str()));
-        let inner = block.inner(area);
-        f.render_widget(block, area);
-
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(1), Constraint::Min(1)])
-            .split(inner);
-
-        let query = if view.query.trim().is_empty() {
-            "filter: (type to search)".to_string()
-        } else {
-            format!("filter: {}", view.query)
+        if area.height == 0 {
+            return;
+        }
+        let width = area.width.max(1) as usize;
+        let max_lines = ((area.height as usize) * 60 / 100)
+            .max(3)
+            .min(area.height as usize);
+        let palette_render = build_command_palette_lines(view, width, max_lines);
+        if palette_render.lines.is_empty() {
+            return;
+        }
+        let height = palette_render.lines.len().min(max_lines).max(1) as u16;
+        let rect = ratatui::layout::Rect {
+            x: area.x,
+            y: area.y.saturating_add(area.height.saturating_sub(height)),
+            width: area.width,
+            height,
         };
-        f.render_widget(
-            Paragraph::new(query).style(Style::default().fg(Color::Gray)),
-            chunks[0],
-        );
-
-        let items = view
-            .filtered
-            .iter()
-            .filter_map(|idx| view.items.get(*idx))
-            .map(|item| ListItem::new(item.label.as_str()))
-            .collect::<Vec<_>>();
-
-        let list = List::new(items)
-            .block(Block::default().borders(Borders::ALL).title("Commands"))
-            .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
-            .highlight_symbol("▶ ");
-
-        let selected = if view.filtered.is_empty() {
-            None
-        } else {
-            Some(view.selected)
-        };
-        f.render_stateful_widget(list, chunks[1], &mut list_state(selected));
+        f.render_widget(Clear, rect);
+        let paragraph = Paragraph::new(Text::from(palette_render.lines));
+        f.render_widget(paragraph, rect);
     }
 
     fn draw_approvals_overlay(
@@ -3387,28 +5460,33 @@ mod tui {
         #[test]
         fn renders_thread_list_snapshot() -> anyhow::Result<()> {
             let mut state = UiState::new(false);
+            state.header.model_context_window = Some(100_000);
+            state.total_tokens_used = 39_280;
             state.threads = vec![
                 ThreadMeta {
                     thread_id: ThreadId::from_str("00000000-0000-0000-0000-000000000001")?,
                     cwd: Some("/repo".to_string()),
-                    model: Some("gpt-4.1".to_string()),
-                    attention_state: "idle".to_string(),
-                    last_seq: 1,
+                    created_at: None,
+                    updated_at: None,
+                    title: Some("First".to_string()),
+                    first_message: Some("hello".to_string()),
                 },
                 ThreadMeta {
                     thread_id: ThreadId::from_str("00000000-0000-0000-0000-000000000002")?,
                     cwd: Some("/repo".to_string()),
-                    model: Some("gpt-4.1-mini".to_string()),
-                    attention_state: "running".to_string(),
-                    last_seq: 42,
+                    created_at: None,
+                    updated_at: None,
+                    title: Some("Second".to_string()),
+                    first_message: Some("world".to_string()),
                 },
             ];
             state.selected_thread = 1;
 
             let actual = render_to_string(&mut state, 64, 12)?;
             let expected = r#"threads (↑↓ Enter=open n=new r=refresh q/Ctrl-C=quit)           
-  [idle] 00000000-0000-0000-0000-000000000001  cwd=/repo  model=
-▶ [running] 00000000-0000-0000-0000-000000000002  cwd=/repo  mod
+Updated  Title   CWD    Message                                 
+  -        First   /repo  hello                                 
+▶ -        Second  /repo  world                                 
                                                                 
                                                                 
                                                                 
@@ -3416,8 +5494,7 @@ mod tui {
                                                                 
                                                                 
                                                                 
-                                                                
-threads (Ctrl-K=commands)                                       "#;
+69% context left  threads (Ctrl-K=commands)                     "#;
             assert_eq!(actual, expected);
             Ok(())
         }
@@ -3449,22 +5526,31 @@ threads (Ctrl-K=commands)                                       "#;
                 text: "Streaming...".to_string(),
             });
             state.input = "next".to_string();
+            state.header.model_context_window = Some(100_000);
+            state.total_tokens_used = 39_280;
 
             let actual = render_to_string(&mut state, 64, 12)?;
-            let expected = r#"system: [model] gpt-4.1 (global_default)                        
+            let expected = r#"                                                                
+system: [model] gpt-4.1 (global_default)                        
 user: Hello                                                     
 assistant: Hi!                                                  
 assistant: Streaming...                                         
                                                                 
-                                                                
-                                                                
-                                                                
-                                                                
-                                                                
 › next                                                          
-th=00000000 mode=coder model=gpt-4.1 (Ctrl-K)                   "#;
+                                                                
+69% context left  th=00000000 mode=coder model=gpt-4.1 (Ctrl-K) 
+                                                                
+                                                                
+                                                                "#;
             assert_eq!(actual, expected);
             Ok(())
+        }
+
+        #[test]
+        fn parse_inline_context_allows_trailing_space_for_slash_commands() {
+            let ctx = parse_inline_context("/model ").expect("context");
+            assert!(matches!(ctx.kind, InlinePaletteKind::Model));
+            assert_eq!(ctx.query, "");
         }
     }
 }

@@ -545,6 +545,8 @@ pub enum ThreadEventKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         model: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        thinking: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         openai_base_url: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         allowed_tools: Option<Option<Vec<String>>>,

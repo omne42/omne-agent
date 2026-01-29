@@ -222,6 +222,7 @@ pub struct ThreadState {
     pub sandbox_network_access: SandboxNetworkAccess,
     pub mode: String,
     pub model: Option<String>,
+    pub thinking: Option<String>,
     pub openai_base_url: Option<String>,
     pub allowed_tools: Option<Vec<String>>,
     pub last_seq: EventSeq,
@@ -233,6 +234,7 @@ pub struct ThreadState {
     pub pending_approvals: HashSet<ApprovalId>,
     pub running_processes: HashSet<ProcessId>,
     pub failed_processes: HashSet<ProcessId>,
+    pub total_tokens_used: u64,
 }
 
 impl ThreadState {
@@ -252,6 +254,7 @@ impl ThreadState {
             sandbox_network_access: SandboxNetworkAccess::Deny,
             mode: "coder".to_string(),
             model: None,
+            thinking: None,
             openai_base_url: None,
             allowed_tools: None,
             last_seq: EventSeq::ZERO,
@@ -263,6 +266,7 @@ impl ThreadState {
             pending_approvals: HashSet::new(),
             running_processes: HashSet::new(),
             failed_processes: HashSet::new(),
+            total_tokens_used: 0,
         }
     }
 
@@ -313,6 +317,7 @@ impl ThreadState {
                 sandbox_network_access,
                 mode,
                 model,
+                thinking,
                 openai_base_url,
                 allowed_tools,
             } => {
@@ -331,6 +336,9 @@ impl ThreadState {
                 }
                 if let Some(model) = model {
                     self.model = Some(model.clone());
+                }
+                if let Some(thinking) = thinking {
+                    self.thinking = Some(thinking.clone());
                 }
                 if let Some(openai_base_url) = openai_base_url {
                     self.openai_base_url = Some(openai_base_url.clone());
@@ -392,12 +400,39 @@ impl ThreadState {
                     }
                 }
             }
+            ThreadEventKind::AgentStep { token_usage, .. } => {
+                if let Some(usage) = token_usage.as_ref()
+                    && let Some(tokens) = usage_total_tokens(usage)
+                {
+                    self.total_tokens_used = self.total_tokens_used.saturating_add(tokens);
+                }
+            }
+            ThreadEventKind::AssistantMessage { .. } => {}
             _ => {}
         }
 
         self.last_seq = event.seq;
         Ok(())
     }
+}
+
+fn usage_total_tokens(usage: &serde_json::Value) -> Option<u64> {
+    let total_tokens = usage
+        .get("total_tokens")
+        .and_then(serde_json::Value::as_u64);
+    let input_tokens = usage
+        .get("input_tokens")
+        .and_then(serde_json::Value::as_u64);
+    let output_tokens = usage
+        .get("output_tokens")
+        .and_then(serde_json::Value::as_u64);
+
+    total_tokens.or_else(|| match (input_tokens, output_tokens) {
+        (Some(input), Some(output)) => input.checked_add(output),
+        (Some(input), None) => Some(input),
+        (None, Some(output)) => Some(output),
+        (None, None) => None,
+    })
 }
 
 #[cfg(test)]

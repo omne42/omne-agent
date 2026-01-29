@@ -994,6 +994,8 @@ struct ThreadConfigureParams {
     #[serde(default)]
     model: Option<String>,
     #[serde(default)]
+    thinking: Option<String>,
+    #[serde(default)]
     openai_base_url: Option<String>,
     #[serde(default)]
     allowed_tools: Option<Option<Vec<String>>>,

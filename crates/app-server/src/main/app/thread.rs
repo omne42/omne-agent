@@ -205,6 +205,7 @@ async fn handle_thread_request(
                             "last_turn_id": state.last_turn_id,
                             "last_turn_status": state.last_turn_status,
                             "last_turn_reason": state.last_turn_reason,
+                            "total_tokens_used": state.total_tokens_used,
                         }),
                     )
                 }

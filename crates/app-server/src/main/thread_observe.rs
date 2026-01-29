@@ -1,3 +1,5 @@
+use pm_eventlog::ThreadState;
+
 async fn handle_thread_attention(
     server: &Server,
     params: ThreadAttentionParams,
@@ -447,16 +449,46 @@ async fn handle_thread_list_meta(
     params: ThreadListMetaParams,
 ) -> anyhow::Result<Value> {
     let thread_ids = server.thread_store.list_threads().await?;
-    let mut threads = Vec::<Value>::new();
+    let mut threads = Vec::<(Option<i128>, ThreadId, Value)>::new();
 
     for thread_id in thread_ids {
-        let Some(state) = server.thread_store.read_state(thread_id).await? else {
+        let Some(events) = server
+            .thread_store
+            .read_events_since(thread_id, EventSeq::ZERO)
+            .await?
+        else {
             continue;
         };
+        let mut state = ThreadState::new(thread_id);
+        for event in &events {
+            state.apply(event)?;
+        }
 
         if state.archived && !params.include_archived {
             continue;
         }
+
+        let created_at = events.first().map(|event| event.timestamp);
+        let updated_at = events.last().map(|event| event.timestamp);
+        let created_at_rfc3339 = created_at.and_then(|ts| ts.format(&Rfc3339).ok());
+        let updated_at_rfc3339 = updated_at.and_then(|ts| ts.format(&Rfc3339).ok());
+
+        let first_message = events.iter().find_map(|event| match &event.kind {
+            pm_protocol::ThreadEventKind::TurnStarted { input, .. } => Some(input.clone()),
+            _ => None,
+        });
+        let first_message = first_message
+            .map(|text| truncate_chars(&pm_core::redact_text(text.trim()), 500))
+            .filter(|text| !text.trim().is_empty());
+        let title = first_message.as_deref().and_then(|text| {
+            let line = text.lines().find(|line| !line.trim().is_empty())?;
+            let line = line.trim();
+            if line.is_empty() {
+                None
+            } else {
+                Some(truncate_chars(line, 120))
+            }
+        });
 
         let archived_at = state.archived_at.and_then(|ts| ts.format(&Rfc3339).ok());
 
@@ -481,7 +513,10 @@ async fn handle_thread_list_meta(
             }
         };
 
-        threads.push(serde_json::json!({
+        let sort_ts = updated_at
+            .or(created_at)
+            .map(|ts| ts.unix_timestamp_nanos());
+        threads.push((sort_ts, thread_id, serde_json::json!({
             "thread_id": thread_id,
             "cwd": state.cwd,
             "archived": state.archived,
@@ -498,10 +533,23 @@ async fn handle_thread_list_meta(
             "last_turn_status": state.last_turn_status,
             "last_turn_reason": state.last_turn_reason,
             "attention_state": attention_state,
-        }));
+            "created_at": created_at_rfc3339,
+            "updated_at": updated_at_rfc3339,
+            "title": title,
+            "first_message": first_message,
+        })));
     }
 
-    Ok(serde_json::json!({ "threads": threads }))
+    threads.sort_by(|(a_ts, a_id, _), (b_ts, b_id, _)| match (a_ts, b_ts) {
+        (Some(a), Some(b)) => b.cmp(a).then_with(|| a_id.cmp(b_id)),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => a_id.cmp(b_id),
+    });
+
+    Ok(serde_json::json!({
+        "threads": threads.into_iter().map(|(_, _, value)| value).collect::<Vec<_>>(),
+    }))
 }
 
 async fn handle_thread_subscribe(

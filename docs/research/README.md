@@ -18,6 +18,13 @@
 | Superset | `8d17373` | 多 agent 并行调度台、`.superset/config.json` + setup/teardown、外部资源隔离（端口/DB/生命周期脚本） | `docs/research/superset.md` |
 | AionUi | `5abe63b` | CLI agent cowork、CLI/MCP 检测、预览面板与 preview 历史、WebUI 远程 | `docs/research/aion-ui.md` |
 
+## 外部参考（非 snapshot）
+
+| 主题 | 发布日期 | 重点方向 | 笔记 |
+| --- | --- | --- | --- |
+| Unrolling the Codex agent loop（OpenAI） | 2026-01-23 | stateless agent loop、prompt caching、ZDR、compaction | `docs/research/unrolling-the-codex-agent-loop.md` |
+| Codex PR #1641（ZDR + sqlite + 内存密钥） | 2025-07-09 | 本地敏感数据存储策略、ZDR 取舍 | `docs/research/codex-pr-1641-zdr-sqlite.md` |
+
 ## 我们的落地方向（先写在这里，便于对齐）
 
 - `CodePM vNext` 以 `example/codex` 为主底座进行“魔改/复用”，允许直接复制/挪用其能力（优先 Rust 侧 `codex-rs`）。

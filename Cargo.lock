@@ -1655,10 +1655,10 @@ dependencies = [
  "nix 0.29.0",
  "pm-app-server-protocol",
  "pm-core",
+ "pm-eventlog",
  "pm-execpolicy",
  "pm-jsonrpc",
  "pm-mcp-kit",
- "pm-openai",
  "pm-protocol",
  "regex",
  "reqwest",
@@ -2246,6 +2246,7 @@ dependencies = [
  "serde",
  "thiserror 1.0.69",
  "walkdir",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

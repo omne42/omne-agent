@@ -1,3 +1,5 @@
+use crate::model_limits::resolve_model_limits;
+
 async fn handle_thread_configure(
     server: &Server,
     params: ThreadConfigureParams,
@@ -10,6 +12,7 @@ async fn handle_thread_configure(
         current_sandbox_network_access,
         current_mode,
         current_model,
+        current_thinking,
         current_openai_base_url,
         current_allowed_tools,
     ) = {
@@ -22,6 +25,7 @@ async fn handle_thread_configure(
             state.sandbox_network_access,
             state.mode.clone(),
             state.model.clone(),
+            state.thinking.clone(),
             state.openai_base_url.clone(),
             state.allowed_tools.clone(),
         )
@@ -64,6 +68,18 @@ async fn handle_thread_configure(
         }
     }
     let model = params.model.filter(|s| !s.trim().is_empty());
+    let thinking = params
+        .thinking
+        .as_deref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(|value| match value.to_ascii_lowercase().as_str() {
+            "small" | "medium" | "high" | "xhigh" | "unsupported" => Ok(value.to_string()),
+            other => anyhow::bail!(
+                "invalid thinking: {other} (expected: small|medium|high|xhigh|unsupported)"
+            ),
+        })
+        .transpose()?;
     let openai_base_url = params.openai_base_url.filter(|s| !s.trim().is_empty());
     let allowed_tools = match params.allowed_tools {
         None => None,
@@ -87,6 +103,7 @@ async fn handle_thread_configure(
             .is_some_and(|access| access != current_sandbox_network_access)
         || mode.as_ref().is_some_and(|m| m != &current_mode)
         || model.as_ref() != current_model.as_ref()
+        || thinking.as_ref() != current_thinking.as_ref()
         || openai_base_url.as_ref() != current_openai_base_url.as_ref()
         || allowed_tools_changed;
 
@@ -98,6 +115,7 @@ async fn handle_thread_configure(
             sandbox_network_access,
             mode,
             model,
+            thinking,
             openai_base_url,
             allowed_tools,
         })
@@ -130,6 +148,7 @@ async fn handle_thread_config_explain(
     let default_openai_provider = "openai-codex-apikey".to_string();
     let default_openai_base_url = "https://api.openai.com/v1".to_string();
     let default_mode = "coder".to_string();
+    let default_thinking = thinking_label(ditto_llm::ThinkingIntensity::default()).to_string();
 
     let mut effective_approval_policy = pm_protocol::ApprovalPolicy::AutoApprove;
     let mut effective_sandbox_policy = pm_protocol::SandboxPolicy::WorkspaceWrite;
@@ -138,6 +157,7 @@ async fn handle_thread_config_explain(
     let mut effective_mode = default_mode.clone();
     let mut effective_openai_provider = default_openai_provider.clone();
     let mut effective_model = default_model.clone();
+    let mut effective_thinking = default_thinking.clone();
     let mut effective_openai_base_url = default_openai_base_url.clone();
     let mut effective_allowed_tools: Option<Vec<String>> = None;
     let mut layers = vec![serde_json::json!({
@@ -149,6 +169,7 @@ async fn handle_thread_config_explain(
         "mode": effective_mode,
         "openai_provider": effective_openai_provider,
         "model": effective_model,
+        "thinking": effective_thinking,
         "openai_base_url": effective_openai_base_url,
         "allowed_tools": effective_allowed_tools,
     })];
@@ -176,11 +197,23 @@ async fn handle_thread_config_explain(
             "source": "env",
             "openai_provider": effective_openai_provider,
             "model": effective_model,
+            "thinking": effective_thinking,
             "openai_base_url": effective_openai_base_url,
         }));
     }
 
     let project = crate::project_config::load_project_config(&thread_root).await;
+    let project_thinking_for_model = |model: &str| -> String {
+        if project.enabled {
+            let thinking = ditto_llm::select_model_config(&project.openai.models, model)
+                .map(|cfg| cfg.thinking)
+                .unwrap_or_default();
+            thinking_label(thinking).to_string()
+        } else {
+            default_thinking.clone()
+        }
+    };
+
     if project.enabled {
         if let Some(provider) = project.openai.provider.as_deref() {
             effective_openai_provider = provider.to_string();
@@ -206,6 +239,7 @@ async fn handle_thread_config_explain(
                 effective_openai_base_url = provider_base_url;
             }
         }
+        effective_thinking = project_thinking_for_model(&effective_model);
         layers.push(serde_json::json!({
             "source": "project",
             "enabled": true,
@@ -217,6 +251,7 @@ async fn handle_thread_config_explain(
             "load_error": project.load_error,
             "openai_provider": effective_openai_provider,
             "model": effective_model,
+            "thinking": effective_thinking,
             "openai_base_url": effective_openai_base_url,
         }));
     } else if project.config_present || project.load_error.is_some() {
@@ -232,6 +267,7 @@ async fn handle_thread_config_explain(
         }));
     }
 
+    let mut thinking_override: Option<String> = None;
     for event in events {
         if let pm_protocol::ThreadEventKind::ThreadConfigUpdated {
             approval_policy,
@@ -240,6 +276,7 @@ async fn handle_thread_config_explain(
             sandbox_network_access,
             mode,
             model,
+            thinking,
             openai_base_url,
             allowed_tools,
         } = event.kind
@@ -260,6 +297,13 @@ async fn handle_thread_config_explain(
             }
             if let Some(model) = model {
                 effective_model = model;
+                if thinking_override.is_none() {
+                    effective_thinking = project_thinking_for_model(&effective_model);
+                }
+            }
+            if let Some(thinking) = thinking {
+                effective_thinking = thinking.clone();
+                thinking_override = Some(thinking);
             }
             if let Some(openai_base_url) = openai_base_url {
                 effective_openai_base_url = openai_base_url;
@@ -278,6 +322,7 @@ async fn handle_thread_config_explain(
                 "mode": effective_mode,
                 "openai_provider": effective_openai_provider,
                 "model": effective_model,
+                "thinking": effective_thinking,
                 "openai_base_url": effective_openai_base_url,
                 "allowed_tools": effective_allowed_tools,
             }));
@@ -318,6 +363,13 @@ async fn handle_thread_config_explain(
         })
     });
 
+    let model_config = if project.enabled {
+        ditto_llm::select_model_config(&project.openai.models, &effective_model)
+    } else {
+        None
+    };
+    let limits = resolve_model_limits(&effective_model, model_config);
+
     Ok(serde_json::json!({
         "thread_id": params.thread_id,
         "effective": {
@@ -327,8 +379,11 @@ async fn handle_thread_config_explain(
             "sandbox_network_access": effective_sandbox_network_access,
             "mode": effective_mode,
             "model": effective_model,
+            "thinking": effective_thinking,
             "openai_base_url": effective_openai_base_url,
             "allowed_tools": effective_allowed_tools,
+            "model_context_window": limits.context_window,
+            "auto_compact_token_limit": limits.auto_compact_token_limit,
         },
         "mode_catalog": {
             "source": mode_catalog_source,
@@ -339,6 +394,16 @@ async fn handle_thread_config_explain(
         "effective_mode_def": effective_mode_def,
         "layers": layers,
     }))
+}
+
+fn thinking_label(value: ditto_llm::ThinkingIntensity) -> &'static str {
+    match value {
+        ditto_llm::ThinkingIntensity::Unsupported => "unsupported",
+        ditto_llm::ThinkingIntensity::Small => "small",
+        ditto_llm::ThinkingIntensity::Medium => "medium",
+        ditto_llm::ThinkingIntensity::High => "high",
+        ditto_llm::ThinkingIntensity::XHigh => "xhigh",
+    }
 }
 
 const KNOWN_ALLOWED_TOOLS: &[&str] = &[

@@ -229,6 +229,7 @@ hooks:
                 sandbox_network_access: None,
                 mode: None,
                 model: None,
+                thinking: None,
                 openai_base_url: None,
                 allowed_tools: Some(Some(vec!["repo/search".to_string()])),
             },

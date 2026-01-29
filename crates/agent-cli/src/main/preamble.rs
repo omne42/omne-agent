@@ -571,6 +571,8 @@ struct ThreadConfigureArgs {
     model: Option<String>,
     #[arg(long)]
     openai_base_url: Option<String>,
+    #[arg(long)]
+    thinking: Option<String>,
 }
 
 #[derive(Parser)]

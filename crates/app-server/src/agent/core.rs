@@ -5,6 +5,7 @@ use std::time::Duration;
 use anyhow::Context;
 use async_trait::async_trait;
 use crate::project_config::ProjectOpenAiOverrides;
+use crate::model_limits::resolve_model_limits;
 use base64::Engine;
 use futures_util::stream::{self, StreamExt};
 use ditto_llm::ThinkingIntensity;
@@ -18,6 +19,8 @@ use thiserror::Error;
 use time::format_description::well_known::Rfc3339;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::CancellationToken;
+
+type OpenAiItem = Value;
 
 const DEFAULT_MODEL: &str = "gpt-4.1";
 const DEFAULT_OPENAI_PROVIDER: &str = "openai-codex-apikey";
@@ -334,11 +337,16 @@ fn hash_json_value(value: &Value, state: &mut impl std::hash::Hasher) {
     }
 }
 
-fn should_auto_summarize(total_tokens_used: u64, max_total_tokens: u64, threshold_pct: u64) -> bool {
-    if max_total_tokens == 0 {
-        return false;
+fn should_auto_compact(
+    total_tokens_used: u64,
+    auto_compact_token_limit: Option<u64>,
+    max_total_tokens: u64,
+    threshold_pct: u64,
+) -> bool {
+    if let Some(limit) = auto_compact_token_limit {
+        return limit > 0 && total_tokens_used >= limit;
     }
-    if threshold_pct == 0 {
+    if max_total_tokens == 0 || threshold_pct == 0 {
         return false;
     }
     let threshold_pct = threshold_pct.min(MAX_AUTO_SUMMARY_THRESHOLD_PCT);
@@ -346,72 +354,98 @@ fn should_auto_summarize(total_tokens_used: u64, max_total_tokens: u64, threshol
     threshold > 0 && total_tokens_used >= threshold
 }
 
-fn estimate_context_tokens(instructions: &str, input_items: &[pm_openai::ResponseItem]) -> u64 {
+fn estimate_context_tokens(instructions: &str, input_items: &[OpenAiItem]) -> u64 {
     let mut chars = instructions.chars().count() as u64;
     for item in input_items {
-        chars = chars.saturating_add(estimate_response_item_chars(item));
+        chars = chars.saturating_add(estimate_openai_item_chars(item));
     }
     (chars.saturating_add(3)) / 4
 }
 
-fn estimate_response_item_chars(item: &pm_openai::ResponseItem) -> u64 {
-    match item {
-        pm_openai::ResponseItem::Message { role, content } => {
+fn estimate_openai_item_chars(item: &OpenAiItem) -> u64 {
+    let kind = item.get("type").and_then(Value::as_str).unwrap_or("");
+    match kind {
+        "message" => {
+            let role = item
+                .get("role")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             let mut chars = role.chars().count() as u64;
-            for part in content {
-                match part {
-                    pm_openai::ContentItem::InputText { text }
-                    | pm_openai::ContentItem::OutputText { text } => {
+            let content = item.get("content").and_then(Value::as_array);
+            if let Some(content) = content {
+                for part in content {
+                    let part_kind = part.get("type").and_then(Value::as_str).unwrap_or("");
+                    if part_kind != "input_text" && part_kind != "output_text" {
+                        continue;
+                    }
+                    if let Some(text) = part.get("text").and_then(Value::as_str) {
                         chars = chars.saturating_add(text.chars().count() as u64);
                     }
-                    pm_openai::ContentItem::Other => {}
                 }
             }
             chars
         }
-        pm_openai::ResponseItem::FunctionCall {
-            name,
-            arguments,
-            call_id,
-        } => {
+        "function_call" => {
+            let name = item.get("name").and_then(Value::as_str).unwrap_or_default();
+            let arguments = item
+                .get("arguments")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let call_id = item
+                .get("call_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             (name.chars().count() as u64)
                 .saturating_add(arguments.chars().count() as u64)
                 .saturating_add(call_id.chars().count() as u64)
         }
-        pm_openai::ResponseItem::FunctionCallOutput { call_id, output } => {
+        "function_call_output" => {
+            let call_id = item
+                .get("call_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let output = item.get("output").and_then(Value::as_str).unwrap_or_default();
             (call_id.chars().count() as u64).saturating_add(output.chars().count() as u64)
         }
-        pm_openai::ResponseItem::Other => 0,
+        _ => 0,
     }
 }
 
-fn render_items_for_summary(items: &[pm_openai::ResponseItem], max_chars: usize) -> String {
+fn render_items_for_summary(items: &[OpenAiItem], max_chars: usize) -> String {
     let mut out = String::new();
 
     for item in items {
-        match item {
-            pm_openai::ResponseItem::Message { role, content } => {
-                for part in content {
-                    let text = match part {
-                        pm_openai::ContentItem::InputText { text } => text,
-                        pm_openai::ContentItem::OutputText { text } => text,
-                        pm_openai::ContentItem::Other => continue,
-                    };
-                    if text.trim().is_empty() {
-                        continue;
+        let kind = item.get("type").and_then(Value::as_str).unwrap_or("");
+        match kind {
+            "message" => {
+                let role = item
+                    .get("role")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                if let Some(content) = item.get("content").and_then(Value::as_array) {
+                    for part in content {
+                        let part_kind = part.get("type").and_then(Value::as_str).unwrap_or("");
+                        if part_kind != "input_text" && part_kind != "output_text" {
+                            continue;
+                        }
+                        let Some(text) = part.get("text").and_then(Value::as_str) else {
+                            continue;
+                        };
+                        if text.trim().is_empty() {
+                            continue;
+                        }
+                        out.push_str(role);
+                        out.push_str(": ");
+                        out.push_str(text.trim());
+                        out.push('\n');
                     }
-                    out.push_str(role);
-                    out.push_str(": ");
-                    out.push_str(text.trim());
-                    out.push('\n');
                 }
             }
-            pm_openai::ResponseItem::FunctionCall {
-                name,
-                arguments,
-                call_id,
-            } => {
-                let arguments = pm_core::redact_text(arguments);
+            "function_call" => {
+                let name = item.get("name").and_then(Value::as_str).unwrap_or("");
+                let call_id = item.get("call_id").and_then(Value::as_str).unwrap_or("");
+                let arguments_raw = item.get("arguments").and_then(Value::as_str).unwrap_or("");
+                let arguments = pm_core::redact_text(arguments_raw);
                 let args_preview = truncate_chars(&arguments, 200);
                 out.push_str("[tool_call] ");
                 out.push_str(name.trim());
@@ -423,8 +457,10 @@ fn render_items_for_summary(items: &[pm_openai::ResponseItem], max_chars: usize)
                 }
                 out.push('\n');
             }
-            pm_openai::ResponseItem::FunctionCallOutput { call_id, output } => {
-                let output = pm_core::redact_text(output);
+            "function_call_output" => {
+                let call_id = item.get("call_id").and_then(Value::as_str).unwrap_or("");
+                let output_raw = item.get("output").and_then(Value::as_str).unwrap_or("");
+                let output = pm_core::redact_text(output_raw);
                 let output_preview = truncate_chars(&output, 500);
                 out.push_str("[tool_output] call_id=");
                 out.push_str(call_id.trim());
@@ -434,7 +470,7 @@ fn render_items_for_summary(items: &[pm_openai::ResponseItem], max_chars: usize)
                 }
                 out.push('\n');
             }
-            pm_openai::ResponseItem::Other => {}
+            _ => {}
         }
 
         if max_chars > 0 && out.chars().count() > max_chars.saturating_mul(2) {
@@ -448,30 +484,27 @@ fn render_items_for_summary(items: &[pm_openai::ResponseItem], max_chars: usize)
 #[derive(Debug, Clone)]
 struct AgentLlmResponse {
     id: String,
-    output: Vec<pm_openai::ResponseItem>,
-    usage: Option<pm_openai::TokenUsage>,
+    output: Vec<OpenAiItem>,
+    usage: Option<Value>,
     warnings: Vec<ditto_llm::Warning>,
 }
 
-fn token_usage_from_ditto_usage(usage: &ditto_llm::Usage) -> Option<pm_openai::TokenUsage> {
+fn token_usage_json_from_ditto_usage(usage: &ditto_llm::Usage) -> Option<Value> {
     if usage.input_tokens.is_none() && usage.output_tokens.is_none() && usage.total_tokens.is_none()
     {
         return None;
     }
 
-    Some(pm_openai::TokenUsage {
-        input_tokens: usage.input_tokens,
-        output_tokens: usage.output_tokens,
-        total_tokens: usage.total_tokens,
-        input_tokens_details: None,
-        output_tokens_details: None,
-        other: std::collections::BTreeMap::new(),
-    })
+    Some(serde_json::json!({
+        "input_tokens": usage.input_tokens,
+        "output_tokens": usage.output_tokens,
+        "total_tokens": usage.total_tokens,
+    }))
 }
 
 fn response_items_to_ditto_messages(
     instructions: &str,
-    items: &[pm_openai::ResponseItem],
+    items: &[OpenAiItem],
     attachments: &[ditto_llm::ContentPart],
 ) -> Vec<ditto_llm::Message> {
     let mut out = Vec::<ditto_llm::Message>::new();
@@ -480,9 +513,14 @@ fn response_items_to_ditto_messages(
     }
 
     for item in items {
-        match item {
-            pm_openai::ResponseItem::Message { role, content } => {
-                let role = match role.as_str() {
+        let kind = item.get("type").and_then(Value::as_str).unwrap_or("");
+        match kind {
+            "message" => {
+                let role = item
+                    .get("role")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let role = match role {
                     "system" => ditto_llm::Role::System,
                     "user" => ditto_llm::Role::User,
                     "assistant" => ditto_llm::Role::Assistant,
@@ -491,49 +529,66 @@ fn response_items_to_ditto_messages(
                 };
 
                 let mut parts = Vec::<ditto_llm::ContentPart>::new();
-                for part in content {
-                    match part {
-                        pm_openai::ContentItem::InputText { text }
-                        | pm_openai::ContentItem::OutputText { text } => {
-                            if text.is_empty() {
-                                continue;
-                            }
-                            parts.push(ditto_llm::ContentPart::Text { text: text.clone() });
+                if let Some(content) = item.get("content").and_then(Value::as_array) {
+                    for part in content {
+                        let part_kind = part.get("type").and_then(Value::as_str).unwrap_or("");
+                        if part_kind != "input_text" && part_kind != "output_text" {
+                            continue;
                         }
-                        pm_openai::ContentItem::Other => {}
+                        let Some(text) = part.get("text").and_then(Value::as_str) else {
+                            continue;
+                        };
+                        if text.is_empty() {
+                            continue;
+                        }
+                        parts.push(ditto_llm::ContentPart::Text {
+                            text: text.to_string(),
+                        });
                     }
                 }
                 if !parts.is_empty() {
                     out.push(ditto_llm::Message { role, content: parts });
                 }
             }
-            pm_openai::ResponseItem::FunctionCall {
-                name,
-                arguments,
-                call_id,
-            } => {
-                let args = serde_json::from_str::<Value>(arguments)
-                    .unwrap_or_else(|_| Value::String(arguments.clone()));
+            "function_call" => {
+                let Some(call_id) = item.get("call_id").and_then(Value::as_str) else {
+                    continue;
+                };
+                let Some(name) = item.get("name").and_then(Value::as_str) else {
+                    continue;
+                };
+                let arguments_raw = item.get("arguments").and_then(Value::as_str).unwrap_or("");
+                let raw = arguments_raw.trim();
+                let raw_json = if raw.is_empty() { "{}" } else { raw };
+                let args = serde_json::from_str::<Value>(raw_json)
+                    .unwrap_or_else(|_| Value::String(arguments_raw.to_string()));
                 out.push(ditto_llm::Message {
                     role: ditto_llm::Role::Assistant,
                     content: vec![ditto_llm::ContentPart::ToolCall {
-                        id: call_id.clone(),
-                        name: name.clone(),
+                        id: call_id.to_string(),
+                        name: name.to_string(),
                         arguments: args,
                     }],
                 });
             }
-            pm_openai::ResponseItem::FunctionCallOutput { call_id, output } => {
+            "function_call_output" => {
+                let Some(call_id) = item.get("call_id").and_then(Value::as_str) else {
+                    continue;
+                };
+                let output = item
+                    .get("output")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
                 out.push(ditto_llm::Message {
                     role: ditto_llm::Role::Tool,
                     content: vec![ditto_llm::ContentPart::ToolResult {
-                        tool_call_id: call_id.clone(),
-                        content: output.clone(),
+                        tool_call_id: call_id.to_string(),
+                        content: output.to_string(),
                         is_error: None,
                     }],
                 });
             }
-            pm_openai::ResponseItem::Other => {}
+            _ => {}
         }
     }
 
@@ -598,7 +653,7 @@ fn tool_specs_to_ditto_tools(specs: &[Value]) -> anyhow::Result<Vec<ditto_llm::T
             name: name.to_string(),
             description,
             parameters,
-            strict: None,
+            strict: Some(false),
         });
     }
     Ok(out)
@@ -645,6 +700,7 @@ struct ProviderRuntime {
     config: ditto_llm::ProviderConfig,
     capabilities: ditto_llm::ProviderCapabilities,
     client: Arc<dyn ditto_llm::LanguageModel>,
+    openai_responses_client: Option<Arc<ditto_llm::OpenAI>>,
     file_uploader: Option<Arc<dyn FileUploader>>,
 }
 
@@ -796,31 +852,31 @@ async fn build_provider_runtime(
         capabilities: Some(provider_capabilities),
     };
 
-    let (client, file_uploader): (
-        Arc<dyn ditto_llm::LanguageModel>,
-        Option<Arc<dyn FileUploader>>,
-    ) = if provider_capabilities.reasoning {
-        let client = Arc::new(
+    let (client, openai_responses_client, file_uploader) = if provider_capabilities.reasoning {
+        let openai = Arc::new(
             ditto_llm::OpenAI::from_config(&provider_for_llm, env)
                 .await
                 .context("build OpenAI Responses client")?,
         );
-        let file_uploader: Arc<dyn FileUploader> = client.clone();
-        (client, Some(file_uploader))
+        let client: Arc<dyn ditto_llm::LanguageModel> = openai.clone();
+        let file_uploader: Arc<dyn FileUploader> = openai.clone();
+        (client, Some(openai), Some(file_uploader))
     } else {
-        let client = Arc::new(
+        let chat = Arc::new(
             ditto_llm::OpenAICompatible::from_config(&provider_for_llm, env)
                 .await
                 .context("build OpenAI-compatible Chat Completions client")?,
         );
-        let file_uploader: Arc<dyn FileUploader> = client.clone();
-        (client, Some(file_uploader))
+        let client: Arc<dyn ditto_llm::LanguageModel> = chat.clone();
+        let file_uploader: Arc<dyn FileUploader> = chat;
+        (client, None, Some(file_uploader))
     };
 
     Ok(ProviderRuntime {
         config: provider_for_llm,
         capabilities: provider_capabilities,
         client,
+        openai_responses_client,
         file_uploader,
     })
 }
@@ -934,25 +990,24 @@ pub async fn run_agent_turn(
         auth: provider_config.auth.clone(),
         capabilities: Some(provider_capabilities),
     };
-    let (model_client, file_uploader): (
-        Arc<dyn ditto_llm::LanguageModel>,
-        Option<Arc<dyn FileUploader>>,
-    ) = if provider_capabilities.reasoning {
-        let model_client = Arc::new(
+    let (model_client, openai_responses_client, file_uploader) = if provider_capabilities.reasoning {
+        let openai = Arc::new(
             ditto_llm::OpenAI::from_config(&provider_for_llm, &env)
                 .await
                 .context("build OpenAI Responses client")?,
         );
-        let file_uploader: Arc<dyn FileUploader> = model_client.clone();
-        (model_client, Some(file_uploader))
+        let model_client: Arc<dyn ditto_llm::LanguageModel> = openai.clone();
+        let file_uploader: Arc<dyn FileUploader> = openai.clone();
+        (model_client, Some(openai), Some(file_uploader))
     } else {
-        let model_client = Arc::new(
+        let chat = Arc::new(
             ditto_llm::OpenAICompatible::from_config(&provider_for_llm, &env)
                 .await
                 .context("build OpenAI-compatible Chat Completions client")?,
         );
-        let file_uploader: Arc<dyn FileUploader> = model_client.clone();
-        (model_client, Some(file_uploader))
+        let model_client: Arc<dyn ditto_llm::LanguageModel> = chat.clone();
+        let file_uploader: Arc<dyn FileUploader> = chat;
+        (model_client, None, Some(file_uploader))
     };
 
     let fallbacks = std::env::var("CODE_PM_OPENAI_FALLBACK_PROVIDERS")
@@ -967,6 +1022,7 @@ pub async fn run_agent_turn(
             config: provider_for_llm,
             capabilities: provider_capabilities,
             client: model_client.clone(),
+            openai_responses_client,
             file_uploader,
         },
     );
@@ -1111,12 +1167,14 @@ pub async fn run_agent_turn(
             match ctx_items {
                 Ok(ctx_items) => insert_context_before_last_user_message(&mut input_items, ctx_items),
                 Err(err) => {
-                    input_items.push(pm_openai::ResponseItem::Message {
-                        role: "system".to_string(),
-                        content: vec![pm_openai::ContentItem::InputText {
-                            text: format!("[context_refs] failed to resolve: {}", err),
-                        }],
-                    });
+                    input_items.push(serde_json::json!({
+                        "type": "message",
+                        "role": "system",
+                        "content": [{
+                            "type": "input_text",
+                            "text": format!("[context_refs] failed to resolve: {}", err),
+                        }]
+                    }));
                 }
             }
         }
@@ -1238,6 +1296,20 @@ pub async fn run_agent_turn(
             })
             .await;
     }
+    let model_config = ditto_llm::select_model_config(&project_overrides.models, &final_model);
+    let limits = resolve_model_limits(&final_model, model_config);
+    let starting_total_tokens_used =
+        match thread_total_tokens_used(&server.thread_store, thread_id).await {
+            Ok(total) => total,
+            Err(err) => {
+                tracing::warn!(
+                    thread_id = %thread_id,
+                    error = %err,
+                    "failed to compute total token usage"
+                );
+                0
+            }
+        };
     let cfg = ToolLoopConfig {
         max_agent_steps,
         max_tool_calls,
@@ -1247,6 +1319,8 @@ pub async fn run_agent_turn(
         llm_retry_base_delay,
         llm_retry_max_delay,
         max_total_tokens,
+        starting_total_tokens_used,
+        auto_compact_token_limit: limits.auto_compact_token_limit,
         auto_summary_threshold_pct,
         auto_summary_source_max_chars,
         auto_summary_tail_items,
@@ -1277,6 +1351,7 @@ pub async fn run_agent_turn(
         env,
         tools,
         instructions,
+        turn_input: input,
         input_items,
         tool_model,
         model_fallbacks,
@@ -1315,12 +1390,11 @@ struct AutoCompactSummaryContext<'a> {
     max_openai_request_duration: Duration,
     max_total_tokens: u64,
     total_tokens_used: &'a mut u64,
-    input_items: &'a mut Vec<pm_openai::ResponseItem>,
+    input_items: &'a mut Vec<OpenAiItem>,
 }
 
 #[derive(Clone, Copy)]
 struct AutoCompactSummaryConfig {
-    threshold_pct: u64,
     source_max_chars: usize,
     tail_items: usize,
 }
@@ -1367,7 +1441,7 @@ async fn auto_compact_summary(
     };
 
     if max_total_tokens > 0
-        && let Some(usage) = token_usage_from_ditto_usage(&resp.usage)
+        && let Some(usage) = token_usage_json_from_ditto_usage(&resp.usage)
         && let Some(tokens) = usage_total_tokens(&usage)
     {
         *total_tokens_used = total_tokens_used.saturating_add(tokens);
@@ -1398,7 +1472,7 @@ async fn auto_compact_summary(
             approval_id: None,
             artifact_id: None,
             artifact_type: "summary".to_string(),
-            summary: format!("Summary (auto compact at {0}% of token budget)", cfg.threshold_pct),
+            summary: "Summary (auto compact)".to_string(),
             text: summary_text.clone(),
         },
     )
@@ -1442,10 +1516,11 @@ async fn auto_compact_summary(
     }
 
     input_items.clear();
-    input_items.push(pm_openai::ResponseItem::Message {
-        role: "system".to_string(),
-        content: vec![pm_openai::ContentItem::InputText { text: system_text }],
-    });
+    input_items.push(serde_json::json!({
+        "type": "message",
+        "role": "system",
+        "content": [{ "type": "input_text", "text": system_text }],
+    }));
     input_items.extend(tail);
 
     Ok(true)
@@ -1680,13 +1755,28 @@ fn tool_is_read_only(tool_name: &str) -> bool {
     )
 }
 
-fn usage_total_tokens(usage: &pm_openai::TokenUsage) -> Option<u64> {
-    usage.total_tokens.or_else(|| match (usage.input_tokens, usage.output_tokens) {
+fn usage_total_tokens(usage: &Value) -> Option<u64> {
+    let total_tokens = usage.get("total_tokens").and_then(Value::as_u64);
+    let input_tokens = usage.get("input_tokens").and_then(Value::as_u64);
+    let output_tokens = usage.get("output_tokens").and_then(Value::as_u64);
+
+    total_tokens.or_else(|| match (input_tokens, output_tokens) {
         (Some(input), Some(output)) => input.checked_add(output),
         (Some(input), None) => Some(input),
         (None, Some(output)) => Some(output),
         (None, None) => None,
     })
+}
+
+async fn thread_total_tokens_used(
+    thread_store: &pm_core::ThreadStore,
+    thread_id: ThreadId,
+) -> anyhow::Result<u64> {
+    Ok(thread_store
+        .read_state(thread_id)
+        .await?
+        .map(|state| state.total_tokens_used)
+        .unwrap_or(0))
 }
 
 async fn load_latest_summary_artifact(
@@ -1753,7 +1843,7 @@ async fn load_latest_summary_artifact(
 async fn build_conversation(
     server: &super::Server,
     thread_id: ThreadId,
-) -> anyhow::Result<Vec<pm_openai::ResponseItem>> {
+) -> anyhow::Result<Vec<OpenAiItem>> {
     let events = server
         .thread_store
         .read_events_since(thread_id, EventSeq::ZERO)
@@ -1772,16 +1862,18 @@ async fn build_conversation(
 
         let summary_text = pm_core::redact_text(&summary_text);
         if !summary_text.trim().is_empty() {
-            input.push(pm_openai::ResponseItem::Message {
-                role: "system".to_string(),
-                content: vec![pm_openai::ContentItem::InputText {
-                    text: format!(
+            input.push(serde_json::json!({
+                "type": "message",
+                "role": "system",
+                "content": [{
+                    "type": "input_text",
+                    "text": format!(
                         "# Context summary\n\n{}\n\n(summary artifact_id: {})",
                         summary_text.trim(),
                         meta.artifact_id
                     ),
-                }],
-            });
+                }]
+            }));
         }
 
         let mut start_idx = 0usize;
@@ -1804,23 +1896,26 @@ async fn build_conversation(
         for event in slice {
             match &event.kind {
                 ThreadEventKind::TurnStarted { input: text, .. } => {
-                    input.push(pm_openai::ResponseItem::Message {
-                        role: "user".to_string(),
-                        content: vec![pm_openai::ContentItem::InputText { text: text.clone() }],
-                    });
+                    input.push(serde_json::json!({
+                        "type": "message",
+                        "role": "user",
+                        "content": [{ "type": "input_text", "text": text }]
+                    }));
                 }
                 ThreadEventKind::AssistantMessage { text, .. } => {
-                    input.push(pm_openai::ResponseItem::Message {
-                        role: "assistant".to_string(),
-                        content: vec![pm_openai::ContentItem::OutputText { text: text.clone() }],
-                    });
+                    input.push(serde_json::json!({
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{ "type": "output_text", "text": text }]
+                    }));
                 }
                 other => {
                     if let Some(text) = format_event_for_context(other) {
-                        input.push(pm_openai::ResponseItem::Message {
-                            role: "assistant".to_string(),
-                            content: vec![pm_openai::ContentItem::OutputText { text }],
-                        });
+                        input.push(serde_json::json!({
+                            "type": "message",
+                            "role": "assistant",
+                            "content": [{ "type": "output_text", "text": text }]
+                        }));
                     }
                 }
             }
@@ -1832,23 +1927,26 @@ async fn build_conversation(
     for event in events {
         match event.kind {
             ThreadEventKind::TurnStarted { input: text, .. } => {
-                input.push(pm_openai::ResponseItem::Message {
-                    role: "user".to_string(),
-                    content: vec![pm_openai::ContentItem::InputText { text }],
-                });
+                input.push(serde_json::json!({
+                    "type": "message",
+                    "role": "user",
+                    "content": [{ "type": "input_text", "text": text }]
+                }));
             }
             ThreadEventKind::AssistantMessage { text, .. } => {
-                input.push(pm_openai::ResponseItem::Message {
-                    role: "assistant".to_string(),
-                    content: vec![pm_openai::ContentItem::OutputText { text }],
-                });
+                input.push(serde_json::json!({
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{ "type": "output_text", "text": text }]
+                }));
             }
             other => {
                 if let Some(text) = format_event_for_context(&other) {
-                    input.push(pm_openai::ResponseItem::Message {
-                        role: "assistant".to_string(),
-                        content: vec![pm_openai::ContentItem::OutputText { text }],
-                    });
+                    input.push(serde_json::json!({
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{ "type": "output_text", "text": text }]
+                    }));
                 }
             }
         }
@@ -2252,7 +2350,7 @@ async fn context_refs_to_messages(
     turn_id: TurnId,
     refs: &[pm_protocol::ContextRef],
     cancel: CancellationToken,
-) -> anyhow::Result<Vec<pm_openai::ResponseItem>> {
+) -> anyhow::Result<Vec<OpenAiItem>> {
     const DEFAULT_CONTEXT_FILE_MAX_BYTES: u64 = 64 * 1024;
     const MAX_CONTEXT_FILE_MAX_BYTES: u64 = 4 * 1024 * 1024;
     const DEFAULT_CONTEXT_DIFF_MAX_BYTES: u64 = 1024 * 1024;
@@ -2274,8 +2372,16 @@ async fn context_refs_to_messages(
                 });
 
                 let (output, hook_messages) =
-                    match run_tool_call(server, thread_id, Some(turn_id), "file_read", args, cancel.clone())
-                        .await
+                    match run_tool_call(
+                        server,
+                        thread_id,
+                        Some(turn_id),
+                        "file_read",
+                        args,
+                        cancel.clone(),
+                        true,
+                    )
+                    .await
                     {
                         Ok(outcome) => (outcome.output, outcome.hook_messages),
                         Err(err) => (serde_json::json!({ "error": err.to_string() }), Vec::new()),
@@ -2332,10 +2438,11 @@ async fn context_refs_to_messages(
                 if denied {
                     msg.push_str("\nstatus: denied\n");
                     msg.push_str(&format!("details: {}\n", json_one_line(&output, 2000)));
-                    out.push(pm_openai::ResponseItem::Message {
-                        role: "system".to_string(),
-                        content: vec![pm_openai::ContentItem::InputText { text: msg }],
-                    });
+                    out.push(serde_json::json!({
+                        "type": "message",
+                        "role": "system",
+                        "content": [{ "type": "input_text", "text": msg }],
+                    }));
                     continue;
                 }
 
@@ -2343,10 +2450,11 @@ async fn context_refs_to_messages(
                 msg.push_str(text.trim_end());
                 msg.push_str("\n```\n");
 
-                out.push(pm_openai::ResponseItem::Message {
-                    role: "system".to_string(),
-                    content: vec![pm_openai::ContentItem::InputText { text: msg }],
-                });
+                out.push(serde_json::json!({
+                    "type": "message",
+                    "role": "system",
+                    "content": [{ "type": "input_text", "text": msg }],
+                }));
             }
             pm_protocol::ContextRef::Diff(diff) => {
                 let max_bytes = diff
@@ -2358,8 +2466,16 @@ async fn context_refs_to_messages(
                     "max_bytes": max_bytes,
                 });
                 let (output, hook_messages) =
-                    match run_tool_call(server, thread_id, Some(turn_id), "thread_diff", args, cancel.clone())
-                        .await
+                    match run_tool_call(
+                        server,
+                        thread_id,
+                        Some(turn_id),
+                        "thread_diff",
+                        args,
+                        cancel.clone(),
+                        true,
+                    )
+                    .await
                     {
                         Ok(outcome) => (outcome.output, outcome.hook_messages),
                         Err(err) => (serde_json::json!({ "error": err.to_string() }), Vec::new()),
@@ -2390,10 +2506,11 @@ async fn context_refs_to_messages(
                     msg.push_str("\nNote: diff content is stored as an artifact. Use `artifact_read` if you need the full text.\n");
                 }
 
-                out.push(pm_openai::ResponseItem::Message {
-                    role: "system".to_string(),
-                    content: vec![pm_openai::ContentItem::InputText { text: msg }],
-                });
+                out.push(serde_json::json!({
+                    "type": "message",
+                    "role": "system",
+                    "content": [{ "type": "input_text", "text": msg }],
+                }));
             }
         }
     }
@@ -2402,8 +2519,8 @@ async fn context_refs_to_messages(
 }
 
 fn insert_context_before_last_user_message(
-    input_items: &mut Vec<pm_openai::ResponseItem>,
-    ctx_items: Vec<pm_openai::ResponseItem>,
+    input_items: &mut Vec<OpenAiItem>,
+    ctx_items: Vec<OpenAiItem>,
 ) {
     if ctx_items.is_empty() {
         return;
@@ -2411,7 +2528,10 @@ fn insert_context_before_last_user_message(
 
     let insert_at = input_items
         .iter()
-        .rposition(|item| matches!(item, pm_openai::ResponseItem::Message { role, .. } if role == "user"))
+        .rposition(|item| {
+            item.get("type").and_then(Value::as_str) == Some("message")
+                && item.get("role").and_then(Value::as_str) == Some("user")
+        })
         .unwrap_or(input_items.len());
 
     input_items.splice(insert_at..insert_at, ctx_items);
@@ -2456,10 +2576,11 @@ fn format_event_for_context(kind: &ThreadEventKind) -> Option<String> {
             sandbox_network_access,
             mode,
             model,
+            thinking,
             openai_base_url,
             allowed_tools,
         } => Some(format!(
-            "[thread/config] approval_policy={approval_policy:?} sandbox_policy={} sandbox_writable_roots={} sandbox_network_access={} mode={} model={} openai_base_url={} allowed_tools={}",
+            "[thread/config] approval_policy={approval_policy:?} sandbox_policy={} sandbox_writable_roots={} sandbox_network_access={} mode={} model={} thinking={} openai_base_url={} allowed_tools={}",
             sandbox_policy
                 .as_ref()
                 .map(|v| format!("{v:?}"))
@@ -2474,6 +2595,7 @@ fn format_event_for_context(kind: &ThreadEventKind) -> Option<String> {
                 .unwrap_or_else(|| "<unchanged>".to_string()),
             mode.as_deref().unwrap_or("<unchanged>"),
             model.as_deref().unwrap_or("<unchanged>"),
+            thinking.as_deref().unwrap_or("<unchanged>"),
             openai_base_url.as_deref().unwrap_or("<unchanged>"),
             match allowed_tools {
                 None => "<unchanged>".to_string(),
@@ -2593,18 +2715,23 @@ fn truncate_chars(input: &str, max_chars: usize) -> String {
     out
 }
 
-fn extract_assistant_text(items: &[pm_openai::ResponseItem]) -> String {
+fn extract_assistant_text(items: &[OpenAiItem]) -> String {
     let mut out = String::new();
     for item in items {
-        let pm_openai::ResponseItem::Message { role, content } = item else {
-            continue;
-        };
-        if role != "assistant" {
+        if item.get("type").and_then(Value::as_str) != Some("message") {
             continue;
         }
-        for c in content {
-            if let pm_openai::ContentItem::OutputText { text } = c {
-                out.push_str(text);
+        if item.get("role").and_then(Value::as_str) != Some("assistant") {
+            continue;
+        }
+        if let Some(content) = item.get("content").and_then(Value::as_array) {
+            for part in content {
+                if part.get("type").and_then(Value::as_str) != Some("output_text") {
+                    continue;
+                }
+                if let Some(text) = part.get("text").and_then(Value::as_str) {
+                    out.push_str(text);
+                }
             }
         }
     }
@@ -2633,27 +2760,20 @@ mod tool_parallelism_tests {
 
     #[test]
     fn usage_total_tokens_prefers_total_tokens() {
-        let usage = pm_openai::TokenUsage {
-            input_tokens: Some(10),
-            output_tokens: Some(5),
-            total_tokens: Some(20),
-            input_tokens_details: None,
-            output_tokens_details: None,
-            other: std::collections::BTreeMap::new(),
-        };
+        let usage = serde_json::json!({
+            "input_tokens": 10u64,
+            "output_tokens": 5u64,
+            "total_tokens": 20u64,
+        });
         assert_eq!(usage_total_tokens(&usage), Some(20));
     }
 
     #[test]
     fn usage_total_tokens_falls_back_to_input_plus_output() {
-        let usage = pm_openai::TokenUsage {
-            input_tokens: Some(10),
-            output_tokens: Some(5),
-            total_tokens: None,
-            input_tokens_details: None,
-            output_tokens_details: None,
-            other: std::collections::BTreeMap::new(),
-        };
+        let usage = serde_json::json!({
+            "input_tokens": 10u64,
+            "output_tokens": 5u64,
+        });
         assert_eq!(usage_total_tokens(&usage), Some(15));
     }
 
@@ -2836,6 +2956,7 @@ mod attachment_upload_tests {
             },
             capabilities: ditto_llm::ProviderCapabilities::openai_responses(),
             client: Arc::new(DummyLanguageModel),
+            openai_responses_client: None,
             file_uploader,
         }
     }
@@ -2995,11 +3116,12 @@ mod auto_summary_tests {
     }
 
     #[test]
-    fn should_auto_summarize_triggers_at_threshold() {
-        assert!(!should_auto_summarize(0, 0, 80));
-        assert!(!should_auto_summarize(79, 100, 80));
-        assert!(should_auto_summarize(80, 100, 80));
-        assert!(should_auto_summarize(100, 100, 80));
+    fn should_auto_compact_triggers_at_threshold() {
+        assert!(!should_auto_compact(0, None, 0, 80));
+        assert!(!should_auto_compact(79, None, 100, 80));
+        assert!(should_auto_compact(80, None, 100, 80));
+        assert!(should_auto_compact(100, None, 100, 80));
+        assert!(should_auto_compact(90, Some(80), 0, 0));
     }
 
     #[tokio::test]
@@ -3068,43 +3190,53 @@ mod auto_summary_tests {
 
         let items = build_conversation(&server, thread_id).await?;
         assert!(
-            items.iter().any(|item| match item {
-                pm_openai::ResponseItem::Message { role, content } => {
-                    role == "system"
-                        && content.iter().any(|part| match part {
-                            pm_openai::ContentItem::InputText { text } => {
-                                text.contains("This is the summary.")
-                            }
-                            _ => false,
+            items.iter().any(|item| {
+                item.get("type").and_then(Value::as_str) == Some("message")
+                    && item.get("role").and_then(Value::as_str) == Some("system")
+                    && item
+                        .get("content")
+                        .and_then(Value::as_array)
+                        .is_some_and(|content| {
+                            content.iter().any(|part| {
+                                part.get("type").and_then(Value::as_str) == Some("input_text")
+                                    && part
+                                        .get("text")
+                                        .and_then(Value::as_str)
+                                        .is_some_and(|text| text.contains("This is the summary."))
+                            })
                         })
-                }
-                _ => false,
             }),
             "expected system summary message"
         );
         assert!(
-            items.iter().any(|item| match item {
-                pm_openai::ResponseItem::Message { role, content } => {
-                    role == "user"
-                        && content.iter().any(|part| match part {
-                            pm_openai::ContentItem::InputText { text } => text == "second",
-                            _ => false,
+            items.iter().any(|item| {
+                item.get("type").and_then(Value::as_str) == Some("message")
+                    && item.get("role").and_then(Value::as_str) == Some("user")
+                    && item
+                        .get("content")
+                        .and_then(Value::as_array)
+                        .is_some_and(|content| {
+                            content.iter().any(|part| {
+                                part.get("type").and_then(Value::as_str) == Some("input_text")
+                                    && part.get("text").and_then(Value::as_str) == Some("second")
+                            })
                         })
-                }
-                _ => false,
             }),
             "expected latest turn input"
         );
         assert!(
-            !items.iter().any(|item| match item {
-                pm_openai::ResponseItem::Message { role, content } => {
-                    role == "user"
-                        && content.iter().any(|part| match part {
-                            pm_openai::ContentItem::InputText { text } => text == "first",
-                            _ => false,
+            !items.iter().any(|item| {
+                item.get("type").and_then(Value::as_str) == Some("message")
+                    && item.get("role").and_then(Value::as_str) == Some("user")
+                    && item
+                        .get("content")
+                        .and_then(Value::as_array)
+                        .is_some_and(|content| {
+                            content.iter().any(|part| {
+                                part.get("type").and_then(Value::as_str) == Some("input_text")
+                                    && part.get("text").and_then(Value::as_str) == Some("first")
+                            })
                         })
-                }
-                _ => false,
             }),
             "expected summary to replace older turn input"
         );

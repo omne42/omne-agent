@@ -33,6 +33,7 @@ async fn run_repl(app: &mut App) -> anyhow::Result<()> {
         mode: None,
         model: None,
         openai_base_url: None,
+        thinking: None,
     })
     .await?;
 
@@ -318,6 +319,7 @@ async fn repl_thread_start(
         mode: None,
         model: None,
         openai_base_url: None,
+        thinking: None,
     })
     .await?;
 
@@ -367,6 +369,7 @@ async fn repl_cmd_set(app: &mut App, state: &mut ReplState, args: &[&str]) -> an
         mode: None,
         model: None,
         openai_base_url: None,
+        thinking: None,
     };
 
     match key {
@@ -388,9 +391,12 @@ async fn repl_cmd_set(app: &mut App, state: &mut ReplState, args: &[&str]) -> an
         "openai_base_url" => {
             cfg.openai_base_url = Some(value.to_string());
         }
+        "thinking" => {
+            cfg.thinking = Some(value.to_string());
+        }
         _ => {
             anyhow::bail!(
-                "unknown key: {key} (try: approval_policy|sandbox_policy|sandbox_network_access|mode|model|openai_base_url)"
+                "unknown key: {key} (try: approval_policy|sandbox_policy|sandbox_network_access|mode|model|openai_base_url|thinking)"
             );
         }
     }
@@ -491,7 +497,7 @@ fn print_repl_help() {
   /state                        show current thread state (JSON)
   /config                       show config explain (JSON)
   /set <key> <value>            update thread config (and print new state)
-    keys: approval_policy | sandbox_policy | sandbox_network_access | mode | model | openai_base_url
+    keys: approval_policy | sandbox_policy | sandbox_network_access | mode | model | openai_base_url | thinking
 
   /inbox [--details] [--include-archived]
   /approvals [--include-decided]

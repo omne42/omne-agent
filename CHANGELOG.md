@@ -179,6 +179,7 @@
 - `pm-protocol`：新增 `ApprovalId`、`ApprovalRequested/ApprovalDecided` 与 `ThreadConfigUpdated(approval_policy)`，为 approvals 做事件化与回放打底。
 - `pm-protocol`：新增 `AssistantMessage` 事件，用于把模型输出落盘并支撑 resume 拼合对话上下文。
 - workspace `tokio` 特性启用 `io-std`（支持 app-server 的 stdio 读写）。
+- 新增 prompts 汉化版本：`.codepm_data/prompts/*`。
 
 ### Changed
 - `pm-app-server`：移除 legacy project config 字段 `openai.base_url`/`openai.auth_command`/`openai.model_reasoning_effort`；改用 `openai.providers.<profile>.base_url`/`openai.providers.<profile>.auth` 与 `openai.models."<pattern>".thinking`。
@@ -191,6 +192,9 @@
 - `pm` TUI：状态栏信息移至底部并移除全局/主视图边框，呈现终端式布局。
 - `pm` TUI：状态栏仅在错误时使用红色，避免 `loading models...` 等正常状态出现红字。
 - `pm` TUI：`Ctrl-C` 行为调整为等同 `Esc`（关闭/返回），不再触发中断。
+- `pm` TUI：禁用 alt-screen 并减少无意义重绘，允许终端原生滚动与选中文本。
+- `pm` TUI：tool 记录改为可读的命令式摘要（如 `$ ls`），并修复流式输出闪现后丢失的问题。
+- `pm` TUI：提升 transcript 缓冲上限，超出屏幕不再丢历史。
 - `ditto-llm`：OpenAI Responses 请求现在会携带 `instructions`（来自 system message），修复部分 provider 返回 “Instructions are required”。
 - `pm-app-server`：项目配置现在会读取 `openai.base_url`（`config.toml`/`config_local.toml`）并允许 `.env` 覆盖，`thread/models` 与 `thread/config-explain` 使用该值。
 - `pm-app-server`/`pm`/`code-pm`/`pm-core::orchestrator`：拆分超大 Rust 源文件（保持行为不变），避免单文件超过 1000 行，降低 review/IDE 压力。

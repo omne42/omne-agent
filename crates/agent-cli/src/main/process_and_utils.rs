@@ -102,13 +102,15 @@ fn render_event(event: &ThreadEvent) {
             sandbox_network_access,
             mode,
             model,
+            thinking,
             openai_base_url,
             allowed_tools,
         } => {
             println!(
-                "[{ts}] config approval_policy={approval_policy:?} sandbox_policy={sandbox_policy:?} sandbox_writable_roots={sandbox_writable_roots:?} sandbox_network_access={sandbox_network_access:?} mode={} model={} openai_base_url={} allowed_tools={allowed_tools:?}",
+                "[{ts}] config approval_policy={approval_policy:?} sandbox_policy={sandbox_policy:?} sandbox_writable_roots={sandbox_writable_roots:?} sandbox_network_access={sandbox_network_access:?} mode={} model={} thinking={} openai_base_url={} allowed_tools={allowed_tools:?}",
                 mode.as_deref().unwrap_or(""),
                 model.as_deref().unwrap_or(""),
+                thinking.as_deref().unwrap_or(""),
                 openai_base_url.as_deref().unwrap_or("")
             );
         }
@@ -453,23 +455,53 @@ impl App {
             default_app_server_path().unwrap_or_else(|| PathBuf::from("pm-app-server"))
         });
 
-        let socket_path = pm_root.join("daemon.sock");
+        let init_timeout = std::env::var("CODE_PM_RPC_INIT_TIMEOUT_MS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|value| *value > 0)
+            .map(Duration::from_millis)
+            .unwrap_or_else(|| Duration::from_millis(1500));
 
-        let mut rpc = match pm_jsonrpc::Client::connect_unix(&socket_path).await {
-            Ok(client) => client,
-            Err(_) => {
-                let mut argv: Vec<OsString> = Vec::new();
-                argv.push("--pm-root".into());
-                argv.push(pm_root.into_os_string());
-                for path in &cli.execpolicy_rules {
-                    argv.push("--execpolicy-rules".into());
-                    argv.push(path.clone().into_os_string());
-                }
-                pm_jsonrpc::Client::spawn(server, argv).await?
+        let socket_path = pm_root.join("daemon.sock");
+        let bypass_daemon = should_bypass_daemon(&socket_path, &server);
+
+        let build_spawn_argv = || {
+            let mut argv: Vec<OsString> = Vec::new();
+            argv.push("--pm-root".into());
+            argv.push(pm_root.clone().into_os_string());
+            for path in &cli.execpolicy_rules {
+                argv.push("--execpolicy-rules".into());
+                argv.push(path.clone().into_os_string());
+            }
+            argv
+        };
+
+        let (mut rpc, used_daemon) = if bypass_daemon {
+            (
+                pm_jsonrpc::Client::spawn(server.clone(), build_spawn_argv()).await?,
+                false,
+            )
+        } else {
+            match pm_jsonrpc::Client::connect_unix(&socket_path).await {
+                Ok(client) => (client, true),
+                Err(_) => (
+                    pm_jsonrpc::Client::spawn(server.clone(), build_spawn_argv()).await?,
+                    false,
+                ),
             }
         };
-        let _ = rpc.request("initialize", serde_json::json!({})).await?;
-        let _ = rpc.request("initialized", serde_json::json!({})).await?;
+
+        let init_result = init_rpc(&mut rpc, init_timeout).await;
+        if let Err(err) = init_result {
+            if used_daemon {
+                let mut fresh =
+                    pm_jsonrpc::Client::spawn(server.clone(), build_spawn_argv()).await?;
+                init_rpc(&mut fresh, init_timeout).await?;
+                rpc = fresh;
+            } else {
+                return Err(err);
+            }
+        }
         let notifications = rpc.take_notifications();
         Ok(Self { rpc, notifications })
     }
@@ -840,11 +872,12 @@ impl App {
                     "approval_policy": approval_policy,
                     "sandbox_policy": sandbox_policy,
                     "sandbox_writable_roots": args.sandbox_writable_roots,
-                    "sandbox_network_access": sandbox_network_access,
-                    "mode": args.mode,
-                    "model": args.model,
-                    "openai_base_url": args.openai_base_url,
-                }),
+                "sandbox_network_access": sandbox_network_access,
+                "mode": args.mode,
+                "model": args.model,
+                "openai_base_url": args.openai_base_url,
+                "thinking": args.thinking,
+            }),
             )
             .await?;
         Ok(())
@@ -1259,6 +1292,16 @@ impl App {
     }
 }
 
+async fn init_rpc(rpc: &mut pm_jsonrpc::Client, timeout: Duration) -> anyhow::Result<()> {
+    tokio::time::timeout(timeout, async {
+        let _ = rpc.request("initialize", serde_json::json!({})).await?;
+        let _ = rpc.request("initialized", serde_json::json!({})).await?;
+        Ok::<_, anyhow::Error>(())
+    })
+    .await
+    .context("initialize timeout")?
+}
+
 fn default_app_server_path() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent()?;
@@ -1267,6 +1310,26 @@ fn default_app_server_path() -> Option<PathBuf> {
         return Some(candidate);
     }
     None
+}
+
+fn should_bypass_daemon(socket_path: &Path, server_path: &Path) -> bool {
+    let sock_meta = match std::fs::metadata(socket_path) {
+        Ok(meta) => meta,
+        Err(_) => return false,
+    };
+    let server_meta = match std::fs::metadata(server_path) {
+        Ok(meta) => meta,
+        Err(_) => return false,
+    };
+    let sock_mtime = match sock_meta.modified() {
+        Ok(time) => time,
+        Err(_) => return false,
+    };
+    let server_mtime = match server_meta.modified() {
+        Ok(time) => time,
+        Err(_) => return false,
+    };
+    server_mtime > sock_mtime
 }
 
 fn app_server_exe_name() -> &'static str {

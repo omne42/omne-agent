@@ -7,6 +7,8 @@ struct WorkflowFileFrontmatterV1 {
     #[serde(default)]
     name: Option<String>,
     mode: String,
+    #[serde(default, rename = "subagent-fork")]
+    subagent_fork: bool,
     #[serde(default)]
     allowed_tools: Option<Vec<String>>,
     #[serde(default)]
@@ -61,6 +63,8 @@ struct FanOutScheduler {
     tasks: Vec<WorkflowTask>,
     fan_in_artifact_id: pm_protocol::ArtifactId,
     concurrency_limit: usize,
+    subagent_fork: bool,
+    parent_cwd: Option<String>,
     pending_idx: usize,
     active: Vec<FanOutActiveTask>,
     finished: Vec<WorkflowTaskResult>,
@@ -86,6 +90,7 @@ impl FanOutScheduler {
         parent_thread_id: ThreadId,
         tasks: Vec<WorkflowTask>,
         fan_in_artifact_id: pm_protocol::ArtifactId,
+        subagent_fork: bool,
     ) -> anyhow::Result<Self> {
         let max_concurrent_subagents = parse_env_usize("CODE_PM_MAX_CONCURRENT_SUBAGENTS", 4, 0, 64);
         let concurrency_limit = if max_concurrent_subagents == 0 {
@@ -94,11 +99,19 @@ impl FanOutScheduler {
             max_concurrent_subagents
         };
 
+        let parent_cwd = if subagent_fork {
+            None
+        } else {
+            Some(resolve_thread_cwd(app, parent_thread_id).await?)
+        };
+
         let started_at = Instant::now();
         let scheduler = Self {
             tasks,
             fan_in_artifact_id,
             concurrency_limit,
+            subagent_fork,
+            parent_cwd,
             pending_idx: 0,
             active: Vec::new(),
             finished: Vec::new(),
@@ -158,8 +171,22 @@ impl FanOutScheduler {
             let task = &self.tasks[self.pending_idx];
             self.pending_idx += 1;
 
-            let forked = app.thread_fork(parent_thread_id).await?;
-            let forked: ForkResult = serde_json::from_value(forked).context("parse thread/fork")?;
+            let spawned = if self.subagent_fork {
+                app.thread_fork(parent_thread_id).await?
+            } else {
+                let cwd = self
+                    .parent_cwd
+                    .as_deref()
+                    .ok_or_else(|| anyhow::anyhow!("fan-out parent cwd missing"))?;
+                app.thread_start(Some(cwd.to_string())).await?
+            };
+            let forked: ForkResult = serde_json::from_value(spawned).with_context(|| {
+                if self.subagent_fork {
+                    "parse thread/fork".to_string()
+                } else {
+                    "parse thread/start".to_string()
+                }
+            })?;
 
             let _ = app
                 .rpc(
@@ -785,11 +812,25 @@ async fn run_command_run(
         if !tasks.is_empty() {
             let artifact_id = pm_protocol::ArtifactId::new();
             if args.fan_out_early_return {
-                let mut scheduler = FanOutScheduler::start(app, thread_id, tasks, artifact_id).await?;
+                let mut scheduler = FanOutScheduler::start(
+                    app,
+                    thread_id,
+                    tasks,
+                    artifact_id,
+                    wf.frontmatter.subagent_fork,
+                )
+                .await?;
                 scheduler.tick(app, thread_id).await?;
                 fan_out_scheduler = Some(scheduler);
             } else {
-                fan_out_results = run_workflow_fan_out(app, thread_id, &tasks, artifact_id).await?;
+                fan_out_results = run_workflow_fan_out(
+                    app,
+                    thread_id,
+                    &tasks,
+                    artifact_id,
+                    wf.frontmatter.subagent_fork,
+                )
+                .await?;
                 let _artifact_path =
                     write_fan_in_summary_artifact(app, thread_id, artifact_id, &fan_out_results)
                         .await?;
@@ -971,11 +1012,23 @@ fn parse_task_header(line: &str) -> Option<(String, String)> {
     Some((id.to_string(), title.to_string()))
 }
 
+async fn resolve_thread_cwd(app: &mut App, thread_id: ThreadId) -> anyhow::Result<String> {
+    let state = app.thread_state(thread_id).await?;
+    let cwd = state
+        .get("cwd")
+        .and_then(Value::as_str)
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("thread cwd missing: {thread_id}"))?;
+    Ok(cwd.to_string())
+}
+
 async fn run_workflow_fan_out(
     app: &mut App,
     parent_thread_id: ThreadId,
     tasks: &[WorkflowTask],
     fan_in_artifact_id: pm_protocol::ArtifactId,
+    subagent_fork: bool,
 ) -> anyhow::Result<Vec<WorkflowTaskResult>> {
     #[derive(Debug, Deserialize)]
     struct ForkResult {
@@ -998,6 +1051,12 @@ async fn run_workflow_fan_out(
         tasks.len().max(1)
     } else {
         max_concurrent_subagents
+    };
+
+    let parent_cwd = if subagent_fork {
+        None
+    } else {
+        Some(resolve_thread_cwd(app, parent_thread_id).await?)
     };
 
     let mut pending_idx = 0usize;
@@ -1024,8 +1083,21 @@ async fn run_workflow_fan_out(
             let task = &tasks[pending_idx];
             pending_idx += 1;
 
-            let forked = app.thread_fork(parent_thread_id).await?;
-            let forked: ForkResult = serde_json::from_value(forked).context("parse thread/fork")?;
+            let spawned = if subagent_fork {
+                app.thread_fork(parent_thread_id).await?
+            } else {
+                let cwd = parent_cwd
+                    .as_deref()
+                    .ok_or_else(|| anyhow::anyhow!("fan-out parent cwd missing"))?;
+                app.thread_start(Some(cwd.to_string())).await?
+            };
+            let forked: ForkResult = serde_json::from_value(spawned).with_context(|| {
+                if subagent_fork {
+                    "parse thread/fork".to_string()
+                } else {
+                    "parse thread/start".to_string()
+                }
+            })?;
 
             let _ = app
                 .rpc(

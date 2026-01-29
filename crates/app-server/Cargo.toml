@@ -18,9 +18,9 @@ pm-mcp-kit = { path = "../../../mcp-kit/crates/mcp-kit" }
 pm-jsonrpc = { path = "../../../mcp-kit/crates/jsonrpc" }
 safe-fs-tools = { path = "../../../safe-fs-tools" }
 pm-core = { path = "../core" }
+pm-eventlog = { path = "../eventlog" }
 pm-execpolicy = { path = "../execpolicy" }
 pm-app-server-protocol = { path = "../app-server-protocol" }
-pm-openai = { path = "../openai" }
 pm-protocol = { path = "../agent-protocol" }
 regex.workspace = true
 serde.workspace = true

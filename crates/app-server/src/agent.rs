@@ -3,4 +3,5 @@
 
 include!("agent/core.rs");
 include!("agent/tool_loop.rs");
+include!("agent/openai_history.rs");
 include!("agent/tools.rs");

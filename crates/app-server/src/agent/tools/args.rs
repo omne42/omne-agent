@@ -226,13 +226,23 @@ enum AgentSpawnWorkspaceMode {
     IsolatedWrite,
 }
 
+#[derive(Debug, Deserialize, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+enum AgentSpawnMode {
+    Fork,
+    New,
+}
+
 #[derive(Debug, Deserialize)]
-struct AgentSpawnArgs {
+struct AgentSpawnTaskArgs {
+    id: String,
     input: String,
     #[serde(default)]
-    task_id: Option<String>,
+    title: Option<String>,
     #[serde(default)]
-    expected_artifact_type: Option<String>,
+    depends_on: Vec<String>,
+    #[serde(default)]
+    spawn_mode: Option<AgentSpawnMode>,
     #[serde(default)]
     mode: Option<String>,
     #[serde(default)]
@@ -241,4 +251,23 @@ struct AgentSpawnArgs {
     model: Option<String>,
     #[serde(default)]
     openai_base_url: Option<String>,
+    #[serde(default)]
+    expected_artifact_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AgentSpawnArgs {
+    #[serde(default)]
+    spawn_mode: Option<AgentSpawnMode>,
+    #[serde(default)]
+    mode: Option<String>,
+    #[serde(default)]
+    workspace_mode: Option<AgentSpawnWorkspaceMode>,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    openai_base_url: Option<String>,
+    #[serde(default)]
+    expected_artifact_type: Option<String>,
+    tasks: Vec<AgentSpawnTaskArgs>,
 }

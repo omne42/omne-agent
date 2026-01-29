@@ -2,6 +2,7 @@
 // Follow-up refactors can convert these into proper modules.
 
 mod agent;
+mod model_limits;
 mod project_config;
 
 include!("main/preamble.rs");
