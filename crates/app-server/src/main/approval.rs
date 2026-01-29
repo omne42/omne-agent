@@ -775,3 +775,56 @@ async fn resolve_file_for_sandbox(
         }
     }
 }
+
+#[derive(Debug)]
+struct ToolDenied {
+    error: String,
+    result: Value,
+}
+
+impl ToolDenied {
+    fn new(error: impl Into<String>, result: Value) -> Self {
+        Self {
+            error: error.into(),
+            result,
+        }
+    }
+}
+
+impl std::fmt::Display for ToolDenied {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.error)
+    }
+}
+
+impl std::error::Error for ToolDenied {}
+
+fn tool_denied(error: impl Into<String>, result: Value) -> anyhow::Error {
+    anyhow::Error::new(ToolDenied::new(error, result))
+}
+
+fn merge_json_object(mut base: Value, extra: &Value) -> Value {
+    let (Some(base_obj), Some(extra_obj)) = (base.as_object_mut(), extra.as_object()) else {
+        return base;
+    };
+    for (key, value) in extra_obj {
+        if key == "tool_id" || key == "denied" {
+            continue;
+        }
+        base_obj.insert(key.clone(), value.clone());
+    }
+    base
+}
+
+async fn canonical_rel_path_for_write(thread_root: &Path, path: &Path) -> anyhow::Result<PathBuf> {
+    let Some(parent) = path.parent() else {
+        anyhow::bail!("path has no parent: {}", path.display());
+    };
+    let Some(file_name) = path.file_name() else {
+        anyhow::bail!("path has no file name: {}", path.display());
+    };
+    let canon_parent = tokio::fs::canonicalize(parent)
+        .await
+        .with_context(|| format!("canonicalize {}", parent.display()))?;
+    pm_core::modes::relative_path_under_root(thread_root, &canon_parent.join(file_name))
+}

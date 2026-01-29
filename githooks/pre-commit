@@ -58,14 +58,14 @@ fi
 
 max_rs_lines=1000
 offenders=()
-staged_rs_files="$(printf '%s\n' "$staged_files" | grep -E '\\.rs$' || true)"
+tracked_rs_files="$(git ls-files '*.rs' || true)"
 while IFS= read -r path; do
   [[ -z "$path" ]] && continue
   lines="$(git show ":$path" 2>/dev/null | awk 'END{print NR}')"
   if [[ "${lines:-0}" -gt "$max_rs_lines" ]]; then
     offenders+=("$path ($lines)")
   fi
-done <<<"$staged_rs_files"
+done <<<"$tracked_rs_files"
 
 if [[ "${#offenders[@]}" -gt 0 ]]; then
   cat >&2 <<EOF

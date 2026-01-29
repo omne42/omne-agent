@@ -207,6 +207,30 @@ async fn handle_fs_mkdir(server: &Server, params: FsMkdirParams) -> anyhow::Resu
             anyhow::bail!("refusing to create thread root: {}", path.display());
         }
 
+        let resolved_rel = canonical_rel_path_for_write(&thread_root, &path).await?;
+        if rel_path_is_secret(&resolved_rel) {
+            return Err(tool_denied(
+                "refusing to mkdir secrets path (.env)".to_string(),
+                serde_json::json!({
+                    "reason": "secrets file is always denied",
+                }),
+            ));
+        }
+        let base_decision = mode.permissions.edit.decision_for_path(&resolved_rel);
+        let effective_decision = match mode.tool_overrides.get("fs/mkdir").copied() {
+            Some(override_decision) => base_decision.combine(override_decision),
+            None => base_decision,
+        };
+        if effective_decision == pm_core::modes::Decision::Deny {
+            return Err(tool_denied(
+                "mode denies fs/mkdir".to_string(),
+                serde_json::json!({
+                    "mode": mode_name,
+                    "decision": effective_decision,
+                }),
+            ));
+        }
+
         match tokio::fs::create_dir(&path).await {
             Ok(()) => Ok((true, path)),
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
@@ -244,15 +268,33 @@ async fn handle_fs_mkdir(server: &Server, params: FsMkdirParams) -> anyhow::Resu
             }))
         }
         Err(err) => {
-            thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
-                    tool_id,
-                    status: pm_protocol::ToolStatus::Failed,
-                    error: Some(err.to_string()),
-                    result: None,
-                })
-                .await?;
-            Err(err)
+            if let Some(denied) = err.downcast_ref::<ToolDenied>() {
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                        tool_id,
+                        status: pm_protocol::ToolStatus::Denied,
+                        error: Some(denied.error.clone()),
+                        result: Some(denied.result.clone()),
+                    })
+                    .await?;
+                Ok(merge_json_object(
+                    serde_json::json!({
+                        "tool_id": tool_id,
+                        "denied": true,
+                    }),
+                    &denied.result,
+                ))
+            } else {
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                        tool_id,
+                        status: pm_protocol::ToolStatus::Failed,
+                        error: Some(err.to_string()),
+                        result: None,
+                    })
+                    .await?;
+                Err(err)
+            }
         }
     }
 }

@@ -245,6 +245,30 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
         )
         .await?;
 
+        let resolved_rel = canonical_rel_path_for_write(&thread_root, &path).await?;
+        if rel_path_is_secret(&resolved_rel) {
+            return Err(tool_denied(
+                "refusing to edit secrets file (.env)".to_string(),
+                serde_json::json!({
+                    "reason": "secrets file is always denied",
+                }),
+            ));
+        }
+        let base_decision = mode.permissions.edit.decision_for_path(&resolved_rel);
+        let effective_decision = match mode.tool_overrides.get("file/edit").copied() {
+            Some(override_decision) => base_decision.combine(override_decision),
+            None => base_decision,
+        };
+        if effective_decision == pm_core::modes::Decision::Deny {
+            return Err(tool_denied(
+                "mode denies file/edit".to_string(),
+                serde_json::json!({
+                    "mode": mode_name,
+                    "decision": effective_decision,
+                }),
+            ));
+        }
+
         let bytes = tokio::fs::read(&path)
             .await
             .with_context(|| format!("read {}", path.display()))?;
@@ -315,15 +339,33 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
             }))
         }
         Err(err) => {
-            thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
-                    tool_id,
-                    status: pm_protocol::ToolStatus::Failed,
-                    error: Some(err.to_string()),
-                    result: None,
-                })
-                .await?;
-            Err(err)
+            if let Some(denied) = err.downcast_ref::<ToolDenied>() {
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                        tool_id,
+                        status: pm_protocol::ToolStatus::Denied,
+                        error: Some(denied.error.clone()),
+                        result: Some(denied.result.clone()),
+                    })
+                    .await?;
+                Ok(merge_json_object(
+                    serde_json::json!({
+                        "tool_id": tool_id,
+                        "denied": true,
+                    }),
+                    &denied.result,
+                ))
+            } else {
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                        tool_id,
+                        status: pm_protocol::ToolStatus::Failed,
+                        error: Some(err.to_string()),
+                        result: None,
+                    })
+                    .await?;
+                Err(err)
+            }
         }
     }
 }
@@ -563,6 +605,30 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
             anyhow::bail!("refusing to delete thread root: {}", path.display());
         }
 
+        let resolved_rel = canonical_rel_path_for_write(&thread_root, &path).await?;
+        if rel_path_is_secret(&resolved_rel) {
+            return Err(tool_denied(
+                "refusing to delete secrets file (.env)".to_string(),
+                serde_json::json!({
+                    "reason": "secrets file is always denied",
+                }),
+            ));
+        }
+        let base_decision = mode.permissions.edit.decision_for_path(&resolved_rel);
+        let effective_decision = match mode.tool_overrides.get("file/delete").copied() {
+            Some(override_decision) => base_decision.combine(override_decision),
+            None => base_decision,
+        };
+        if effective_decision == pm_core::modes::Decision::Deny {
+            return Err(tool_denied(
+                "mode denies file/delete".to_string(),
+                serde_json::json!({
+                    "mode": mode_name,
+                    "decision": effective_decision,
+                }),
+            ));
+        }
+
         let meta = match tokio::fs::symlink_metadata(&path).await {
             Ok(meta) => meta,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok((false, path)),
@@ -609,15 +675,33 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
             }))
         }
         Err(err) => {
-            thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
-                    tool_id,
-                    status: pm_protocol::ToolStatus::Failed,
-                    error: Some(err.to_string()),
-                    result: None,
-                })
-                .await?;
-            Err(err)
+            if let Some(denied) = err.downcast_ref::<ToolDenied>() {
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                        tool_id,
+                        status: pm_protocol::ToolStatus::Denied,
+                        error: Some(denied.error.clone()),
+                        result: Some(denied.result.clone()),
+                    })
+                    .await?;
+                Ok(merge_json_object(
+                    serde_json::json!({
+                        "tool_id": tool_id,
+                        "denied": true,
+                    }),
+                    &denied.result,
+                ))
+            } else {
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                        tool_id,
+                        status: pm_protocol::ToolStatus::Failed,
+                        error: Some(err.to_string()),
+                        result: None,
+                    })
+                    .await?;
+                Err(err)
+            }
         }
     }
 }

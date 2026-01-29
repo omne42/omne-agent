@@ -152,7 +152,7 @@
 - 更新 `docs/v0.2.0_parity.md`：补齐 “Item 覆盖” 勾选状态（见 `docs/thread_event_model.md`）。
 - 更新 `docs/v0.2.0_parity.md`：标记 “统一请求/响应结构 + provider 适配集中” 已通过 `ditto-llm` 在 agent loop 落地（见 `docs/ditto_llm.md`）。
 - `githooks/pre-commit`：强制每次提交同时包含 `CHANGELOG.md` 与实际变更（禁止 changelog-only / non-changelog commit）。
-- `githooks/pre-commit`：新增 Rust 单文件行数 gate：任意暂存的 `.rs` 文件超过 1000 行将拒绝提交（要求拆分模块/降低复杂度）。
+- `githooks/pre-commit`：新增 Rust 单文件行数 gate：仓库内任意 `.rs` 文件超过 1000 行将拒绝提交（要求拆分模块/降低复杂度）。
 - `pm-app-server agent loop`：增加最小长任务预算（`max_steps`/`max_tool_calls`/`max_turn_seconds` + 单次 OpenAI 请求超时）；超限会使 turn 失败并写入失败原因，避免无限循环烧钱/卡死。
 - v0.2.0 方向明确：git/workspace 使用 `/tmp`/worktree 等目录隔离，不把 Docker/容器当作实现前提（但不禁止 agent 自己运行 Docker）；实现文档中移除/替换相关表述。
 - `pm-eventlog ThreadState`：记录 thread 的 `cwd`；`pm-app-server thread/state` 返回 `cwd` 便于后续 sandbox/root 约束。

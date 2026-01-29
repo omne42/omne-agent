@@ -32,3 +32,6 @@ include!("main/repo_index_search_tests.rs");
 
 #[cfg(test)]
 include!("main/mcp_tests.rs");
+
+#[cfg(test)]
+include!("main/fs_tools_security_tests.rs");
