@@ -47,6 +47,7 @@ async fn main() -> anyhow::Result<()> {
     let server = Arc::new(Server {
         cwd,
         notify_tx,
+        notify_hub: init_notify_hub()?,
         thread_store: ThreadStore::new(PmPaths::new(pm_root)),
         threads: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         processes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),

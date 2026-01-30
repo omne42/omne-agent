@@ -293,7 +293,11 @@ async fn create_new_thread(
     let log_path = handle.log_path().display().to_string();
     let last_seq = handle.last_seq().0;
 
-    let rt = Arc::new(crate::ThreadRuntime::new(handle, server.notify_tx.clone()));
+    let rt = Arc::new(crate::ThreadRuntime::new(
+        handle,
+        server.notify_tx.clone(),
+        server.notify_hub.clone(),
+    ));
     server.threads.lock().await.insert(thread_id, rt);
 
     Ok(SpawnedThread {
@@ -390,6 +394,7 @@ mod agent_spawn_guard_tests {
         super::super::Server {
             cwd: pm_root.clone(),
             notify_tx,
+            notify_hub: crate::default_notify_hub(),
             thread_store: super::super::ThreadStore::new(super::super::PmPaths::new(pm_root)),
             threads: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             processes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
@@ -544,6 +549,7 @@ mod reference_repo_file_tools_tests {
         super::super::Server {
             cwd: pm_root.clone(),
             notify_tx,
+            notify_hub: crate::default_notify_hub(),
             thread_store: super::super::ThreadStore::new(super::super::PmPaths::new(pm_root)),
             threads: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             processes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),

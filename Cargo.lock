@@ -402,6 +402,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "codepm-notify"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "colorchoice"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1648,6 +1660,7 @@ dependencies = [
  "async-trait",
  "base64",
  "clap",
+ "codepm-notify",
  "diffy",
  "ditto-llm",
  "futures-util",

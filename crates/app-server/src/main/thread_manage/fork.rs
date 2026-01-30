@@ -65,7 +65,11 @@ async fn handle_thread_fork(server: &Server, params: ThreadForkParams) -> anyhow
     let log_path = forked.log_path().display().to_string();
     let last_seq = forked.last_seq().0;
 
-    let rt = Arc::new(ThreadRuntime::new(forked, server.notify_tx.clone()));
+    let rt = Arc::new(ThreadRuntime::new(
+        forked,
+        server.notify_tx.clone(),
+        server.notify_hub.clone(),
+    ));
     server.threads.lock().await.insert(forked_id, rt);
 
     Ok(serde_json::json!({

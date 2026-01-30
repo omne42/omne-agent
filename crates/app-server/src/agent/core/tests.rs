@@ -366,6 +366,7 @@ mod auto_summary_tests {
         crate::Server {
             cwd: pm_root.clone(),
             notify_tx,
+            notify_hub: crate::default_notify_hub(),
             thread_store: ThreadStore::new(PmPaths::new(pm_root)),
             threads: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             processes: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),

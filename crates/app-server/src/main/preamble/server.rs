@@ -123,6 +123,35 @@ const JSONRPC_INTERNAL_ERROR: i64 = -32603;
 const CODE_PM_NOT_INITIALIZED: i64 = -32_000;
 const CODE_PM_ALREADY_INITIALIZED: i64 = -32_001;
 
+#[cfg(feature = "notify")]
+type NotifyHub = Option<codepm_notify::Hub>;
+
+#[cfg(not(feature = "notify"))]
+type NotifyHub = ();
+
+#[cfg(test)]
+fn default_notify_hub() -> NotifyHub {
+    #[cfg(feature = "notify")]
+    {
+        None
+    }
+    #[cfg(not(feature = "notify"))]
+    {
+        ()
+    }
+}
+
+fn init_notify_hub() -> anyhow::Result<NotifyHub> {
+    #[cfg(feature = "notify")]
+    {
+        codepm_notify::Hub::from_env().map_err(anyhow::Error::new)
+    }
+    #[cfg(not(feature = "notify"))]
+    {
+        Ok(())
+    }
+}
+
 struct DiskWarningState {
     last_checked_at: Option<tokio::time::Instant>,
     last_reported_at: Option<tokio::time::Instant>,
@@ -132,6 +161,7 @@ struct DiskWarningState {
 struct Server {
     cwd: PathBuf,
     notify_tx: broadcast::Sender<String>,
+    notify_hub: NotifyHub,
     thread_store: ThreadStore,
     threads: Arc<tokio::sync::Mutex<HashMap<ThreadId, Arc<ThreadRuntime>>>>,
     processes: Arc<tokio::sync::Mutex<HashMap<ProcessId, ProcessEntry>>>,
@@ -153,7 +183,11 @@ impl Server {
             .await?
             .ok_or_else(|| anyhow::anyhow!("thread not found: {thread_id}"))?;
 
-        let rt = Arc::new(ThreadRuntime::new(handle, self.notify_tx.clone()));
+        let rt = Arc::new(ThreadRuntime::new(
+            handle,
+            self.notify_tx.clone(),
+            self.notify_hub.clone(),
+        ));
         threads.insert(thread_id, rt.clone());
         Ok(rt)
     }
@@ -197,6 +231,8 @@ struct ThreadRuntime {
     handle: tokio::sync::Mutex<pm_core::ThreadHandle>,
     active_turn: tokio::sync::Mutex<Option<ActiveTurn>>,
     notify_tx: broadcast::Sender<String>,
+    #[cfg_attr(not(feature = "notify"), allow(dead_code))]
+    notify_hub: NotifyHub,
 }
 
 fn validate_context_refs(refs: &[pm_protocol::ContextRef]) -> anyhow::Result<()> {
@@ -290,11 +326,16 @@ fn validate_turn_attachments(attachments: &[pm_protocol::TurnAttachment]) -> any
 }
 
 impl ThreadRuntime {
-    fn new(handle: pm_core::ThreadHandle, notify_tx: broadcast::Sender<String>) -> Self {
+    fn new(
+        handle: pm_core::ThreadHandle,
+        notify_tx: broadcast::Sender<String>,
+        notify_hub: NotifyHub,
+    ) -> Self {
         Self {
             handle: tokio::sync::Mutex::new(handle),
             active_turn: tokio::sync::Mutex::new(None),
             notify_tx,
+            notify_hub,
         }
     }
 
@@ -338,6 +379,22 @@ impl ThreadRuntime {
                 self.emit_notification("agent/step", event);
             }
             _ => {}
+        }
+
+        self.emit_notify_hub(event);
+    }
+
+    fn emit_notify_hub(&self, event: &ThreadEvent) {
+        let _ = event;
+        #[cfg(feature = "notify")]
+        {
+            let Some(hub) = &self.notify_hub else {
+                return;
+            };
+            let Some(ev) = map_thread_event_to_notify_event(event) else {
+                return;
+            };
+            hub.notify(ev);
         }
     }
 
@@ -549,3 +606,109 @@ struct ActiveTurn {
     interrupt_reason: Option<String>,
 }
 
+#[cfg(feature = "notify")]
+fn map_thread_event_to_notify_event(event: &ThreadEvent) -> Option<codepm_notify::Event> {
+    use pm_protocol::ThreadEventKind;
+    use pm_protocol::TurnStatus;
+
+    fn truncate_preview(text: &str, max_chars: usize) -> String {
+        let text = text.trim();
+        if text.is_empty() {
+            return String::new();
+        }
+        if text.chars().count() <= max_chars {
+            return text.to_string();
+        }
+        let mut out: String = text.chars().take(max_chars).collect();
+        out.push('…');
+        out
+    }
+
+    let thread_id = event.thread_id.to_string();
+
+    match &event.kind {
+        ThreadEventKind::TurnCompleted {
+            turn_id,
+            status,
+            reason,
+        } => {
+            let severity = match status {
+                TurnStatus::Completed => codepm_notify::Severity::Success,
+                TurnStatus::Interrupted | TurnStatus::Cancelled => codepm_notify::Severity::Warning,
+                TurnStatus::Failed | TurnStatus::Stuck => codepm_notify::Severity::Error,
+            };
+            let title = match status {
+                TurnStatus::Completed => "turn completed",
+                TurnStatus::Interrupted => "turn interrupted",
+                TurnStatus::Failed => "turn failed",
+                TurnStatus::Cancelled => "turn cancelled",
+                TurnStatus::Stuck => "turn stuck",
+            };
+
+            let mut out = codepm_notify::Event::new(
+                codepm_notify::EventKind::TurnCompleted,
+                severity,
+                title,
+            )
+            .with_tag("thread_id", thread_id)
+            .with_tag("turn_id", turn_id.to_string())
+            .with_tag("status", format!("{status:?}"));
+
+            if let Some(reason) = reason.as_deref() {
+                let reason = truncate_preview(reason, 400);
+                if !reason.is_empty() {
+                    out = out.with_body(reason);
+                }
+            }
+            Some(out)
+        }
+        ThreadEventKind::ApprovalRequested {
+            approval_id,
+            turn_id,
+            action,
+            ..
+        } => {
+            let title = format!("approval requested: {action}");
+            let mut out = codepm_notify::Event::new(
+                codepm_notify::EventKind::ApprovalRequested,
+                codepm_notify::Severity::Warning,
+                title,
+            )
+            .with_tag("thread_id", thread_id)
+            .with_tag("approval_id", approval_id.to_string())
+            .with_tag("action", action.clone());
+
+            if let Some(turn_id) = turn_id.as_ref() {
+                out = out.with_tag("turn_id", turn_id.to_string());
+            }
+            Some(out)
+        }
+        ThreadEventKind::AssistantMessage {
+            turn_id,
+            text,
+            model,
+            response_id,
+            ..
+        } => {
+            let mut out = codepm_notify::Event::new(
+                codepm_notify::EventKind::MessageReceived,
+                codepm_notify::Severity::Info,
+                "assistant message",
+            )
+            .with_tag("thread_id", thread_id)
+            .with_body(truncate_preview(text, 600));
+
+            if let Some(turn_id) = turn_id.as_ref() {
+                out = out.with_tag("turn_id", turn_id.to_string());
+            }
+            if let Some(model) = model.as_deref() {
+                out = out.with_tag("model", model.to_string());
+            }
+            if let Some(response_id) = response_id.as_deref() {
+                out = out.with_tag("response_id", response_id.to_string());
+            }
+            Some(out)
+        }
+        _ => None,
+    }
+}
