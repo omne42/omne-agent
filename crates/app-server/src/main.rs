@@ -3,6 +3,8 @@
 
 mod agent;
 mod model_limits;
+#[cfg(feature = "notify")]
+mod notify_adapter;
 mod project_config;
 
 include!("main/preamble.rs");

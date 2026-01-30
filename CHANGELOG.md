@@ -92,7 +92,7 @@
 - `pm-app-server thread/events`：支持 `max_events` 分页，并返回 `has_more`/`thread_last_seq` 便于订阅端处理 lag 与续读。
 - `pm-app-server thread/subscribe`：长轮询读取 thread events（`wait_ms` 超时），用于实现“不断线不丢”的订阅式消费（`since_seq` + `seq` 去重）。
 - `pm-app-server`：追加 `ThreadEvent` 时会同时发送 JSON-RPC notifications（`thread/event`、`turn/*`、`item/*`），用于 UI/客户端实时渲染；掉线可用 `thread/subscribe` 从 `since_seq` 重放补齐。
-- `pm-app-server`：可选通知插件：接入 `codepm-notify`（声音/飞书 webhook），通过 `--features notify` 启用，使用 `CODE_PM_NOTIFY_*` 环境变量配置。
+- `pm-app-server`：可选通知插件：接入通用库 `codepm-notify`（声音/飞书 webhook）；CodePM adapter（`CODE_PM_NOTIFY_*` 解析与 `ThreadEvent` 映射）留在 app-server，通过 `--features notify` 启用。
 - `pm-app-server` agent loop：Responses SSE 流式执行（`response.output_text.delta`）并转发为 `item/delta` JSON-RPC notifications（文本流）；最终仍以 `AssistantMessage` 落盘为准（断线不丢）。
 - `pm-app-server` 新增 thread 清理 API：`thread/delete(force?)` 与 `thread/clear_artifacts(force?)`，用于一键清除 history 与中间态产物。
 - `pm-app-server` 新增 approvals 控制面：`thread/configure(approval_policy,sandbox_policy?)`、`approval/list`、`approval/decide`。
