@@ -418,6 +418,9 @@ async fn handle_thread_config_explain(
         None
     };
     let limits = resolve_model_limits(&effective_model, model_config);
+    let model_context_window = limits
+        .context_window
+        .map(|window| crate::model_limits::effective_context_window_for_model(&effective_model, window));
 
     Ok(serde_json::json!({
         "thread_id": params.thread_id,
@@ -432,7 +435,7 @@ async fn handle_thread_config_explain(
             "thinking": effective_thinking,
             "openai_base_url": effective_openai_base_url,
             "allowed_tools": effective_allowed_tools,
-            "model_context_window": limits.context_window,
+            "model_context_window": model_context_window,
             "auto_compact_token_limit": limits.auto_compact_token_limit,
         },
         "mode_catalog": {

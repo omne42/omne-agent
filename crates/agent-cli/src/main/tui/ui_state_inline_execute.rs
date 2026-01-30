@@ -137,37 +137,37 @@
                     Ok(false)
                 }
                 PaletteCommand::PickMode => {
-                    self.input = "/mode ".to_string();
+                    self.set_input("/mode ".to_string());
                     self.inline_palette = None;
                     self.update_inline_palette(app).await?;
                     Ok(false)
                 }
                 PaletteCommand::PickModel => {
-                    self.input = "/model ".to_string();
+                    self.set_input("/model ".to_string());
                     self.inline_palette = None;
                     self.update_inline_palette(app).await?;
                     Ok(false)
                 }
                 PaletteCommand::PickApprovalPolicy => {
-                    self.input = "/approval-policy ".to_string();
+                    self.set_input("/approval-policy ".to_string());
                     self.inline_palette = None;
                     self.update_inline_palette(app).await?;
                     Ok(false)
                 }
                 PaletteCommand::PickSandboxPolicy => {
-                    self.input = "/sandbox-policy ".to_string();
+                    self.set_input("/sandbox-policy ".to_string());
                     self.inline_palette = None;
                     self.update_inline_palette(app).await?;
                     Ok(false)
                 }
                 PaletteCommand::PickSandboxNetworkAccess => {
-                    self.input = "/sandbox-network ".to_string();
+                    self.set_input("/sandbox-network ".to_string());
                     self.inline_palette = None;
                     self.update_inline_palette(app).await?;
                     Ok(false)
                 }
                 PaletteCommand::OpenRoot => {
-                    self.input = "/".to_string();
+                    self.set_input("/".to_string());
                     self.inline_palette = None;
                     self.update_inline_palette(app).await?;
                     Ok(false)
@@ -298,10 +298,7 @@
                 | "item/completed" => {
                     let event = serde_json::from_value::<ThreadEvent>(note.params)
                         .context("parse ThreadEvent notification")?;
-                    if self.active_thread == Some(event.thread_id) && event.seq.0 > self.last_seq {
-                        self.last_seq = event.seq.0;
-                        self.apply_event(&event);
-                    }
+                    let _ = self.apply_live_event(&event);
                 }
                 _ => {}
             }

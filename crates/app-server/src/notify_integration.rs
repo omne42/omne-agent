@@ -4,13 +4,13 @@ use std::sync::Arc;
 use anyhow::Context;
 use pm_protocol::{ThreadEvent, ThreadEventKind, TurnStatus};
 
-pub(crate) fn init_notify_hub_from_env() -> anyhow::Result<Option<codepm_notify::Hub>> {
-    let mut sinks: Vec<Arc<dyn codepm_notify::Sink>> = Vec::new();
+pub(crate) fn init_notify_hub_from_env() -> anyhow::Result<Option<notify_kit::Hub>> {
+    let mut sinks: Vec<Arc<dyn notify_kit::Sink>> = Vec::new();
 
     if parse_env_bool("CODE_PM_NOTIFY_SOUND")? {
         let command_argv = parse_env_json_string_array("CODE_PM_NOTIFY_SOUND_CMD_JSON")?;
-        sinks.push(Arc::new(codepm_notify::SoundSink::new(
-            codepm_notify::SoundConfig { command_argv },
+        sinks.push(Arc::new(notify_kit::SoundSink::new(
+            notify_kit::SoundConfig { command_argv },
         )));
     }
 
@@ -19,8 +19,8 @@ pub(crate) fn init_notify_hub_from_env() -> anyhow::Result<Option<codepm_notify:
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
     {
-        sinks.push(Arc::new(codepm_notify::FeishuWebhookSink::new(
-            codepm_notify::FeishuWebhookConfig::new(webhook_url),
+        sinks.push(Arc::new(notify_kit::FeishuWebhookSink::new(
+            notify_kit::FeishuWebhookConfig::new(webhook_url),
         )?));
     }
 
@@ -30,19 +30,17 @@ pub(crate) fn init_notify_hub_from_env() -> anyhow::Result<Option<codepm_notify:
 
     let enabled_kinds = parse_env_event_kinds("CODE_PM_NOTIFY_EVENTS")?;
 
-    let hub = codepm_notify::Hub::new(
-        codepm_notify::HubConfig {
+    let hub = notify_kit::Hub::new(
+        notify_kit::HubConfig {
             enabled_kinds: Some(enabled_kinds),
-            ..codepm_notify::HubConfig::default()
+            ..notify_kit::HubConfig::default()
         },
         sinks,
     );
     Ok(Some(hub))
 }
 
-pub(crate) fn map_thread_event_to_notify_event(
-    event: &ThreadEvent,
-) -> Option<codepm_notify::Event> {
+pub(crate) fn map_thread_event_to_notify_event(event: &ThreadEvent) -> Option<notify_kit::Event> {
     fn truncate_preview(text: &str, max_chars: usize) -> String {
         let text = text.trim();
         if text.is_empty() {
@@ -65,9 +63,9 @@ pub(crate) fn map_thread_event_to_notify_event(
             reason,
         } => {
             let severity = match status {
-                TurnStatus::Completed => codepm_notify::Severity::Success,
-                TurnStatus::Interrupted | TurnStatus::Cancelled => codepm_notify::Severity::Warning,
-                TurnStatus::Failed | TurnStatus::Stuck => codepm_notify::Severity::Error,
+                TurnStatus::Completed => notify_kit::Severity::Success,
+                TurnStatus::Interrupted | TurnStatus::Cancelled => notify_kit::Severity::Warning,
+                TurnStatus::Failed | TurnStatus::Stuck => notify_kit::Severity::Error,
             };
             let title = match status {
                 TurnStatus::Completed => "turn completed",
@@ -77,7 +75,7 @@ pub(crate) fn map_thread_event_to_notify_event(
                 TurnStatus::Stuck => "turn stuck",
             };
 
-            let mut out = codepm_notify::Event::new("turn_completed", severity, title)
+            let mut out = notify_kit::Event::new("turn_completed", severity, title)
                 .with_tag("thread_id", thread_id)
                 .with_tag("turn_id", turn_id.to_string())
                 .with_tag("status", format!("{status:?}"));
@@ -97,14 +95,11 @@ pub(crate) fn map_thread_event_to_notify_event(
             ..
         } => {
             let title = format!("approval requested: {action}");
-            let mut out = codepm_notify::Event::new(
-                "approval_requested",
-                codepm_notify::Severity::Warning,
-                title,
-            )
-            .with_tag("thread_id", thread_id)
-            .with_tag("approval_id", approval_id.to_string())
-            .with_tag("action", action.clone());
+            let mut out =
+                notify_kit::Event::new("approval_requested", notify_kit::Severity::Warning, title)
+                    .with_tag("thread_id", thread_id)
+                    .with_tag("approval_id", approval_id.to_string())
+                    .with_tag("action", action.clone());
 
             if let Some(turn_id) = turn_id.as_ref() {
                 out = out.with_tag("turn_id", turn_id.to_string());
@@ -118,9 +113,9 @@ pub(crate) fn map_thread_event_to_notify_event(
             response_id,
             ..
         } => {
-            let mut out = codepm_notify::Event::new(
+            let mut out = notify_kit::Event::new(
                 "message_received",
-                codepm_notify::Severity::Info,
+                notify_kit::Severity::Info,
                 "assistant message",
             )
             .with_tag("thread_id", thread_id)

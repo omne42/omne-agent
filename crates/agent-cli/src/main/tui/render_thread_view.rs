@@ -15,23 +15,39 @@
     ) {
         let width = area.width.max(1) as usize;
         let mut transcript_lines = Vec::<Line>::new();
-        for entry in &state.transcript {
-            transcript_lines.extend(format_transcript_entry_lines(entry, width));
+        if state.scrollback_enabled {
+            for entry in state.transcript.iter().skip(state.transcript_flushed) {
+                transcript_lines.extend(format_transcript_entry_lines(entry, width));
+            }
+            if let Some(streaming) = &state.streaming {
+                transcript_lines.extend(format_role_lines(
+                    TranscriptRole::Assistant,
+                    streaming.text.as_str(),
+                    width,
+                ));
+            }
+            // Keep one empty line between transcript and prompt so the input never "jumps" to the
+            // very top when streaming finishes.
+            transcript_lines.push(Line::from(Span::raw("")));
+        } else {
+            for entry in &state.transcript {
+                transcript_lines.extend(format_transcript_entry_lines(entry, width));
+            }
+            if let Some(streaming) = &state.streaming {
+                transcript_lines.extend(format_role_lines(
+                    TranscriptRole::Assistant,
+                    streaming.text.as_str(),
+                    width,
+                ));
+            }
+            // 顶部固定留一行空白，避免首条输出把输入框顶线盖住。
+            transcript_lines.insert(0, Line::from(Span::raw("")));
         }
-        if let Some(streaming) = &state.streaming {
-            transcript_lines.extend(format_role_lines(
-                TranscriptRole::Assistant,
-                streaming.text.as_str(),
-                width,
-            ));
-        }
-        // 顶部固定留一行空白，避免首条输出把输入框顶线盖住。
-        transcript_lines.insert(0, Line::from(Span::raw("")));
 
         const MAX_INLINE_PALETTE_ITEMS: usize = 12;
         const INLINE_PALETTE_MIN_LINES: usize = 4;
 
-        let input_render = build_input_lines(&state.input, width);
+        let input_render = build_input_lines(&state.input, state.input_cursor, width);
         let input_lines = input_render.lines.len();
         let total_height = area.height as usize;
 
@@ -94,7 +110,11 @@
         let required_bottom = bottom_lines.len().max(1);
         let bottom_height = required_bottom.min(max_bottom).min(total_height);
         let max_top = total_height.saturating_sub(bottom_height);
-        let top_height = transcript_lines.len().min(max_top);
+        let top_height = if state.scrollback_enabled {
+            transcript_lines.len().min(max_top)
+        } else {
+            max_top
+        };
 
         let transcript_area = ratatui::layout::Rect {
             x: area.x,
@@ -380,7 +400,7 @@
         PaletteRender { lines }
     }
 
-    fn build_input_lines(input: &str, width: usize) -> InputRender {
+    fn build_input_lines(input: &str, cursor: usize, width: usize) -> InputRender {
         const PADDING_LINES: usize = 1;
         let width = width.max(1);
         let prompt = "› ";
@@ -404,14 +424,34 @@
             segments.push(String::new());
         }
 
-        let cursor_line = segments.len().saturating_sub(1) + PADDING_LINES;
+        let cursor = cursor.min(input.len());
+        let mut cursor_segment_line = 0usize;
+        let mut cursor_segment_col = 0usize;
+        let mut bytes_seen = 0usize;
+        for ch in input.chars() {
+            let ch_len = ch.len_utf8();
+            if bytes_seen + ch_len > cursor {
+                break;
+            }
+            bytes_seen = bytes_seen.saturating_add(ch_len);
+            if ch == '\n' {
+                cursor_segment_line = cursor_segment_line.saturating_add(1);
+                cursor_segment_col = 0;
+                continue;
+            }
+            let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+            if cursor_segment_col + ch_width > available && cursor_segment_col > 0 {
+                cursor_segment_line = cursor_segment_line.saturating_add(1);
+                cursor_segment_col = 0;
+            }
+            cursor_segment_col = cursor_segment_col.saturating_add(ch_width);
+        }
+
+        let cursor_segment_line =
+            cursor_segment_line.min(segments.len().saturating_sub(1));
+        let cursor_line = cursor_segment_line + PADDING_LINES;
         let cursor_col = prompt_width
-            .saturating_add(UnicodeWidthStr::width(
-                segments
-                    .last()
-                    .map(|segment| segment.as_str())
-                    .unwrap_or(""),
-            ))
+            .saturating_add(cursor_segment_col)
             .min(width.saturating_sub(1));
 
         let mut lines = Vec::<Line>::new();
@@ -458,12 +498,39 @@
 
     fn usage_total_tokens(usage: &Value) -> Option<u64> {
         let total_tokens = usage.get("total_tokens").and_then(Value::as_u64);
-        let input_tokens = usage.get("input_tokens").and_then(Value::as_u64);
-        let output_tokens = usage.get("output_tokens").and_then(Value::as_u64);
+        let input_tokens = usage_input_tokens(usage);
+        let output_tokens = usage_output_tokens(usage);
         total_tokens.or_else(|| match (input_tokens, output_tokens) {
             (Some(input), Some(output)) => Some(input.saturating_add(output)),
             _ => None,
         })
+    }
+
+    fn usage_input_tokens(usage: &Value) -> Option<u64> {
+        usage.get("input_tokens")
+            .or_else(|| usage.get("prompt_tokens"))
+            .and_then(Value::as_u64)
+    }
+
+    fn usage_output_tokens(usage: &Value) -> Option<u64> {
+        usage.get("output_tokens")
+            .or_else(|| usage.get("completion_tokens"))
+            .and_then(Value::as_u64)
+    }
+
+    fn usage_cache_input_tokens(usage: &Value) -> Option<u64> {
+        usage.get("cache_input_tokens")
+            .and_then(Value::as_u64)
+            .or_else(|| {
+                usage.get("input_tokens_details")
+                    .and_then(|details| details.get("cached_tokens"))
+                    .and_then(Value::as_u64)
+            })
+            .or_else(|| {
+                usage.get("prompt_tokens_details")
+                    .and_then(|details| details.get("cached_tokens"))
+                    .and_then(Value::as_u64)
+            })
     }
 
     fn tool_status_str(value: ToolStatus) -> &'static str {

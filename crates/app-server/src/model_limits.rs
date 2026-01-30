@@ -8,6 +8,7 @@ const DEFAULT_CONTEXT_WINDOW_16K: u64 = 16_385;
 const DEFAULT_CONTEXT_WINDOW_4_1: u64 = 1_047_576;
 
 const DEFAULT_AUTO_COMPACT_PCT: u64 = 90;
+const DEFAULT_EFFECTIVE_CONTEXT_WINDOW_PERCENT_CODEX: u64 = 95;
 
 #[derive(Clone, Copy, Debug)]
 pub struct ModelLimits {
@@ -31,6 +32,29 @@ pub fn resolve_model_limits(model: &str, config: Option<&ModelConfig>) -> ModelL
         context_window,
         auto_compact_token_limit,
     }
+}
+
+pub fn effective_context_window_for_model(model: &str, context_window: u64) -> u64 {
+    context_window.saturating_mul(effective_context_window_percent_for_model(model)) / 100
+}
+
+fn effective_context_window_percent_for_model(model: &str) -> u64 {
+    let slug = model.trim();
+    if slug.is_empty() {
+        return 100;
+    }
+    let slug = slug.to_ascii_lowercase();
+
+    if slug.starts_with("gpt-5")
+        || slug.starts_with("codex-")
+        || slug.starts_with("exp-")
+        || slug.starts_with("bengalfox")
+        || slug.starts_with("boomslang")
+    {
+        return DEFAULT_EFFECTIVE_CONTEXT_WINDOW_PERCENT_CODEX;
+    }
+
+    100
 }
 
 fn default_context_window_for_model(model: &str) -> Option<u64> {

@@ -1,5 +1,5 @@
-    use std::collections::{HashMap, HashSet, VecDeque};
-    use std::io::{Stdout, Write};
+    use std::collections::{HashMap, VecDeque};
+    use std::io::{IsTerminal, Stdout, Write};
     use std::path::PathBuf;
     use std::time::{Duration, Instant};
 
@@ -16,8 +16,8 @@
     use ratatui::layout::{Constraint, Direction, Layout};
     use ratatui::style::{Color, Modifier, Style};
     use ratatui::text::{Line, Span, Text};
-    use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
-    use ratatui::Terminal;
+    use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap, Widget};
+    use ratatui::{Terminal, TerminalOptions, Viewport};
     use serde::Deserialize;
     use serde_json::Value;
     use super::SubscribeResponse;
@@ -192,12 +192,17 @@
             .take_notifications()
             .context("notifications already taken")?;
 
-        let mut terminal = setup_terminal().context("setup terminal")?;
         let _guard = TerminalGuard::enter().context("enter terminal mode")?;
-        terminal.clear().context("clear terminal")?;
+        let scrollback_enabled = tui_scrollback_enabled();
+        let mut terminal = setup_terminal(scrollback_enabled).context("setup terminal")?;
+        if !scrollback_enabled {
+            terminal.clear().context("clear terminal")?;
+        }
 
         let mut state = UiState::new(args.include_archived);
+        state.scrollback_enabled = scrollback_enabled;
         state.status = Some("connecting...".to_string());
+        flush_transcript_to_scrollback(&mut terminal, &mut state)?;
         terminal.draw(|f| draw_ui(f, &mut state))?;
 
         let startup_timeout = std::env::var("CODE_PM_TUI_STARTUP_TIMEOUT_MS")
@@ -229,6 +234,7 @@
 
         loop {
             if needs_draw {
+                flush_transcript_to_scrollback(&mut terminal, &mut state)?;
                 terminal.draw(|f| draw_ui(f, &mut state))?;
                 needs_draw = false;
             }
@@ -263,8 +269,14 @@
                     Some(Ok(event)) = event_stream.next() => {
                         match event {
                             Event::Key(key) => {
-                                if key.kind != crossterm::event::KeyEventKind::Press {
-                                    continue;
+                                match key.kind {
+                                    crossterm::event::KeyEventKind::Press => {}
+                                    crossterm::event::KeyEventKind::Repeat => {
+                                        if matches!(key.code, KeyCode::Enter) {
+                                            continue;
+                                        }
+                                    }
+                                    _ => continue,
                                 }
                                 if state.handle_key(app, key).await? {
                                     return Ok(());
@@ -295,8 +307,14 @@
                     Some(Ok(event)) = event_stream.next() => {
                         match event {
                             Event::Key(key) => {
-                                if key.kind != crossterm::event::KeyEventKind::Press {
-                                    continue;
+                                match key.kind {
+                                    crossterm::event::KeyEventKind::Press => {}
+                                    crossterm::event::KeyEventKind::Repeat => {
+                                        if matches!(key.code, KeyCode::Enter) {
+                                            continue;
+                                        }
+                                    }
+                                    _ => continue,
                                 }
                                 if state.handle_key(app, key).await? {
                                     return Ok(());
@@ -334,12 +352,14 @@
                 match result {
                     Ok(Ok(PollOutcome::Response(resp))) => {
                         if state.active_thread == Some(thread_id) {
-                            state.last_seq = resp.last_seq;
-                            let has_events = !resp.events.is_empty();
+                            let mut applied = false;
                             for event in resp.events {
-                                state.apply_event(&event);
+                                if state.apply_live_event(&event) {
+                                    applied = true;
+                                }
                             }
-                            if has_events {
+                            state.last_seq = state.last_seq.max(resp.last_seq);
+                            if applied {
                                 needs_draw = true;
                             }
                             if resp.has_more {
@@ -434,7 +454,7 @@
                         if state.active_thread == Some(pending.thread_id)
                             && state.input.trim().is_empty()
                         {
-                            state.input = pending.input;
+                            state.set_input(pending.input);
                         }
                         state.set_status(format!("turn/start error: {err}"));
                         needs_draw = true;
@@ -443,7 +463,7 @@
                         if state.active_thread == Some(pending.thread_id)
                             && state.input.trim().is_empty()
                         {
-                            state.input = pending.input;
+                            state.set_input(pending.input);
                         }
                         state.set_status(format!("turn/start task error: {err}"));
                         needs_draw = true;
@@ -472,10 +492,115 @@
         }
     }
 
-    fn setup_terminal() -> anyhow::Result<Terminal<CrosstermBackend<Stdout>>> {
+    fn env_bool(key: &str) -> Option<bool> {
+        let value = std::env::var(key).ok()?;
+        let value = value.trim().to_ascii_lowercase();
+        match value.as_str() {
+            "1" | "true" | "yes" | "on" => Some(true),
+            "0" | "false" | "no" | "off" => Some(false),
+            _ => None,
+        }
+    }
+
+    fn tui_scrollback_enabled() -> bool {
+        env_bool("CODE_PM_TUI_SCROLLBACK").unwrap_or_else(|| std::io::stdout().is_terminal())
+    }
+
+    fn tui_viewport_height(max_height: u16) -> u16 {
+        let default = max_height.min(24);
+        std::env::var("CODE_PM_TUI_VIEWPORT_HEIGHT")
+            .ok()
+            .and_then(|value| value.trim().parse::<u16>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(default)
+            .min(max_height)
+            .max(1)
+    }
+
+    fn setup_terminal(
+        scrollback_enabled: bool,
+    ) -> anyhow::Result<Terminal<CrosstermBackend<Stdout>>> {
         let stdout = std::io::stdout();
         let backend = CrosstermBackend::new(stdout);
-        Ok(Terminal::new(backend)?)
+        if !scrollback_enabled {
+            return Ok(Terminal::new(backend)?);
+        }
+
+        let (_cols, rows) = crossterm::terminal::size()?;
+        let max_height = rows.max(1);
+        let height = tui_viewport_height(max_height);
+        Ok(Terminal::with_options(
+            backend,
+            TerminalOptions {
+                viewport: Viewport::Inline(height),
+            },
+        )?)
+    }
+
+    fn flush_transcript_to_scrollback(
+        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+        state: &mut UiState,
+    ) -> anyhow::Result<()> {
+        const KEEP_TAIL_ENTRIES: usize = 64;
+
+        if !state.scrollback_enabled {
+            return Ok(());
+        }
+        if state.active_thread.is_none() {
+            return Ok(());
+        }
+
+        let flush_target = state
+            .transcript
+            .len()
+            .saturating_sub(KEEP_TAIL_ENTRIES);
+        if state.transcript_flushed >= flush_target {
+            return Ok(());
+        }
+
+        let width = terminal.size().context("terminal size")?.width.max(1) as usize;
+        let mut lines = Vec::<Line>::new();
+        for entry in state
+            .transcript
+            .iter()
+            .skip(state.transcript_flushed)
+            .take(flush_target.saturating_sub(state.transcript_flushed))
+        {
+            lines.extend(format_transcript_entry_lines(entry, width));
+        }
+        state.transcript_flushed = flush_target;
+
+        if lines.is_empty() {
+            return Ok(());
+        }
+
+        let height = u16::try_from(lines.len()).unwrap_or(u16::MAX);
+        let text = Text::from(lines);
+        terminal.insert_before(height, move |buf| {
+            Paragraph::new(text).render(buf.area, buf);
+            scrub_wide_symbol_placeholders(buf);
+        })?;
+        Ok(())
+    }
+
+    fn scrub_wide_symbol_placeholders(buf: &mut ratatui::buffer::Buffer) {
+        let width = buf.area.width.max(1) as usize;
+        let len = buf.content.len();
+        let mut idx = 0usize;
+        while idx < len {
+            let symbol_width = UnicodeWidthStr::width(buf.content[idx].symbol());
+            if symbol_width > 1 {
+                let col = idx % width;
+                let remaining_in_row = width.saturating_sub(col);
+                let to_blank = symbol_width.min(remaining_in_row);
+                for offset in 1..to_blank {
+                    if let Some(cell) = buf.content.get_mut(idx + offset) {
+                        cell.set_symbol("");
+                    }
+                }
+            }
+            idx += 1;
+        }
     }
 
     async fn initialize_startup(
@@ -497,10 +622,29 @@
                         .and_then(|v| v.as_str())
                         .map(|s| s.trim().to_string())
                         .filter(|s| !s.is_empty());
+                    state.total_input_tokens_used = value
+                        .get("input_tokens_used")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    state.total_cache_input_tokens_used = value
+                        .get("cache_input_tokens_used")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    state.total_output_tokens_used = value
+                        .get("output_tokens_used")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
                     state.total_tokens_used = value
                         .get("total_tokens_used")
                         .and_then(|v| v.as_u64())
                         .unwrap_or(0);
+                    if state.total_tokens_used > 0
+                        || state.total_input_tokens_used > 0
+                        || state.total_output_tokens_used > 0
+                        || state.total_cache_input_tokens_used > 0
+                    {
+                        state.skip_token_usage_before_seq = Some(last_seq);
+                    }
                 }
             }
             None => {
@@ -517,10 +661,29 @@
                         .and_then(|v| v.as_str())
                         .map(|s| s.trim().to_string())
                         .filter(|s| !s.is_empty());
+                    state.total_input_tokens_used = value
+                        .get("input_tokens_used")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    state.total_cache_input_tokens_used = value
+                        .get("cache_input_tokens_used")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    state.total_output_tokens_used = value
+                        .get("output_tokens_used")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
                     state.total_tokens_used = value
                         .get("total_tokens_used")
                         .and_then(|v| v.as_u64())
                         .unwrap_or(0);
+                    if state.total_tokens_used > 0
+                        || state.total_input_tokens_used > 0
+                        || state.total_output_tokens_used > 0
+                        || state.total_cache_input_tokens_used > 0
+                    {
+                        state.skip_token_usage_before_seq = Some(last_seq);
+                    }
                 }
             }
         }

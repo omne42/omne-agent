@@ -19,18 +19,21 @@
         }
 
         fn insert_command_trigger(&mut self) {
-            if self.input.is_empty()
+            self.clamp_input_cursor();
+            let insert = if self.input_cursor == 0
                 || self
                     .input
+                    .get(..self.input_cursor)
+                    .unwrap_or("")
                     .chars()
                     .last()
                     .is_some_and(char::is_whitespace)
             {
-                self.input.push('/');
+                "/"
             } else {
-                self.input.push(' ');
-                self.input.push('/');
-            }
+                " /"
+            };
+            self.insert_input_str(insert);
             self.transcript_follow = true;
         }
 
@@ -53,15 +56,25 @@
         fn clear_inline_line(&mut self) {
             let (line_start, _) = last_line_bounds(&self.input);
             self.input.truncate(line_start);
+            self.input_cursor = self.input_cursor.min(self.input.len());
         }
 
         fn replace_inline_token(&mut self, trigger: char, replacement: &str, trailing_space: bool) {
             if let Some((start, end)) = inline_token_span(&self.input, trigger) {
+                let old_cursor = self.input_cursor;
                 let mut value = replacement.to_string();
                 if trailing_space {
                     value.push(' ');
                 }
                 self.input.replace_range(start..end, &value);
+                if old_cursor < start {
+                    // keep
+                } else if old_cursor > end {
+                    let delta = value.len() as isize - (end - start) as isize;
+                    self.input_cursor = old_cursor.saturating_add_signed(delta);
+                } else {
+                    self.input_cursor = start.saturating_add(value.len());
+                }
             }
         }
 

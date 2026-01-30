@@ -5,14 +5,14 @@ rust-version.workspace = true
 version.workspace = true
 
 [features]
-notify = ["dep:codepm-notify"]
+notify = ["dep:notify-kit"]
 
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
 base64.workspace = true
 clap.workspace = true
-codepm-notify = { workspace = true, optional = true }
+notify-kit = { workspace = true, optional = true }
 diffy.workspace = true
 globset.workspace = true
 futures-util.workspace = true

@@ -14,7 +14,7 @@ axum = "0.7"
 base64 = "0.22"
 bytes = "1"
 clap = { version = "4", features = ["derive"] }
-codepm-notify = { path = "../codepm-notify/crates/codepm-notify" }
+notify-kit = { path = "../notify-kit/crates/notify-kit" }
 diffy = "0.4"
 fs2 = "0.4"
 futures-util = "0.3"

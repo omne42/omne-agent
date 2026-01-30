@@ -81,6 +81,286 @@
         out
     }
 
+    fn normalize_agent_tool_name(tool: &str) -> String {
+        if tool.contains('/') {
+            return tool.to_string();
+        }
+        let mut parts = tool.splitn(2, '_');
+        let group = parts.next().unwrap_or(tool);
+        let action = parts.next().unwrap_or("");
+        if action.is_empty() {
+            tool.to_string()
+        } else {
+            format!("{group}/{action}")
+        }
+    }
+
+    fn truncate_multiline_output(text: &str, max_lines: usize, max_chars: usize) -> String {
+        let text = text.trim_end_matches('\n');
+        let max_lines = max_lines.max(1);
+        let max_chars = max_chars.max(1);
+
+        let mut out = String::new();
+        let mut chars_used = 0usize;
+        let mut lines_used = 0usize;
+
+        for line in text.split('\n') {
+            if lines_used >= max_lines {
+                if !out.is_empty() {
+                    out.push('\n');
+                }
+                out.push('…');
+                return out;
+            }
+            if lines_used > 0 {
+                out.push('\n');
+                chars_used = chars_used.saturating_add(1);
+            }
+            for ch in line.chars() {
+                if chars_used >= max_chars {
+                    out.push('…');
+                    return out;
+                }
+                out.push(ch);
+                chars_used = chars_used.saturating_add(1);
+            }
+            lines_used = lines_used.saturating_add(1);
+        }
+        out
+    }
+
+    fn extract_primary_tool_text(value: &Value) -> Option<String> {
+        match value {
+            Value::String(value) => {
+                let value = value.to_string();
+                if value.trim().is_empty() {
+                    None
+                } else {
+                    Some(value)
+                }
+            }
+            Value::Object(map) => {
+                if let Some(text) = map.get("text").and_then(Value::as_str) {
+                    return Some(text.to_string());
+                }
+                let stdout = map
+                    .get("stdout")
+                    .or_else(|| map.get("stdout_tail"))
+                    .and_then(Value::as_str);
+                let stderr = map
+                    .get("stderr")
+                    .or_else(|| map.get("stderr_tail"))
+                    .and_then(Value::as_str);
+                if stdout.is_some() || stderr.is_some() {
+                    let mut out = String::new();
+                    if let Some(stdout) = stdout.filter(|s| !s.trim().is_empty()) {
+                        out.push_str(stdout.trim_end());
+                    }
+                    if let Some(stderr) = stderr.filter(|s| !s.trim().is_empty()) {
+                        if !out.is_empty() {
+                            out.push_str("\n\n");
+                            out.push_str("[stderr]\n");
+                        }
+                        out.push_str(stderr.trim_end());
+                    }
+                    if out.trim().is_empty() {
+                        None
+                    } else {
+                        Some(out)
+                    }
+                } else {
+                    for key in ["output", "content", "diff", "patch"] {
+                        if let Some(text) = map.get(key).and_then(Value::as_str) {
+                            if !text.trim().is_empty() {
+                                return Some(text.to_string());
+                            }
+                        }
+                    }
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn tool_meta_brief(value: &Value) -> String {
+        let Some(map) = value.as_object() else {
+            return String::new();
+        };
+        let mut parts = Vec::<String>::new();
+        if let Some(process_id) = map
+            .get("process_id")
+            .and_then(Value::as_str)
+            .filter(|s| !s.trim().is_empty())
+        {
+            parts.push(format!("process_id={}", normalize_single_line(process_id)));
+        }
+        if let Some(path) = map
+            .get("resolved_path")
+            .and_then(Value::as_str)
+            .filter(|s| !s.trim().is_empty())
+        {
+            parts.push(format!("path={}", normalize_single_line(path)));
+        } else if let Some(path) = map
+            .get("path")
+            .and_then(Value::as_str)
+            .filter(|s| !s.trim().is_empty())
+        {
+            parts.push(format!("path={}", normalize_single_line(path)));
+        }
+        if let Some(exit_code) = map.get("exit_code").and_then(Value::as_i64) {
+            parts.push(format!("exit_code={exit_code}"));
+        }
+        if map.get("truncated").and_then(Value::as_bool) == Some(true) {
+            parts.push("truncated=true".to_string());
+        }
+        if map.get("denied").and_then(Value::as_bool) == Some(true) {
+            parts.push("denied=true".to_string());
+        }
+        if parts.is_empty() {
+            String::new()
+        } else {
+            format!(" [{}]", parts.join(", "))
+        }
+    }
+
+    fn format_agent_step_tool_result(tool: &str, output: &str) -> Option<String> {
+        const MAX_OUTPUT_LINES: usize = 80;
+        const MAX_OUTPUT_CHARS: usize = 8_000;
+
+        let tool = normalize_agent_tool_name(tool);
+        let output = output.trim();
+        if output.is_empty() {
+            return Some(format!("{tool} → (empty)"));
+        }
+        let parsed = serde_json::from_str::<Value>(output);
+        if tool == "process/start" {
+            match parsed {
+                Ok(value) => {
+                    if value.get("needs_approval").and_then(Value::as_bool) == Some(true) {
+                        let approval_id = value
+                            .get("approval_id")
+                            .and_then(Value::as_str)
+                            .unwrap_or("");
+                        let mut body = "needs_approval=true".to_string();
+                        let approval_id = normalize_single_line(approval_id);
+                        if approval_id != "-" {
+                            body.push_str(&format!(" approval_id={approval_id}"));
+                        }
+                        return Some(format!("{tool} → {body}"));
+                    }
+
+                    if value.get("denied").and_then(Value::as_bool) == Some(true) {
+                        return Some(format!("{tool} → denied=true"));
+                    }
+
+                    // process/start success is already rendered via ThreadEventKind::ProcessStarted.
+                    return None;
+                }
+                Err(_) => {
+                    // Avoid dumping raw JSON (often includes long stdout/stderr paths).
+                    return Some(format!("{tool} → (started)"));
+                }
+            }
+        }
+
+        let (meta, body) = match parsed {
+            Ok(value) => match tool.as_str() {
+                "process/inspect" => {
+                    if value.get("needs_approval").and_then(Value::as_bool) == Some(true) {
+                        let approval_id = value
+                            .get("approval_id")
+                            .and_then(Value::as_str)
+                            .unwrap_or("");
+                        let mut body = "needs_approval=true".to_string();
+                        let approval_id = normalize_single_line(approval_id);
+                        if approval_id != "-" {
+                            body.push_str(&format!(" approval_id={approval_id}"));
+                        }
+                        return Some(format!("{tool} → {body}"));
+                    }
+
+                    if value.get("denied").and_then(Value::as_bool) == Some(true) {
+                        return Some(format!("{tool} → denied=true"));
+                    }
+
+                    let process = value.get("process").and_then(Value::as_object);
+                    let exit_code = process
+                        .and_then(|p| p.get("exit_code"))
+                        .and_then(Value::as_i64);
+                    let meta = exit_code
+                        .map(|code| format!(" [exit_code={code}]"))
+                        .unwrap_or_default();
+
+                    let cmd_line = process
+                        .and_then(|p| p.get("argv"))
+                        .and_then(Value::as_array)
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(Value::as_str)
+                                .map(str::to_string)
+                                .collect::<Vec<_>>()
+                        })
+                        .and_then(|argv| {
+                            let cwd = process
+                                .and_then(|p| p.get("cwd"))
+                                .and_then(Value::as_str)
+                                .unwrap_or("");
+                            format_process_started_line(&argv, cwd, None)
+                        })
+                        .unwrap_or_default();
+
+                    let mut body = extract_primary_tool_text(&value).unwrap_or_default();
+                    body = truncate_multiline_output(&body, MAX_OUTPUT_LINES, MAX_OUTPUT_CHARS);
+                    let body = if !cmd_line.trim().is_empty() && !body.trim().is_empty() {
+                        format!("{cmd_line}\n{body}")
+                    } else if !cmd_line.trim().is_empty() {
+                        cmd_line
+                    } else if !body.trim().is_empty() {
+                        body
+                    } else {
+                        "(no output)".to_string()
+                    };
+                    (meta, body)
+                }
+                _ => {
+                    let meta = tool_meta_brief(&value);
+                    if let Some(text) = extract_primary_tool_text(&value) {
+                        (
+                            meta,
+                            truncate_multiline_output(&text, MAX_OUTPUT_LINES, MAX_OUTPUT_CHARS),
+                        )
+                    } else {
+                        let summary = summarize_json(&value);
+                        (
+                            meta,
+                            truncate_multiline_output(&summary, MAX_OUTPUT_LINES, MAX_OUTPUT_CHARS),
+                        )
+                    }
+                }
+            },
+            Err(_) => {
+                if tool == "process/inspect" {
+                    // Avoid dumping raw JSON (often includes long stdout/stderr paths).
+                    return Some(format!("{tool} → (output unavailable)"));
+                }
+
+                // The agent event log stores output as a JSON string preview which may be truncated
+                // with an ellipsis. If parsing fails, show a slightly-unescaped preview.
+                let display = output.replace("\\n", "\n").replace("\\t", "\t");
+                (
+                    String::new(),
+                    truncate_multiline_output(&display, MAX_OUTPUT_LINES, MAX_OUTPUT_CHARS),
+                )
+            }
+        };
+        if body.contains('\n') {
+            Some(format!("{tool}{meta} →\n{body}"))
+        } else {
+            Some(format!("{tool}{meta} → {body}"))
+        }
+    }
+
     fn should_suppress_tool_started(tool: &str) -> bool {
         matches!(
             tool,
@@ -362,4 +642,3 @@
             path.to_string()
         }
     }
-

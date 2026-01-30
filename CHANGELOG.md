@@ -92,7 +92,7 @@
 - `pm-app-server thread/events`：支持 `max_events` 分页，并返回 `has_more`/`thread_last_seq` 便于订阅端处理 lag 与续读。
 - `pm-app-server thread/subscribe`：长轮询读取 thread events（`wait_ms` 超时），用于实现“不断线不丢”的订阅式消费（`since_seq` + `seq` 去重）。
 - `pm-app-server`：追加 `ThreadEvent` 时会同时发送 JSON-RPC notifications（`thread/event`、`turn/*`、`item/*`），用于 UI/客户端实时渲染；掉线可用 `thread/subscribe` 从 `since_seq` 重放补齐。
-- `pm-app-server`：可选通知插件：接入通用库 `codepm-notify`（声音/飞书 webhook）；CodePM adapter（`CODE_PM_NOTIFY_*` 解析与 `ThreadEvent` 映射）留在 app-server，通过 `--features notify` 启用。
+- `pm-app-server`：可选通知插件：接入通用库 `notify-kit`（声音/飞书 webhook）；CodePM notify integration（`CODE_PM_NOTIFY_*` 解析与 `ThreadEvent` 映射）留在 app-server，通过 `--features notify` 启用。
 - `pm-app-server` agent loop：Responses SSE 流式执行（`response.output_text.delta`）并转发为 `item/delta` JSON-RPC notifications（文本流）；最终仍以 `AssistantMessage` 落盘为准（断线不丢）。
 - `pm-app-server` 新增 thread 清理 API：`thread/delete(force?)` 与 `thread/clear_artifacts(force?)`，用于一键清除 history 与中间态产物。
 - `pm-app-server` 新增 approvals 控制面：`thread/configure(approval_policy,sandbox_policy?)`、`approval/list`、`approval/decide`。
@@ -200,6 +200,11 @@
 - `pm` TUI：禁用 alt-screen 并减少无意义重绘，允许终端原生滚动与选中文本。
 - `pm` TUI：tool 记录改为可读的命令式摘要（如 `$ ls`），并修复流式输出闪现后丢失的问题。
 - `pm` TUI：提升 transcript 缓冲上限，超出屏幕不再丢历史。
+- `pm` TUI：修复输入框光标左右移动/中间编辑不生效的问题，并补齐折行场景下的光标定位。
+- `pm` TUI：修复用户消息与 tool 输出偶发重复渲染的问题。
+- `pm` TUI：tool 输出展示改为合并 `process/*` 的 stdout/stderr，并隐藏噪声路径 JSON。
+- `pm` TUI：状态栏补齐 token 用量统计（`input`/`cache_input`/`output`），并按模型上限显示 context 剩余百分比。
+- `pm` TUI：修复中文/宽字符渲染导致的字间空格问题。
 - `ditto-llm`：OpenAI Responses 请求现在会携带 `instructions`（来自 system message），修复部分 provider 返回 “Instructions are required”。
 - `pm-app-server`：项目配置现在会读取 `openai.base_url`（`config.toml`/`config_local.toml`）并允许 `.env` 覆盖，`thread/models` 与 `thread/config-explain` 使用该值。
 - `pm-app-server thread/models`：`GET /models` 增加 2s 超时并在失败时降级返回候选模型列表，同时返回 `models_error` 供 UI 持久展示错误。

@@ -777,6 +777,7 @@
 
     struct UiState {
         include_archived: bool,
+        scrollback_enabled: bool,
         threads: Vec<ThreadMeta>,
         selected_thread: usize,
         active_thread: Option<ThreadId>,
@@ -786,17 +787,24 @@
         inline_palette: Option<InlinePalette>,
         last_seq: u64,
         transcript: VecDeque<TranscriptEntry>,
+        transcript_flushed: usize,
         transcript_scroll: u16,
         transcript_follow: bool,
         transcript_max_scroll: u16,
         transcript_viewport_height: u16,
         tool_events: HashMap<ToolId, String>,
+        process_started_lines: HashMap<ProcessId, String>,
         streaming: Option<StreamingState>,
         active_turn_id: Option<TurnId>,
         input: String,
+        input_cursor: usize,
         status: Option<String>,
+        total_input_tokens_used: u64,
+        total_cache_input_tokens_used: u64,
+        total_output_tokens_used: u64,
         total_tokens_used: u64,
-        counted_usage_responses: HashSet<String>,
+        token_usage_by_response: HashMap<String, SeenTokenUsage>,
+        last_tokens_in_context_window: Option<u64>,
         skip_token_usage_before_seq: Option<u64>,
         pending_action: Option<PendingAction>,
         model_fetch: Option<ModelFetchInFlight>,
@@ -811,3 +819,10 @@
         turn_start: Option<TurnStartInFlight>,
     }
 
+    #[derive(Debug, Clone, Default)]
+    struct SeenTokenUsage {
+        input_tokens: Option<u64>,
+        cache_input_tokens: Option<u64>,
+        output_tokens: Option<u64>,
+        total_tokens: Option<u64>,
+    }

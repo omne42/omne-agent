@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
@@ -235,7 +235,19 @@ pub struct ThreadState {
     pub pending_approvals: HashSet<ApprovalId>,
     pub running_processes: HashSet<ProcessId>,
     pub failed_processes: HashSet<ProcessId>,
+    pub input_tokens_used: u64,
+    pub cache_input_tokens_used: u64,
+    pub output_tokens_used: u64,
     pub total_tokens_used: u64,
+    token_usage_by_response: HashMap<String, SeenTokenUsage>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct SeenTokenUsage {
+    input_tokens: Option<u64>,
+    cache_input_tokens: Option<u64>,
+    output_tokens: Option<u64>,
+    total_tokens: Option<u64>,
 }
 
 impl ThreadState {
@@ -268,7 +280,11 @@ impl ThreadState {
             pending_approvals: HashSet::new(),
             running_processes: HashSet::new(),
             failed_processes: HashSet::new(),
+            input_tokens_used: 0,
+            cache_input_tokens_used: 0,
+            output_tokens_used: 0,
             total_tokens_used: 0,
+            token_usage_by_response: HashMap::new(),
         }
     }
 
@@ -406,19 +422,94 @@ impl ThreadState {
                     }
                 }
             }
-            ThreadEventKind::AgentStep { token_usage, .. } => {
-                if let Some(usage) = token_usage.as_ref()
-                    && let Some(tokens) = usage_total_tokens(usage)
-                {
-                    self.total_tokens_used = self.total_tokens_used.saturating_add(tokens);
-                }
+            ThreadEventKind::AgentStep {
+                response_id,
+                token_usage,
+                ..
+            } => {
+                self.record_token_usage(Some(response_id.as_str()), token_usage.as_ref());
             }
-            ThreadEventKind::AssistantMessage { .. } => {}
+            ThreadEventKind::AssistantMessage {
+                response_id,
+                token_usage,
+                ..
+            } => {
+                self.record_token_usage(response_id.as_deref(), token_usage.as_ref());
+            }
             _ => {}
         }
 
         self.last_seq = event.seq;
         Ok(())
+    }
+
+    fn record_token_usage(&mut self, response_id: Option<&str>, usage: Option<&serde_json::Value>) {
+        let Some(usage) = usage else {
+            return;
+        };
+
+        let input_tokens = usage_input_tokens(usage);
+        let cache_input_tokens = usage_cache_input_tokens(usage);
+        let output_tokens = usage_output_tokens(usage);
+        let total_tokens = usage_total_tokens(usage);
+        let has_numeric_usage = input_tokens.is_some()
+            || cache_input_tokens.is_some()
+            || output_tokens.is_some()
+            || total_tokens.is_some();
+        if !has_numeric_usage {
+            return;
+        }
+
+        fn apply_delta(slot: &mut Option<u64>, next: Option<u64>) -> u64 {
+            let Some(next) = next else {
+                return 0;
+            };
+            match *slot {
+                None => {
+                    *slot = Some(next);
+                    next
+                }
+                Some(prev) if next > prev => {
+                    *slot = Some(next);
+                    next - prev
+                }
+                _ => 0,
+            }
+        }
+
+        if let Some(response_id) = response_id.filter(|value| !value.trim().is_empty()) {
+            let entry = self
+                .token_usage_by_response
+                .entry(response_id.to_string())
+                .or_default();
+
+            self.input_tokens_used = self
+                .input_tokens_used
+                .saturating_add(apply_delta(&mut entry.input_tokens, input_tokens));
+            self.cache_input_tokens_used = self.cache_input_tokens_used.saturating_add(
+                apply_delta(&mut entry.cache_input_tokens, cache_input_tokens),
+            );
+            self.output_tokens_used = self
+                .output_tokens_used
+                .saturating_add(apply_delta(&mut entry.output_tokens, output_tokens));
+            self.total_tokens_used = self
+                .total_tokens_used
+                .saturating_add(apply_delta(&mut entry.total_tokens, total_tokens));
+            return;
+        }
+
+        if let Some(tokens) = input_tokens {
+            self.input_tokens_used = self.input_tokens_used.saturating_add(tokens);
+        }
+        if let Some(tokens) = cache_input_tokens {
+            self.cache_input_tokens_used = self.cache_input_tokens_used.saturating_add(tokens);
+        }
+        if let Some(tokens) = output_tokens {
+            self.output_tokens_used = self.output_tokens_used.saturating_add(tokens);
+        }
+        if let Some(tokens) = total_tokens {
+            self.total_tokens_used = self.total_tokens_used.saturating_add(tokens);
+        }
     }
 }
 
@@ -439,6 +530,38 @@ fn usage_total_tokens(usage: &serde_json::Value) -> Option<u64> {
         (None, Some(output)) => Some(output),
         (None, None) => None,
     })
+}
+
+fn usage_input_tokens(usage: &serde_json::Value) -> Option<u64> {
+    usage
+        .get("input_tokens")
+        .or_else(|| usage.get("prompt_tokens"))
+        .and_then(serde_json::Value::as_u64)
+}
+
+fn usage_output_tokens(usage: &serde_json::Value) -> Option<u64> {
+    usage
+        .get("output_tokens")
+        .or_else(|| usage.get("completion_tokens"))
+        .and_then(serde_json::Value::as_u64)
+}
+
+fn usage_cache_input_tokens(usage: &serde_json::Value) -> Option<u64> {
+    usage
+        .get("cache_input_tokens")
+        .and_then(serde_json::Value::as_u64)
+        .or_else(|| {
+            usage
+                .get("input_tokens_details")
+                .and_then(|details| details.get("cached_tokens"))
+                .and_then(serde_json::Value::as_u64)
+        })
+        .or_else(|| {
+            usage
+                .get("prompt_tokens_details")
+                .and_then(|details| details.get("cached_tokens"))
+                .and_then(serde_json::Value::as_u64)
+        })
 }
 
 #[cfg(test)]

@@ -94,7 +94,7 @@
             if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
                 let mut cleared_input = false;
                 if self.active_thread.is_some() && !self.input.trim().is_empty() {
-                    self.input.clear();
+                    self.clear_input();
                     self.transcript_follow = true;
                     self.update_inline_palette(app).await?;
                     cleared_input = true;
@@ -272,7 +272,7 @@
                 }
                 KeyCode::Esc => {
                     if !self.input.trim().is_empty() {
-                        self.input.clear();
+                        self.clear_input();
                         self.transcript_follow = true;
                         input_changed = true;
                     } else {
@@ -283,7 +283,7 @@
                     if key.modifiers.contains(KeyModifiers::CONTROL)
                         || key.modifiers.contains(KeyModifiers::SUPER) =>
                 {
-                    self.input.push('\n');
+                    self.insert_input_char('\n');
                     input_changed = true;
                 }
                 KeyCode::Enter => {
@@ -325,16 +325,31 @@
                             return Ok(false);
                         }
                     };
-                    self.input.clear();
+                    self.clear_input();
                     self.turn_start = Some(pending);
+                    input_changed = true;
                 }
                 KeyCode::Backspace => {
-                    self.input.pop();
-                    input_changed = true;
+                    if self.input_cursor > 0 {
+                        self.input_backspace();
+                        input_changed = true;
+                    }
+                }
+                KeyCode::Delete => {
+                    if self.input_cursor < self.input.len() {
+                        self.input_delete();
+                        input_changed = true;
+                    }
+                }
+                KeyCode::Left => {
+                    self.move_input_cursor_left();
+                }
+                KeyCode::Right => {
+                    self.move_input_cursor_right();
                 }
                 KeyCode::Char(c) => {
                     if !key.modifiers.contains(KeyModifiers::CONTROL) {
-                        self.input.push(c);
+                        self.insert_input_char(c);
                         input_changed = true;
                     }
                 }
@@ -353,12 +368,17 @@
             self.header_needs_refresh = false;
             self.overlays.clear();
             self.inline_palette = None;
-            self.input.clear();
+            self.clear_input();
             self.streaming = None;
             self.active_turn_id = None;
+            self.total_input_tokens_used = 0;
+            self.total_cache_input_tokens_used = 0;
+            self.total_output_tokens_used = 0;
             self.total_tokens_used = 0;
-            self.counted_usage_responses.clear();
+            self.token_usage_by_response.clear();
+            self.last_tokens_in_context_window = None;
             self.skip_token_usage_before_seq = None;
+            self.process_started_lines.clear();
             self.pending_action = None;
             self.cancel_turn_start();
             self.transcript_scroll = 0;

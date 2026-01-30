@@ -124,7 +124,7 @@ const CODE_PM_NOT_INITIALIZED: i64 = -32_000;
 const CODE_PM_ALREADY_INITIALIZED: i64 = -32_001;
 
 #[cfg(feature = "notify")]
-type NotifyHub = Option<codepm_notify::Hub>;
+type NotifyHub = Option<notify_kit::Hub>;
 
 #[cfg(not(feature = "notify"))]
 type NotifyHub = ();
@@ -144,7 +144,7 @@ fn default_notify_hub() -> NotifyHub {
 fn init_notify_hub() -> anyhow::Result<NotifyHub> {
     #[cfg(feature = "notify")]
     {
-        crate::notify_adapter::init_notify_hub_from_env()
+        crate::notify_integration::init_notify_hub_from_env()
     }
     #[cfg(not(feature = "notify"))]
     {
@@ -391,7 +391,8 @@ impl ThreadRuntime {
             let Some(hub) = &self.notify_hub else {
                 return;
             };
-            let Some(ev) = crate::notify_adapter::map_thread_event_to_notify_event(event) else {
+            let Some(ev) = crate::notify_integration::map_thread_event_to_notify_event(event)
+            else {
                 return;
             };
             hub.notify(ev);

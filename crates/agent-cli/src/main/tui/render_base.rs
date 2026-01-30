@@ -27,16 +27,22 @@
                 _ => draw_overlay(f, overlay),
             }
         }
+
+        // ratatui writes placeholder spaces into wide-character continuation cells; scrub them so
+        // CJK text doesn't render with visible gaps.
+        scrub_wide_symbol_placeholders(f.buffer_mut());
     }
 
+    // Matches Codex: account for fixed prompt/tool overhead so the percentage reflects what the
+    // user can influence.
     const BASELINE_TOKENS: u64 = 12_000;
 
-    fn percent_of_context_window_remaining(total_tokens_used: u64, context_window: u64) -> u64 {
+    fn percent_of_context_window_remaining(tokens_in_context_window: u64, context_window: u64) -> u64 {
         if context_window <= BASELINE_TOKENS {
             return 0;
         }
         let effective_window = context_window.saturating_sub(BASELINE_TOKENS);
-        let used = total_tokens_used.saturating_sub(BASELINE_TOKENS);
+        let used = tokens_in_context_window.saturating_sub(BASELINE_TOKENS);
         let remaining = effective_window.saturating_sub(used);
         (remaining as f64 / effective_window as f64 * 100.0)
             .clamp(0.0, 100.0)
@@ -44,19 +50,14 @@
     }
 
     fn build_footer_line(state: &UiState, width: u16) -> Line<'static> {
-        let context_left = match state.header.model_context_window {
-            Some(window) => {
-                let pct = percent_of_context_window_remaining(state.total_tokens_used, window);
-                format!("{pct}% context left")
-            }
-            None => {
-                if state.total_tokens_used > 0 {
-                    format!("{} used", state.total_tokens_used)
-                } else {
-                    "100% context left".to_string()
-                }
-            }
-        };
+        let context_left = build_context_left_label(state, width);
+
+        let token_usage = format!(
+            "input: {}({}), output: {}",
+            state.total_input_tokens_used,
+            state.total_cache_input_tokens_used,
+            state.total_output_tokens_used
+        );
 
         let msg = match state.active_thread {
             Some(thread_id) => {
@@ -68,14 +69,16 @@
                 let mcp = if state.header.mcp_enabled { "on" } else { "off" };
 
                 if width < 80 {
-                    format!("{context_left}  th={short} mode={mode} model={model} (Ctrl-K)")
+                    format!(
+                        "{context_left}  {token_usage}  th={short} mode={mode} model={model} (Ctrl-K)"
+                    )
                 } else {
                     format!(
-                        "{context_left}  thread={short} agent={mode} provider={provider} model={model} thinking={thinking} mcp={mcp} (Ctrl-K=commands)"
+                        "{context_left}  {token_usage}  thread={short} agent={mode} provider={provider} model={model} thinking={thinking} mcp={mcp} (Ctrl-K=commands)"
                     )
                 }
             }
-            None => format!("{context_left}  threads (Ctrl-K=commands)"),
+            None => format!("{context_left}  {token_usage}  threads (Ctrl-K=commands)"),
         };
 
         let style = Style::default().fg(Color::Gray);
@@ -93,6 +96,27 @@
                 ])
             }
             None => Line::from(Span::styled(msg, style)),
+        }
+    }
+
+    fn build_context_left_label(state: &UiState, width: u16) -> String {
+        match state.header.model_context_window.filter(|window| *window > 0) {
+            Some(window) => {
+                let used = state.last_tokens_in_context_window.unwrap_or(0);
+                let pct = percent_of_context_window_remaining(used, window);
+                if width < 80 {
+                    format!("{pct}% ctx")
+                } else {
+                    format!("{pct}% context left ({used}/{window})")
+                }
+            }
+            None => {
+                if state.total_tokens_used > 0 {
+                    format!("context: {} used", state.total_tokens_used)
+                } else {
+                    "100% context left".to_string()
+                }
+            }
         }
     }
 
@@ -192,4 +216,3 @@
         }
         out
     }
-

@@ -4,7 +4,7 @@
 mod agent;
 mod model_limits;
 #[cfg(feature = "notify")]
-mod notify_adapter;
+mod notify_integration;
 mod project_config;
 
 include!("main/preamble.rs");
