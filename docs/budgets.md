@@ -15,7 +15,7 @@ v0.2.0 已实现的硬规则：
 对照实现（仅用于核对）：
 
 - `crates/app-server/src/agent/core.rs`（预算与超时触发点）
-- `crates/app-server/src/main/preamble.rs`（错误 → `TurnStatus` 分类）
+- `crates/app-server/src/main/preamble/server.rs`（错误 → `TurnStatus` 分类）
 
 ---
 
@@ -94,7 +94,7 @@ v0.2.0 现状：
   - 最近一个 tool 的 `tool_id/tool name`（如果存在）
 - **Next actions**（给可复制命令）：
   - `pm inbox --watch` / `pm thread attention <thread_id>`
-  - `pm process list --thread <thread_id>` + `pm process tail <process_id>`
+  - `pm process list --thread-id <thread_id>` + `pm process tail <process_id>`
   - 调整 budget env（只列出当前命中的那一项，例如 `CODE_PM_AGENT_MAX_TURN_SECONDS`）
 
 最小模板（建议写死成 Markdown，便于人读/脚本解析）：
@@ -117,7 +117,7 @@ v0.2.0 现状：
 
 ## Next actions
 - pm thread attention <thread_id>
-- pm process list --thread <thread_id>
+- pm process list --thread-id <thread_id>
 - pm process tail <process_id>
 ```
 

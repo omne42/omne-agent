@@ -97,6 +97,7 @@
 - 必须排除运行时目录：
   - `.codepm_data/tmp/**`、`.codepm_data/threads/**`
   - `.codepm_data/data/**`、`.codepm_data/repos/**`
+  - `.codepm_data/reference/**`
   - `.codepm_data/locks/**`、`.codepm_data/logs/**`
 - 必须排除 `.git/**`（避免体积与凭据/配置问题；不把 git 当正确性前提）。
 - 必须避免“把大目录打进快照”：
@@ -167,7 +168,7 @@ restore 是破坏性操作，最小约束建议写死：
 
 ## Next steps
 
-- pm process list --thread <thread_id>
+- pm process list --thread-id <thread_id>
 - pm process kill <process_id>
 - pm checkpoint restore <thread_id> <checkpoint_id>
 ```
@@ -204,7 +205,7 @@ restore 的审批流程（示例）：
 pm checkpoint restore <thread_id> <checkpoint_id>
 
 # 2) 人工决定
-pm approval decide --thread-id <thread_id> --approval-id <approval_id> --approve
+pm approval decide <thread_id> <approval_id> --approve
 
 # 3) 带 approval_id 重试，执行实际 restore
 pm checkpoint restore <thread_id> <checkpoint_id> --approval-id <approval_id>

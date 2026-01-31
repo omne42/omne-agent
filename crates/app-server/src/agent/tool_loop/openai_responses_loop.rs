@@ -6,6 +6,7 @@ async fn run_openai_responses_codex_parity_loop(
     turn_id: TurnId,
     cancel: CancellationToken,
     turn_priority: TurnPriority,
+    approval_policy: pm_protocol::ApprovalPolicy,
     final_model: String,
     provider: String,
     provider_candidates: Vec<String>,
@@ -27,160 +28,6 @@ async fn run_openai_responses_codex_parity_loop(
     thinking_override: Option<String>,
     cfg: ToolLoopConfig,
 ) -> anyhow::Result<ToolLoopOutcome> {
-    async fn resolve_openai_client_for_provider(
-        provider_name: &str,
-        provider_cache: &mut std::collections::BTreeMap<String, ProviderRuntime>,
-        project_overrides: &ProjectOpenAiOverrides,
-        base_url_override: Option<&str>,
-        env: &ditto_llm::Env,
-    ) -> anyhow::Result<(ProviderRuntime, Arc<ditto_llm::OpenAI>)> {
-        let runtime = match provider_cache.get(provider_name).cloned() {
-            Some(runtime) => runtime,
-            None => {
-                let runtime =
-                    build_provider_runtime(provider_name, project_overrides, base_url_override, env)
-                        .await?;
-                provider_cache.insert(provider_name.to_string(), runtime.clone());
-                runtime
-            }
-        };
-
-        let client = runtime.openai_responses_client.clone().ok_or_else(|| {
-            anyhow::anyhow!("provider does not have an OpenAI Responses client: {provider_name}")
-        })?;
-        Ok((runtime, client))
-    }
-
-    async fn run_openai_stream_once(
-        client: Arc<ditto_llm::OpenAI>,
-        thread_rt: Arc<super::ThreadRuntime>,
-        thread_id: ThreadId,
-        turn_id: TurnId,
-        emit_deltas: bool,
-        request: ditto_llm::providers::openai::OpenAIResponsesRawRequest<'_>,
-        max_openai_request_duration: Duration,
-    ) -> Result<OpenAiRawLlmResponse, LlmAttemptFailure> {
-        let mut emitted_output = false;
-
-        let inner = async {
-            let mut stream = client.create_response_stream_raw(&request).await?;
-            let mut response_id = String::new();
-            let mut usage: Option<Value> = None;
-            let mut output_items = Vec::<Value>::new();
-            let mut output_text = String::new();
-            let mut reasoning_summary_text = String::new();
-
-            while let Some(event) = stream.recv().await {
-                let event = event?;
-                match event {
-                    ditto_llm::providers::openai::OpenAIResponsesRawEvent::Created {
-                        response_id: id,
-                    } => {
-                        if response_id.is_empty()
-                            && let Some(id) = id.as_deref().filter(|v| !v.trim().is_empty())
-                        {
-                            response_id = id.to_string();
-                        }
-                    }
-                    ditto_llm::providers::openai::OpenAIResponsesRawEvent::OutputTextDelta(delta) => {
-                        if delta.is_empty() {
-                            continue;
-                        }
-                        emitted_output = true;
-                        output_text.push_str(&delta);
-                        if emit_deltas {
-                            let response_id_snapshot = response_id.clone();
-                            thread_rt.emit_notification(
-                                "item/delta",
-                                &serde_json::json!({
-                                    "thread_id": thread_id,
-                                    "turn_id": turn_id,
-                                    "response_id": response_id_snapshot,
-                                    "kind": "output_text",
-                                    "delta": delta,
-                                }),
-                            );
-                        }
-                    }
-                    ditto_llm::providers::openai::OpenAIResponsesRawEvent::ReasoningTextDelta(
-                        _delta,
-                    ) => {}
-                    ditto_llm::providers::openai::OpenAIResponsesRawEvent::ReasoningSummaryTextDelta(
-                        delta,
-                    ) => {
-                        if !delta.is_empty() {
-                            reasoning_summary_text.push_str(&delta);
-                        }
-                    }
-                    ditto_llm::providers::openai::OpenAIResponsesRawEvent::OutputItemDone(item) => {
-                        emitted_output = true;
-                        output_items.push(item);
-                    }
-                    ditto_llm::providers::openai::OpenAIResponsesRawEvent::Failed { error, .. } => {
-                        let message = error
-                            .get("message")
-                            .and_then(Value::as_str)
-                            .unwrap_or("unknown error message");
-                        return Err(ditto_llm::DittoError::InvalidResponse(format!(
-                            "openai response.failed: {message}"
-                        )));
-                    }
-                    ditto_llm::providers::openai::OpenAIResponsesRawEvent::Completed {
-                        response_id: id,
-                        usage: u,
-                    } => {
-                        if response_id.is_empty()
-                            && let Some(id) = id.as_deref().filter(|v| !v.trim().is_empty())
-                        {
-                            response_id = id.to_string();
-                        }
-                        usage = u;
-                        break;
-                    }
-                }
-            }
-
-            if response_id.trim().is_empty() {
-                response_id = "<unknown>".to_string();
-            }
-
-            let reasoning_summary_text =
-                resolve_reasoning_summary_text(reasoning_summary_text, &output_items);
-            if emit_deltas && !reasoning_summary_text.trim().is_empty() {
-                let response_id_snapshot = response_id.clone();
-                thread_rt.emit_notification(
-                    "item/delta",
-                    &serde_json::json!({
-                        "thread_id": thread_id,
-                        "turn_id": turn_id,
-                        "response_id": response_id_snapshot,
-                        "kind": "reasoning_summary_text",
-                        "delta": reasoning_summary_text,
-                    }),
-                );
-            }
-
-            Ok::<_, ditto_llm::DittoError>(OpenAiRawLlmResponse {
-                id: response_id,
-                output_text,
-                output_items,
-                usage,
-            })
-        };
-
-        match tokio::time::timeout(max_openai_request_duration, inner).await {
-            Ok(Ok(resp)) => Ok(resp),
-            Ok(Err(err)) => Err(LlmAttemptFailure {
-                error: LlmAttemptError::Ditto(err),
-                emitted_output,
-            }),
-            Err(_) => Err(LlmAttemptFailure {
-                error: LlmAttemptError::TimedOut,
-                emitted_output,
-            }),
-        }
-    }
-
     let mut openai_history = read_openai_responses_history(&server.thread_store, thread_id).await?;
     let seeded_from_events = openai_history.is_empty() && !seed_input_items.is_empty();
     let (bootstrap_runtime, bootstrap_client) = resolve_openai_client_for_provider(
@@ -316,7 +163,9 @@ async fn run_openai_responses_codex_parity_loop(
         }
     }
 
-    for step_idx in 0..cfg.max_agent_steps {
+    let max_steps_message = max_steps_prompt(cfg.max_agent_steps);
+
+    for step_idx in 0..=cfg.max_agent_steps {
         if cancel.is_cancelled() {
             return Err(AgentTurnError::Cancelled.into());
         }
@@ -327,8 +176,29 @@ async fn run_openai_responses_codex_parity_loop(
             .into());
         }
 
-        let tools_enabled = tool_model.is_none() || tool_phase_active;
-        let emit_deltas = tool_model.is_none() || !tool_phase_active;
+        let force_text_only = step_idx >= cfg.max_agent_steps;
+        if force_text_only {
+            tool_phase_active = false;
+            if model != final_model {
+                model = final_model.clone();
+                model_candidates = build_model_candidates(&model, model_fallbacks.clone());
+                if !provider_config.model_whitelist.is_empty() {
+                    model_candidates.retain(|candidate| {
+                        model_allowed_by_whitelist(candidate, &provider_config.model_whitelist)
+                    });
+                }
+                model_idx = 0;
+            }
+        }
+
+        let step_instructions = if force_text_only {
+            std::borrow::Cow::Owned(format!("{instructions}\n\n{}", max_steps_message))
+        } else {
+            std::borrow::Cow::Borrowed(instructions.as_str())
+        };
+
+        let tools_enabled = !force_text_only && (tool_model.is_none() || tool_phase_active);
+        let emit_deltas = force_text_only || tool_model.is_none() || !tool_phase_active;
         let keep_assistant_messages = emit_deltas;
 
         let mut provider_index = active_provider_idx.min(provider_candidates.len().saturating_sub(1));
@@ -435,7 +305,7 @@ async fn run_openai_responses_codex_parity_loop(
 
             let request = ditto_llm::providers::openai::OpenAIResponsesRawRequest {
                 model: &model,
-                instructions: &instructions,
+                instructions: step_instructions.as_ref(),
                 input: &openai_history,
                 tools: tools_opt,
                 tool_choice: Some(&tool_choice),
@@ -591,16 +461,34 @@ async fn run_openai_responses_codex_parity_loop(
             last_text = resp.output_text.clone();
         }
 
-        for item in &resp.output_items {
-            if let Some(call) = parse_function_call_item(item) {
-                function_calls.push(call);
+        if !force_text_only {
+            for item in &resp.output_items {
+                if let Some(call) = parse_function_call_item(item) {
+                    function_calls.push(call);
+                }
             }
         }
 
         if !resp.output_items.is_empty() {
-            append_openai_responses_history_items(&server.thread_store, thread_id, &resp.output_items)
+            let output_items_for_history = if force_text_only {
+                resp.output_items
+                    .iter()
+                    .filter(|item| item.get("type").and_then(Value::as_str) != Some("function_call"))
+                    .cloned()
+                    .collect::<Vec<_>>()
+            } else {
+                resp.output_items.clone()
+            };
+
+            if !output_items_for_history.is_empty() {
+                append_openai_responses_history_items(
+                    &server.thread_store,
+                    thread_id,
+                    &output_items_for_history,
+                )
                 .await?;
-            openai_history.extend(resp.output_items.clone());
+                openai_history.extend(output_items_for_history);
+            }
         }
 
         if function_calls.is_empty() {
@@ -687,7 +575,82 @@ async fn run_openai_responses_codex_parity_loop(
 
         let signature = step_signature(&function_calls);
         if let Some(kind) = loop_detector.observe(signature) {
-            return Err(AgentTurnError::LoopDetected { kind }.into());
+            match gate_doom_loop(
+                server.as_ref(),
+                &thread_rt,
+                thread_id,
+                turn_id,
+                approval_policy,
+                kind,
+                signature,
+                &tool_calls_for_event,
+                cancel.clone(),
+            )
+            .await?
+            {
+                DoomLoopDecision::Approved => {
+                    loop_detector.recent.clear();
+                }
+                DoomLoopDecision::Denied { remembered } => {
+                    let mut tool_output_items = Vec::<Value>::new();
+                    for (tool_name, _arguments, call_id) in &function_calls {
+                        let output_value = serde_json::json!({
+                            "denied": true,
+                            "error": "doom_loop denied",
+                            "kind": kind,
+                            "signature": signature,
+                            "tool": tool_name,
+                        });
+                        let output_json = serde_json::to_string(&output_value)?;
+                        let output_preview = pm_core::redact_text(&output_json);
+                        let output_preview = truncate_chars(&output_preview, 10_000);
+                        tool_results_for_event.push(pm_protocol::AgentStepToolResult {
+                            call_id: call_id.clone(),
+                            output: output_preview,
+                        });
+
+                        tool_output_items.push(serde_json::json!({
+                            "type": "function_call_output",
+                            "call_id": call_id,
+                            "output": output_json,
+                        }));
+                    }
+
+                    if !tool_output_items.is_empty() {
+                        append_openai_responses_history_items(
+                            &server.thread_store,
+                            thread_id,
+                            &tool_output_items,
+                        )
+                        .await?;
+                        openai_history.extend(tool_output_items);
+                    }
+
+                    last_text = format!(
+                        "[doom_loop] detected repeated tool calls (kind={kind}). Stopped executing tools after approval was denied{}.",
+                        if remembered { " (remembered)" } else { "" }
+                    );
+                    let _ = thread_rt
+                        .append_event(ThreadEventKind::AgentStep {
+                            turn_id,
+                            step: step_idx.min(u32::MAX as usize) as u32,
+                            model: model.clone(),
+                            response_id: last_response_id.clone(),
+                            text: if step_text.trim().is_empty() {
+                                None
+                            } else {
+                                Some(truncate_chars(&step_text, 20_000))
+                            },
+                            tool_calls: tool_calls_for_event,
+                            tool_results: tool_results_for_event,
+                            token_usage: last_usage.clone(),
+                            warnings_count: None,
+                        })
+                        .await;
+                    finished = true;
+                    break;
+                }
+            }
         }
 
         let can_parallelize_read_only = cfg.parallel_tool_calls

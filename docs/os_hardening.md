@@ -52,7 +52,7 @@ fail-closed（只对配置解析）：
   - 更严格的默认文件权限：`umask(0o077)`（Unix）。
   - Linux-only：禁止被 ptrace/attach（`prctl(PR_SET_DUMPABLE, 0)`）。
 - child process hardening（最小子集）：
-  - `process/start` 对 child env 做 scrub（实现对照：`crates/app-server/src/main/preamble.rs`）。
+  - `process/start` 对 child env 做 scrub（实现对照：`crates/app-server/src/main/preamble/hardening.rs`）。
   - 非交互约束：不做 stdin/PTY 交互（见 `docs/v0.2.0_parity.md` 的进程模型）。
   - 非交互 env defaults（仅当未设置且 hardening 启用时注入到 child env）：`GIT_TERMINAL_PROMPT=0`、`NO_COLOR=1`、`PAGER=cat`。
 - 事件落盘与 artifact 写入前脱敏（见 `docs/redaction.md`）。

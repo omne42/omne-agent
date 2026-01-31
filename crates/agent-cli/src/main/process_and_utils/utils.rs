@@ -65,7 +65,7 @@ fn ensure_approval_and_denial_handled(action: &str, value: &Value) -> anyhow::Re
             .and_then(|v| v.as_str())
             .unwrap_or("<missing approval_id>");
         anyhow::bail!(
-            "{action} needs approval: pm approval decide --thread-id {thread_id} --approval-id {approval_id} --approve (then re-run with --approval-id {approval_id})"
+            "{action} needs approval: pm approval decide {thread_id} {approval_id} --approve (then re-run with --approval-id {approval_id})"
         );
     }
 

@@ -25,11 +25,14 @@ type OpenAiItem = Value;
 const DEFAULT_MODEL: &str = "gpt-4.1";
 const DEFAULT_OPENAI_PROVIDER: &str = "openai-codex-apikey";
 const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
-const DEFAULT_MAX_AGENT_STEPS: usize = 24;
-const DEFAULT_MAX_TOOL_CALLS: usize = 128;
+// Keep defaults high so a single turn can run "for a long time" without surprising early stops.
+// Guardrails (loop detection, approvals, turn_seconds, etc.) still apply.
+const DEFAULT_MAX_AGENT_STEPS: usize = 9_999;
+const DEFAULT_MAX_TOOL_CALLS: usize = 9_999;
 const DEFAULT_MAX_PARALLEL_TOOL_CALLS: usize = 8;
 const DEFAULT_MAX_TOTAL_TOKENS: u64 = 0;
-const DEFAULT_MAX_TURN_SECONDS: u64 = 10 * 60;
+// 2 days by default; users can lower/raise via env.
+const DEFAULT_MAX_TURN_SECONDS: u64 = 2 * 24 * 60 * 60;
 const DEFAULT_MAX_OPENAI_REQUEST_SECONDS: u64 = 120;
 const DEFAULT_LLM_MAX_ATTEMPTS: usize = 3;
 const MAX_LLM_MAX_ATTEMPTS: usize = 20;
@@ -52,7 +55,7 @@ const MAX_MAX_AGENT_STEPS: usize = 10_000;
 const MAX_MAX_TOOL_CALLS: usize = 10_000;
 const MAX_MAX_PARALLEL_TOOL_CALLS: usize = 128;
 const MAX_MAX_TOTAL_TOKENS: u64 = 10_000_000;
-const MAX_MAX_TURN_SECONDS: u64 = 24 * 60 * 60;
+const MAX_MAX_TURN_SECONDS: u64 = 7 * 24 * 60 * 60;
 const MAX_MAX_OPENAI_REQUEST_SECONDS: u64 = 60 * 60;
 
 const LOOP_DETECTOR_HISTORY_LIMIT: usize = 8;
@@ -100,8 +103,6 @@ pub enum AgentTurnError {
     TokenBudgetExceeded { used: u64, limit: u64 },
     #[error("openai request timed out")]
     OpenAiRequestTimedOut,
-    #[error("loop_detected: {kind}")]
-    LoopDetected { kind: &'static str },
 }
 
 #[derive(Debug, Error)]

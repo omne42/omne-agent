@@ -50,7 +50,7 @@ pm thread hook-run <thread_id> archive
 - hook 未配置：`{ ok: true, skipped: true, reason: "...", config_path: "..." }`
 - 成功启动：`{ ok: true, process_id, stdout_path, stderr_path, ... }`
 - 需要审批：返回 `{ needs_approval: true, approval_id, thread_id, hook }`
-  - CLI 会报错并提示：先 `pm approval decide ... --approve`，然后带 `--approval-id <id>` 重跑。
+  - CLI 会报错并提示：先 `pm approval decide <thread_id> <approval_id> --approve`，然后带 `--approval-id <id>` 重跑。
 
 ---
 

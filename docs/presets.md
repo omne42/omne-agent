@@ -113,7 +113,7 @@ thread_config:
 
 可选字段（TODO，先别承诺实现）：
 
-- `execpolicy_rules`: `["./.codepm_data/spec/execpolicy/*.yaml", ...]`
+- `execpolicy_rules`: `["./.codepm_data/spec/execpolicy/*.rules", ...]`
   - 备注：execpolicy 目前是 **app-server 全局启动参数**（`pm --execpolicy-rules <path>`），不是 thread 配置；preset 里最多作为“启动建议/提示”，导入到已运行的 app-server 不应静默生效。
 
 硬规则（再次强调）：

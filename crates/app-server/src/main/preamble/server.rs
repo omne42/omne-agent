@@ -594,7 +594,7 @@ fn classify_agent_turn_error(err: &anyhow::Error) -> TurnStatus {
                 agent::AgentTurnError::BudgetExceeded { .. }
                 | agent::AgentTurnError::TokenBudgetExceeded { .. }
                 | agent::AgentTurnError::OpenAiRequestTimedOut
-                | agent::AgentTurnError::LoopDetected { .. } => TurnStatus::Stuck,
+                    => TurnStatus::Stuck,
             };
         }
     }

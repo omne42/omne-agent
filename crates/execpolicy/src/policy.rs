@@ -119,13 +119,35 @@ pub struct Evaluation {
 
 impl Evaluation {
     fn from_matches(matched_rules: Vec<RuleMatch>) -> Self {
-        let decision = matched_rules.iter().map(RuleMatch::decision).max();
-        #[expect(clippy::expect_used)]
-        let decision = decision.expect("invariant failed: matched_rules must be non-empty");
+        // An empty match set should not crash the policy engine. "Allow" is the
+        // least surprising answer when there is nothing to evaluate.
+        let decision = matched_rules
+            .iter()
+            .map(RuleMatch::decision)
+            .max()
+            .unwrap_or(Decision::Allow);
 
         Self {
             decision,
             matched_rules,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn check_multiple_empty_is_allow_and_does_not_panic() {
+        let policy = Policy::empty();
+
+        let evaluation = policy.check_multiple(Vec::<Vec<String>>::new(), &|_cmd| {
+            // Should not be invoked for an empty command list.
+            Decision::Forbidden
+        });
+
+        assert_eq!(evaluation.decision, Decision::Allow);
+        assert!(evaluation.matched_rules.is_empty());
     }
 }

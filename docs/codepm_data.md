@@ -122,5 +122,5 @@ CODE_PM_OPENAI_FALLBACK_PROVIDERS=openai-auth-command,openai-codex-apikey
 
 只忽略运行时/secret：
 
-- 忽略：`.codepm_data/tmp/`、`.codepm_data/data/`、`.codepm_data/repos/`、`.codepm_data/reference/`、`.codepm_data/threads/`、`.codepm_data/locks/`、`.codepm_data/logs/`、`.codepm_data/daemon.sock`、`.codepm_data/config_local.toml`、`.codepm_data/.env`
+- 忽略（写在 `.codepm_data/.gitignore` 内，因此是相对路径）：`tmp/`、`data/`、`repos/`、`reference/`、`threads/`、`locks/`、`logs/`、`daemon.sock`、`config_local.toml`、`.env`
 - 不忽略：`.codepm_data/config.toml`、`.codepm_data/spec/`

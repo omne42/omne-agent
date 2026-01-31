@@ -364,7 +364,39 @@
                         text: line,
                     });
                 }
-                ThreadEventKind::TurnCompleted { turn_id, status, .. } => {
+                ThreadEventKind::ApprovalRequested {
+                    approval_id,
+                    turn_id,
+                    action,
+                    ..
+                } => {
+                    let mut line = format!("[approval] requested {approval_id} action={action}");
+                    if let Some(turn_id) = turn_id {
+                        line.push_str(&format!(" turn_id={turn_id}"));
+                    }
+                    self.push_transcript(TranscriptEntry {
+                        role: TranscriptRole::System,
+                        text: line,
+                    });
+                }
+                ThreadEventKind::ApprovalDecided {
+                    approval_id,
+                    decision,
+                    remember,
+                    reason,
+                } => {
+                    let mut line = format!(
+                        "[approval] decided {approval_id} decision={decision:?} remember={remember}",
+                    );
+                    if let Some(reason) = reason.as_deref().filter(|s| !s.trim().is_empty()) {
+                        line.push_str(&format!(" - {reason}"));
+                    }
+                    self.push_transcript(TranscriptEntry {
+                        role: TranscriptRole::System,
+                        text: line,
+                    });
+                }
+                ThreadEventKind::TurnCompleted { turn_id, status, reason } => {
                     let inflight_matches = self.turn_inflight_id == Some(*turn_id)
                         || (self.turn_inflight_id.is_none()
                             && self.active_turn_id == Some(*turn_id));
@@ -383,6 +415,9 @@
                     let mut line = format!("[turn] {turn_id} {}", turn_status_str(*status));
                     if let Some(duration) = duration {
                         line.push_str(&format!(" ({})", format_elapsed(duration)));
+                    }
+                    if let Some(reason) = reason.as_deref().filter(|s| !s.trim().is_empty()) {
+                        line.push_str(&format!(" - {reason}"));
                     }
                     self.push_transcript(TranscriptEntry {
                         role: TranscriptRole::System,

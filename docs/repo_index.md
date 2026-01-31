@@ -28,7 +28,7 @@
 
 - 扫描范围：thread 的 workspace root（`thread cwd`）。
 - 默认忽略目录：`.git`、`.code_pm`、`.codepm`、`target`、`node_modules`、`example`（实现对照：`crates/app-server/src/main/file_read_glob_grep.rs`）。
-- 并额外跳过 `.codepm_data/{tmp,threads,data,repos,locks,logs}/`（避免扫描运行时目录）。
+- 并额外跳过 `.codepm_data/{tmp,threads,locks,logs,data,repos,reference}/`（以及 `codepm_data/...` 的同名目录；避免扫描运行时目录）。
 - 参数边界：
   - `max_results` 默认 `2000`，上限 `20000`；超限 `truncated=true`。
 - 事件落盘（摘要）：`ToolCompleted.result` 只记录 `{matches,truncated}`，不记录全部 paths（避免事件爆炸）。

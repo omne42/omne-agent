@@ -93,7 +93,7 @@ metadata 字段模型：`pm_protocol::ArtifactMetadata`（见 `crates/agent-prot
 - 已知 `thread_id`：
   - `pm thread events <thread_id>`（或 JSON-RPC `thread/subscribe`）看 `events.jsonl` 的回放结果
   - `pm artifact list <thread_id>` 查 user artifacts（返回 metadata + 路径）
-  - `pm process list --thread <thread_id>` 查 processes（返回 stdout/stderr 路径）
+  - `pm process list --thread-id <thread_id>` 查 processes（返回 stdout/stderr 路径）
 - 已知 `process_id`：
   - `pm process inspect <process_id>` / `pm process tail <process_id>` / `pm process follow <process_id>`
 - 已知 `artifact_id`：

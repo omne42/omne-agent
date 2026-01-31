@@ -8,6 +8,7 @@ pub async fn run_agent_turn(
 ) -> anyhow::Result<()> {
     let (
         thread_id,
+        thread_approval_policy,
         thread_mode,
         thread_openai_provider,
         thread_model,
@@ -20,6 +21,7 @@ pub async fn run_agent_turn(
         let state = handle.state();
         (
             handle.thread_id(),
+            state.approval_policy,
             state.mode.clone(),
             state.openai_provider.clone(),
             state.model.clone(),
@@ -519,6 +521,7 @@ pub async fn run_agent_turn(
         turn_id,
         cancel,
         turn_priority,
+        approval_policy: thread_approval_policy,
         final_model,
         provider,
         provider_candidates,

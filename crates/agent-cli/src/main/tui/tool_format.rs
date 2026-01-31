@@ -266,6 +266,131 @@
 
         let (meta, body) = match parsed {
             Ok(value) => match tool.as_str() {
+                "file/read" => {
+                    if let Some(text) = value.get("text").and_then(Value::as_str) {
+                        let meta = tool_meta_brief(&value);
+                        let bytes = value
+                            .get("bytes")
+                            .and_then(Value::as_u64)
+                            .map(|n| n as usize)
+                            .unwrap_or_else(|| text.len());
+                        let lines = text.lines().count();
+                        let body = format!("bytes={bytes} lines={lines} (content hidden)");
+                        (meta, body)
+                    } else {
+                        let meta = tool_meta_brief(&value);
+                        if let Some(text) = extract_primary_tool_text(&value) {
+                            (
+                                meta,
+                                truncate_multiline_output(&text, MAX_OUTPUT_LINES, MAX_OUTPUT_CHARS),
+                            )
+                        } else {
+                            let summary = summarize_json(&value);
+                            (
+                                meta,
+                                truncate_multiline_output(&summary, MAX_OUTPUT_LINES, MAX_OUTPUT_CHARS),
+                            )
+                        }
+                    }
+                }
+                "file/grep" => {
+                    let meta = tool_meta_brief(&value);
+                    let body = match value.get("matches").and_then(Value::as_array) {
+                        None => {
+                            let summary = summarize_json(&value);
+                            truncate_multiline_output(&summary, MAX_OUTPUT_LINES, MAX_OUTPUT_CHARS)
+                        }
+                        Some(matches) => {
+                            const MAX_ITEMS: usize = 40;
+                            let truncated =
+                                value.get("truncated").and_then(Value::as_bool).unwrap_or(false);
+                            let mut header = format!("matches={}", matches.len());
+                            if truncated {
+                                header.push_str(" truncated=true");
+                            }
+                            if let Some(files_scanned) =
+                                value.get("files_scanned").and_then(Value::as_u64)
+                            {
+                                header.push_str(&format!(" files_scanned={files_scanned}"));
+                            }
+                            if let Some(files_skipped_too_large) =
+                                value.get("files_skipped_too_large").and_then(Value::as_u64)
+                            {
+                                header.push_str(&format!(
+                                    " files_skipped_too_large={files_skipped_too_large}"
+                                ));
+                            }
+                            if let Some(files_skipped_binary) =
+                                value.get("files_skipped_binary").and_then(Value::as_u64)
+                            {
+                                header
+                                    .push_str(&format!(" files_skipped_binary={files_skipped_binary}"));
+                            }
+
+                            let mut out = String::new();
+                            out.push_str(&header);
+                            for item in matches.iter().take(MAX_ITEMS) {
+                                let Some(path) = item.get("path").and_then(Value::as_str) else {
+                                    continue;
+                                };
+                                let line = item
+                                    .get("line_number")
+                                    .and_then(Value::as_u64)
+                                    .filter(|n| *n > 0);
+                                out.push('\n');
+                                let path = normalize_single_line(path);
+                                match line {
+                                    Some(line) => out.push_str(&format!("{path}:{line}")),
+                                    None => out.push_str(&path),
+                                }
+                            }
+                            if matches.len() > MAX_ITEMS {
+                                out.push('\n');
+                                out.push_str(&format!("… (+{} more)", matches.len() - MAX_ITEMS));
+                            }
+                            truncate_multiline_output(&out, MAX_OUTPUT_LINES, MAX_OUTPUT_CHARS)
+                        }
+                    };
+                    (meta, body)
+                }
+                "artifact/read" => {
+                    if let Some(text) = value.get("text").and_then(Value::as_str) {
+                        let meta = tool_meta_brief(&value);
+                        let artifact_id = value
+                            .get("metadata")
+                            .and_then(Value::as_object)
+                            .and_then(|meta| meta.get("artifact_id"))
+                            .and_then(Value::as_str)
+                            .map(normalize_single_line);
+                        let bytes = value
+                            .get("bytes")
+                            .and_then(Value::as_u64)
+                            .map(|n| n as usize)
+                            .unwrap_or_else(|| text.len());
+                        let lines = text.lines().count();
+                        let body = match artifact_id {
+                            Some(artifact_id) => {
+                                format!("artifact_id={artifact_id} bytes={bytes} lines={lines} (content hidden)")
+                            }
+                            None => format!("bytes={bytes} lines={lines} (content hidden)"),
+                        };
+                        (meta, body)
+                    } else {
+                        let meta = tool_meta_brief(&value);
+                        if let Some(text) = extract_primary_tool_text(&value) {
+                            (
+                                meta,
+                                truncate_multiline_output(&text, MAX_OUTPUT_LINES, MAX_OUTPUT_CHARS),
+                            )
+                        } else {
+                            let summary = summarize_json(&value);
+                            (
+                                meta,
+                                truncate_multiline_output(&summary, MAX_OUTPUT_LINES, MAX_OUTPUT_CHARS),
+                            )
+                        }
+                    }
+                }
                 "process/inspect" => {
                     if value.get("needs_approval").and_then(Value::as_bool) == Some(true) {
                         let approval_id = value

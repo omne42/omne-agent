@@ -269,5 +269,5 @@ pm thread spawn <thread_id> "<input>"
 
 ```bash
 rg -n \"handle_thread_fork\" crates/app-server/src/main/thread_manage/fork.rs
-rg -n \"agent_spawn\" crates/app-server/src/agent/tools/dispatch.rs
+rg -n \"agent_spawn\" crates/app-server/src/agent/tools/dispatch/subagents.rs
 ```

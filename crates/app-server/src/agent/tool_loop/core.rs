@@ -33,6 +33,7 @@ struct ToolLoop {
     turn_id: TurnId,
     cancel: CancellationToken,
     turn_priority: TurnPriority,
+    approval_policy: pm_protocol::ApprovalPolicy,
     final_model: String,
     provider: String,
     provider_candidates: Vec<String>,
@@ -54,6 +55,12 @@ struct ToolLoop {
     rule_id: Option<String>,
     thinking_override: Option<String>,
     cfg: ToolLoopConfig,
+}
+
+fn max_steps_prompt(max_agent_steps: usize) -> String {
+    format!(
+        "[max_steps] reached max_agent_steps={max_agent_steps} for this turn.\n\nHard requirements:\n- Do NOT call any tools.\n- Only write a text response to the user.\n- Briefly summarize progress, what is incomplete, and ask the user whether to continue in a new message."
+    )
 }
 
 fn parse_thinking_override(value: Option<&str>) -> Option<ThinkingIntensity> {
@@ -97,6 +104,7 @@ impl ToolLoop {
             turn_id,
             cancel,
             turn_priority,
+            approval_policy,
             final_model,
             provider,
             provider_candidates,
@@ -133,6 +141,7 @@ impl ToolLoop {
                 turn_id,
                 cancel,
                 turn_priority,
+                approval_policy,
                 final_model,
                 provider,
                 provider_candidates,
@@ -211,7 +220,9 @@ impl ToolLoop {
             }
         }
 
-        for step_idx in 0..cfg.max_agent_steps {
+        let max_steps_message = max_steps_prompt(cfg.max_agent_steps);
+
+        for step_idx in 0..=cfg.max_agent_steps {
             if cancel.is_cancelled() {
                 return Err(AgentTurnError::Cancelled.into());
             }
@@ -222,10 +233,29 @@ impl ToolLoop {
                 .into());
             }
 
-            let base_messages = response_items_to_ditto_messages(&instructions, &input_items, &[]);
+            let force_text_only = step_idx >= cfg.max_agent_steps;
+            if force_text_only {
+                tool_phase_active = false;
+                if model != final_model {
+                    model = final_model.clone();
+                    model_candidates = build_model_candidates(&model, model_fallbacks.clone());
+                    if !provider_config.model_whitelist.is_empty() {
+                        model_candidates.retain(|candidate| {
+                            model_allowed_by_whitelist(candidate, &provider_config.model_whitelist)
+                        });
+                    }
+                    model_idx = 0;
+                }
+            }
 
-            let tools_enabled = tool_model.is_none() || tool_phase_active;
-            let emit_deltas = tool_model.is_none() || !tool_phase_active;
+            let mut base_messages =
+                response_items_to_ditto_messages(&instructions, &input_items, &[]);
+            if force_text_only {
+                base_messages.push(ditto_llm::Message::system(max_steps_message.clone()));
+            }
+
+            let tools_enabled = !force_text_only && (tool_model.is_none() || tool_phase_active);
+            let emit_deltas = force_text_only || tool_model.is_none() || !tool_phase_active;
             let keep_assistant_messages = emit_deltas;
 
             let mut provider_index =
@@ -543,6 +573,11 @@ impl ToolLoop {
             }
 
             for item in resp.output {
+                if force_text_only
+                    && item.get("type").and_then(Value::as_str) == Some("function_call")
+                {
+                    continue;
+                }
                 if item.get("type").and_then(Value::as_str) == Some("function_call")
                     && let Some(name) = item.get("name").and_then(Value::as_str)
                     && let Some(call_id) = item.get("call_id").and_then(Value::as_str)
@@ -647,7 +682,75 @@ impl ToolLoop {
 
             let signature = step_signature(&function_calls);
             if let Some(kind) = loop_detector.observe(signature) {
-                return Err(AgentTurnError::LoopDetected { kind }.into());
+                match gate_doom_loop(
+                    server.as_ref(),
+                    &thread_rt,
+                    thread_id,
+                    turn_id,
+                    approval_policy,
+                    kind,
+                    signature,
+                    &tool_calls_for_event,
+                    cancel.clone(),
+                )
+                .await?
+                {
+                    DoomLoopDecision::Approved => {
+                        loop_detector.recent.clear();
+                    }
+                    DoomLoopDecision::Denied { remembered } => {
+                        for (tool_name, _arguments, call_id) in &function_calls {
+                            let output_value = serde_json::json!({
+                                "denied": true,
+                                "error": "doom_loop denied",
+                                "kind": kind,
+                                "signature": signature,
+                                "tool": tool_name,
+                            });
+                            let output_json = serde_json::to_string(&output_value)?;
+                            let output_preview = pm_core::redact_text(&output_json);
+                            let output_preview = truncate_chars(&output_preview, 10_000);
+                            tool_results_for_event.push(pm_protocol::AgentStepToolResult {
+                                call_id: call_id.clone(),
+                                output: output_preview,
+                            });
+
+                            input_items.push(serde_json::json!({
+                                "type": "function_call_output",
+                                "call_id": call_id,
+                                "output": output_json,
+                            }));
+                        }
+
+                        last_text = format!(
+                            "[doom_loop] detected repeated tool calls (kind={kind}). Stopped executing tools after approval was denied{}.",
+                            if remembered { " (remembered)" } else { "" }
+                        );
+                        let _ = thread_rt
+                            .append_event(ThreadEventKind::AgentStep {
+                                turn_id,
+                                step: step_idx.min(u32::MAX as usize) as u32,
+                                model: model.clone(),
+                                response_id: last_response_id.clone(),
+                                text: if step_text.trim().is_empty() {
+                                    None
+                                } else {
+                                    Some(truncate_chars(&step_text, 20_000))
+                                },
+                                tool_calls: tool_calls_for_event,
+                                tool_results: tool_results_for_event,
+                                token_usage: last_usage.clone(),
+                                warnings_count: if warnings_count == 0 {
+                                    None
+                                } else {
+                                    Some(warnings_count.min(u32::MAX as usize) as u32)
+                                },
+                            })
+                            .await;
+                        finished = true;
+                        break;
+                    }
+                }
             }
 
             let can_parallelize_read_only = cfg.parallel_tool_calls

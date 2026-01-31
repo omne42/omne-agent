@@ -144,7 +144,7 @@
 - `pm-app-server process/start`：当 `sandbox_network_access=deny` 时，拒绝明显网络命令（best-effort 防呆；非 OS 级网络沙箱），需要联网可显式配置 `sandbox_network_access=allow`。
 - `pm-app-server` agent loop：支持 read-only tool calls 并发执行与结果聚合（默认关闭；`CODE_PM_AGENT_PARALLEL_TOOL_CALLS=1` 启用，`CODE_PM_AGENT_MAX_PARALLEL_TOOL_CALLS` 限制并发数）。
 - `pm-app-server` agent loop：支持 token budget（`CODE_PM_AGENT_MAX_TOTAL_TOKENS`；超限标记为 `stuck`）。
-- `pm-app-server` agent loop：新增 loop/cycle detection（连续重复/短周期）以 `TurnStatus::Stuck` 中止明显循环（reason `loop_detected:*`）。
+- `pm-app-server` agent loop：loop/cycle detection 触发后改为请求 `prompt_strict` 审批（`action=doom_loop`）；批准后继续，拒绝则写入被拒绝的 tool outputs 并结束 turn（避免 hard-stuck）。
 - `pm-app-server` agent loop：新增 auto compact/summary（接近 token budget 时写入 `artifact_type="summary"` 并用 summary + 近端事件重建上下文）。
 - Router：`keyword_rules` 支持 `min_context_tokens` 上下文阈值触发 longContext 路由，并把阈值/估算值写入 `ModelRouted.reason`。
 - `pm-app-server` agent loop：LLM streaming 失败重试 + provider fallback（429/5xx/timeout；`openai.fallback_providers` / `CODE_PM_OPENAI_FALLBACK_PROVIDERS`；`CODE_PM_AGENT_LLM_MAX_ATTEMPTS` 等）。
@@ -157,7 +157,7 @@
 - 更新 `docs/v0.2.0_parity.md`：标记 “统一请求/响应结构 + provider 适配集中” 已通过 `ditto-llm` 在 agent loop 落地（见 `docs/ditto_llm.md`）。
 - `githooks/pre-commit`：强制每次提交同时包含 `CHANGELOG.md` 与实际变更（禁止 changelog-only / non-changelog commit）。
 - `githooks/pre-commit`：新增 Rust 单文件行数 gate：仓库内任意 `.rs` 文件超过 1000 行将拒绝提交（要求拆分模块/降低复杂度）。
-- `pm-app-server agent loop`：增加最小长任务预算（`max_steps`/`max_tool_calls`/`max_turn_seconds` + 单次 OpenAI 请求超时）；超限会使 turn 失败并写入失败原因，避免无限循环烧钱/卡死。
+- `pm-app-server agent loop`：提高默认长任务预算（`max_steps=9999`/`max_tool_calls=9999`/`max_turn_seconds=2d`），并在命中 `max_steps` 时注入强约束 prompt（禁用 tools、仅输出文字）进行收尾，而不是直接把 turn 标记为 stuck。
 - v0.2.0 方向明确：git/workspace 使用 `/tmp`/worktree 等目录隔离，不把 Docker/容器当作实现前提（但不禁止 agent 自己运行 Docker）；实现文档中移除/替换相关表述。
 - `pm-eventlog ThreadState`：记录 thread 的 `cwd`；`pm-app-server thread/state` 返回 `cwd` 便于后续 sandbox/root 约束。
 - `pm-eventlog ThreadState`：增加 `approval_policy`（默认 auto-approve）；`pm-app-server thread/state` 返回当前策略。
@@ -199,10 +199,12 @@
 - `pm` TUI：`Ctrl-C` 行为调整为等同 `Esc`（关闭/返回），不再触发中断。
 - `pm` TUI：禁用 alt-screen 并减少无意义重绘，允许终端原生滚动与选中文本。
 - `pm` TUI：scrollback 模式下将 transcript 按行刷入终端原生 scrollback，避免超过视口的内容被覆盖/“消失”。
+- `pm` TUI：修复超长 scrollback flush 触发 `ratatui` `Buffer` 越界 panic（按 cell 上限分块插入并处理 resize）。
 - `pm` TUI：scrollback 模式默认 viewport 留出顶部终端历史，避免必须手动设置 `CODE_PM_TUI_VIEWPORT_HEIGHT`。
 - `pm` TUI：transcript 的 `user/tool/assistant/system` 标签左对齐；正文超过 16 字宽时换行并缩进 2 空格；tool 文本使用更淡的样式（约 62% 亮度/“透明度”）。
 - `pm` TUI：system 消息默认与 role 同行显示，并在不同 role 之间增加空行提升可读性。
 - `pm` TUI：输入框上方显示本次 turn 的处理计时，并在 `[turn] ... completed` 行追加耗时（从用户提交到 completed）。
+- `pm` TUI：transcript 追加显示 `approval requested/decided` 与 `turn completed` 的 `reason`，便于定位卡住/预算触发原因。
 - `pm` TUI：scrollback 模式下输入框不再固定在底部，而是紧跟 transcript 末尾。
 - `pm` TUI：流式 `item/delta` 现在直接写入 transcript，避免 tool 输出插到 streaming 下方导致顺序错乱/内容跳变。
 - `pm` TUI：tool 记录改为可读的命令式摘要（如 `$ ls`），并修复流式输出闪现后丢失的问题。
@@ -210,13 +212,15 @@
 - `pm` TUI：修复输入框光标左右移动/中间编辑不生效的问题，并补齐折行场景下的光标定位。
 - `pm` TUI：修复用户消息与 tool 输出偶发重复渲染的问题。
 - `pm` TUI：tool 输出展示改为合并 `process/*` 的 stdout/stderr，并隐藏噪声路径 JSON。
+- `pm` TUI：`file/read`/`file/grep`/`artifact/read` 默认隐藏内容本体，仅展示位置或 bytes/lines 摘要，避免超大输出刷屏。
 - `pm` TUI：状态栏补齐 token 用量统计（`input`/`cache_input`/`output`），并按模型上限显示 context 剩余百分比。
 - `pm` TUI：修复中文/宽字符渲染导致的字间空格问题。
-- `pm` TUI：支持展示 `item/delta.kind=reasoning_*|thinking_*`（浅灰），窄屏状态栏补齐 `thinking` 字段，并对未知 kind 保持忽略；`pm-app-server` 现在会请求 `reasoning.summary=auto` 并在完成时下发 `reasoning_summary_text`。
+- `pm` TUI：支持展示 `item/delta.kind=reasoning_*|thinking_*`（浅灰），窄屏状态栏补齐 `thinking` 字段，并对未知 kind 保持忽略；`pm-app-server` 现在会转发 `reasoning_text`（如 provider 支持），并在完成时下发 `reasoning_summary_text`。
 - `ditto-llm`：OpenAI Responses 请求现在会携带 `instructions`（来自 system message），修复部分 provider 返回 “Instructions are required”。
 - `pm-app-server`：项目配置现在会读取 `openai.base_url`（`config.toml`/`config_local.toml`）并允许 `.env` 覆盖，`thread/models` 与 `thread/config-explain` 使用该值。
 - `pm-app-server thread/models`：`GET /models` 增加 2s 超时并在失败时降级返回候选模型列表，同时返回 `models_error` 供 UI 持久展示错误。
 - `pm-app-server`：修复 `file/glob` 的 sandbox policy 初始化缺少 `paths` 字段导致的编译失败。
+- `pm-execpolicy`：空匹配集合不再 panic（返回 `allow`），并补齐回归测试。
 - `pm-app-server`/`pm`/`code-pm`/`pm-core::orchestrator`：拆分超大 Rust 源文件（保持行为不变），避免单文件超过 1000 行，降低 review/IDE 压力。
 - `pm-app-server`：进一步拆分接近上限的模块（`agent/tools`、`process_control`），为后续扩展 tools/hooks 留出空间并保持单文件 < 1000 行。
 - `pm-app-server`：拆分 JSON-RPC router（`main/app.rs`）为按域 handler 的小文件（`main/app/*.rs`），避免入口路由继续膨胀。

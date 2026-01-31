@@ -669,16 +669,29 @@
             return Ok(());
         }
 
-        // Insert in chunks because the terminal API uses `u16` heights.
+        // Insert in chunks to respect ratatui's `u16::MAX` *cell* limit. If the render area
+        // overflows `u16`, ratatui clamps the underlying buffer length but still renders as if the
+        // full area exists, which can panic with an out-of-bounds access.
         let mut inserted_any = false;
-        for chunk in lines.chunks(u16::MAX as usize) {
-            let height = u16::try_from(chunk.len()).unwrap_or(u16::MAX);
+        let max_cells = u16::MAX as usize;
+        let mut cursor = 0usize;
+        while cursor < lines.len() {
+            // Recompute per chunk so terminal resizes cannot invalidate the safe bound.
+            let insert_width = terminal.size().context("terminal size")?.width.max(1) as usize;
+            let max_chunk_height = (max_cells / insert_width).max(1);
+            let end = (cursor + max_chunk_height).min(lines.len());
+            let chunk = &lines[cursor..end];
+            let height = u16::try_from(chunk.len())
+                .ok()
+                .filter(|h| *h > 0)
+                .unwrap_or(1);
             let text = Text::from(chunk.to_vec());
             terminal.insert_before(height, move |buf| {
                 Paragraph::new(text).render(buf.area, buf);
                 scrub_wide_symbol_placeholders(buf);
             })?;
             inserted_any = true;
+            cursor = end;
         }
 
         if inserted_any {

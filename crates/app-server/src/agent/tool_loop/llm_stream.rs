@@ -77,8 +77,25 @@ async fn run_llm_stream_once(
                         tool_call_order.push(id);
                     }
                 }
-                ditto_llm::StreamChunk::ReasoningDelta { .. } => {
+                ditto_llm::StreamChunk::ReasoningDelta { text } => {
+                    if text.is_empty() {
+                        continue;
+                    }
                     emitted_output = true;
+                    if emit_deltas {
+                        let delta = pm_core::redact_text(&text);
+                        let response_id_snapshot = response_id.clone();
+                        thread_rt.emit_notification(
+                            "item/delta",
+                            &serde_json::json!({
+                                "thread_id": thread_id,
+                                "turn_id": turn_id,
+                                "response_id": response_id_snapshot,
+                                "kind": "reasoning_text",
+                                "delta": delta,
+                            }),
+                        );
+                    }
                 }
                 ditto_llm::StreamChunk::Usage(u) => usage = Some(u),
                 ditto_llm::StreamChunk::FinishReason(_) => {}
