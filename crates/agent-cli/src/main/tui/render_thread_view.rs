@@ -199,8 +199,14 @@
             TranscriptRole::Error => ("error:", Style::default().fg(Color::Red), None),
             TranscriptRole::Tool => (
                 "tool:",
-                Style::default().fg(Color::Blue),
-                Some(Style::default().fg(Color::Blue)),
+                Style::default()
+                    .fg(Color::Rgb(158, 158, 158))
+                    .add_modifier(Modifier::DIM),
+                Some(
+                    Style::default()
+                        .fg(Color::Rgb(158, 158, 158))
+                        .add_modifier(Modifier::DIM),
+                ),
             ),
         };
         wrap_prefixed_lines(label, label_style, content_style, text, width)
@@ -213,12 +219,12 @@
         text: &str,
         width: usize,
     ) -> Vec<Line<'static>> {
-        const LEFT_PADDING: &str = "  ";
+        const BODY_PADDING: &str = "  ";
         const INLINE_MAX_CONTENT_WIDTH: usize = 16;
 
         let width = width.max(1);
-        let left_pad_width = UnicodeWidthStr::width(LEFT_PADDING);
-        let available = width.saturating_sub(left_pad_width).max(1);
+        let body_pad_width = UnicodeWidthStr::width(BODY_PADDING);
+        let available_body = width.saturating_sub(body_pad_width).max(1);
         let body_style = content_style.unwrap_or_default();
 
         let first_line = text.split('\n').next().unwrap_or("");
@@ -228,23 +234,23 @@
         let mut out = Vec::<Line>::new();
         if block_layout || text.trim().is_empty() {
             // Long (or multi-line) text: label on its own line, content starts at the next line.
-            out.push(Line::from(vec![
-                Span::raw(LEFT_PADDING),
-                Span::styled(label.to_string(), label_style),
-            ]));
+            out.push(Line::from(vec![Span::styled(
+                label.to_string(),
+                label_style,
+            )]));
 
             if text.trim().is_empty() {
                 return out;
             }
 
             for raw_line in text.split('\n') {
-                let mut segments = wrap_plain_text(raw_line, available);
+                let mut segments = wrap_plain_text(raw_line, available_body);
                 if segments.is_empty() {
                     segments.push(String::new());
                 }
                 for segment in segments {
                     out.push(Line::from(vec![
-                        Span::raw(LEFT_PADDING),
+                        Span::raw(BODY_PADDING),
                         Span::styled(segment, body_style),
                     ]));
                 }
@@ -254,10 +260,7 @@
 
         // Short text: keep it on the same line as the label.
         let label_width = UnicodeWidthStr::width(label);
-        let max_width_first = available
-            .saturating_sub(label_width)
-            .saturating_sub(1)
-            .max(1);
+        let max_width_first = width.saturating_sub(label_width).saturating_sub(1).max(1);
         let mut segments = wrap_plain_text(text, max_width_first);
         if segments.is_empty() {
             segments.push(String::new());
@@ -267,14 +270,12 @@
         for (idx, segment) in segments.into_iter().enumerate() {
             if idx == 0 {
                 out.push(Line::from(vec![
-                    Span::raw(LEFT_PADDING),
                     Span::styled(label.to_string(), label_style),
                     Span::raw(" "),
                     Span::styled(segment, body_style),
                 ]));
             } else {
                 out.push(Line::from(vec![
-                    Span::raw(LEFT_PADDING),
                     Span::raw(align.clone()),
                     Span::styled(segment, body_style),
                 ]));
