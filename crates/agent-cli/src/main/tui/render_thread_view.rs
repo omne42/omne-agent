@@ -239,6 +239,11 @@
         let (label, label_style, content_style) = match role {
             TranscriptRole::User => ("user:", Style::default().fg(Color::Yellow), None),
             TranscriptRole::Assistant => ("assistant:", Style::default().fg(Color::Green), None),
+            TranscriptRole::Thinking => (
+                "thinking:",
+                Style::default().fg(Color::Gray),
+                Some(Style::default().fg(Color::Gray)),
+            ),
             TranscriptRole::System => ("system:", Style::default().fg(Color::Cyan), None),
             TranscriptRole::Error => ("error:", Style::default().fg(Color::Red), None),
             TranscriptRole::Tool => (

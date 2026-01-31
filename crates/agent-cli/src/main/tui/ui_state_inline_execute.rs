@@ -287,6 +287,28 @@
             self.streaming_entry_active = true;
         }
 
+        fn apply_thinking_delta(&mut self, delta: &str) {
+            if delta.is_empty() {
+                return;
+            }
+
+            if self
+                .transcript
+                .back()
+                .is_some_and(|last| matches!(last.role, TranscriptRole::Thinking))
+            {
+                if let Some(last) = self.transcript.back_mut() {
+                    last.text.push_str(delta);
+                }
+                return;
+            }
+
+            self.push_transcript(TranscriptEntry {
+                role: TranscriptRole::Thinking,
+                text: delta.to_string(),
+            });
+        }
+
         fn handle_notification(&mut self, note: pm_jsonrpc::Notification) -> anyhow::Result<()> {
             match note.method.as_str() {
                 "item/delta" => {
@@ -297,9 +319,7 @@
                     if delta.is_empty() {
                         return Ok(());
                     }
-                    if params.get("kind").and_then(|v| v.as_str()) != Some("output_text") {
-                        return Ok(());
-                    }
+                    let kind = params.get("kind").and_then(|v| v.as_str()).unwrap_or("");
                     let thread_id = serde_json::from_value::<ThreadId>(
                         params
                             .get("thread_id")
@@ -317,7 +337,16 @@
                             .unwrap_or(serde_json::Value::Null),
                     )
                     .context("parse delta turn_id")?;
-                    self.apply_output_text_delta(turn_id, delta);
+                    match kind {
+                        "output_text" => {
+                            self.apply_output_text_delta(turn_id, delta);
+                        }
+                        "reasoning_text" | "reasoning_summary_text" | "thinking_text"
+                        | "thinking_summary_text" => {
+                            self.apply_thinking_delta(delta);
+                        }
+                        _ => {}
+                    }
                 }
                 "thread/event"
                 | "turn/started"

@@ -212,6 +212,7 @@
 - `pm` TUI：tool 输出展示改为合并 `process/*` 的 stdout/stderr，并隐藏噪声路径 JSON。
 - `pm` TUI：状态栏补齐 token 用量统计（`input`/`cache_input`/`output`），并按模型上限显示 context 剩余百分比。
 - `pm` TUI：修复中文/宽字符渲染导致的字间空格问题。
+- `pm` TUI：支持展示 `item/delta.kind=reasoning_*|thinking_*`（浅灰），并在窄屏状态栏补齐 `thinking` 字段。
 - `ditto-llm`：OpenAI Responses 请求现在会携带 `instructions`（来自 system message），修复部分 provider 返回 “Instructions are required”。
 - `pm-app-server`：项目配置现在会读取 `openai.base_url`（`config.toml`/`config_local.toml`）并允许 `.env` 覆盖，`thread/models` 与 `thread/config-explain` 使用该值。
 - `pm-app-server thread/models`：`GET /models` 增加 2s 超时并在失败时降级返回候选模型列表，同时返回 `models_error` 供 UI 持久展示错误。

@@ -29,6 +29,7 @@
     enum TranscriptRole {
         User,
         Assistant,
+        Thinking,
         System,
         Error,
         Tool,

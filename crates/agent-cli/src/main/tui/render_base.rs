@@ -70,7 +70,7 @@
 
                 if width < 80 {
                     format!(
-                        "{context_left}  {token_usage}  th={short} mode={mode} model={model} (Ctrl-K)"
+                        "{context_left}  {token_usage}  th={short} mode={mode} model={model} thk={thinking} (Ctrl-K)"
                     )
                 } else {
                     format!(
