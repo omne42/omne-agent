@@ -27,115 +27,6 @@ async fn run_openai_responses_codex_parity_loop(
     thinking_override: Option<String>,
     cfg: ToolLoopConfig,
 ) -> anyhow::Result<ToolLoopOutcome> {
-    fn content_part_to_openai_user_item(part: &ditto_llm::ContentPart) -> Option<Value> {
-        match part {
-            ditto_llm::ContentPart::Text { text } => {
-                if text.is_empty() {
-                    return None;
-                }
-                Some(serde_json::json!({ "type": "input_text", "text": text }))
-            }
-            ditto_llm::ContentPart::Image { source } => {
-                let image_url = match source {
-                    ditto_llm::ImageSource::Url { url } => url.clone(),
-                    ditto_llm::ImageSource::Base64 { media_type, data } => {
-                        format!("data:{media_type};base64,{data}")
-                    }
-                };
-                Some(serde_json::json!({ "type": "input_image", "image_url": image_url }))
-            }
-            ditto_llm::ContentPart::File {
-                filename,
-                media_type,
-                source,
-            } => {
-                if media_type != "application/pdf" {
-                    return None;
-                }
-
-                let item = match source {
-                    ditto_llm::FileSource::Url { url } => {
-                        serde_json::json!({ "type": "input_file", "file_url": url })
-                    }
-                    ditto_llm::FileSource::Base64 { data } => serde_json::json!({
-                        "type": "input_file",
-                        "filename": filename.clone().unwrap_or_else(|| "file.pdf".to_string()),
-                        "file_data": format!("data:{media_type};base64,{data}"),
-                    }),
-                    ditto_llm::FileSource::FileId { file_id } => {
-                        serde_json::json!({ "type": "input_file", "file_id": file_id })
-                    }
-                };
-                Some(item)
-            }
-            _ => None,
-        }
-    }
-
-    fn build_user_message_item(
-        text: &str,
-        attachment_parts: &[ditto_llm::ContentPart],
-    ) -> Option<Value> {
-        let mut content = Vec::<Value>::new();
-        if !text.trim().is_empty() {
-            content.push(serde_json::json!({ "type": "input_text", "text": text }));
-        }
-        for part in attachment_parts {
-            if let Some(item) = content_part_to_openai_user_item(part) {
-                content.push(item);
-            }
-        }
-        if content.is_empty() {
-            return None;
-        }
-        Some(serde_json::json!({
-            "type": "message",
-            "role": "user",
-            "content": content,
-        }))
-    }
-
-    fn append_attachments_to_last_user_message(
-        history: &mut [Value],
-        attachment_parts: &[ditto_llm::ContentPart],
-    ) -> bool {
-        if attachment_parts.is_empty() {
-            return false;
-        }
-
-        let Some(last_user_idx) = history.iter().rposition(|item| {
-            item.get("type").and_then(Value::as_str) == Some("message")
-                && item.get("role").and_then(Value::as_str) == Some("user")
-        }) else {
-            return false;
-        };
-
-        let Some(obj) = history[last_user_idx].as_object_mut() else {
-            return false;
-        };
-        let Some(content) = obj.get_mut("content").and_then(Value::as_array_mut) else {
-            return false;
-        };
-        let mut added = false;
-        for part in attachment_parts {
-            if let Some(item) = content_part_to_openai_user_item(part) {
-                content.push(item);
-                added = true;
-            }
-        }
-        added
-    }
-
-    fn parse_function_call_item(item: &Value) -> Option<(String, String, String)> {
-        if item.get("type").and_then(Value::as_str) != Some("function_call") {
-            return None;
-        }
-        let call_id = item.get("call_id").and_then(Value::as_str)?;
-        let name = item.get("name").and_then(Value::as_str)?;
-        let arguments = item.get("arguments").and_then(Value::as_str).unwrap_or("{}");
-        Some((name.to_string(), arguments.to_string(), call_id.to_string()))
-    }
-
     async fn resolve_openai_client_for_provider(
         provider_name: &str,
         provider_cache: &mut std::collections::BTreeMap<String, ProviderRuntime>,
@@ -177,6 +68,7 @@ async fn run_openai_responses_codex_parity_loop(
             let mut usage: Option<Value> = None;
             let mut output_items = Vec::<Value>::new();
             let mut output_text = String::new();
+            let mut reasoning_summary_text = String::new();
 
             while let Some(event) = stream.recv().await {
                 let event = event?;
@@ -210,6 +102,16 @@ async fn run_openai_responses_codex_parity_loop(
                             );
                         }
                     }
+                    ditto_llm::providers::openai::OpenAIResponsesRawEvent::ReasoningTextDelta(
+                        _delta,
+                    ) => {}
+                    ditto_llm::providers::openai::OpenAIResponsesRawEvent::ReasoningSummaryTextDelta(
+                        delta,
+                    ) => {
+                        if !delta.is_empty() {
+                            reasoning_summary_text.push_str(&delta);
+                        }
+                    }
                     ditto_llm::providers::openai::OpenAIResponsesRawEvent::OutputItemDone(item) => {
                         emitted_output = true;
                         output_items.push(item);
@@ -240,6 +142,22 @@ async fn run_openai_responses_codex_parity_loop(
 
             if response_id.trim().is_empty() {
                 response_id = "<unknown>".to_string();
+            }
+
+            let reasoning_summary_text =
+                resolve_reasoning_summary_text(reasoning_summary_text, &output_items);
+            if emit_deltas && !reasoning_summary_text.trim().is_empty() {
+                let response_id_snapshot = response_id.clone();
+                thread_rt.emit_notification(
+                    "item/delta",
+                    &serde_json::json!({
+                        "thread_id": thread_id,
+                        "turn_id": turn_id,
+                        "response_id": response_id_snapshot,
+                        "kind": "reasoning_summary_text",
+                        "delta": reasoning_summary_text,
+                    }),
+                );
             }
 
             Ok::<_, ditto_llm::DittoError>(OpenAiRawLlmResponse {
@@ -525,6 +443,7 @@ async fn run_openai_responses_codex_parity_loop(
                 store: false,
                 stream: true,
                 reasoning_effort,
+                reasoning_summary: Some(ditto_llm::ReasoningSummary::Auto),
                 response_format: cfg.response_format.as_ref(),
                 include: vec!["reasoning.encrypted_content".to_string()],
                 prompt_cache_key: Some(thread_id.to_string()),
