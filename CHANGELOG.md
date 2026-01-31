@@ -199,6 +199,7 @@
 - `pm` TUI：`Ctrl-C` 行为调整为等同 `Esc`（关闭/返回），不再触发中断。
 - `pm` TUI：禁用 alt-screen 并减少无意义重绘，允许终端原生滚动与选中文本。
 - `pm` TUI：scrollback 模式下将 transcript 按行刷入终端原生 scrollback，避免超过视口的内容被覆盖/“消失”。
+- `pm` TUI：transcript 统一左侧留 2 空格，并在内容长度超过 16 个字宽时将正文放到下一行开始，避免 `system/user/tool/assistant` 前缀挤占可读性。
 - `pm` TUI：tool 记录改为可读的命令式摘要（如 `$ ls`），并修复流式输出闪现后丢失的问题。
 - `pm` TUI：提升 transcript 缓冲上限，超出屏幕不再丢历史。
 - `pm` TUI：修复输入框光标左右移动/中间编辑不生效的问题，并补齐折行场景下的光标定位。

@@ -192,64 +192,93 @@
         text: &str,
         width: usize,
     ) -> Vec<Line<'static>> {
-        let (prefix, prefix_style, content_style) = match role {
-            TranscriptRole::User => ("user: ", Style::default().fg(Color::Yellow), None),
-            TranscriptRole::Assistant => ("assistant: ", Style::default().fg(Color::Green), None),
-            TranscriptRole::System => ("system: ", Style::default().fg(Color::Cyan), None),
-            TranscriptRole::Error => ("error: ", Style::default().fg(Color::Red), None),
-            TranscriptRole::Tool => ("tool: ", Style::default().fg(Color::Blue), Some(Style::default().fg(Color::Blue))),
+        let (label, label_style, content_style) = match role {
+            TranscriptRole::User => ("user:", Style::default().fg(Color::Yellow), None),
+            TranscriptRole::Assistant => ("assistant:", Style::default().fg(Color::Green), None),
+            TranscriptRole::System => ("system:", Style::default().fg(Color::Cyan), None),
+            TranscriptRole::Error => ("error:", Style::default().fg(Color::Red), None),
+            TranscriptRole::Tool => (
+                "tool:",
+                Style::default().fg(Color::Blue),
+                Some(Style::default().fg(Color::Blue)),
+            ),
         };
-        wrap_prefixed_lines(prefix, prefix_style, content_style, text, width)
+        wrap_prefixed_lines(label, label_style, content_style, text, width)
     }
 
     fn wrap_prefixed_lines(
-        prefix: &str,
-        prefix_style: Style,
+        label: &str,
+        label_style: Style,
         content_style: Option<Style>,
         text: &str,
         width: usize,
     ) -> Vec<Line<'static>> {
-        let width = width.max(1);
-        let prefix_width = UnicodeWidthStr::width(prefix);
-        let available_first = width.saturating_sub(prefix_width).max(1);
-        let available_other = width;
-        let mut out = Vec::<Line>::new();
+        const LEFT_PADDING: &str = "  ";
+        const INLINE_MAX_CONTENT_WIDTH: usize = 16;
 
-        let mut first = true;
-        for raw_line in text.split('\n') {
-            let max_width = if first {
-                available_first
-            } else {
-                available_other
-            };
-            let mut segments = wrap_plain_text(raw_line, max_width);
-            if segments.is_empty() {
-                segments.push(String::new());
+        let width = width.max(1);
+        let left_pad_width = UnicodeWidthStr::width(LEFT_PADDING);
+        let available = width.saturating_sub(left_pad_width).max(1);
+        let body_style = content_style.unwrap_or_default();
+
+        let first_line = text.split('\n').next().unwrap_or("");
+        let block_layout = text.contains('\n')
+            || UnicodeWidthStr::width(first_line) > INLINE_MAX_CONTENT_WIDTH;
+
+        let mut out = Vec::<Line>::new();
+        if block_layout || text.trim().is_empty() {
+            // Long (or multi-line) text: label on its own line, content starts at the next line.
+            out.push(Line::from(vec![
+                Span::raw(LEFT_PADDING),
+                Span::styled(label.to_string(), label_style),
+            ]));
+
+            if text.trim().is_empty() {
+                return out;
             }
-            for segment in segments {
-                let lead = if first { prefix } else { "" };
-                let lead_style = prefix_style;
-                let body_style = content_style.unwrap_or_default();
-                out.push(Line::from(vec![
-                    Span::styled(lead.to_string(), lead_style),
-                    Span::styled(segment, body_style),
-                ]));
-                first = false;
+
+            for raw_line in text.split('\n') {
+                let mut segments = wrap_plain_text(raw_line, available);
+                if segments.is_empty() {
+                    segments.push(String::new());
+                }
+                for segment in segments {
+                    out.push(Line::from(vec![
+                        Span::raw(LEFT_PADDING),
+                        Span::styled(segment, body_style),
+                    ]));
+                }
             }
-            if first {
-                out.push(Line::from(vec![Span::styled(
-                    prefix.to_string(),
-                    prefix_style,
-                )]));
-                first = false;
-            }
+            return out;
         }
 
-        if out.is_empty() {
-            out.push(Line::from(vec![Span::styled(
-                prefix.to_string(),
-                prefix_style,
-            )]));
+        // Short text: keep it on the same line as the label.
+        let label_width = UnicodeWidthStr::width(label);
+        let max_width_first = available
+            .saturating_sub(label_width)
+            .saturating_sub(1)
+            .max(1);
+        let mut segments = wrap_plain_text(text, max_width_first);
+        if segments.is_empty() {
+            segments.push(String::new());
+        }
+
+        let align = " ".repeat(label_width + 1);
+        for (idx, segment) in segments.into_iter().enumerate() {
+            if idx == 0 {
+                out.push(Line::from(vec![
+                    Span::raw(LEFT_PADDING),
+                    Span::styled(label.to_string(), label_style),
+                    Span::raw(" "),
+                    Span::styled(segment, body_style),
+                ]));
+            } else {
+                out.push(Line::from(vec![
+                    Span::raw(LEFT_PADDING),
+                    Span::raw(align.clone()),
+                    Span::styled(segment, body_style),
+                ]));
+            }
         }
         out
     }
