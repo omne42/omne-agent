@@ -373,6 +373,7 @@ mod auto_summary_tests {
             mcp: Arc::new(tokio::sync::Mutex::new(crate::McpManager::default())),
             disk_warning: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             exec_policy: pm_execpolicy::Policy::empty(),
+            db_vfs: None,
         }
     }
 

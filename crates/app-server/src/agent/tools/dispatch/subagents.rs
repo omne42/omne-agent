@@ -401,6 +401,7 @@ mod agent_spawn_guard_tests {
             mcp: Arc::new(tokio::sync::Mutex::new(super::super::McpManager::default())),
             disk_warning: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             exec_policy: pm_execpolicy::Policy::empty(),
+            db_vfs: None,
         }
     }
 
@@ -556,6 +557,7 @@ mod reference_repo_file_tools_tests {
             mcp: Arc::new(tokio::sync::Mutex::new(super::super::McpManager::default())),
             disk_warning: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             exec_policy: pm_execpolicy::Policy::empty(),
+            db_vfs: None,
         }
     }
 

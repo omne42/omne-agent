@@ -161,6 +161,75 @@ async fn handle_file_glob(server: &Server, params: FileGlobParams) -> anyhow::Re
         })
         .await?;
 
+    if matches!(file_root, FileRoot::Workspace)
+        && let Some(db_vfs) = server.db_vfs.clone()
+    {
+        let resp = db_vfs
+            .glob(
+                params.thread_id.to_string(),
+                params.pattern.clone(),
+                Some(String::new()),
+            )
+            .await;
+
+        match resp {
+            Ok(resp) => {
+                let mut paths = resp.matches;
+                let mut truncated = resp.truncated;
+                if paths.len() > max_results {
+                    paths.truncate(max_results);
+                    truncated = true;
+                }
+
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                        tool_id,
+                        status: pm_protocol::ToolStatus::Completed,
+                        error: None,
+                        result: Some(serde_json::json!({
+                            "matches": paths.len(),
+                            "truncated": truncated,
+                        })),
+                    })
+                    .await?;
+                return Ok(serde_json::json!({
+                    "tool_id": tool_id,
+                    "root": file_root.as_str(),
+                    "paths": paths,
+                    "truncated": truncated,
+                }));
+            }
+            Err(err) if err.is_denied() => {
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                        tool_id,
+                        status: pm_protocol::ToolStatus::Denied,
+                        error: Some(err.to_string()),
+                        result: Some(serde_json::json!({
+                            "db_vfs_code": err.code,
+                            "db_vfs_status": err.status.map(|status| status.as_u16()),
+                        })),
+                    })
+                    .await?;
+                return Ok(serde_json::json!({
+                    "tool_id": tool_id,
+                    "denied": true,
+                }));
+            }
+            Err(err) => {
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                        tool_id,
+                        status: pm_protocol::ToolStatus::Failed,
+                        error: Some(err.to_string()),
+                        result: None,
+                    })
+                    .await?;
+                return Err(anyhow::anyhow!(err));
+            }
+        }
+    }
+
     let pattern = params.pattern.clone();
     let root_id = file_root.as_str().to_string();
     let root = match file_root {

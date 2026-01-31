@@ -223,72 +223,145 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
         })
         .await?;
 
-    let outcome: anyhow::Result<(PathBuf, String, bool, usize)> = async {
-        let path = match file_root {
-            FileRoot::Workspace => {
-                resolve_file_for_sandbox(
-                    &thread_root,
-                    sandbox_policy,
-                    &sandbox_writable_roots,
-                    Path::new(&params.path),
-                    pm_core::PathAccess::Read,
-                    false,
-                )
-                .await?
+    let db_vfs = server.db_vfs.clone();
+    let outcome: anyhow::Result<(String, String, bool, usize)> = async {
+        if matches!(file_root, FileRoot::Workspace)
+            && let Some(db_vfs) = db_vfs
+        {
+            let rel = pm_core::modes::relative_path_under_root(&thread_root, Path::new(&params.path))?;
+            if rel_path_is_secret(&rel) {
+                return Err(tool_denied(
+                    "refusing to read secrets file (.env)".to_string(),
+                    serde_json::json!({
+                        "reason": "secrets file is always denied",
+                    }),
+                ));
             }
-            FileRoot::Reference => {
-                pm_core::resolve_file(&root, Path::new(&params.path), pm_core::PathAccess::Read, false)
-                    .await?
-            }
-        };
 
-        let resolved_rel = pm_core::modes::relative_path_under_root(&root, &path)?;
-        if rel_path_is_secret(&resolved_rel) {
-            return Err(tool_denied(
-                "refusing to read secrets file (.env)".to_string(),
-                serde_json::json!({
-                    "reason": "secrets file is always denied",
-                }),
-            ));
-        }
-        let base_decision = if mode.permissions.edit.is_denied(&resolved_rel) {
-            pm_core::modes::Decision::Deny
+            let base_decision = if mode.permissions.edit.is_denied(&rel) {
+                pm_core::modes::Decision::Deny
+            } else {
+                mode.permissions.read
+            };
+            let effective_decision = match mode.tool_overrides.get("file/read").copied() {
+                Some(override_decision) => base_decision.combine(override_decision),
+                None => base_decision,
+            };
+            if effective_decision == pm_core::modes::Decision::Deny {
+                return Err(tool_denied(
+                    "mode denies file/read".to_string(),
+                    serde_json::json!({
+                        "mode": mode_name,
+                        "decision": effective_decision,
+                    }),
+                ));
+            }
+
+            let normalized = rel.to_string_lossy().replace('\\', "/");
+            let resp = match db_vfs
+                .read(params.thread_id.to_string(), normalized.clone())
+                .await
+            {
+                Ok(resp) => resp,
+                Err(err) if err.is_denied() => {
+                    return Err(tool_denied(
+                        err.to_string(),
+                        serde_json::json!({
+                            "db_vfs_code": err.code,
+                            "db_vfs_status": err.status.map(|status| status.as_u16()),
+                        }),
+                    ));
+                }
+                Err(err) => return Err(anyhow::anyhow!(err)),
+            };
+
+            let mut bytes = resp.content.len();
+            let mut truncated = false;
+            let text = if bytes > max_bytes as usize {
+                truncated = true;
+                let mut end = max_bytes as usize;
+                while end > 0 && !resp.content.is_char_boundary(end) {
+                    end = end.saturating_sub(1);
+                }
+                bytes = end;
+                resp.content[..end].to_string()
+            } else {
+                resp.content
+            };
+
+            Ok((normalized, text, truncated, bytes))
         } else {
-            mode.permissions.read
-        };
-        let effective_decision = match mode.tool_overrides.get("file/read").copied() {
-            Some(override_decision) => base_decision.combine(override_decision),
-            None => base_decision,
-        };
-        if effective_decision == pm_core::modes::Decision::Deny {
-            return Err(tool_denied(
-                "mode denies file/read".to_string(),
-                serde_json::json!({
-                    "mode": mode_name,
-                    "decision": effective_decision,
-                }),
-            ));
-        }
+            let path = match file_root {
+                FileRoot::Workspace => {
+                    resolve_file_for_sandbox(
+                        &thread_root,
+                        sandbox_policy,
+                        &sandbox_writable_roots,
+                        Path::new(&params.path),
+                        pm_core::PathAccess::Read,
+                        false,
+                    )
+                    .await?
+                }
+                FileRoot::Reference => {
+                    pm_core::resolve_file(
+                        &root,
+                        Path::new(&params.path),
+                        pm_core::PathAccess::Read,
+                        false,
+                    )
+                    .await?
+                }
+            };
 
-        let limit = max_bytes + 1;
-        let file = tokio::fs::File::open(&path)
-            .await
-            .with_context(|| format!("open {}", path.display()))?;
-        let mut buf = Vec::new();
-        file.take(limit).read_to_end(&mut buf).await?;
+            let resolved_rel = pm_core::modes::relative_path_under_root(&root, &path)?;
+            if rel_path_is_secret(&resolved_rel) {
+                return Err(tool_denied(
+                    "refusing to read secrets file (.env)".to_string(),
+                    serde_json::json!({
+                        "reason": "secrets file is always denied",
+                    }),
+                ));
+            }
+            let base_decision = if mode.permissions.edit.is_denied(&resolved_rel) {
+                pm_core::modes::Decision::Deny
+            } else {
+                mode.permissions.read
+            };
+            let effective_decision = match mode.tool_overrides.get("file/read").copied() {
+                Some(override_decision) => base_decision.combine(override_decision),
+                None => base_decision,
+            };
+            if effective_decision == pm_core::modes::Decision::Deny {
+                return Err(tool_denied(
+                    "mode denies file/read".to_string(),
+                    serde_json::json!({
+                        "mode": mode_name,
+                        "decision": effective_decision,
+                    }),
+                ));
+            }
 
-        let truncated = buf.len() > max_bytes as usize;
-        if truncated {
-            buf.truncate(max_bytes as usize);
+            let limit = max_bytes + 1;
+            let file = tokio::fs::File::open(&path)
+                .await
+                .with_context(|| format!("open {}", path.display()))?;
+            let mut buf = Vec::new();
+            file.take(limit).read_to_end(&mut buf).await?;
+
+            let truncated = buf.len() > max_bytes as usize;
+            if truncated {
+                buf.truncate(max_bytes as usize);
+            }
+            let bytes = buf.len();
+            let text = String::from_utf8(buf).context("file is not valid utf-8")?;
+            Ok((path.to_string_lossy().to_string(), text, truncated, bytes))
         }
-        let bytes = buf.len();
-        let text = String::from_utf8(buf).context("file is not valid utf-8")?;
-        Ok((path, text, truncated, bytes))
     }
     .await;
 
     match outcome {
-        Ok((path, text, truncated, bytes)) => {
+        Ok((resolved_path, text, truncated, bytes)) => {
             thread_rt
                 .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
@@ -303,7 +376,7 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
 
             Ok(serde_json::json!({
                 "tool_id": tool_id,
-                "resolved_path": path.display().to_string(),
+                "resolved_path": resolved_path,
                 "root": file_root.as_str(),
                 "text": text,
                 "truncated": truncated,
@@ -349,4 +422,3 @@ const DEFAULT_IGNORED_DIRS: &[&str] = &[
     "node_modules",
     "example",
 ];
-

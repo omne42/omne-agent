@@ -220,58 +220,134 @@ async fn handle_file_write(server: &Server, params: FileWriteParams) -> anyhow::
         })
         .await?;
 
-    let outcome: anyhow::Result<PathBuf> = async {
-        let path = resolve_file_for_sandbox(
-            &thread_root,
-            sandbox_policy,
-            &sandbox_writable_roots,
-            Path::new(&params.path),
-            pm_core::PathAccess::Write,
-            create_parent_dirs,
-        )
-        .await?;
+    let db_vfs = server.db_vfs.clone();
+    let outcome: anyhow::Result<String> = async {
+        if let Some(db_vfs) = db_vfs {
+            let rel = pm_core::modes::relative_path_under_root(&thread_root, Path::new(&params.path))?;
+            if rel_path_is_secret(&rel) {
+                return Err(tool_denied(
+                    "refusing to write secrets file (.env)".to_string(),
+                    serde_json::json!({
+                        "reason": "secrets file is always denied",
+                    }),
+                ));
+            }
+            let base_decision = mode.permissions.edit.decision_for_path(&rel);
+            let effective_decision = match mode.tool_overrides.get("file/write").copied() {
+                Some(override_decision) => base_decision.combine(override_decision),
+                None => base_decision,
+            };
+            if effective_decision == pm_core::modes::Decision::Deny {
+                return Err(tool_denied(
+                    "mode denies file/write".to_string(),
+                    serde_json::json!({
+                        "mode": mode_name,
+                        "decision": effective_decision,
+                    }),
+                ));
+            }
 
-        let resolved_rel = canonical_rel_path_for_write(&thread_root, &path).await?;
-        if rel_path_is_secret(&resolved_rel) {
-            return Err(tool_denied(
-                "refusing to write secrets file (.env)".to_string(),
-                serde_json::json!({
-                    "reason": "secrets file is always denied",
-                }),
-            ));
+            let workspace_id = params.thread_id.to_string();
+            let normalized = rel.to_string_lossy().replace('\\', "/");
+
+            let mut attempts = 0u32;
+            loop {
+                attempts = attempts.saturating_add(1);
+                let existing = db_vfs
+                    .read(workspace_id.clone(), normalized.clone())
+                    .await;
+
+                let expected_version = match existing {
+                    Ok(record) => Some(record.version),
+                    Err(err) if err.code.as_deref() == Some("not_found") => None,
+                    Err(err) if err.is_denied() => {
+                        return Err(tool_denied(
+                            err.to_string(),
+                            serde_json::json!({
+                                "db_vfs_code": err.code,
+                                "db_vfs_status": err.status.map(|status| status.as_u16()),
+                            }),
+                        ));
+                    }
+                    Err(err) => return Err(anyhow::anyhow!(err)),
+                };
+
+                match db_vfs
+                    .write(
+                        workspace_id.clone(),
+                        normalized.clone(),
+                        params.text.clone(),
+                        expected_version,
+                    )
+                    .await
+                {
+                    Ok(_) => return Ok(normalized),
+                    Err(err) if err.code.as_deref() == Some("conflict") && attempts < 3 => continue,
+                    Err(err) if err.is_denied() => {
+                        return Err(tool_denied(
+                            err.to_string(),
+                            serde_json::json!({
+                                "db_vfs_code": err.code,
+                                "db_vfs_status": err.status.map(|status| status.as_u16()),
+                            }),
+                        ));
+                    }
+                    Err(err) => return Err(anyhow::anyhow!(err)),
+                }
+            }
+        } else {
+            let path = resolve_file_for_sandbox(
+                &thread_root,
+                sandbox_policy,
+                &sandbox_writable_roots,
+                Path::new(&params.path),
+                pm_core::PathAccess::Write,
+                create_parent_dirs,
+            )
+            .await?;
+
+            let resolved_rel = canonical_rel_path_for_write(&thread_root, &path).await?;
+            if rel_path_is_secret(&resolved_rel) {
+                return Err(tool_denied(
+                    "refusing to write secrets file (.env)".to_string(),
+                    serde_json::json!({
+                        "reason": "secrets file is always denied",
+                    }),
+                ));
+            }
+            let base_decision = mode.permissions.edit.decision_for_path(&resolved_rel);
+            let effective_decision = match mode.tool_overrides.get("file/write").copied() {
+                Some(override_decision) => base_decision.combine(override_decision),
+                None => base_decision,
+            };
+            if effective_decision == pm_core::modes::Decision::Deny {
+                return Err(tool_denied(
+                    "mode denies file/write".to_string(),
+                    serde_json::json!({
+                        "mode": mode_name,
+                        "decision": effective_decision,
+                    }),
+                ));
+            }
+
+            tokio::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(&path)
+                .await
+                .with_context(|| format!("open {}", path.display()))?
+                .write_all(params.text.as_bytes())
+                .await
+                .with_context(|| format!("write {}", path.display()))?;
+
+            Ok(path.to_string_lossy().to_string())
         }
-        let base_decision = mode.permissions.edit.decision_for_path(&resolved_rel);
-        let effective_decision = match mode.tool_overrides.get("file/write").copied() {
-            Some(override_decision) => base_decision.combine(override_decision),
-            None => base_decision,
-        };
-        if effective_decision == pm_core::modes::Decision::Deny {
-            return Err(tool_denied(
-                "mode denies file/write".to_string(),
-                serde_json::json!({
-                    "mode": mode_name,
-                    "decision": effective_decision,
-                }),
-            ));
-        }
-
-        tokio::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&path)
-            .await
-            .with_context(|| format!("open {}", path.display()))?
-            .write_all(params.text.as_bytes())
-            .await
-            .with_context(|| format!("write {}", path.display()))?;
-
-        Ok(path)
     }
     .await;
 
     match outcome {
-        Ok(path) => {
+        Ok(resolved_path) => {
             thread_rt
                 .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
@@ -283,7 +359,7 @@ async fn handle_file_write(server: &Server, params: FileWriteParams) -> anyhow::
 
             Ok(serde_json::json!({
                 "tool_id": tool_id,
-                "resolved_path": path.display().to_string(),
+                "resolved_path": resolved_path,
                 "bytes_written": bytes,
             }))
         }
@@ -549,81 +625,165 @@ async fn handle_file_patch(server: &Server, params: FilePatchParams) -> anyhow::
         })
         .await?;
 
-    let outcome: anyhow::Result<(PathBuf, bool, usize, usize)> = async {
-        let path = resolve_file_for_sandbox(
-            &thread_root,
-            sandbox_policy,
-            &sandbox_writable_roots,
-            Path::new(&params.path),
-            pm_core::PathAccess::Write,
-            false,
-        )
-        .await?;
+    let db_vfs = server.db_vfs.clone();
+    let outcome: anyhow::Result<(String, bool, usize, usize)> = async {
+        if let Some(db_vfs) = db_vfs {
+            let rel = pm_core::modes::relative_path_under_root(&thread_root, Path::new(&params.path))?;
+            if rel_path_is_secret(&rel) {
+                return Err(tool_denied(
+                    "refusing to patch secrets file (.env)".to_string(),
+                    serde_json::json!({
+                        "reason": "secrets file is always denied",
+                    }),
+                ));
+            }
+            let base_decision = mode.permissions.edit.decision_for_path(&rel);
+            let effective_decision = match mode.tool_overrides.get("file/patch").copied() {
+                Some(override_decision) => base_decision.combine(override_decision),
+                None => base_decision,
+            };
+            if effective_decision == pm_core::modes::Decision::Deny {
+                return Err(tool_denied(
+                    "mode denies file/patch".to_string(),
+                    serde_json::json!({
+                        "mode": mode_name,
+                        "decision": effective_decision,
+                    }),
+                ));
+            }
 
-        let resolved_rel = canonical_rel_path_for_write(&thread_root, &path).await?;
-        if rel_path_is_secret(&resolved_rel) {
-            return Err(tool_denied(
-                "refusing to patch secrets file (.env)".to_string(),
-                serde_json::json!({
-                    "reason": "secrets file is always denied",
-                }),
-            ));
+            let workspace_id = params.thread_id.to_string();
+            let normalized = rel.to_string_lossy().replace('\\', "/");
+            let record = match db_vfs.read(workspace_id.clone(), normalized.clone()).await {
+                Ok(record) => record,
+                Err(err) if err.is_denied() => {
+                    return Err(tool_denied(
+                        err.to_string(),
+                        serde_json::json!({
+                            "db_vfs_code": err.code,
+                            "db_vfs_status": err.status.map(|status| status.as_u16()),
+                        }),
+                    ));
+                }
+                Err(err) => return Err(anyhow::anyhow!(err)),
+            };
+
+            let original_bytes = record.content.len();
+            if original_bytes > max_bytes as usize {
+                anyhow::bail!(
+                    "file too large for patch: {} ({} bytes)",
+                    normalized,
+                    original_bytes
+                );
+            }
+
+            let patch = Patch::from_str(&params.patch).context("parse unified diff patch")?;
+            let updated = apply(&record.content, &patch).context("apply patch")?;
+            let changed = updated != record.content;
+            let bytes_written = updated.len();
+            if bytes_written > max_bytes as usize {
+                anyhow::bail!(
+                    "patched file too large: {} ({} bytes)",
+                    normalized,
+                    bytes_written
+                );
+            }
+
+            match db_vfs
+                .write(
+                    workspace_id,
+                    normalized.clone(),
+                    updated,
+                    Some(record.version),
+                )
+                .await
+            {
+                Ok(_) => Ok((normalized, changed, patch_bytes, bytes_written)),
+                Err(err) if err.is_denied() => Err(tool_denied(
+                    err.to_string(),
+                    serde_json::json!({
+                        "db_vfs_code": err.code,
+                        "db_vfs_status": err.status.map(|status| status.as_u16()),
+                    }),
+                )),
+                Err(err) => Err(anyhow::anyhow!(err)),
+            }
+        } else {
+            let path = resolve_file_for_sandbox(
+                &thread_root,
+                sandbox_policy,
+                &sandbox_writable_roots,
+                Path::new(&params.path),
+                pm_core::PathAccess::Write,
+                false,
+            )
+            .await?;
+
+            let resolved_rel = canonical_rel_path_for_write(&thread_root, &path).await?;
+            if rel_path_is_secret(&resolved_rel) {
+                return Err(tool_denied(
+                    "refusing to patch secrets file (.env)".to_string(),
+                    serde_json::json!({
+                        "reason": "secrets file is always denied",
+                    }),
+                ));
+            }
+            let base_decision = mode.permissions.edit.decision_for_path(&resolved_rel);
+            let effective_decision = match mode.tool_overrides.get("file/patch").copied() {
+                Some(override_decision) => base_decision.combine(override_decision),
+                None => base_decision,
+            };
+            if effective_decision == pm_core::modes::Decision::Deny {
+                return Err(tool_denied(
+                    "mode denies file/patch".to_string(),
+                    serde_json::json!({
+                        "mode": mode_name,
+                        "decision": effective_decision,
+                    }),
+                ));
+            }
+
+            let bytes = tokio::fs::read(&path)
+                .await
+                .with_context(|| format!("read {}", path.display()))?;
+            if bytes.len() > max_bytes as usize {
+                anyhow::bail!(
+                    "file too large for patch: {} ({} bytes)",
+                    path.display(),
+                    bytes.len()
+                );
+            }
+
+            let original = String::from_utf8(bytes).context("file is not valid utf-8")?;
+            let patch = Patch::from_str(&params.patch).context("parse unified diff patch")?;
+            let updated = apply(&original, &patch).context("apply patch")?;
+            let changed = updated != original;
+            let bytes_written = updated.len();
+            if bytes_written > max_bytes as usize {
+                anyhow::bail!(
+                    "patched file too large: {} ({} bytes)",
+                    path.display(),
+                    bytes_written
+                );
+            }
+
+            tokio::fs::OpenOptions::new()
+                .write(true)
+                .truncate(true)
+                .open(&path)
+                .await
+                .with_context(|| format!("open {}", path.display()))?
+                .write_all(updated.as_bytes())
+                .await
+                .with_context(|| format!("write {}", path.display()))?;
+
+            Ok((path.to_string_lossy().to_string(), changed, patch_bytes, bytes_written))
         }
-        let base_decision = mode.permissions.edit.decision_for_path(&resolved_rel);
-        let effective_decision = match mode.tool_overrides.get("file/patch").copied() {
-            Some(override_decision) => base_decision.combine(override_decision),
-            None => base_decision,
-        };
-        if effective_decision == pm_core::modes::Decision::Deny {
-            return Err(tool_denied(
-                "mode denies file/patch".to_string(),
-                serde_json::json!({
-                    "mode": mode_name,
-                    "decision": effective_decision,
-                }),
-            ));
-        }
-
-        let bytes = tokio::fs::read(&path)
-            .await
-            .with_context(|| format!("read {}", path.display()))?;
-        if bytes.len() > max_bytes as usize {
-            anyhow::bail!(
-                "file too large for patch: {} ({} bytes)",
-                path.display(),
-                bytes.len()
-            );
-        }
-
-        let original = String::from_utf8(bytes).context("file is not valid utf-8")?;
-        let patch = Patch::from_str(&params.patch).context("parse unified diff patch")?;
-        let updated = apply(&original, &patch).context("apply patch")?;
-        let changed = updated != original;
-        let bytes_written = updated.len();
-        if bytes_written > max_bytes as usize {
-            anyhow::bail!(
-                "patched file too large: {} ({} bytes)",
-                path.display(),
-                bytes_written
-            );
-        }
-
-        tokio::fs::OpenOptions::new()
-            .write(true)
-            .truncate(true)
-            .open(&path)
-            .await
-            .with_context(|| format!("open {}", path.display()))?
-            .write_all(updated.as_bytes())
-            .await
-            .with_context(|| format!("write {}", path.display()))?;
-
-        Ok((path, changed, patch_bytes, bytes_written))
     }
     .await;
 
     match outcome {
-        Ok((path, changed, patch_bytes, bytes_written)) => {
+        Ok((resolved_path, changed, patch_bytes, bytes_written)) => {
             thread_rt
                 .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
@@ -639,7 +799,7 @@ async fn handle_file_patch(server: &Server, params: FilePatchParams) -> anyhow::
 
             Ok(serde_json::json!({
                 "tool_id": tool_id,
-                "resolved_path": path.display().to_string(),
+                "resolved_path": resolved_path,
                 "changed": changed,
                 "patch_bytes": patch_bytes,
                 "bytes_written": bytes_written,

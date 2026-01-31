@@ -27,6 +27,7 @@ pm-execpolicy = { path = "../execpolicy" }
 pm-app-server-protocol = { path = "../app-server-protocol" }
 pm-protocol = { path = "../agent-protocol" }
 regex.workspace = true
+reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
@@ -42,5 +43,4 @@ tracing-subscriber.workspace = true
 walkdir.workspace = true
 
 [dev-dependencies]
-reqwest.workspace = true
 tempfile.workspace = true

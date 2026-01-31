@@ -234,90 +234,184 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
         })
         .await?;
 
-    let outcome: anyhow::Result<(PathBuf, bool, usize, usize)> = async {
-        let path = resolve_file_for_sandbox(
-            &thread_root,
-            sandbox_policy,
-            &sandbox_writable_roots,
-            Path::new(&params.path),
-            pm_core::PathAccess::Write,
-            false,
-        )
-        .await?;
+    let db_vfs = server.db_vfs.clone();
+    let outcome: anyhow::Result<(String, bool, usize, usize)> = async {
+        if let Some(db_vfs) = db_vfs {
+            let rel = pm_core::modes::relative_path_under_root(&thread_root, Path::new(&params.path))?;
+            if rel_path_is_secret(&rel) {
+                return Err(tool_denied(
+                    "refusing to edit secrets file (.env)".to_string(),
+                    serde_json::json!({
+                        "reason": "secrets file is always denied",
+                    }),
+                ));
+            }
+            let base_decision = mode.permissions.edit.decision_for_path(&rel);
+            let effective_decision = match mode.tool_overrides.get("file/edit").copied() {
+                Some(override_decision) => base_decision.combine(override_decision),
+                None => base_decision,
+            };
+            if effective_decision == pm_core::modes::Decision::Deny {
+                return Err(tool_denied(
+                    "mode denies file/edit".to_string(),
+                    serde_json::json!({
+                        "mode": mode_name,
+                        "decision": effective_decision,
+                    }),
+                ));
+            }
 
-        let resolved_rel = canonical_rel_path_for_write(&thread_root, &path).await?;
-        if rel_path_is_secret(&resolved_rel) {
-            return Err(tool_denied(
-                "refusing to edit secrets file (.env)".to_string(),
-                serde_json::json!({
-                    "reason": "secrets file is always denied",
-                }),
-            ));
-        }
-        let base_decision = mode.permissions.edit.decision_for_path(&resolved_rel);
-        let effective_decision = match mode.tool_overrides.get("file/edit").copied() {
-            Some(override_decision) => base_decision.combine(override_decision),
-            None => base_decision,
-        };
-        if effective_decision == pm_core::modes::Decision::Deny {
-            return Err(tool_denied(
-                "mode denies file/edit".to_string(),
-                serde_json::json!({
-                    "mode": mode_name,
-                    "decision": effective_decision,
-                }),
-            ));
-        }
+            let workspace_id = params.thread_id.to_string();
+            let normalized = rel.to_string_lossy().replace('\\', "/");
+            let record = match db_vfs.read(workspace_id.clone(), normalized.clone()).await {
+                Ok(record) => record,
+                Err(err) if err.is_denied() => {
+                    return Err(tool_denied(
+                        err.to_string(),
+                        serde_json::json!({
+                            "db_vfs_code": err.code,
+                            "db_vfs_status": err.status.map(|status| status.as_u16()),
+                        }),
+                    ));
+                }
+                Err(err) => return Err(anyhow::anyhow!(err)),
+            };
 
-        let bytes = tokio::fs::read(&path)
-            .await
-            .with_context(|| format!("read {}", path.display()))?;
-        if bytes.len() > max_bytes as usize {
-            anyhow::bail!(
-                "file too large for edit: {} ({} bytes)",
-                path.display(),
-                bytes.len()
-            );
-        }
-        let mut text = String::from_utf8(bytes).context("file is not valid utf-8")?;
-
-        let mut total_replacements = 0usize;
-        let mut changed = false;
-        for edit in &params.edits {
-            let expected = edit.expected_replacements.unwrap_or(1);
-            let found = count_non_overlapping(&text, &edit.old);
-            if found != expected {
+            let original_bytes = record.content.len();
+            if original_bytes > max_bytes as usize {
                 anyhow::bail!(
-                    "edit mismatch for {}: expected {} replacements, found {}",
-                    path.display(),
-                    expected,
-                    found
+                    "file too large for edit: {} ({} bytes)",
+                    normalized,
+                    original_bytes
                 );
             }
-            if edit.old != edit.new {
-                changed = true;
+
+            let mut text = record.content;
+            let mut total_replacements = 0usize;
+            let mut changed = false;
+            for edit in &params.edits {
+                let expected = edit.expected_replacements.unwrap_or(1);
+                let found = count_non_overlapping(&text, &edit.old);
+                if found != expected {
+                    anyhow::bail!(
+                        "edit mismatch for {}: expected {} replacements, found {}",
+                        normalized,
+                        expected,
+                        found
+                    );
+                }
+                if edit.old != edit.new {
+                    changed = true;
+                }
+                total_replacements += expected;
+                text = text.replacen(&edit.old, &edit.new, expected);
             }
-            total_replacements += expected;
-            text = text.replacen(&edit.old, &edit.new, expected);
+
+            let bytes_written = text.len();
+            match db_vfs
+                .write(
+                    workspace_id,
+                    normalized.clone(),
+                    text,
+                    Some(record.version),
+                )
+                .await
+            {
+                Ok(_) => Ok((normalized, changed, total_replacements, bytes_written)),
+                Err(err) if err.is_denied() => Err(tool_denied(
+                    err.to_string(),
+                    serde_json::json!({
+                        "db_vfs_code": err.code,
+                        "db_vfs_status": err.status.map(|status| status.as_u16()),
+                    }),
+                )),
+                Err(err) => Err(anyhow::anyhow!(err)),
+            }
+        } else {
+            let path = resolve_file_for_sandbox(
+                &thread_root,
+                sandbox_policy,
+                &sandbox_writable_roots,
+                Path::new(&params.path),
+                pm_core::PathAccess::Write,
+                false,
+            )
+            .await?;
+
+            let resolved_rel = canonical_rel_path_for_write(&thread_root, &path).await?;
+            if rel_path_is_secret(&resolved_rel) {
+                return Err(tool_denied(
+                    "refusing to edit secrets file (.env)".to_string(),
+                    serde_json::json!({
+                        "reason": "secrets file is always denied",
+                    }),
+                ));
+            }
+            let base_decision = mode.permissions.edit.decision_for_path(&resolved_rel);
+            let effective_decision = match mode.tool_overrides.get("file/edit").copied() {
+                Some(override_decision) => base_decision.combine(override_decision),
+                None => base_decision,
+            };
+            if effective_decision == pm_core::modes::Decision::Deny {
+                return Err(tool_denied(
+                    "mode denies file/edit".to_string(),
+                    serde_json::json!({
+                        "mode": mode_name,
+                        "decision": effective_decision,
+                    }),
+                ));
+            }
+
+            let bytes = tokio::fs::read(&path)
+                .await
+                .with_context(|| format!("read {}", path.display()))?;
+            if bytes.len() > max_bytes as usize {
+                anyhow::bail!(
+                    "file too large for edit: {} ({} bytes)",
+                    path.display(),
+                    bytes.len()
+                );
+            }
+            let mut text = String::from_utf8(bytes).context("file is not valid utf-8")?;
+
+            let mut total_replacements = 0usize;
+            let mut changed = false;
+            for edit in &params.edits {
+                let expected = edit.expected_replacements.unwrap_or(1);
+                let found = count_non_overlapping(&text, &edit.old);
+                if found != expected {
+                    anyhow::bail!(
+                        "edit mismatch for {}: expected {} replacements, found {}",
+                        path.display(),
+                        expected,
+                        found
+                    );
+                }
+                if edit.old != edit.new {
+                    changed = true;
+                }
+                total_replacements += expected;
+                text = text.replacen(&edit.old, &edit.new, expected);
+            }
+
+            let bytes_written = text.len();
+            tokio::fs::OpenOptions::new()
+                .write(true)
+                .truncate(true)
+                .open(&path)
+                .await
+                .with_context(|| format!("open {}", path.display()))?
+                .write_all(text.as_bytes())
+                .await
+                .with_context(|| format!("write {}", path.display()))?;
+
+            Ok((path.to_string_lossy().to_string(), changed, total_replacements, bytes_written))
         }
-
-        let bytes_written = text.len();
-        tokio::fs::OpenOptions::new()
-            .write(true)
-            .truncate(true)
-            .open(&path)
-            .await
-            .with_context(|| format!("open {}", path.display()))?
-            .write_all(text.as_bytes())
-            .await
-            .with_context(|| format!("write {}", path.display()))?;
-
-        Ok((path, changed, total_replacements, bytes_written))
     }
     .await;
 
     match outcome {
-        Ok((path, changed, replacements, bytes_written)) => {
+        Ok((resolved_path, changed, replacements, bytes_written)) => {
             thread_rt
                 .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
@@ -332,7 +426,7 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
                 .await?;
             Ok(serde_json::json!({
                 "tool_id": tool_id,
-                "resolved_path": path.display().to_string(),
+                "resolved_path": resolved_path,
                 "changed": changed,
                 "replacements": replacements,
                 "bytes_written": bytes_written,
@@ -590,73 +684,171 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
         .await?;
 
     let thread_root = thread_root.clone();
-    let outcome: anyhow::Result<(bool, PathBuf)> = async {
-        let path = resolve_file_for_sandbox(
-            &thread_root,
-            sandbox_policy,
-            &sandbox_writable_roots,
-            Path::new(&params.path),
-            pm_core::PathAccess::Write,
-            false,
-        )
-        .await?;
-
-        if path == thread_root {
-            anyhow::bail!("refusing to delete thread root: {}", path.display());
-        }
-
-        let resolved_rel = canonical_rel_path_for_write(&thread_root, &path).await?;
-        if rel_path_is_secret(&resolved_rel) {
-            return Err(tool_denied(
-                "refusing to delete secrets file (.env)".to_string(),
-                serde_json::json!({
-                    "reason": "secrets file is always denied",
-                }),
-            ));
-        }
-        let base_decision = mode.permissions.edit.decision_for_path(&resolved_rel);
-        let effective_decision = match mode.tool_overrides.get("file/delete").copied() {
-            Some(override_decision) => base_decision.combine(override_decision),
-            None => base_decision,
-        };
-        if effective_decision == pm_core::modes::Decision::Deny {
-            return Err(tool_denied(
-                "mode denies file/delete".to_string(),
-                serde_json::json!({
-                    "mode": mode_name,
-                    "decision": effective_decision,
-                }),
-            ));
-        }
-
-        let meta = match tokio::fs::symlink_metadata(&path).await {
-            Ok(meta) => meta,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok((false, path)),
-            Err(err) => return Err(err).with_context(|| format!("stat {}", path.display())),
-        };
-
-        if meta.is_dir() {
-            if params.recursive {
-                tokio::fs::remove_dir_all(&path)
-                    .await
-                    .with_context(|| format!("remove dir {}", path.display()))?;
-            } else {
-                tokio::fs::remove_dir(&path)
-                    .await
-                    .with_context(|| format!("remove dir {}", path.display()))?;
+    let db_vfs = server.db_vfs.clone();
+    let outcome: anyhow::Result<(bool, String)> = async {
+        if let Some(db_vfs) = db_vfs {
+            let rel = pm_core::modes::relative_path_under_root(&thread_root, Path::new(&params.path))?;
+            if rel.as_os_str().is_empty() {
+                anyhow::bail!("refusing to delete workspace root");
             }
-        } else {
-            tokio::fs::remove_file(&path)
-                .await
-                .with_context(|| format!("remove file {}", path.display()))?;
-        }
+            let base_decision = mode.permissions.edit.decision_for_path(&rel);
+            let effective_decision = match mode.tool_overrides.get("file/delete").copied() {
+                Some(override_decision) => base_decision.combine(override_decision),
+                None => base_decision,
+            };
+            if effective_decision == pm_core::modes::Decision::Deny {
+                return Err(tool_denied(
+                    "mode denies file/delete".to_string(),
+                    serde_json::json!({
+                        "mode": mode_name,
+                        "decision": effective_decision,
+                    }),
+                ));
+            }
 
-        Ok((true, path))
+            let workspace_id = params.thread_id.to_string();
+            let normalized = rel.to_string_lossy().replace('\\', "/");
+
+            let delete_exact = db_vfs
+                .delete(workspace_id.clone(), normalized.clone(), true)
+                .await;
+
+            let exact = match delete_exact {
+                Ok(resp) => resp,
+                Err(err) if err.is_denied() => {
+                    return Err(tool_denied(
+                        err.to_string(),
+                        serde_json::json!({
+                            "db_vfs_code": err.code,
+                            "db_vfs_status": err.status.map(|status| status.as_u16()),
+                        }),
+                    ));
+                }
+                Err(err) => return Err(anyhow::anyhow!(err)),
+            };
+
+            if exact.deleted || !params.recursive {
+                return Ok((exact.deleted, normalized));
+            }
+
+            let prefix = format!("{}/", normalized.trim_end_matches('/'));
+            let listing = match db_vfs
+                .glob(
+                    workspace_id.clone(),
+                    format!("{prefix}**"),
+                    Some(prefix.clone()),
+                )
+                .await
+            {
+                Ok(resp) => resp,
+                Err(err) if err.is_denied() => {
+                    return Err(tool_denied(
+                        err.to_string(),
+                        serde_json::json!({
+                            "db_vfs_code": err.code,
+                            "db_vfs_status": err.status.map(|status| status.as_u16()),
+                        }),
+                    ));
+                }
+                Err(err) => return Err(anyhow::anyhow!(err)),
+            };
+
+            if listing.truncated {
+                anyhow::bail!("refusing to delete: too many matching files under {}", prefix);
+            }
+
+            let mut deleted_any = false;
+            for path in listing.matches {
+                let deleted = match db_vfs
+                    .delete(workspace_id.clone(), path.clone(), true)
+                    .await
+                {
+                    Ok(resp) => resp.deleted,
+                    Err(err) if err.is_denied() => {
+                        return Err(tool_denied(
+                            err.to_string(),
+                            serde_json::json!({
+                                "db_vfs_code": err.code,
+                                "db_vfs_status": err.status.map(|status| status.as_u16()),
+                            }),
+                        ));
+                    }
+                    Err(err) => return Err(anyhow::anyhow!(err)),
+                };
+                deleted_any = deleted_any || deleted;
+            }
+
+            Ok((deleted_any, normalized))
+        } else {
+            let path = resolve_file_for_sandbox(
+                &thread_root,
+                sandbox_policy,
+                &sandbox_writable_roots,
+                Path::new(&params.path),
+                pm_core::PathAccess::Write,
+                false,
+            )
+            .await?;
+
+            if path == thread_root {
+                anyhow::bail!("refusing to delete thread root: {}", path.display());
+            }
+
+            let resolved_rel = canonical_rel_path_for_write(&thread_root, &path).await?;
+            if rel_path_is_secret(&resolved_rel) {
+                return Err(tool_denied(
+                    "refusing to delete secrets file (.env)".to_string(),
+                    serde_json::json!({
+                        "reason": "secrets file is always denied",
+                    }),
+                ));
+            }
+            let base_decision = mode.permissions.edit.decision_for_path(&resolved_rel);
+            let effective_decision = match mode.tool_overrides.get("file/delete").copied() {
+                Some(override_decision) => base_decision.combine(override_decision),
+                None => base_decision,
+            };
+            if effective_decision == pm_core::modes::Decision::Deny {
+                return Err(tool_denied(
+                    "mode denies file/delete".to_string(),
+                    serde_json::json!({
+                        "mode": mode_name,
+                        "decision": effective_decision,
+                    }),
+                ));
+            }
+
+            let meta = match tokio::fs::symlink_metadata(&path).await {
+                Ok(meta) => meta,
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                    return Ok((false, path.to_string_lossy().to_string()));
+                }
+                Err(err) => return Err(err).with_context(|| format!("stat {}", path.display())),
+            };
+
+            if meta.is_dir() {
+                if params.recursive {
+                    tokio::fs::remove_dir_all(&path)
+                        .await
+                        .with_context(|| format!("remove dir {}", path.display()))?;
+                } else {
+                    tokio::fs::remove_dir(&path)
+                        .await
+                        .with_context(|| format!("remove dir {}", path.display()))?;
+                }
+            } else {
+                tokio::fs::remove_file(&path)
+                    .await
+                    .with_context(|| format!("remove file {}", path.display()))?;
+            }
+
+            Ok((true, path.to_string_lossy().to_string()))
+        }
     }
     .await;
 
     match outcome {
-        Ok((deleted, path)) => {
+        Ok((deleted, resolved_path)) => {
             thread_rt
                 .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
@@ -664,14 +856,14 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
                     error: None,
                     result: Some(serde_json::json!({
                         "deleted": deleted,
-                        "path": path.display().to_string(),
+                        "path": resolved_path,
                     })),
                 })
                 .await?;
             Ok(serde_json::json!({
                 "tool_id": tool_id,
                 "deleted": deleted,
-                "resolved_path": path.display().to_string(),
+                "resolved_path": resolved_path,
             }))
         }
         Err(err) => {

@@ -168,6 +168,7 @@ struct Server {
     mcp: Arc<tokio::sync::Mutex<McpManager>>,
     disk_warning: Arc<tokio::sync::Mutex<HashMap<ThreadId, DiskWarningState>>>,
     exec_policy: pm_execpolicy::Policy,
+    db_vfs: Option<DbVfsHttpClient>,
 }
 
 impl Server {

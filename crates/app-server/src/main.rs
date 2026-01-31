@@ -7,6 +7,7 @@ mod model_limits;
 mod notify_integration;
 mod project_config;
 
+include!("main/db_vfs_http.rs");
 include!("main/preamble.rs");
 include!("main/app.rs");
 include!("main/thread_observe.rs");

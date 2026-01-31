@@ -595,6 +595,7 @@ mod approval_prompt_strict_tests {
             mcp: Arc::new(tokio::sync::Mutex::new(McpManager::default())),
             disk_warning: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             exec_policy: pm_execpolicy::Policy::empty(),
+            db_vfs: None,
         }
     }
 

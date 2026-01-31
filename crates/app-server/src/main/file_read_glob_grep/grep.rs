@@ -189,6 +189,96 @@ async fn handle_file_grep(server: &Server, params: FileGrepParams) -> anyhow::Re
         })
         .await?;
 
+    if matches!(file_root, FileRoot::Workspace)
+        && let Some(db_vfs) = server.db_vfs.clone()
+    {
+        let resp = db_vfs
+            .grep(
+                params.thread_id.to_string(),
+                params.query.clone(),
+                params.is_regex,
+                params.include_glob.clone(),
+                Some(String::new()),
+            )
+            .await;
+
+        match resp {
+            Ok(resp) => {
+                let mut matches = resp
+                    .matches
+                    .into_iter()
+                    .map(|m| GrepMatch {
+                        path: m.path,
+                        line_number: m.line,
+                        line: truncate_line(&m.text, 4000),
+                    })
+                    .collect::<Vec<_>>();
+
+                let mut truncated = resp.truncated;
+                if matches.len() > max_matches {
+                    matches.truncate(max_matches);
+                    truncated = true;
+                }
+
+                let files_scanned = resp.scanned_files as usize;
+                let files_skipped_too_large = resp.skipped_too_large_files as usize;
+                let files_skipped_binary = 0usize;
+
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                        tool_id,
+                        status: pm_protocol::ToolStatus::Completed,
+                        error: None,
+                        result: Some(serde_json::json!({
+                            "matches": matches.len(),
+                            "truncated": truncated,
+                            "files_scanned": files_scanned,
+                            "files_skipped_too_large": files_skipped_too_large,
+                            "files_skipped_binary": files_skipped_binary,
+                        })),
+                    })
+                    .await?;
+                return Ok(serde_json::json!({
+                    "tool_id": tool_id,
+                    "root": file_root.as_str(),
+                    "matches": matches,
+                    "truncated": truncated,
+                    "files_scanned": files_scanned,
+                    "files_skipped_too_large": files_skipped_too_large,
+                    "files_skipped_binary": files_skipped_binary,
+                }));
+            }
+            Err(err) if err.is_denied() => {
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                        tool_id,
+                        status: pm_protocol::ToolStatus::Denied,
+                        error: Some(err.to_string()),
+                        result: Some(serde_json::json!({
+                            "db_vfs_code": err.code,
+                            "db_vfs_status": err.status.map(|status| status.as_u16()),
+                        })),
+                    })
+                    .await?;
+                return Ok(serde_json::json!({
+                    "tool_id": tool_id,
+                    "denied": true,
+                }));
+            }
+            Err(err) => {
+                thread_rt
+                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                        tool_id,
+                        status: pm_protocol::ToolStatus::Failed,
+                        error: Some(err.to_string()),
+                        result: None,
+                    })
+                    .await?;
+                return Err(anyhow::anyhow!(err));
+            }
+        }
+    }
+
     let pattern = if params.is_regex {
         params.query.clone()
     } else {

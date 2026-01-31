@@ -620,6 +620,7 @@ mod execve_gate_tests {
             mcp: Arc::new(tokio::sync::Mutex::new(McpManager::default())),
             disk_warning: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             exec_policy,
+            db_vfs: None,
         }
     }
 

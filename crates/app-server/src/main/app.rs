@@ -43,6 +43,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let (notify_tx, _notify_rx) = broadcast::channel::<String>(NOTIFY_CHANNEL_CAPACITY);
+    let db_vfs = DbVfsHttpClient::from_env()?;
 
     let server = Arc::new(Server {
         cwd,
@@ -54,6 +55,7 @@ async fn main() -> anyhow::Result<()> {
         mcp: Arc::new(tokio::sync::Mutex::new(McpManager::default())),
         disk_warning: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         exec_policy,
+        db_vfs,
     });
 
     let listen = args.listen.clone();
