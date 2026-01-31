@@ -16,9 +16,14 @@
         let width = area.width.max(1) as usize;
         let mut transcript_lines = Vec::<Line>::new();
         if state.scrollback_enabled {
+            let mut prev_role = state
+                .transcript_flushed
+                .checked_sub(1)
+                .and_then(|idx| state.transcript.get(idx))
+                .map(|entry| entry.role);
             let mut entries = state.transcript.iter().enumerate().skip(state.transcript_flushed);
             if let Some((idx, entry)) = entries.next() {
-                let mut lines = format_transcript_entry_lines(entry, width);
+                let mut lines = format_transcript_entry_lines(entry, width, prev_role);
                 if idx == state.transcript_flushed && state.transcript_flushed_line_offset > 0 {
                     let skip = state
                         .transcript_flushed_line_offset
@@ -26,29 +31,35 @@
                     lines.drain(0..skip);
                 }
                 transcript_lines.extend(lines);
+                prev_role = Some(entry.role);
             }
             for (_idx, entry) in entries {
-                transcript_lines.extend(format_transcript_entry_lines(entry, width));
+                transcript_lines.extend(format_transcript_entry_lines(entry, width, prev_role));
+                prev_role = Some(entry.role);
             }
             if let Some(streaming) = &state.streaming {
                 transcript_lines.extend(format_role_lines(
                     TranscriptRole::Assistant,
                     streaming.text.as_str(),
                     width,
+                    prev_role,
                 ));
             }
             // Keep one empty line between transcript and prompt so the input never "jumps" to the
             // very top when streaming finishes.
             transcript_lines.push(Line::from(Span::raw("")));
         } else {
+            let mut prev_role = None::<TranscriptRole>;
             for entry in &state.transcript {
-                transcript_lines.extend(format_transcript_entry_lines(entry, width));
+                transcript_lines.extend(format_transcript_entry_lines(entry, width, prev_role));
+                prev_role = Some(entry.role);
             }
             if let Some(streaming) = &state.streaming {
                 transcript_lines.extend(format_role_lines(
                     TranscriptRole::Assistant,
                     streaming.text.as_str(),
                     width,
+                    prev_role,
                 ));
             }
             // 顶部固定留一行空白，避免首条输出把输入框顶线盖住。
@@ -58,13 +69,16 @@
         const MAX_INLINE_PALETTE_ITEMS: usize = 12;
         const INLINE_PALETTE_MIN_LINES: usize = 4;
 
+        let timer_lines = 1usize;
         let input_render = build_input_lines(&state.input, state.input_cursor, width);
         let input_lines = input_render.lines.len();
         let total_height = area.height as usize;
 
         let inline_view = state.inline_palette.as_ref().map(|inline| &inline.view);
         let footer_lines = if inline_view.is_some() { 0 } else { 1 };
-        let reserved_bottom = input_lines.saturating_add(footer_lines);
+        let reserved_bottom = timer_lines
+            .saturating_add(input_lines)
+            .saturating_add(footer_lines);
         let palette_target_lines = inline_view
             .map(|view| {
                 let items = if view.filtered.is_empty() {
@@ -105,6 +119,7 @@
             .map(|view| build_command_palette_lines(view, width, max_palette_lines));
 
         let mut bottom_lines = Vec::<Line>::new();
+        bottom_lines.push(build_turn_timer_line(state, area.width));
         let input_start = bottom_lines.len();
         bottom_lines.extend(input_render.lines);
         let input_cursor = (
@@ -121,11 +136,7 @@
         let required_bottom = bottom_lines.len().max(1);
         let bottom_height = required_bottom.min(max_bottom).min(total_height);
         let max_top = total_height.saturating_sub(bottom_height);
-        let top_height = if state.scrollback_enabled {
-            transcript_lines.len().min(max_top)
-        } else {
-            max_top
-        };
+        let top_height = max_top;
 
         let transcript_area = ratatui::layout::Rect {
             x: area.x,
@@ -145,7 +156,7 @@
         state.transcript_max_scroll = u16::try_from(max_scroll).unwrap_or(u16::MAX);
         state.transcript_viewport_height = transcript_area.height;
 
-        let scroll = if state.transcript_follow {
+        let scroll = if state.scrollback_enabled || state.transcript_follow {
             max_scroll
         } else {
             usize::from(state.transcript_scroll).min(max_scroll)
@@ -183,15 +194,60 @@
         }
     }
 
-    fn format_transcript_entry_lines(entry: &TranscriptEntry, width: usize) -> Vec<Line<'static>> {
-        format_role_lines(entry.role, entry.text.as_str(), width)
+    fn build_turn_timer_line(state: &UiState, width: u16) -> Line<'static> {
+        let width = width.max(1) as usize;
+        let style = Style::default().fg(Color::DarkGray);
+        let text = state
+            .turn_inflight_started_at
+            .map(|start| format!("processing: {}", format_elapsed(start.elapsed())))
+            .unwrap_or_default();
+        let text = truncate_to_width(text.as_str(), width);
+        let used = UnicodeWidthStr::width(text.as_str());
+        let pad = width.saturating_sub(used);
+        let mut spans = Vec::new();
+        spans.push(Span::styled(text, style));
+        if pad > 0 {
+            spans.push(Span::styled(" ".repeat(pad), style));
+        }
+        Line::from(spans)
+    }
+
+    fn format_elapsed(elapsed: Duration) -> String {
+        let secs = elapsed.as_secs();
+        if secs < 60 {
+            return format!("{:.1}s", elapsed.as_secs_f32());
+        }
+        let mins = secs / 60;
+        let rem = secs % 60;
+        format!("{mins}m{rem:02}s")
+    }
+
+    fn format_transcript_entry_lines(
+        entry: &TranscriptEntry,
+        width: usize,
+        prev_role: Option<TranscriptRole>,
+    ) -> Vec<Line<'static>> {
+        format_role_lines(entry.role, entry.text.as_str(), width, prev_role)
     }
 
     fn format_role_lines(
         role: TranscriptRole,
         text: &str,
         width: usize,
+        prev_role: Option<TranscriptRole>,
     ) -> Vec<Line<'static>> {
+        let mut out = Vec::<Line<'static>>::new();
+        if let Some(prev_role) = prev_role
+            && prev_role != role
+        {
+            out.push(Line::from(Span::raw("")));
+        }
+
+        let inline_max_content_width = match role {
+            TranscriptRole::System => usize::MAX,
+            _ => 16,
+        };
+
         let (label, label_style, content_style) = match role {
             TranscriptRole::User => ("user:", Style::default().fg(Color::Yellow), None),
             TranscriptRole::Assistant => ("assistant:", Style::default().fg(Color::Green), None),
@@ -200,16 +256,24 @@
             TranscriptRole::Tool => (
                 "tool:",
                 Style::default()
-                    .fg(Color::Rgb(158, 158, 158))
+                    .fg(Color::Rgb(110, 150, 190))
                     .add_modifier(Modifier::DIM),
                 Some(
                     Style::default()
-                        .fg(Color::Rgb(158, 158, 158))
+                        .fg(Color::Rgb(110, 150, 190))
                         .add_modifier(Modifier::DIM),
                 ),
             ),
         };
-        wrap_prefixed_lines(label, label_style, content_style, text, width)
+        out.extend(wrap_prefixed_lines(
+            label,
+            label_style,
+            content_style,
+            text,
+            width,
+            inline_max_content_width,
+        ));
+        out
     }
 
     fn wrap_prefixed_lines(
@@ -218,9 +282,9 @@
         content_style: Option<Style>,
         text: &str,
         width: usize,
+        inline_max_content_width: usize,
     ) -> Vec<Line<'static>> {
         const BODY_PADDING: &str = "  ";
-        const INLINE_MAX_CONTENT_WIDTH: usize = 16;
 
         let width = width.max(1);
         let body_pad_width = UnicodeWidthStr::width(BODY_PADDING);
@@ -229,7 +293,7 @@
 
         let first_line = text.split('\n').next().unwrap_or("");
         let block_layout = text.contains('\n')
-            || UnicodeWidthStr::width(first_line) > INLINE_MAX_CONTENT_WIDTH;
+            || UnicodeWidthStr::width(first_line) > inline_max_content_width;
 
         let mut out = Vec::<Line>::new();
         if block_layout || text.trim().is_empty() {

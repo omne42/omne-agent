@@ -25,7 +25,7 @@
         text: String,
     }
 
-    #[derive(Debug, Clone, Copy)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum TranscriptRole {
         User,
         Assistant,
@@ -797,6 +797,8 @@
         process_started_lines: HashMap<ProcessId, String>,
         streaming: Option<StreamingState>,
         active_turn_id: Option<TurnId>,
+        turn_inflight_started_at: Option<Instant>,
+        turn_inflight_id: Option<TurnId>,
         input: String,
         input_cursor: usize,
         status: Option<String>,

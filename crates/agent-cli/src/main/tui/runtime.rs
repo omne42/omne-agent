@@ -153,6 +153,9 @@
         last_threads_refresh: &mut Instant,
     ) -> bool {
         let mut changed = false;
+        if state.turn_inflight_started_at.is_some() {
+            changed = true;
+        }
         if let Some(thread_id) = state.active_thread {
             if state.header_needs_refresh {
                 match tokio::time::timeout(header_timeout, state.refresh_header(app, thread_id))
@@ -447,6 +450,11 @@
                     Ok(Ok(turn_id)) => {
                         if state.active_thread == Some(pending.thread_id) {
                             state.active_turn_id = Some(turn_id);
+                            if state.turn_inflight_started_at.is_some()
+                                && state.turn_inflight_id.is_none()
+                            {
+                                state.turn_inflight_id = Some(turn_id);
+                            }
                         }
                         needs_draw = true;
                     }
@@ -457,6 +465,8 @@
                             state.set_input(pending.input);
                         }
                         state.set_status(format!("turn/start error: {err}"));
+                        state.turn_inflight_started_at = None;
+                        state.turn_inflight_id = None;
                         needs_draw = true;
                     }
                     Err(err) => {
@@ -466,6 +476,8 @@
                             state.set_input(pending.input);
                         }
                         state.set_status(format!("turn/start task error: {err}"));
+                        state.turn_inflight_started_at = None;
+                        state.turn_inflight_id = None;
                         needs_draw = true;
                     }
                 }
@@ -507,7 +519,11 @@
     }
 
     fn tui_viewport_height(max_height: u16) -> u16 {
-        let default = max_height.min(24);
+        let default = if max_height <= 24 {
+            max_height.saturating_sub(6).max(12)
+        } else {
+            24
+        };
         std::env::var("CODE_PM_TUI_VIEWPORT_HEIGHT")
             .ok()
             .and_then(|value| value.trim().parse::<u16>().ok())
@@ -569,8 +585,13 @@
 
         // Normalize a stale per-entry line offset (e.g. after resize).
         while state.transcript_flushed < state.transcript.len() {
-            let entry = &state.transcript[state.transcript_flushed];
-            let lines_len = format_transcript_entry_lines(entry, width).len();
+            let idx = state.transcript_flushed;
+            let prev_role = idx
+                .checked_sub(1)
+                .and_then(|prev| state.transcript.get(prev))
+                .map(|entry| entry.role);
+            let entry = &state.transcript[idx];
+            let lines_len = format_transcript_entry_lines(entry, width, prev_role).len();
             if state.transcript_flushed_line_offset >= lines_len && lines_len > 0 {
                 state.transcript_flushed += 1;
                 state.transcript_flushed_line_offset = 0;
@@ -589,7 +610,11 @@
             .enumerate()
             .skip(state.transcript_flushed)
             .map(|(idx, entry)| {
-                let lines_len = format_transcript_entry_lines(entry, width).len();
+                let prev_role = idx
+                    .checked_sub(1)
+                    .and_then(|prev| state.transcript.get(prev))
+                    .map(|entry| entry.role);
+                let lines_len = format_transcript_entry_lines(entry, width, prev_role).len();
                 if idx == state.transcript_flushed {
                     lines_len.saturating_sub(state.transcript_flushed_line_offset)
                 } else {
@@ -608,8 +633,12 @@
 
         let mut lines = Vec::<Line>::new();
         while remaining_to_flush > 0 && flushed_entries < state.transcript.len() {
+            let prev_role = flushed_entries
+                .checked_sub(1)
+                .and_then(|prev| state.transcript.get(prev))
+                .map(|entry| entry.role);
             let entry = &state.transcript[flushed_entries];
-            let entry_lines = format_transcript_entry_lines(entry, width);
+            let entry_lines = format_transcript_entry_lines(entry, width, prev_role);
             let start = if flushed_entries == state.transcript_flushed {
                 flushed_line_offset
             } else {

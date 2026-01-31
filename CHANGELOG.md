@@ -199,7 +199,10 @@
 - `pm` TUI：`Ctrl-C` 行为调整为等同 `Esc`（关闭/返回），不再触发中断。
 - `pm` TUI：禁用 alt-screen 并减少无意义重绘，允许终端原生滚动与选中文本。
 - `pm` TUI：scrollback 模式下将 transcript 按行刷入终端原生 scrollback，避免超过视口的内容被覆盖/“消失”。
+- `pm` TUI：scrollback 模式默认 viewport 留出顶部终端历史，避免必须手动设置 `CODE_PM_TUI_VIEWPORT_HEIGHT`。
 - `pm` TUI：transcript 的 `user/tool/assistant/system` 标签左对齐；正文超过 16 字宽时换行并缩进 2 空格；tool 文本使用更淡的样式（约 62% 亮度/“透明度”）。
+- `pm` TUI：system 消息默认与 role 同行显示，并在不同 role 之间增加空行提升可读性。
+- `pm` TUI：输入框上方显示本次 turn 的处理计时，并在 `[turn] ... completed` 行追加耗时（从用户提交到 completed）。
 - `pm` TUI：tool 记录改为可读的命令式摘要（如 `$ ls`），并修复流式输出闪现后丢失的问题。
 - `pm` TUI：提升 transcript 缓冲上限，超出屏幕不再丢历史。
 - `pm` TUI：修复输入框光标左右移动/中间编辑不生效的问题，并补齐折行场景下的光标定位。

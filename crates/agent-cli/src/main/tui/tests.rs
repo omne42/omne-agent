@@ -110,12 +110,12 @@ Updated  Title   CWD    Message
 
             let actual = render_to_string(&mut state, 64, 12)?;
             let expected = r#"                                                                
-system:                                                         
-  [model] gpt-4.1 (global_default)                              
+system: [model] gpt-4.1 (global_default)                        
+                                                                
 user: Hello                                                     
+                                                                
 assistant: Hi!                                                  
 assistant: Streaming...                                         
-                                                                
                                                                 
                                                                 
 › next                                                          

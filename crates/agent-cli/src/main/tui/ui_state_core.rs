@@ -22,6 +22,8 @@
                 process_started_lines: HashMap::new(),
                 streaming: None,
                 active_turn_id: None,
+                turn_inflight_started_at: None,
+                turn_inflight_id: None,
                 input: String::new(),
                 input_cursor: 0,
                 status: None,
@@ -137,6 +139,8 @@
             self.process_started_lines.clear();
             self.streaming = None;
             self.active_turn_id = None;
+            self.turn_inflight_started_at = None;
+            self.turn_inflight_id = None;
             self.total_input_tokens_used = 0;
             self.total_cache_input_tokens_used = 0;
             self.total_output_tokens_used = 0;
@@ -208,6 +212,9 @@
                 ThreadEventKind::TurnStarted { turn_id, input, .. } => {
                     self.cancel_turn_start();
                     self.active_turn_id = Some(*turn_id);
+                    if self.turn_inflight_started_at.is_some() && self.turn_inflight_id.is_none() {
+                        self.turn_inflight_id = Some(*turn_id);
+                    }
                     let normalized_input = normalize_user_turn_input_for_dedupe(input);
                     let should_dedupe = self.transcript.back().is_some_and(|last| {
                         matches!(last.role, TranscriptRole::User)
@@ -322,12 +329,28 @@
                     });
                 }
                 ThreadEventKind::TurnCompleted { turn_id, status, .. } => {
+                    let inflight_matches = self.turn_inflight_id == Some(*turn_id)
+                        || (self.turn_inflight_id.is_none()
+                            && self.active_turn_id == Some(*turn_id));
+                    let duration = if inflight_matches {
+                        self.turn_inflight_started_at.map(|start| start.elapsed())
+                    } else {
+                        None
+                    };
                     if self.active_turn_id == Some(*turn_id) {
                         self.active_turn_id = None;
                     }
+                    if inflight_matches {
+                        self.turn_inflight_started_at = None;
+                        self.turn_inflight_id = None;
+                    }
+                    let mut line = format!("[turn] {turn_id} {}", turn_status_str(*status));
+                    if let Some(duration) = duration {
+                        line.push_str(&format!(" ({})", format_elapsed(duration)));
+                    }
                     self.push_transcript(TranscriptEntry {
                         role: TranscriptRole::System,
-                        text: format!("[turn] {turn_id} {}", turn_status_str(*status)),
+                        text: line,
                     });
                 }
                 ThreadEventKind::ToolStarted { tool_id, tool, params, .. } => {

@@ -215,10 +215,16 @@
                     self.cycle_thinking(app).await?;
                 }
                 KeyCode::Up if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    if self.scrollback_enabled {
+                        return Ok(false);
+                    }
                     self.transcript_follow = false;
                     self.transcript_scroll = self.transcript_scroll.saturating_sub(1);
                 }
                 KeyCode::Down if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    if self.scrollback_enabled {
+                        return Ok(false);
+                    }
                     self.transcript_follow = false;
                     self.transcript_scroll = self.transcript_scroll.saturating_add(1);
                     if self.transcript_scroll >= self.transcript_max_scroll {
@@ -229,7 +235,7 @@
                 KeyCode::Up => {
                     if inline_active {
                         self.move_inline_selection(-1);
-                    } else {
+                    } else if !self.scrollback_enabled {
                         self.transcript_follow = false;
                         self.transcript_scroll = self.transcript_scroll.saturating_sub(1);
                     }
@@ -237,7 +243,7 @@
                 KeyCode::Down => {
                     if inline_active {
                         self.move_inline_selection(1);
-                    } else {
+                    } else if !self.scrollback_enabled {
                         self.transcript_follow = false;
                         self.transcript_scroll = self.transcript_scroll.saturating_add(1);
                         if self.transcript_scroll >= self.transcript_max_scroll {
@@ -247,12 +253,18 @@
                     }
                 }
                 KeyCode::PageUp => {
+                    if self.scrollback_enabled {
+                        return Ok(false);
+                    }
                     self.transcript_follow = false;
                     self.transcript_scroll = self
                         .transcript_scroll
                         .saturating_sub(self.transcript_page());
                 }
                 KeyCode::PageDown => {
+                    if self.scrollback_enabled {
+                        return Ok(false);
+                    }
                     self.transcript_follow = false;
                     self.transcript_scroll = self
                         .transcript_scroll
@@ -263,10 +275,16 @@
                     }
                 }
                 KeyCode::Home => {
+                    if self.scrollback_enabled {
+                        return Ok(false);
+                    }
                     self.transcript_follow = false;
                     self.transcript_scroll = 0;
                 }
                 KeyCode::End => {
+                    if self.scrollback_enabled {
+                        return Ok(false);
+                    }
                     self.transcript_scroll = self.transcript_max_scroll;
                     self.transcript_follow = true;
                 }
@@ -325,6 +343,8 @@
                             return Ok(false);
                         }
                     };
+                    self.turn_inflight_started_at = Some(Instant::now());
+                    self.turn_inflight_id = None;
                     self.clear_input();
                     self.turn_start = Some(pending);
                     input_changed = true;
@@ -371,6 +391,8 @@
             self.clear_input();
             self.streaming = None;
             self.active_turn_id = None;
+            self.turn_inflight_started_at = None;
+            self.turn_inflight_id = None;
             self.total_input_tokens_used = 0;
             self.total_cache_input_tokens_used = 0;
             self.total_output_tokens_used = 0;
