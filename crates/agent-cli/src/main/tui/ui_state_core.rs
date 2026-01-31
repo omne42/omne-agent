@@ -13,6 +13,7 @@
                 last_seq: 0,
                 transcript: VecDeque::new(),
                 transcript_flushed: 0,
+                transcript_flushed_line_offset: 0,
                 transcript_scroll: 0,
                 transcript_follow: true,
                 transcript_max_scroll: 0,
@@ -124,11 +125,12 @@
             self.header_needs_refresh = true;
             self.overlays.clear();
             self.inline_palette = None;
-                self.last_seq = last_seq;
-                self.transcript.clear();
-                self.transcript_flushed = 0;
-                self.transcript_scroll = 0;
-                self.transcript_follow = true;
+            self.last_seq = last_seq;
+            self.transcript.clear();
+            self.transcript_flushed = 0;
+            self.transcript_flushed_line_offset = 0;
+            self.transcript_scroll = 0;
+            self.transcript_follow = true;
             self.transcript_max_scroll = 0;
             self.transcript_viewport_height = 0;
             self.tool_events.clear();
@@ -434,7 +436,11 @@
             const MAX_TRANSCRIPT_ITEMS: usize = 5000;
             if self.transcript.len() >= MAX_TRANSCRIPT_ITEMS {
                 self.transcript.pop_front();
-                self.transcript_flushed = self.transcript_flushed.saturating_sub(1);
+                if self.transcript_flushed > 0 {
+                    self.transcript_flushed = self.transcript_flushed.saturating_sub(1);
+                } else {
+                    self.transcript_flushed_line_offset = 0;
+                }
             }
             self.transcript.push_back(entry);
         }
@@ -487,7 +493,11 @@
                 });
 
             match found {
-                Some((idx, entry)) if idx >= self.transcript_flushed => {
+                Some((idx, entry))
+                    if idx > self.transcript_flushed
+                        || (idx == self.transcript_flushed
+                            && self.transcript_flushed_line_offset == 0) =>
+                {
                     entry.text.push('\n');
                     entry.text.push_str(text);
                 }

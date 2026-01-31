@@ -788,6 +788,7 @@
         last_seq: u64,
         transcript: VecDeque<TranscriptEntry>,
         transcript_flushed: usize,
+        transcript_flushed_line_offset: usize,
         transcript_scroll: u16,
         transcript_follow: bool,
         transcript_max_scroll: u16,

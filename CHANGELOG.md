@@ -198,7 +198,7 @@
 - `pm` TUI：状态栏仅在错误时使用红色，避免 `loading models...` 等正常状态出现红字。
 - `pm` TUI：`Ctrl-C` 行为调整为等同 `Esc`（关闭/返回），不再触发中断。
 - `pm` TUI：禁用 alt-screen 并减少无意义重绘，允许终端原生滚动与选中文本。
-- `pm` TUI：scrollback 模式下默认禁用 mouse capture（滚轮走终端原生 scrollback）；如需在 TUI 内用滚轮滚动 transcript/overlay，可设置 `CODE_PM_TUI_MOUSE_CAPTURE=1`。
+- `pm` TUI：scrollback 模式下将 transcript 按行刷入终端原生 scrollback，避免超过视口的内容被覆盖/“消失”。
 - `pm` TUI：tool 记录改为可读的命令式摘要（如 `$ ls`），并修复流式输出闪现后丢失的问题。
 - `pm` TUI：提升 transcript 缓冲上限，超出屏幕不再丢历史。
 - `pm` TUI：修复输入框光标左右移动/中间编辑不生效的问题，并补齐折行场景下的光标定位。

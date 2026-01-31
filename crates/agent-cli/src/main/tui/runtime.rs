@@ -4,10 +4,7 @@
     use std::time::{Duration, Instant};
 
     use anyhow::Context;
-    use crossterm::event::{
-        DisableMouseCapture, EnableMouseCapture, Event, EventStream, KeyCode, KeyEvent,
-        KeyModifiers, MouseEvent, MouseEventKind,
-    };
+    use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyModifiers};
     use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
     use futures_util::StreamExt;
     use pm_jsonrpc::ClientHandle;
@@ -196,9 +193,7 @@
             .context("notifications already taken")?;
 
         let scrollback_enabled = tui_scrollback_enabled();
-        let mouse_capture_enabled = tui_mouse_capture_enabled(scrollback_enabled);
-        let _guard =
-            TerminalGuard::enter(mouse_capture_enabled).context("enter terminal mode")?;
+        let _guard = TerminalGuard::enter().context("enter terminal mode")?;
         let mut terminal = setup_terminal(scrollback_enabled).context("setup terminal")?;
         if !scrollback_enabled {
             terminal.clear().context("clear terminal")?;
@@ -207,9 +202,7 @@
         let mut state = UiState::new(args.include_archived);
         state.scrollback_enabled = scrollback_enabled;
         state.status = Some("connecting...".to_string());
-        if !mouse_capture_enabled {
-            flush_transcript_to_scrollback(&mut terminal, &mut state)?;
-        }
+        flush_transcript_to_scrollback(&mut terminal, &mut state)?;
         terminal.draw(|f| draw_ui(f, &mut state))?;
 
         let startup_timeout = std::env::var("CODE_PM_TUI_STARTUP_TIMEOUT_MS")
@@ -241,9 +234,7 @@
 
         loop {
             if needs_draw {
-                if !mouse_capture_enabled {
-                    flush_transcript_to_scrollback(&mut terminal, &mut state)?;
-                }
+                flush_transcript_to_scrollback(&mut terminal, &mut state)?;
                 terminal.draw(|f| draw_ui(f, &mut state))?;
                 needs_draw = false;
             }
@@ -292,11 +283,6 @@
                                 }
                                 needs_draw = true;
                             }
-                            Event::Mouse(mouse) => {
-                                if state.handle_mouse(mouse) {
-                                    needs_draw = true;
-                                }
-                            }
                             Event::Resize(_, _) => {
                                 needs_draw = true;
                             }
@@ -334,11 +320,6 @@
                                     return Ok(());
                                 }
                                 needs_draw = true;
-                            }
-                            Event::Mouse(mouse) => {
-                                if state.handle_mouse(mouse) {
-                                    needs_draw = true;
-                                }
                             }
                             Event::Resize(_, _) => {
                                 needs_draw = true;
@@ -492,32 +473,21 @@
         }
     }
 
-    struct TerminalGuard {
-        mouse_capture: bool,
-    }
+    struct TerminalGuard;
 
     impl TerminalGuard {
-        fn enter(mouse_capture: bool) -> anyhow::Result<Self> {
+        fn enter() -> anyhow::Result<Self> {
             enable_raw_mode()?;
             let mut stdout = std::io::stdout();
-            if mouse_capture {
-                if let Err(err) = crossterm::execute!(stdout, EnableMouseCapture) {
-                    let _ = disable_raw_mode();
-                    return Err(anyhow::Error::new(err).context("enable mouse capture"));
-                }
-            }
             stdout.flush().ok();
-            Ok(Self { mouse_capture })
+            Ok(Self)
         }
     }
 
     impl Drop for TerminalGuard {
         fn drop(&mut self) {
-            let mut stdout = std::io::stdout();
-            if self.mouse_capture {
-                let _ = crossterm::execute!(stdout, DisableMouseCapture);
-            }
             let _ = disable_raw_mode();
+            let mut stdout = std::io::stdout();
             let _ = stdout.flush();
         }
     }
@@ -534,14 +504,6 @@
 
     fn tui_scrollback_enabled() -> bool {
         env_bool("CODE_PM_TUI_SCROLLBACK").unwrap_or_else(|| std::io::stdout().is_terminal())
-    }
-
-    fn tui_mouse_capture_enabled(scrollback_enabled: bool) -> bool {
-        // When we render with `Viewport::Inline`, prefer terminal-native scrollback by default.
-        // Mouse capture blocks scrollback in terminals/tmux, so only enable it when explicitly
-        // requested.
-        let default = !scrollback_enabled;
-        env_bool("CODE_PM_TUI_MOUSE_CAPTURE").unwrap_or(default)
     }
 
     fn tui_viewport_height(max_height: u16) -> u16 {
@@ -579,8 +541,6 @@
         terminal: &mut Terminal<CrosstermBackend<Stdout>>,
         state: &mut UiState,
     ) -> anyhow::Result<()> {
-        const KEEP_TAIL_ENTRIES: usize = 64;
-
         if !state.scrollback_enabled {
             return Ok(());
         }
@@ -588,36 +548,114 @@
             return Ok(());
         }
 
-        let flush_target = state
-            .transcript
-            .len()
-            .saturating_sub(KEEP_TAIL_ENTRIES);
-        if state.transcript_flushed >= flush_target {
+        let size = terminal.size().context("terminal size")?;
+        let width = size.width.max(1) as usize;
+
+        // Keep the unflushed tail small enough to fit in the viewport so the user never needs
+        // internal scrolling to see earlier output.
+        let keep_tail_lines = if state.transcript_viewport_height > 0 {
+            usize::from(state.transcript_viewport_height)
+        } else {
+            // Before the first draw we don't yet know the transcript viewport; keep a conservative
+            // tail to avoid hiding content.
+            usize::from(size.height.saturating_sub(6)).max(1)
+        };
+
+        if state.transcript_flushed >= state.transcript.len() {
+            state.transcript_flushed = state.transcript.len();
+            state.transcript_flushed_line_offset = 0;
             return Ok(());
         }
 
-        let width = terminal.size().context("terminal size")?.width.max(1) as usize;
-        let mut lines = Vec::<Line>::new();
-        for entry in state
+        // Normalize a stale per-entry line offset (e.g. after resize).
+        while state.transcript_flushed < state.transcript.len() {
+            let entry = &state.transcript[state.transcript_flushed];
+            let lines_len = format_transcript_entry_lines(entry, width).len();
+            if state.transcript_flushed_line_offset >= lines_len && lines_len > 0 {
+                state.transcript_flushed += 1;
+                state.transcript_flushed_line_offset = 0;
+            } else {
+                break;
+            }
+        }
+        if state.transcript_flushed >= state.transcript.len() {
+            state.transcript_flushed_line_offset = 0;
+            return Ok(());
+        }
+
+        let total_unflushed_lines = state
             .transcript
             .iter()
+            .enumerate()
             .skip(state.transcript_flushed)
-            .take(flush_target.saturating_sub(state.transcript_flushed))
-        {
-            lines.extend(format_transcript_entry_lines(entry, width));
+            .map(|(idx, entry)| {
+                let lines_len = format_transcript_entry_lines(entry, width).len();
+                if idx == state.transcript_flushed {
+                    lines_len.saturating_sub(state.transcript_flushed_line_offset)
+                } else {
+                    lines_len
+                }
+            })
+            .sum::<usize>();
+
+        if total_unflushed_lines <= keep_tail_lines {
+            return Ok(());
         }
-        state.transcript_flushed = flush_target;
+
+        let mut remaining_to_flush = total_unflushed_lines - keep_tail_lines;
+        let mut flushed_entries = state.transcript_flushed;
+        let mut flushed_line_offset = state.transcript_flushed_line_offset;
+
+        let mut lines = Vec::<Line>::new();
+        while remaining_to_flush > 0 && flushed_entries < state.transcript.len() {
+            let entry = &state.transcript[flushed_entries];
+            let entry_lines = format_transcript_entry_lines(entry, width);
+            let start = if flushed_entries == state.transcript_flushed {
+                flushed_line_offset
+            } else {
+                0
+            }
+            .min(entry_lines.len());
+
+            let available = entry_lines.len().saturating_sub(start);
+            if available == 0 {
+                flushed_entries += 1;
+                flushed_line_offset = 0;
+                continue;
+            }
+
+            if remaining_to_flush >= available {
+                lines.extend(entry_lines.into_iter().skip(start));
+                remaining_to_flush -= available;
+                flushed_entries += 1;
+                flushed_line_offset = 0;
+            } else {
+                lines.extend(entry_lines.into_iter().skip(start).take(remaining_to_flush));
+                flushed_line_offset = start + remaining_to_flush;
+                remaining_to_flush = 0;
+            }
+        }
 
         if lines.is_empty() {
             return Ok(());
         }
 
-        let height = u16::try_from(lines.len()).unwrap_or(u16::MAX);
-        let text = Text::from(lines);
-        terminal.insert_before(height, move |buf| {
-            Paragraph::new(text).render(buf.area, buf);
-            scrub_wide_symbol_placeholders(buf);
-        })?;
+        // Insert in chunks because the terminal API uses `u16` heights.
+        let mut inserted_any = false;
+        for chunk in lines.chunks(u16::MAX as usize) {
+            let height = u16::try_from(chunk.len()).unwrap_or(u16::MAX);
+            let text = Text::from(chunk.to_vec());
+            terminal.insert_before(height, move |buf| {
+                Paragraph::new(text).render(buf.area, buf);
+                scrub_wide_symbol_placeholders(buf);
+            })?;
+            inserted_any = true;
+        }
+
+        if inserted_any {
+            state.transcript_flushed = flushed_entries;
+            state.transcript_flushed_line_offset = flushed_line_offset;
+        }
         Ok(())
     }
 

@@ -16,7 +16,18 @@
         let width = area.width.max(1) as usize;
         let mut transcript_lines = Vec::<Line>::new();
         if state.scrollback_enabled {
-            for entry in state.transcript.iter().skip(state.transcript_flushed) {
+            let mut entries = state.transcript.iter().enumerate().skip(state.transcript_flushed);
+            if let Some((idx, entry)) = entries.next() {
+                let mut lines = format_transcript_entry_lines(entry, width);
+                if idx == state.transcript_flushed && state.transcript_flushed_line_offset > 0 {
+                    let skip = state
+                        .transcript_flushed_line_offset
+                        .min(lines.len());
+                    lines.drain(0..skip);
+                }
+                transcript_lines.extend(lines);
+            }
+            for (_idx, entry) in entries {
                 transcript_lines.extend(format_transcript_entry_lines(entry, width));
             }
             if let Some(streaming) = &state.streaming {
