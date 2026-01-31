@@ -109,6 +109,9 @@ CODE_PM_OPENAI_BASE_URL=https://api.openai.com/v1
 CODE_PM_OPENAI_MODEL=gpt-4.1
 # 可选：逗号分隔的 fallback provider 列表（优先级高于 config.toml 的 `openai.fallback_providers`）
 CODE_PM_OPENAI_FALLBACK_PROVIDERS=openai-auth-command,openai-codex-apikey
+
+# 可选：启用 DB-VFS（使 pm-app-server 的 workspace `file/*` 工具走 HTTP + DB-backed workspace）
+CODE_PM_DB_VFS_URL=http://127.0.0.1:8080
 ```
 
 注意：

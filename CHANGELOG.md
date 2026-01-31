@@ -27,6 +27,7 @@
 - 新增并拆分 `pm-jsonrpc`/`pm-mcp-kit`：最小 JSON-RPC/MCP client（独立仓库：`shiertier/mcp-kit`；本地 checkout：`../mcp-kit`，CodePM 通过 path 依赖引用）。
 - 新增并拆分 `safe-fs-tools`：带显式 `SandboxPolicy/Root/SecretRules` 的 filesystem tools（独立仓库：`shiertier/safe-fs-tools`；本地 checkout：`../safe-fs-tools`；`pm-app-server file/glob` 复用其实现）。
 - `pm-app-server`：新增可选 DB-VFS 后端（通过 `CODE_PM_DB_VFS_URL` 启用），使 `file/*` 工具可切换为通过 HTTP 调用 DB-backed virtual filesystem（默认仍使用本地 filesystem）。
+- Docs：补齐 `CODE_PM_DB_VFS_URL` 的使用说明（`docs/codepm_data.md`）。
 - 新增 `pm-app-server-protocol`：导出 app-server 协议的 TypeScript types 与 JSON Schema；`pm-app-server generate-ts --out <dir>` / `pm-app-server generate-json-schema --out <dir>` 可生成对应产物。
 - 新增 Node.js packages 雏形：`packages/pm`（launcher）与 `packages/pm-client`（stdio JSON-RPC client），作为 v0.3.0 Node.js 分发/集成方向的最小落地。
 - 新增 `pm-protocol`/`pm-eventlog`：为 v0.2.0 落地 Thread/Turn 事件类型与 append-only JSONL event log（thread_id 一致性校验、`seq` 连续、`since_seq` 断点续读、尾部半行自动截断，并提供 `ThreadState` 纯事件派生）。
