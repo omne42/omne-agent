@@ -249,6 +249,44 @@
                 || lower.contains("denied")
         }
 
+        fn apply_output_text_delta(&mut self, turn_id: TurnId, delta: &str) {
+            if delta.is_empty() {
+                return;
+            }
+
+            match &mut self.streaming {
+                Some(streaming) if streaming.turn_id == turn_id => {
+                    streaming.text.push_str(delta);
+                }
+                _ => {
+                    self.streaming_entry_active = false;
+                    self.streaming = Some(StreamingState {
+                        turn_id,
+                        text: delta.to_string(),
+                    });
+                }
+            }
+
+            let can_append = self.streaming_entry_active
+                && self.streaming.as_ref().is_some_and(|s| s.turn_id == turn_id)
+                && self
+                    .transcript
+                    .back()
+                    .is_some_and(|last| matches!(last.role, TranscriptRole::Assistant));
+            if can_append {
+                if let Some(last) = self.transcript.back_mut() {
+                    last.text.push_str(delta);
+                }
+                return;
+            }
+
+            self.push_transcript(TranscriptEntry {
+                role: TranscriptRole::Assistant,
+                text: delta.to_string(),
+            });
+            self.streaming_entry_active = true;
+        }
+
         fn handle_notification(&mut self, note: pm_jsonrpc::Notification) -> anyhow::Result<()> {
             match note.method.as_str() {
                 "item/delta" => {
@@ -279,17 +317,7 @@
                             .unwrap_or(serde_json::Value::Null),
                     )
                     .context("parse delta turn_id")?;
-                    match &mut self.streaming {
-                        Some(streaming) if streaming.turn_id == turn_id => {
-                            streaming.text.push_str(delta);
-                        }
-                        _ => {
-                            self.streaming = Some(StreamingState {
-                                turn_id,
-                                text: delta.to_string(),
-                            });
-                        }
-                    }
+                    self.apply_output_text_delta(turn_id, delta);
                 }
                 "thread/event"
                 | "turn/started"

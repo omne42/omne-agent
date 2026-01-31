@@ -21,6 +21,7 @@
                 tool_events: HashMap::new(),
                 process_started_lines: HashMap::new(),
                 streaming: None,
+                streaming_entry_active: false,
                 active_turn_id: None,
                 turn_inflight_started_at: None,
                 turn_inflight_id: None,
@@ -138,6 +139,7 @@
             self.tool_events.clear();
             self.process_started_lines.clear();
             self.streaming = None;
+            self.streaming_entry_active = false;
             self.active_turn_id = None;
             self.turn_inflight_started_at = None;
             self.turn_inflight_id = None;
@@ -243,29 +245,61 @@
                         token_usage.as_ref(),
                         event.seq.0,
                     );
-                    let mut streamed = None::<String>;
+
+                    let final_text = text.as_str();
+                    let final_trim = final_text.trim();
+
                     if let Some(turn_id) = turn_id
                         && self.streaming.as_ref().is_some_and(|s| s.turn_id == *turn_id)
                     {
-                        streamed = self.streaming.as_ref().map(|s| s.text.clone());
+                        let streamed = self.streaming.as_ref().map(|s| s.text.clone());
                         self.streaming = None;
-                    }
-                    if let Some(streamed) = streamed {
+                        self.streaming_entry_active = false;
+
+                        let Some(streamed) = streamed else {
+                            return;
+                        };
                         let streamed_trim = streamed.trim();
-                        let final_trim = text.trim();
-                        if !streamed_trim.is_empty()
-                            && (final_trim.is_empty() || !final_trim.starts_with(streamed_trim))
-                        {
+                        if final_trim.is_empty() {
+                            return;
+                        }
+                        if streamed_trim.is_empty() {
                             self.push_transcript(TranscriptEntry {
                                 role: TranscriptRole::Assistant,
-                                text: streamed,
+                                text: final_text.to_string(),
                             });
+                            return;
                         }
-                    }
-                    if !text.trim().is_empty() {
+
+                        if final_text.starts_with(streamed.as_str()) {
+                            let rest = &final_text[streamed.len()..];
+                            if !rest.is_empty() {
+                                match self.transcript.back_mut() {
+                                    Some(last) if matches!(last.role, TranscriptRole::Assistant) => {
+                                        last.text.push_str(rest);
+                                    }
+                                    _ => {
+                                        self.push_transcript(TranscriptEntry {
+                                            role: TranscriptRole::Assistant,
+                                            text: rest.to_string(),
+                                        });
+                                    }
+                                }
+                            }
+                            return;
+                        }
+
                         self.push_transcript(TranscriptEntry {
                             role: TranscriptRole::Assistant,
-                            text: text.clone(),
+                            text: final_text.to_string(),
+                        });
+                        return;
+                    }
+
+                    if !final_trim.is_empty() {
+                        self.push_transcript(TranscriptEntry {
+                            role: TranscriptRole::Assistant,
+                            text: final_text.to_string(),
                         });
                     }
                 }
@@ -456,6 +490,7 @@
         }
 
         fn push_transcript(&mut self, entry: TranscriptEntry) {
+            self.streaming_entry_active = false;
             const MAX_TRANSCRIPT_ITEMS: usize = 5000;
             if self.transcript.len() >= MAX_TRANSCRIPT_ITEMS {
                 self.transcript.pop_front();

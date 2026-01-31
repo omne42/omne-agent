@@ -37,14 +37,6 @@
                 transcript_lines.extend(format_transcript_entry_lines(entry, width, prev_role));
                 prev_role = Some(entry.role);
             }
-            if let Some(streaming) = &state.streaming {
-                transcript_lines.extend(format_role_lines(
-                    TranscriptRole::Assistant,
-                    streaming.text.as_str(),
-                    width,
-                    prev_role,
-                ));
-            }
             // Keep one empty line between transcript and prompt so the input never "jumps" to the
             // very top when streaming finishes.
             transcript_lines.push(Line::from(Span::raw("")));
@@ -53,14 +45,6 @@
             for entry in &state.transcript {
                 transcript_lines.extend(format_transcript_entry_lines(entry, width, prev_role));
                 prev_role = Some(entry.role);
-            }
-            if let Some(streaming) = &state.streaming {
-                transcript_lines.extend(format_role_lines(
-                    TranscriptRole::Assistant,
-                    streaming.text.as_str(),
-                    width,
-                    prev_role,
-                ));
             }
             // 顶部固定留一行空白，避免首条输出把输入框顶线盖住。
             transcript_lines.insert(0, Line::from(Span::raw("")));

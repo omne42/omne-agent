@@ -77,7 +77,6 @@ Updated  Title   CWD    Message
         #[test]
         fn renders_thread_view_snapshot() -> anyhow::Result<()> {
             let thread_id = ThreadId::from_str("00000000-0000-0000-0000-000000000001")?;
-            let turn_id = TurnId::from_str("00000000-0000-0000-0000-0000000000aa")?;
 
             let mut state = UiState::new(false);
             state.active_thread = Some(thread_id);
@@ -96,8 +95,8 @@ Updated  Title   CWD    Message
                 role: TranscriptRole::Assistant,
                 text: "Hi!".to_string(),
             });
-            state.streaming = Some(StreamingState {
-                turn_id,
+            state.push_transcript(TranscriptEntry {
+                role: TranscriptRole::Assistant,
                 text: "Streaming...".to_string(),
             });
             state.input = "next".to_string();

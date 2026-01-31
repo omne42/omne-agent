@@ -390,6 +390,7 @@
             self.inline_palette = None;
             self.clear_input();
             self.streaming = None;
+            self.streaming_entry_active = false;
             self.active_turn_id = None;
             self.turn_inflight_started_at = None;
             self.turn_inflight_id = None;
