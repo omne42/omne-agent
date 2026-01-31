@@ -198,6 +198,7 @@
 - `pm` TUI：状态栏仅在错误时使用红色，避免 `loading models...` 等正常状态出现红字。
 - `pm` TUI：`Ctrl-C` 行为调整为等同 `Esc`（关闭/返回），不再触发中断。
 - `pm` TUI：禁用 alt-screen 并减少无意义重绘，允许终端原生滚动与选中文本。
+- `pm` TUI：scrollback 模式下默认禁用 mouse capture（滚轮走终端原生 scrollback）；如需在 TUI 内用滚轮滚动 transcript/overlay，可设置 `CODE_PM_TUI_MOUSE_CAPTURE=1`。
 - `pm` TUI：tool 记录改为可读的命令式摘要（如 `$ ls`），并修复流式输出闪现后丢失的问题。
 - `pm` TUI：提升 transcript 缓冲上限，超出屏幕不再丢历史。
 - `pm` TUI：修复输入框光标左右移动/中间编辑不生效的问题，并补齐折行场景下的光标定位。
@@ -208,6 +209,7 @@
 - `ditto-llm`：OpenAI Responses 请求现在会携带 `instructions`（来自 system message），修复部分 provider 返回 “Instructions are required”。
 - `pm-app-server`：项目配置现在会读取 `openai.base_url`（`config.toml`/`config_local.toml`）并允许 `.env` 覆盖，`thread/models` 与 `thread/config-explain` 使用该值。
 - `pm-app-server thread/models`：`GET /models` 增加 2s 超时并在失败时降级返回候选模型列表，同时返回 `models_error` 供 UI 持久展示错误。
+- `pm-app-server`：修复 `file/glob` 的 sandbox policy 初始化缺少 `paths` 字段导致的编译失败。
 - `pm-app-server`/`pm`/`code-pm`/`pm-core::orchestrator`：拆分超大 Rust 源文件（保持行为不变），避免单文件超过 1000 行，降低 review/IDE 压力。
 - `pm-app-server`：进一步拆分接近上限的模块（`agent/tools`、`process_control`），为后续扩展 tools/hooks 留出空间并保持单文件 < 1000 行。
 - `pm-app-server`：拆分 JSON-RPC router（`main/app.rs`）为按域 handler 的小文件（`main/app/*.rs`），避免入口路由继续膨胀。

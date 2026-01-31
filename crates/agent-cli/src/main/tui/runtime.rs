@@ -4,7 +4,10 @@
     use std::time::{Duration, Instant};
 
     use anyhow::Context;
-    use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyModifiers};
+    use crossterm::event::{
+        DisableMouseCapture, EnableMouseCapture, Event, EventStream, KeyCode, KeyEvent,
+        KeyModifiers, MouseEvent, MouseEventKind,
+    };
     use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
     use futures_util::StreamExt;
     use pm_jsonrpc::ClientHandle;
@@ -192,8 +195,10 @@
             .take_notifications()
             .context("notifications already taken")?;
 
-        let _guard = TerminalGuard::enter().context("enter terminal mode")?;
         let scrollback_enabled = tui_scrollback_enabled();
+        let mouse_capture_enabled = tui_mouse_capture_enabled(scrollback_enabled);
+        let _guard =
+            TerminalGuard::enter(mouse_capture_enabled).context("enter terminal mode")?;
         let mut terminal = setup_terminal(scrollback_enabled).context("setup terminal")?;
         if !scrollback_enabled {
             terminal.clear().context("clear terminal")?;
@@ -202,7 +207,9 @@
         let mut state = UiState::new(args.include_archived);
         state.scrollback_enabled = scrollback_enabled;
         state.status = Some("connecting...".to_string());
-        flush_transcript_to_scrollback(&mut terminal, &mut state)?;
+        if !mouse_capture_enabled {
+            flush_transcript_to_scrollback(&mut terminal, &mut state)?;
+        }
         terminal.draw(|f| draw_ui(f, &mut state))?;
 
         let startup_timeout = std::env::var("CODE_PM_TUI_STARTUP_TIMEOUT_MS")
@@ -234,7 +241,9 @@
 
         loop {
             if needs_draw {
-                flush_transcript_to_scrollback(&mut terminal, &mut state)?;
+                if !mouse_capture_enabled {
+                    flush_transcript_to_scrollback(&mut terminal, &mut state)?;
+                }
                 terminal.draw(|f| draw_ui(f, &mut state))?;
                 needs_draw = false;
             }
@@ -283,6 +292,11 @@
                                 }
                                 needs_draw = true;
                             }
+                            Event::Mouse(mouse) => {
+                                if state.handle_mouse(mouse) {
+                                    needs_draw = true;
+                                }
+                            }
                             Event::Resize(_, _) => {
                                 needs_draw = true;
                             }
@@ -320,6 +334,11 @@
                                     return Ok(());
                                 }
                                 needs_draw = true;
+                            }
+                            Event::Mouse(mouse) => {
+                                if state.handle_mouse(mouse) {
+                                    needs_draw = true;
+                                }
                             }
                             Event::Resize(_, _) => {
                                 needs_draw = true;
@@ -473,21 +492,32 @@
         }
     }
 
-    struct TerminalGuard;
+    struct TerminalGuard {
+        mouse_capture: bool,
+    }
 
     impl TerminalGuard {
-        fn enter() -> anyhow::Result<Self> {
+        fn enter(mouse_capture: bool) -> anyhow::Result<Self> {
             enable_raw_mode()?;
             let mut stdout = std::io::stdout();
+            if mouse_capture {
+                if let Err(err) = crossterm::execute!(stdout, EnableMouseCapture) {
+                    let _ = disable_raw_mode();
+                    return Err(anyhow::Error::new(err).context("enable mouse capture"));
+                }
+            }
             stdout.flush().ok();
-            Ok(Self)
+            Ok(Self { mouse_capture })
         }
     }
 
     impl Drop for TerminalGuard {
         fn drop(&mut self) {
-            let _ = disable_raw_mode();
             let mut stdout = std::io::stdout();
+            if self.mouse_capture {
+                let _ = crossterm::execute!(stdout, DisableMouseCapture);
+            }
+            let _ = disable_raw_mode();
             let _ = stdout.flush();
         }
     }
@@ -504,6 +534,14 @@
 
     fn tui_scrollback_enabled() -> bool {
         env_bool("CODE_PM_TUI_SCROLLBACK").unwrap_or_else(|| std::io::stdout().is_terminal())
+    }
+
+    fn tui_mouse_capture_enabled(scrollback_enabled: bool) -> bool {
+        // When we render with `Viewport::Inline`, prefer terminal-native scrollback by default.
+        // Mouse capture blocks scrollback in terminals/tmux, so only enable it when explicitly
+        // requested.
+        let default = !scrollback_enabled;
+        env_bool("CODE_PM_TUI_MOUSE_CAPTURE").unwrap_or(default)
     }
 
     fn tui_viewport_height(max_height: u16) -> u16 {

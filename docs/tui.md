@@ -55,6 +55,11 @@
 
 - 进入/退出全屏（alt-screen）要可靠；panic/异常必须恢复终端状态。
 - 打开外部 pager/editor 时，先“暂时恢复终端模式”，结束后再接管（参考 Codex 的 `with_restored` 思路）。
+- 鼠标滚轮：
+  - scrollback 模式（默认）下不启用 mouse capture，优先使用终端原生滚动/选择文本；
+  - 如需在 TUI 内用滚轮滚动 transcript/overlay，可设置 `CODE_PM_TUI_MOUSE_CAPTURE=1`。
+- 视口高度：可用 `CODE_PM_TUI_VIEWPORT_HEIGHT=16` 调整 Inline viewport 的高度，留更多空间给上方终端历史。
+- scrollback 开关：可用 `CODE_PM_TUI_SCROLLBACK=0` 关闭 Inline viewport（回到不依赖终端 scrollback 的渲染模式）。
 
 ## 5) 测试策略（别把 TUI 变成黑盒）
 
