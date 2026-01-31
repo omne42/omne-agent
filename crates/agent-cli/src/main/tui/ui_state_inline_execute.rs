@@ -287,15 +287,16 @@
             self.streaming_entry_active = true;
         }
 
-        fn apply_thinking_delta(&mut self, delta: &str) {
+        fn apply_thinking_delta(&mut self, turn_id: TurnId, delta: &str) {
             if delta.is_empty() {
                 return;
             }
 
-            if self
-                .transcript
-                .back()
-                .is_some_and(|last| matches!(last.role, TranscriptRole::Thinking))
+            if self.thinking_turn_id == Some(turn_id)
+                && self
+                    .transcript
+                    .back()
+                    .is_some_and(|last| matches!(last.role, TranscriptRole::Thinking))
             {
                 if let Some(last) = self.transcript.back_mut() {
                     last.text.push_str(delta);
@@ -307,6 +308,7 @@
                 role: TranscriptRole::Thinking,
                 text: delta.to_string(),
             });
+            self.thinking_turn_id = Some(turn_id);
         }
 
         fn handle_notification(&mut self, note: pm_jsonrpc::Notification) -> anyhow::Result<()> {
@@ -320,6 +322,17 @@
                         return Ok(());
                     }
                     let kind = params.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+                    let is_output_text = kind == "output_text";
+                    let is_thinking = matches!(
+                        kind,
+                        "reasoning_text"
+                            | "reasoning_summary_text"
+                            | "thinking_text"
+                            | "thinking_summary_text"
+                    );
+                    if !is_output_text && !is_thinking {
+                        return Ok(());
+                    }
                     let thread_id = serde_json::from_value::<ThreadId>(
                         params
                             .get("thread_id")
@@ -337,15 +350,10 @@
                             .unwrap_or(serde_json::Value::Null),
                     )
                     .context("parse delta turn_id")?;
-                    match kind {
-                        "output_text" => {
-                            self.apply_output_text_delta(turn_id, delta);
-                        }
-                        "reasoning_text" | "reasoning_summary_text" | "thinking_text"
-                        | "thinking_summary_text" => {
-                            self.apply_thinking_delta(delta);
-                        }
-                        _ => {}
+                    if is_output_text {
+                        self.apply_output_text_delta(turn_id, delta);
+                    } else if is_thinking {
+                        self.apply_thinking_delta(turn_id, delta);
                     }
                 }
                 "thread/event"

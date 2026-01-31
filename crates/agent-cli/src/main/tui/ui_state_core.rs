@@ -22,6 +22,7 @@
                 process_started_lines: HashMap::new(),
                 streaming: None,
                 streaming_entry_active: false,
+                thinking_turn_id: None,
                 active_turn_id: None,
                 turn_inflight_started_at: None,
                 turn_inflight_id: None,
@@ -140,6 +141,7 @@
             self.process_started_lines.clear();
             self.streaming = None;
             self.streaming_entry_active = false;
+            self.thinking_turn_id = None;
             self.active_turn_id = None;
             self.turn_inflight_started_at = None;
             self.turn_inflight_id = None;

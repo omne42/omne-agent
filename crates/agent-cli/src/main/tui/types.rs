@@ -798,6 +798,7 @@
         process_started_lines: HashMap<ProcessId, String>,
         streaming: Option<StreamingState>,
         streaming_entry_active: bool,
+        thinking_turn_id: Option<TurnId>,
         active_turn_id: Option<TurnId>,
         turn_inflight_started_at: Option<Instant>,
         turn_inflight_id: Option<TurnId>,
