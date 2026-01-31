@@ -136,7 +136,11 @@
         let required_bottom = bottom_lines.len().max(1);
         let bottom_height = required_bottom.min(max_bottom).min(total_height);
         let max_top = total_height.saturating_sub(bottom_height);
-        let top_height = max_top;
+        let top_height = if state.scrollback_enabled {
+            transcript_lines.len().min(max_top)
+        } else {
+            max_top
+        };
 
         let transcript_area = ratatui::layout::Rect {
             x: area.x,

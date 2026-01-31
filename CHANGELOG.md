@@ -203,6 +203,7 @@
 - `pm` TUI：transcript 的 `user/tool/assistant/system` 标签左对齐；正文超过 16 字宽时换行并缩进 2 空格；tool 文本使用更淡的样式（约 62% 亮度/“透明度”）。
 - `pm` TUI：system 消息默认与 role 同行显示，并在不同 role 之间增加空行提升可读性。
 - `pm` TUI：输入框上方显示本次 turn 的处理计时，并在 `[turn] ... completed` 行追加耗时（从用户提交到 completed）。
+- `pm` TUI：scrollback 模式下输入框不再固定在底部，而是紧跟 transcript 末尾。
 - `pm` TUI：tool 记录改为可读的命令式摘要（如 `$ ls`），并修复流式输出闪现后丢失的问题。
 - `pm` TUI：提升 transcript 缓冲上限，超出屏幕不再丢历史。
 - `pm` TUI：修复输入框光标左右移动/中间编辑不生效的问题，并补齐折行场景下的光标定位。
