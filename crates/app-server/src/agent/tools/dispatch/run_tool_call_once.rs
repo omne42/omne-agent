@@ -31,6 +31,7 @@ async fn run_tool_call_once(
                     turn_id,
                     approval_id,
                     root: args.root,
+                    path_prefix: args.path_prefix,
                     pattern: args.pattern,
                     max_results: args.max_results,
                 },
@@ -46,6 +47,7 @@ async fn run_tool_call_once(
                     turn_id,
                     approval_id,
                     root: args.root,
+                    path_prefix: args.path_prefix,
                     query: args.query,
                     is_regex: args.is_regex,
                     include_glob: args.include_glob,
@@ -963,7 +965,6 @@ async fn run_tool_call_once(
                 Ok(snapshot)
             }
             .await;
-
             match outcome {
                 Ok(tasks) => {
                     thread_rt
@@ -976,7 +977,6 @@ async fn run_tool_call_once(
                             })),
                         })
                         .await?;
-
                     Ok(serde_json::json!({
                         "tool_id": tool_id,
                         "tasks": tasks,

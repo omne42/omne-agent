@@ -30,6 +30,7 @@
 - 默认忽略目录：`.git`、`.code_pm`、`.codepm`、`target`、`node_modules`、`example`（实现对照：`crates/app-server/src/main/file_read_glob_grep.rs`）。
 - 并额外跳过 `.codepm_data/{tmp,threads,locks,logs,data,repos,reference}/`（以及 `codepm_data/...` 的同名目录；避免扫描运行时目录）。
 - 参数边界：
+  - `path_prefix`（可选）：额外的 scope 限制（root-relative）。当 workspace 由 DB-VFS 提供时，宽泛 pattern 可能需要显式 `path_prefix` 才会被允许。
   - `max_results` 默认 `2000`，上限 `20000`；超限 `truncated=true`。
 - 事件落盘（摘要）：`ToolCompleted.result` 只记录 `{matches,truncated}`，不记录全部 paths（避免事件爆炸）。
 
@@ -41,6 +42,7 @@
   - `max_files` 默认 `20000`，上限 `200000`
   - `max_bytes_per_file` 默认 `1MiB`，上限 `16MiB`
   - 跳过二进制文件（检测 NUL byte）；匹配行会截断到 4000 字符（加 `…`）
+- `path_prefix`（可选）：额外的 scope 限制（root-relative）。当 workspace 由 DB-VFS 提供时，`file/grep` 可能需要显式 `path_prefix`（或用 `include_glob` 提供可推导的字面前缀）以避免全 workspace 扫描。
 - 事件落盘（摘要）：`ToolCompleted.result` 记录
   - `matches/truncated/files_scanned/files_skipped_too_large/files_skipped_binary`
   - **不记录**具体 `matches` 列表（列表只在 RPC 响应里返回）

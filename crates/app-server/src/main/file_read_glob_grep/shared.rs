@@ -2,6 +2,26 @@ fn rel_path_is_secret(rel_path: &Path) -> bool {
     rel_path.file_name() == Some(std::ffi::OsStr::new(".env"))
 }
 
+fn normalize_path_prefix_for_filter(input: &str) -> anyhow::Result<String> {
+    let mut prefix = input.trim().replace('\\', "/");
+    while prefix.starts_with("./") {
+        prefix = prefix.trim_start_matches("./").to_string();
+    }
+    if prefix == "." {
+        prefix.clear();
+    }
+    if prefix.starts_with('/') {
+        anyhow::bail!("path_prefix must be root-relative (must not start with '/')");
+    }
+    if prefix.split('/').any(|seg| seg == "..") {
+        anyhow::bail!("path_prefix must not contain '..'");
+    }
+    if !prefix.is_empty() && !prefix.ends_with('/') {
+        prefix.push('/');
+    }
+    Ok(prefix)
+}
+
 fn should_walk_entry(entry: &walkdir::DirEntry) -> bool {
     if entry.depth() == 0 {
         return true;
@@ -45,4 +65,3 @@ async fn resolve_reference_repo_root(thread_root: &Path) -> anyhow::Result<PathB
         .await
         .with_context(|| format!("resolve reference repo root {}", thread_root.join(rel).display()))
 }
-

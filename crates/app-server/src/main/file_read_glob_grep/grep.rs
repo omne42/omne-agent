@@ -30,6 +30,7 @@ async fn handle_file_grep(server: &Server, params: FileGrepParams) -> anyhow::Re
     let tool_id = pm_protocol::ToolId::new();
     let approval_params = serde_json::json!({
         "root": file_root.as_str(),
+        "path_prefix": params.path_prefix.clone(),
         "query": params.query.clone(),
         "is_regex": params.is_regex,
         "include_glob": params.include_glob.clone(),
@@ -192,13 +193,14 @@ async fn handle_file_grep(server: &Server, params: FileGrepParams) -> anyhow::Re
     if matches!(file_root, FileRoot::Workspace)
         && let Some(db_vfs) = server.db_vfs.clone()
     {
+        let path_prefix = params.path_prefix.clone().map(|p| p.replace('\\', "/"));
         let resp = db_vfs
             .grep(
                 params.thread_id.to_string(),
                 params.query.clone(),
                 params.is_regex,
                 params.include_glob.clone(),
-                None,
+                path_prefix,
             )
             .await;
 
@@ -300,6 +302,7 @@ async fn handle_file_grep(server: &Server, params: FileGrepParams) -> anyhow::Re
         None => None,
     };
 
+    let path_prefix = params.path_prefix.clone();
     let root = match file_root {
         FileRoot::Workspace => thread_root.clone(),
         FileRoot::Reference => match resolve_reference_repo_root(&thread_root).await {
@@ -322,6 +325,10 @@ async fn handle_file_grep(server: &Server, params: FileGrepParams) -> anyhow::Re
     };
     let outcome = tokio::task::spawn_blocking(
         move || -> anyhow::Result<(Vec<GrepMatch>, bool, usize, usize, usize)> {
+            let path_prefix = match path_prefix.as_deref() {
+                Some(prefix) => Some(normalize_path_prefix_for_filter(prefix)?),
+                None => None,
+            };
             let mut matches = Vec::new();
             let mut truncated = false;
             let mut files_scanned = 0usize;
@@ -343,6 +350,12 @@ async fn handle_file_grep(server: &Server, params: FileGrepParams) -> anyhow::Re
                 let rel = entry.path().strip_prefix(&root).unwrap_or(entry.path());
                 if rel_path_is_secret(rel) {
                     continue;
+                }
+                let rel_string = rel.to_string_lossy().replace('\\', "/");
+                if let Some(prefix) = path_prefix.as_deref() {
+                    if !rel_string.starts_with(prefix) {
+                        continue;
+                    }
                 }
                 if let Some(ref matcher) = include_matcher {
                     if !matcher.is_match(rel) {
@@ -374,7 +387,7 @@ async fn handle_file_grep(server: &Server, params: FileGrepParams) -> anyhow::Re
                     }
 
                     matches.push(GrepMatch {
-                        path: rel.to_string_lossy().to_string(),
+                        path: rel_string.clone(),
                         line_number: (idx + 1) as u64,
                         line: truncate_line(line, 4000),
                     });

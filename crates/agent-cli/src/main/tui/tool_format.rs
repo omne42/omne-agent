@@ -636,6 +636,9 @@
         let pattern = param_str(params, "pattern")?;
         let root = root_tag(param_str(params, "root"));
         let mut line = format!("glob \"{pattern}\"");
+        if let Some(prefix) = param_str(params, "path_prefix") {
+            line.push_str(&format!(" under {prefix}"));
+        }
         if let Some(root) = root {
             line.push_str(&format!(" ({root})"));
         }
@@ -645,6 +648,9 @@
     fn format_file_grep(params: Option<&Value>) -> Option<String> {
         let query = param_str(params, "query")?;
         let mut line = format!("grep \"{query}\"");
+        if let Some(prefix) = param_str(params, "path_prefix") {
+            line.push_str(&format!(" under {prefix}"));
+        }
         if let Some(include) = param_str(params, "include_glob") {
             line.push_str(&format!(" in {include}"));
         }

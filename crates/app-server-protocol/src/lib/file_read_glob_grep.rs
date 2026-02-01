@@ -35,6 +35,13 @@ pub struct FileGlobParams {
     #[serde(default)]
     #[ts(optional)]
     pub root: Option<FileRoot>,
+    /// Optional scope limiter for `glob`/`grep` style operations.
+    ///
+    /// This is mainly useful when the workspace is backed by DB-VFS, where broad patterns may
+    /// require an explicit prefix to avoid whole-workspace scans.
+    #[serde(default)]
+    #[ts(optional)]
+    pub path_prefix: Option<String>,
     pub pattern: String,
     #[serde(default)]
     #[ts(optional)]
@@ -53,6 +60,13 @@ pub struct FileGrepParams {
     #[serde(default)]
     #[ts(optional)]
     pub root: Option<FileRoot>,
+    /// Optional scope limiter for `glob`/`grep` style operations.
+    ///
+    /// This is mainly useful when the workspace is backed by DB-VFS, where broad patterns may
+    /// require an explicit prefix to avoid whole-workspace scans.
+    #[serde(default)]
+    #[ts(optional)]
+    pub path_prefix: Option<String>,
     pub query: String,
     #[serde(default)]
     pub is_regex: bool,

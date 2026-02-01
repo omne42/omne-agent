@@ -351,6 +351,8 @@ struct FileGlobParams {
     approval_id: Option<pm_protocol::ApprovalId>,
     #[serde(default)]
     root: Option<FileRoot>,
+    #[serde(default)]
+    path_prefix: Option<String>,
     pattern: String,
     #[serde(default)]
     max_results: Option<usize>,
@@ -365,6 +367,8 @@ struct FileGrepParams {
     approval_id: Option<pm_protocol::ApprovalId>,
     #[serde(default)]
     root: Option<FileRoot>,
+    #[serde(default)]
+    path_prefix: Option<String>,
     query: String,
     #[serde(default)]
     is_regex: bool,

@@ -11,6 +11,8 @@ struct FileReadArgs {
 struct FileGlobArgs {
     #[serde(default)]
     root: Option<crate::FileRoot>,
+    #[serde(default)]
+    path_prefix: Option<String>,
     pattern: String,
     #[serde(default)]
     max_results: Option<usize>,
@@ -20,6 +22,8 @@ struct FileGlobArgs {
 struct FileGrepArgs {
     #[serde(default)]
     root: Option<crate::FileRoot>,
+    #[serde(default)]
+    path_prefix: Option<String>,
     query: String,
     #[serde(default)]
     is_regex: bool,

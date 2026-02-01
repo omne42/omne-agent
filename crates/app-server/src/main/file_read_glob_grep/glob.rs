@@ -6,6 +6,7 @@ async fn handle_file_glob(server: &Server, params: FileGlobParams) -> anyhow::Re
     let tool_id = pm_protocol::ToolId::new();
     let approval_params = serde_json::json!({
         "root": file_root.as_str(),
+        "path_prefix": params.path_prefix.clone(),
         "pattern": params.pattern.clone(),
         "max_results": max_results,
     });
@@ -164,8 +165,9 @@ async fn handle_file_glob(server: &Server, params: FileGlobParams) -> anyhow::Re
     if matches!(file_root, FileRoot::Workspace)
         && let Some(db_vfs) = server.db_vfs.clone()
     {
+        let path_prefix = params.path_prefix.clone().map(|p| p.replace('\\', "/"));
         let resp = db_vfs
-            .glob(params.thread_id.to_string(), params.pattern.clone(), None)
+            .glob(params.thread_id.to_string(), params.pattern.clone(), path_prefix)
             .await;
 
         match resp {
@@ -233,6 +235,7 @@ async fn handle_file_glob(server: &Server, params: FileGlobParams) -> anyhow::Re
     }
 
     let pattern = params.pattern.clone();
+    let path_prefix = params.path_prefix.clone();
     let root_id = file_root.as_str().to_string();
     let root = match file_root {
         FileRoot::Workspace => thread_root.clone(),
@@ -305,6 +308,11 @@ async fn handle_file_glob(server: &Server, params: FileGlobParams) -> anyhow::Re
             .into_iter()
             .map(|path| path.to_string_lossy().to_string())
             .collect::<Vec<_>>();
+        let mut paths = paths;
+        if let Some(prefix) = path_prefix.as_deref() {
+            let prefix = normalize_path_prefix_for_filter(prefix)?;
+            paths.retain(|path| path.starts_with(&prefix));
+        }
         Ok((paths, resp.truncated))
     })
     .await

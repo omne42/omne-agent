@@ -32,6 +32,7 @@ fn build_tools() -> Vec<Value> {
                 "type": "object",
                 "properties": {
                     "root": { "type": "string", "enum": ["workspace", "reference"] },
+                    "path_prefix": { "type": "string" },
                     "pattern": { "type": "string" },
                     "max_results": { "type": "integer", "minimum": 1 },
                 },
@@ -46,6 +47,7 @@ fn build_tools() -> Vec<Value> {
                 "type": "object",
                 "properties": {
                     "root": { "type": "string", "enum": ["workspace", "reference"] },
+                    "path_prefix": { "type": "string" },
                     "query": { "type": "string" },
                     "is_regex": { "type": "boolean" },
                     "include_glob": { "type": "string" },
