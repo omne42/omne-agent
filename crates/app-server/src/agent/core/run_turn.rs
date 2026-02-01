@@ -236,34 +236,20 @@ pub async fn run_agent_turn(
         Err(_) => None,
     };
 
+    const ROLE_PROMPT_MARKER: &str = "__OMNE_AGENT_ROLE_PROMPT__";
+    const ROLE_PERMISSIONS_MARKER: &str = "__OMNE_AGENT_ROLE_PERMISSIONS__";
+    const ROLE_PROMPT_STABLE_MESSAGE: &str = "Role-specific instructions are provided in the latest user message via `@role <role>...</role>` (if present).";
+    const ROLE_PERMISSIONS_STABLE_MESSAGE: &str = "Role-specific permissions are provided in the latest user message via `@role <role>...</role>` (if present).";
+
     let mut instructions = DEFAULT_INSTRUCTIONS.to_string();
 
     let role_message_block = render_role_message_block(thread_mode.as_str());
 
     instructions.push_str("\n\n# Role prompt\n\n");
-    if provider_capabilities.prompt_cache {
-        instructions.push_str(
-            "Role-specific instructions are provided in the latest user message via `@role <role>...</role>`.",
-        );
-    } else if let Some(role) = role_prompt_parts_for_mode(thread_mode.as_str()) {
-        instructions.push_str(role.markdown_body.trim());
-    }
+    instructions.push_str(ROLE_PROMPT_MARKER);
 
     instructions.push_str("\n\n# Role permissions\n\n");
-    if provider_capabilities.prompt_cache {
-        instructions.push_str(
-            "Role-specific permissions are provided in the latest user message via `@role <role>...</role>`.",
-        );
-    } else if let Some(role) = role_prompt_parts_for_mode(thread_mode.as_str())
-        && let Some(yaml) = role.yaml_frontmatter
-    {
-        let yaml = yaml.trim();
-        if !yaml.is_empty() {
-            instructions.push_str("```yaml\n");
-            instructions.push_str(yaml);
-            instructions.push_str("\n```");
-        }
-    }
+    instructions.push_str(ROLE_PERMISSIONS_MARKER);
 
     if let Some(user_instructions_path) = resolve_user_instructions_path() {
         if let Ok(contents) = tokio::fs::read_to_string(&user_instructions_path).await {
@@ -507,6 +493,40 @@ pub async fn run_agent_turn(
         .or(mode_default_thinking);
 
     let model_config = ditto_llm::select_model_config(&project_overrides.models, &final_model);
+    let prompt_cache_enabled = model_config
+        .and_then(|cfg| cfg.prompt_cache)
+        .unwrap_or(provider_capabilities.prompt_cache);
+    let role_prompt = role_prompt_parts_for_mode(thread_mode.as_str());
+
+    let role_prompt_text = if !prompt_cache_enabled
+        && let Some(role_prompt) = role_prompt
+    {
+        let trimmed = role_prompt.markdown_body.trim();
+        if trimmed.is_empty() {
+            ROLE_PROMPT_STABLE_MESSAGE.to_string()
+        } else {
+            trimmed.to_string()
+        }
+    } else {
+        ROLE_PROMPT_STABLE_MESSAGE.to_string()
+    };
+    let role_permissions_text = if !prompt_cache_enabled
+        && let Some(role_prompt) = role_prompt
+        && let Some(yaml) = role_prompt.yaml_frontmatter
+    {
+        let yaml = yaml.trim();
+        if yaml.is_empty() {
+            ROLE_PERMISSIONS_STABLE_MESSAGE.to_string()
+        } else {
+            format!("```yaml\n{yaml}\n```")
+        }
+    } else {
+        ROLE_PERMISSIONS_STABLE_MESSAGE.to_string()
+    };
+
+    instructions = instructions.replace(ROLE_PROMPT_MARKER, &role_prompt_text);
+    instructions = instructions.replace(ROLE_PERMISSIONS_MARKER, &role_permissions_text);
+
     let limits = resolve_model_limits(&final_model, model_config);
     let starting_total_tokens_used =
         match thread_total_tokens_used(&server.thread_store, thread_id).await {

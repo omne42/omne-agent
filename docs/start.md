@@ -40,7 +40,12 @@ cargo build -p omne-agent -p omne-agent-app-server
 ```toml
 [openai.providers.openai-codex-apikey.capabilities]
 prompt_cache = false
+
+[openai.models."gpt-4.1"]
+prompt_cache = false
 ```
+
+优先级：`openai.models.<model>.prompt_cache`（如设置） > `openai.providers.<provider>.capabilities.prompt_cache`。
 
 > `prompt/roles/*.md` 顶部的 YAML frontmatter 描述该 role 的权限摘要（informational），与 `docs/modes.md` 的 Mode gate 强制边界一致。
 

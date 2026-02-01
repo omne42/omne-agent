@@ -11,6 +11,7 @@
 - 内置 role prompt 文件：`prompt/roles/*.md`（YAML frontmatter + Markdown body），编译期嵌入程序。
 - 为了最大化 prompt cache 命中：当 provider 配置为支持 prompt cache（`capabilities.prompt_cache=true`）时，system prompt 会保持稳定结构；role prompt/permissions 通过最新一条 user message 的 `@role <role>...</role>` 块注入。
 - 当 prompt cache 关闭（`capabilities.prompt_cache=false`）时，role prompt/permissions 也会写入 system prompt（同时仍会注入到 user message，方便 `@` 切换）。
+- 可按 model 覆盖：`openai.models.<model>.prompt_cache`（如设置）优先于 provider capability。
 
 ## 1) 术语
 
