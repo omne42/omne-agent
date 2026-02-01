@@ -24,6 +24,7 @@
 - Node packages（分发方向的最小落地）：`packages/omne-agent`、`packages/app-server-client`。
 - Auto compact：支持 `best_context`/`max_context`（模型配置别名），并在超阈值时先 prune 老的 tool output，再做 summary 重建上下文。
 - Dev：pre-commit 禁止新增/修改 `partNN.*` 风格文件名。
+- Docs：新增内嵌 Git 的实现计划（`docs/plans/embedded_git.md`）。
 
 ### Security
 
