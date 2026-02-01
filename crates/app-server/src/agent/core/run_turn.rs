@@ -238,9 +238,31 @@ pub async fn run_agent_turn(
 
     let mut instructions = DEFAULT_INSTRUCTIONS.to_string();
 
-    if let Some(prompt) = role_prompt_for_mode(thread_mode.as_str()) {
-        instructions.push_str("\n\n# Role instructions\n\n");
-        instructions.push_str(prompt.trim());
+    let role_message_block = render_role_message_block(thread_mode.as_str());
+
+    instructions.push_str("\n\n# Role prompt\n\n");
+    if provider_capabilities.prompt_cache {
+        instructions.push_str(
+            "Role-specific instructions are provided in the latest user message via `@role <role>...</role>`.",
+        );
+    } else if let Some(role) = role_prompt_parts_for_mode(thread_mode.as_str()) {
+        instructions.push_str(role.markdown_body.trim());
+    }
+
+    instructions.push_str("\n\n# Role permissions\n\n");
+    if provider_capabilities.prompt_cache {
+        instructions.push_str(
+            "Role-specific permissions are provided in the latest user message via `@role <role>...</role>`.",
+        );
+    } else if let Some(role) = role_prompt_parts_for_mode(thread_mode.as_str())
+        && let Some(yaml) = role.yaml_frontmatter
+    {
+        let yaml = yaml.trim();
+        if !yaml.is_empty() {
+            instructions.push_str("```yaml\n");
+            instructions.push_str(yaml);
+            instructions.push_str("\n```");
+        }
     }
 
     if let Some(user_instructions_path) = resolve_user_instructions_path() {
@@ -303,6 +325,10 @@ pub async fn run_agent_turn(
                 }
             }
         }
+    }
+
+    if let Some(role_message_block) = role_message_block.as_deref() {
+        inject_text_prefix_into_last_user_message(&mut input_items, role_message_block);
     }
 
     let attachments = load_turn_attachments(&server, thread_id, turn_id).await?;

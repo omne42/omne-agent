@@ -1,3 +1,39 @@
+---
+mode: debugger
+permissions:
+  read: { decision: allow }
+  edit:
+    decision: prompt
+    allow_globs: ["**"]
+    deny_globs:
+      - .git/**
+      - "**/.env"
+      - .omne_agent_data/config_local.toml
+      - .omne_agent_data/config.toml
+      - .omne_agent_data/spec/**
+      - .omne_agent_data/tmp/**
+      - .omne_agent_data/threads/**
+      - .omne_agent_data/locks/**
+      - .omne_agent_data/logs/**
+      - .omne_agent_data/data/**
+      - .omne_agent_data/repos/**
+      - .omne_agent_data/reference/**
+  command: { decision: prompt }
+  process:
+    inspect: { decision: allow }
+    kill: { decision: prompt }
+    interact: { decision: deny }
+  artifact: { decision: allow }
+  browser: { decision: prompt }
+  subagent:
+    spawn:
+      decision: prompt
+      allowed_modes:
+        - architect
+        - reviewer
+        - builder
+---
+
 # Debugger（排障修复）
 
 你负责把“失败”变成“可复现 → 可定位 → 可修复 → 有回归覆盖”。
@@ -16,4 +52,3 @@
 - 根因定位（路径+位置）
 - 最小修复说明
 - 回归覆盖与验证命令
-

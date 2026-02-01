@@ -696,6 +696,40 @@ fn insert_context_before_last_user_message(
     input_items.splice(insert_at..insert_at, ctx_items);
 }
 
+fn inject_text_prefix_into_last_user_message(input_items: &mut [OpenAiItem], prefix: &str) {
+    let prefix = prefix.trim();
+    if prefix.is_empty() {
+        return;
+    }
+
+    for item in input_items.iter_mut().rev() {
+        if item.get("type").and_then(Value::as_str) != Some("message") {
+            continue;
+        }
+        if item.get("role").and_then(Value::as_str) != Some("user") {
+            continue;
+        }
+
+        let Some(content) = item.get_mut("content").and_then(Value::as_array_mut) else {
+            continue;
+        };
+
+        for part in content.iter_mut() {
+            if part.get("type").and_then(Value::as_str) != Some("input_text") {
+                continue;
+            }
+            let Some(old) = part.get("text").and_then(Value::as_str) else {
+                continue;
+            };
+            let new = format!("{prefix}\n\n{old}");
+            if let Some(obj) = part.as_object_mut() {
+                obj.insert("text".to_string(), Value::String(new));
+            }
+            return;
+        }
+    }
+}
+
 fn format_event_for_context(kind: &ThreadEventKind) -> Option<String> {
     match kind {
         ThreadEventKind::ThreadArchived { reason } => Some(format!(

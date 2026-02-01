@@ -15,7 +15,7 @@
 - Reference repo（只读快照）：`omne-agent reference import/status`。
 - Checkpoints（create/list/restore）：快照落盘到 thread artifacts。
 - MCP：client +（可选）server 原语与审计落盘。
-- 内置 role prompts：随 `@<role>`（mode）注入到 system instructions（来源：`prompt/roles/*.md`，编译期嵌入）。
+- 内置 role prompts：`prompt/roles/*.md`（含权限 frontmatter）编译期嵌入；每 turn 以 `@role <role>...</role>` 注入到最新 user message；当 `capabilities.prompt_cache=false` 时同时写入 system prompt。
 
 ### Changed
 

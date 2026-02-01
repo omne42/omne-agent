@@ -6,6 +6,12 @@
 
 ---
 
+## 0) Role prompts（informational）与 prompt cache
+
+- 内置 role prompt 文件：`prompt/roles/*.md`（YAML frontmatter + Markdown body），编译期嵌入程序。
+- 为了最大化 prompt cache 命中：当 provider 配置为支持 prompt cache（`capabilities.prompt_cache=true`）时，system prompt 会保持稳定结构；role prompt/permissions 通过最新一条 user message 的 `@role <role>...</role>` 块注入。
+- 当 prompt cache 关闭（`capabilities.prompt_cache=false`）时，role prompt/permissions 也会写入 system prompt（同时仍会注入到 user message，方便 `@` 切换）。
+
 ## 1) 术语
 
 - **Mode**：一个命名角色（例如 `architect/coder/reviewer/builder`），定义该角色允许使用的能力边界。

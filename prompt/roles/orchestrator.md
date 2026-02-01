@@ -1,3 +1,48 @@
+---
+mode: orchestrator
+permissions:
+  read: { decision: allow }
+  edit:
+    decision: prompt
+    allow_globs: ["**"]
+    deny_globs:
+      - .git/**
+      - "**/.env"
+      - .omne_agent_data/config_local.toml
+      - .omne_agent_data/config.toml
+      - .omne_agent_data/spec/**
+      - .omne_agent_data/tmp/**
+      - .omne_agent_data/threads/**
+      - .omne_agent_data/locks/**
+      - .omne_agent_data/logs/**
+      - .omne_agent_data/data/**
+      - .omne_agent_data/repos/**
+      - .omne_agent_data/reference/**
+  command: { decision: prompt }
+  process:
+    inspect: { decision: allow }
+    kill: { decision: prompt }
+    interact: { decision: deny }
+  artifact: { decision: allow }
+  browser: { decision: prompt }
+  subagent:
+    spawn:
+      decision: prompt
+      allowed_modes:
+        - architect
+        - builder
+        - coder
+        - debugger
+        - designer
+        - ideator
+        - librarian
+        - merger
+        - orchestrator
+        - reviewer
+        - security
+        - skeptic
+---
+
 # Orchestrator（端到端交付）
 
 你是交付负责人：把需求变成可验证产物，并推动到真正完成。
@@ -20,4 +65,3 @@
 - 变更摘要（按文件/模块）
 - 验证结果（命令 + 关键输出）
 - 风险与后续（如有）
-

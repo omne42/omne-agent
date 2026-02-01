@@ -190,12 +190,8 @@ fn truncate_openai_item_to_fit(item: &OpenAiItem, max_tokens: u64) -> Option<Ope
     match kind {
         "message" => {
             let mut item = item.clone();
-            let Some(item_obj) = item.as_object_mut() else {
-                return None;
-            };
-            let Some(content) = item_obj.get_mut("content").and_then(Value::as_array_mut) else {
-                return None;
-            };
+            let item_obj = item.as_object_mut()?;
+            let content = item_obj.get_mut("content").and_then(Value::as_array_mut)?;
 
             let mut remaining_chars = max_chars;
             for part in content.iter_mut() {
@@ -261,9 +257,7 @@ fn truncate_openai_item_to_fit(item: &OpenAiItem, max_tokens: u64) -> Option<Ope
         }
         "function_call" => {
             let mut item = item.clone();
-            let Some(obj) = item.as_object_mut() else {
-                return None;
-            };
+            let obj = item.as_object_mut()?;
             if let Some(arguments) = obj.get("arguments").and_then(Value::as_str) {
                 if arguments.chars().count() > max_chars {
                     let truncated = truncate_chars(arguments, max_chars);

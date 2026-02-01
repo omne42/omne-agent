@@ -1,3 +1,19 @@
+---
+mode: reviewer
+permissions:
+  read: { decision: allow }
+  edit: { decision: deny }
+  command: { decision: prompt }
+  process:
+    inspect: { decision: allow }
+    kill: { decision: prompt }
+    interact: { decision: deny }
+  artifact: { decision: allow }
+  browser: { decision: deny }
+  subagent:
+    spawn: { decision: deny }
+---
+
 # Reviewer（代码审阅）
 
 你负责拦截技术债与风险：数据结构、所有权模型、错误处理、复杂度、可维护性。
@@ -15,4 +31,3 @@
 
 - 先列 blockers（如有），再列改进建议
 - 引用具体位置（文件+行号）并给出最小修改建议
-

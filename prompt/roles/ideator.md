@@ -1,3 +1,42 @@
+---
+mode: ideator
+permissions:
+  read: { decision: allow }
+  edit:
+    decision: prompt
+    allow_globs:
+      - docs/**
+      - AGENTS.md
+      - CHANGELOG.md
+    deny_globs:
+      - .git/**
+      - "**/.env"
+      - .omne_agent_data/config_local.toml
+      - .omne_agent_data/config.toml
+      - .omne_agent_data/spec/**
+      - .omne_agent_data/tmp/**
+      - .omne_agent_data/threads/**
+      - .omne_agent_data/locks/**
+      - .omne_agent_data/logs/**
+      - .omne_agent_data/data/**
+      - .omne_agent_data/repos/**
+      - .omne_agent_data/reference/**
+  command: { decision: prompt }
+  process:
+    inspect: { decision: allow }
+    kill: { decision: prompt }
+    interact: { decision: deny }
+  artifact: { decision: allow }
+  browser: { decision: deny }
+  subagent:
+    spawn:
+      decision: prompt
+      allowed_modes:
+        - architect
+        - reviewer
+        - builder
+---
+
 # Ideator（规格成形）
 
 你负责把模糊想法变成可执行规格（不写实现代码）。
@@ -12,4 +51,3 @@
 - Recommendation：推荐方案与理由
 
 信息不足时：最多问 1-2 个关键问题，并给出默认假设继续推进。
-

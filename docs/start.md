@@ -29,6 +29,21 @@ cargo build -p omne-agent -p omne-agent-app-server
 
 这些 role prompts 存放在 `prompt/roles/*.md`，并在编译期嵌入程序。
 
+### Prompt cache 与 role 注入（system prompt 组装）
+
+- 默认认为 provider 支持 prompt cache（`capabilities.prompt_cache=true`）。
+- 为了最大化缓存命中：当 prompt cache 开启时，system prompt 只保留稳定的 role 占位说明；**实际 role prompt + role permissions** 会在每次 turn 的最新一条 user message 里以 `@role <role>...</role>` 形式注入。
+- 当 prompt cache 关闭时（`capabilities.prompt_cache=false`），role prompt + role permissions 也会直接写入 system prompt（同时仍会在 user message 中注入，方便 `@` 切换）。
+
+配置位置（project config）：`./.omne_agent_data/config.toml`
+
+```toml
+[openai.providers.openai-codex-apikey.capabilities]
+prompt_cache = false
+```
+
+> `prompt/roles/*.md` 顶部的 YAML frontmatter 描述该 role 的权限摘要（informational），与 `docs/modes.md` 的 Mode gate 强制边界一致。
+
 ## Skills（`$<name>`）
 
 skills 属于可选的外部扩展：如果你的 `$` 面板是空的，通常表示本机没有配置 skills 目录。
