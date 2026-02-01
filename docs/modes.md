@@ -2,7 +2,7 @@
 
 > 目标：把“角色/Mode”从 prompt 里的软约束，变成 **可落盘、可审计、可强制执行** 的权限边界。
 >
-> 原则：Mode 只解决“能不能做什么”；不解决“怎么做得更好”（那是 router/workflow/skills 的工作）。
+> 原则：Mode 只解决“能不能做什么”的强制边界；同时系统也可以为部分内置 mode 附带可选的 role prompt，用来指导工作流，但它不是安全边界的一部分。
 
 ---
 
@@ -170,6 +170,17 @@ v0.2.0 内置最小模式（作为没有 project config 时的兜底）：
 - `coder`：实现变更；`edit/command` 默认 `prompt`，依赖 execpolicy 细化白名单。
 - `reviewer`：只读；`edit=deny`；只允许安全的检查类命令（execpolicy）。
 - `builder`：跑 fmt/check/test/clippy 等 gates；`edit=deny`；命令受 execpolicy 严格限制。
+
+补充（内置扩展角色）：
+
+- `debugger`：排障修复；默认需要审批；尽量最小改动。
+- `designer`：UI/UX 设计与实现；默认需要审批。
+- `ideator`：规格成形；默认只允许改 docs 与少数根文件。
+- `librarian`：只读上下文打包/代码地图。
+- `merger`：集成合并；默认需要审批。
+- `orchestrator`：端到端交付；默认需要审批；允许 `subagent/spawn`（仍需审批+白名单）。
+- `security`：只读安全审阅/守门。
+- `skeptic`：只读简化/砍范围（YAGNI）。
 
 ---
 

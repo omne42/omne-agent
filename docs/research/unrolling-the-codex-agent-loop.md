@@ -86,7 +86,7 @@
 - `safe-fs-tools` 的 `SandboxPolicy`/`Root`/`SecretRules`/`limits` 非常适合成为：
   - omne-agent 的默认文件系统工具底座（比“随便读写”更可审计、更易控）
 
-### 2.5 `code-checker/`：可以当作“只读分析类工具”的案例
+### 2.5 `dup-check/`：可以当作“只读分析类工具”的案例
 
 - 其功能天然偏 read-only（扫描/报告），适合被纳入 “read-only tools 并发” 与 “缓存友好（工具定义稳定）” 的约束体系中。
 

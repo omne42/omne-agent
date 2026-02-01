@@ -238,6 +238,11 @@ pub async fn run_agent_turn(
 
     let mut instructions = DEFAULT_INSTRUCTIONS.to_string();
 
+    if let Some(prompt) = role_prompt_for_mode(thread_mode.as_str()) {
+        instructions.push_str("\n\n# Role instructions\n\n");
+        instructions.push_str(prompt.trim());
+    }
+
     if let Some(user_instructions_path) = resolve_user_instructions_path() {
         if let Ok(contents) = tokio::fs::read_to_string(&user_instructions_path).await {
             let contents = omne_agent_core::redact_text(&contents);

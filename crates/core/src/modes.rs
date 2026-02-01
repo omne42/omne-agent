@@ -210,6 +210,246 @@ impl ModeCatalog {
                 "Run checks/tests; no edits; commands require approvals.",
                 ModePermissions {
                     read: Decision::Allow,
+                    edit: EditPermissions::new(
+                        Decision::Deny,
+                        Vec::new(),
+                        default_deny_globs.clone(),
+                    )
+                    .expect("builtin globs must compile"),
+                    command: Decision::Prompt,
+                    process: ProcessPermissions {
+                        inspect: Decision::Allow,
+                        kill: Decision::Prompt,
+                        interact: Decision::Deny,
+                    },
+                    artifact: Decision::Allow,
+                    browser: Decision::Deny,
+                    subagent: SubagentPermissions::default(),
+                },
+            ),
+        );
+
+        modes.insert(
+            "debugger".to_string(),
+            ModeDef::builtin(
+                "Fix failures; minimal changes; edits and commands require approvals by default.",
+                ModePermissions {
+                    read: Decision::Allow,
+                    edit: EditPermissions::new(
+                        Decision::Prompt,
+                        Vec::new(),
+                        default_deny_globs.clone(),
+                    )
+                    .expect("builtin globs must compile"),
+                    command: Decision::Prompt,
+                    process: ProcessPermissions {
+                        inspect: Decision::Allow,
+                        kill: Decision::Prompt,
+                        interact: Decision::Deny,
+                    },
+                    artifact: Decision::Allow,
+                    browser: Decision::Prompt,
+                    subagent: SubagentPermissions {
+                        spawn: SubagentSpawnPermissions {
+                            decision: Decision::Prompt,
+                            allowed_modes: Some(vec![
+                                "architect".to_string(),
+                                "reviewer".to_string(),
+                                "builder".to_string(),
+                            ]),
+                        },
+                    },
+                },
+            ),
+        );
+
+        modes.insert(
+            "designer".to_string(),
+            ModeDef::builtin(
+                "Design and implement UI/UX; edits and commands require approvals by default.",
+                ModePermissions {
+                    read: Decision::Allow,
+                    edit: EditPermissions::new(
+                        Decision::Prompt,
+                        Vec::new(),
+                        default_deny_globs.clone(),
+                    )
+                    .expect("builtin globs must compile"),
+                    command: Decision::Prompt,
+                    process: ProcessPermissions {
+                        inspect: Decision::Allow,
+                        kill: Decision::Prompt,
+                        interact: Decision::Deny,
+                    },
+                    artifact: Decision::Allow,
+                    browser: Decision::Prompt,
+                    subagent: SubagentPermissions::default(),
+                },
+            ),
+        );
+
+        modes.insert(
+            "ideator".to_string(),
+            ModeDef::builtin(
+                "Shape specs; edits require approvals and are limited to docs + a few root files.",
+                ModePermissions {
+                    read: Decision::Allow,
+                    edit: EditPermissions::new(
+                        Decision::Prompt,
+                        vec![
+                            "docs/**".to_string(),
+                            "AGENTS.md".to_string(),
+                            "CHANGELOG.md".to_string(),
+                        ],
+                        default_deny_globs.clone(),
+                    )
+                    .expect("builtin globs must compile"),
+                    command: Decision::Prompt,
+                    process: ProcessPermissions {
+                        inspect: Decision::Allow,
+                        kill: Decision::Prompt,
+                        interact: Decision::Deny,
+                    },
+                    artifact: Decision::Allow,
+                    browser: Decision::Deny,
+                    subagent: SubagentPermissions {
+                        spawn: SubagentSpawnPermissions {
+                            decision: Decision::Prompt,
+                            allowed_modes: Some(vec![
+                                "architect".to_string(),
+                                "reviewer".to_string(),
+                                "builder".to_string(),
+                            ]),
+                        },
+                    },
+                },
+            ),
+        );
+
+        modes.insert(
+            "librarian".to_string(),
+            ModeDef::builtin(
+                "Read-only context mapping; commands require approvals; no edits.",
+                ModePermissions {
+                    read: Decision::Allow,
+                    edit: EditPermissions::new(
+                        Decision::Deny,
+                        Vec::new(),
+                        default_deny_globs.clone(),
+                    )
+                    .expect("builtin globs must compile"),
+                    command: Decision::Prompt,
+                    process: ProcessPermissions {
+                        inspect: Decision::Allow,
+                        kill: Decision::Prompt,
+                        interact: Decision::Deny,
+                    },
+                    artifact: Decision::Allow,
+                    browser: Decision::Deny,
+                    subagent: SubagentPermissions::default(),
+                },
+            ),
+        );
+
+        modes.insert(
+            "merger".to_string(),
+            ModeDef::builtin(
+                "Integrate changes; edits and commands require approvals by default.",
+                ModePermissions {
+                    read: Decision::Allow,
+                    edit: EditPermissions::new(
+                        Decision::Prompt,
+                        Vec::new(),
+                        default_deny_globs.clone(),
+                    )
+                    .expect("builtin globs must compile"),
+                    command: Decision::Prompt,
+                    process: ProcessPermissions {
+                        inspect: Decision::Allow,
+                        kill: Decision::Prompt,
+                        interact: Decision::Deny,
+                    },
+                    artifact: Decision::Allow,
+                    browser: Decision::Deny,
+                    subagent: SubagentPermissions::default(),
+                },
+            ),
+        );
+
+        modes.insert(
+            "orchestrator".to_string(),
+            ModeDef::builtin(
+                "Drive end-to-end delivery; approvals required by default; can spawn subagents.",
+                ModePermissions {
+                    read: Decision::Allow,
+                    edit: EditPermissions::new(
+                        Decision::Prompt,
+                        Vec::new(),
+                        default_deny_globs.clone(),
+                    )
+                    .expect("builtin globs must compile"),
+                    command: Decision::Prompt,
+                    process: ProcessPermissions {
+                        inspect: Decision::Allow,
+                        kill: Decision::Prompt,
+                        interact: Decision::Deny,
+                    },
+                    artifact: Decision::Allow,
+                    browser: Decision::Prompt,
+                    subagent: SubagentPermissions {
+                        spawn: SubagentSpawnPermissions {
+                            decision: Decision::Prompt,
+                            allowed_modes: Some(vec![
+                                "architect".to_string(),
+                                "builder".to_string(),
+                                "coder".to_string(),
+                                "debugger".to_string(),
+                                "designer".to_string(),
+                                "ideator".to_string(),
+                                "librarian".to_string(),
+                                "merger".to_string(),
+                                "orchestrator".to_string(),
+                                "reviewer".to_string(),
+                                "security".to_string(),
+                                "skeptic".to_string(),
+                            ]),
+                        },
+                    },
+                },
+            ),
+        );
+
+        modes.insert(
+            "security".to_string(),
+            ModeDef::builtin(
+                "Read-only security review; commands require approvals; no edits.",
+                ModePermissions {
+                    read: Decision::Allow,
+                    edit: EditPermissions::new(
+                        Decision::Deny,
+                        Vec::new(),
+                        default_deny_globs.clone(),
+                    )
+                    .expect("builtin globs must compile"),
+                    command: Decision::Prompt,
+                    process: ProcessPermissions {
+                        inspect: Decision::Allow,
+                        kill: Decision::Prompt,
+                        interact: Decision::Deny,
+                    },
+                    artifact: Decision::Allow,
+                    browser: Decision::Deny,
+                    subagent: SubagentPermissions::default(),
+                },
+            ),
+        );
+
+        modes.insert(
+            "skeptic".to_string(),
+            ModeDef::builtin(
+                "Read-only scope reduction; commands require approvals; no edits.",
+                ModePermissions {
+                    read: Decision::Allow,
                     edit: EditPermissions::new(Decision::Deny, Vec::new(), default_deny_globs)
                         .expect("builtin globs must compile"),
                     command: Decision::Prompt,
