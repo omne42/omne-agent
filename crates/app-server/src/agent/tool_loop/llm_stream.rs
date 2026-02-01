@@ -42,7 +42,7 @@ async fn run_llm_stream_once(
                     emitted_output = true;
                     output_text.push_str(&text);
                     if emit_deltas {
-                        let delta = pm_core::redact_text(&text);
+                        let delta = omne_agent_core::redact_text(&text);
                         let response_id_snapshot = response_id.clone();
                         thread_rt.emit_notification(
                             "item/delta",
@@ -83,7 +83,7 @@ async fn run_llm_stream_once(
                     }
                     emitted_output = true;
                     if emit_deltas {
-                        let delta = pm_core::redact_text(&text);
+                        let delta = omne_agent_core::redact_text(&text);
                         let response_id_snapshot = response_id.clone();
                         thread_rt.emit_notification(
                             "item/delta",
@@ -107,7 +107,7 @@ async fn run_llm_stream_once(
         }
 
         if !output_text.is_empty() {
-            let output_text = pm_core::redact_text(&output_text);
+            let output_text = omne_agent_core::redact_text(&output_text);
             output_items.push(serde_json::json!({
                 "type": "message",
                 "role": "assistant",

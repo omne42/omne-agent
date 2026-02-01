@@ -12,7 +12,7 @@ async fn handle_fs_mkdir(server: &Server, params: FsMkdirParams) -> anyhow::Resu
             state.allowed_tools.clone(),
         )
     };
-    let tool_id = pm_protocol::ToolId::new();
+    let tool_id = omne_agent_protocol::ToolId::new();
 
     let approval_params = serde_json::json!({
         "path": params.path.clone(),
@@ -30,9 +30,9 @@ async fn handle_fs_mkdir(server: &Server, params: FsMkdirParams) -> anyhow::Resu
     {
         return Ok(result);
     }
-    if sandbox_policy == pm_protocol::SandboxPolicy::ReadOnly {
+    if sandbox_policy == omne_agent_protocol::SandboxPolicy::ReadOnly {
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+            .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
                 tool_id,
                 turn_id: params.turn_id,
                 tool: "fs/mkdir".to_string(),
@@ -40,9 +40,9 @@ async fn handle_fs_mkdir(server: &Server, params: FsMkdirParams) -> anyhow::Resu
             })
             .await?;
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+            .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                 tool_id,
-                status: pm_protocol::ToolStatus::Denied,
+                status: omne_agent_protocol::ToolStatus::Denied,
                 error: Some("sandbox_policy=read_only forbids fs/mkdir".to_string()),
                 result: Some(serde_json::json!({
                     "sandbox_policy": sandbox_policy,
@@ -56,16 +56,16 @@ async fn handle_fs_mkdir(server: &Server, params: FsMkdirParams) -> anyhow::Resu
         }));
     }
 
-    let rel_path = pm_core::modes::relative_path_under_root(&thread_root, Path::new(&params.path));
-    let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
+    let rel_path = omne_agent_core::modes::relative_path_under_root(&thread_root, Path::new(&params.path));
+    let catalog = omne_agent_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {
         Some(mode) => mode,
         None => {
             let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
-            let decision = pm_core::modes::Decision::Deny;
+            let decision = omne_agent_core::modes::Decision::Deny;
 
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
                     tool_id,
                     turn_id: params.turn_id,
                     tool: "fs/mkdir".to_string(),
@@ -73,9 +73,9 @@ async fn handle_fs_mkdir(server: &Server, params: FsMkdirParams) -> anyhow::Resu
                 })
                 .await?;
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
-                    status: pm_protocol::ToolStatus::Denied,
+                    status: omne_agent_protocol::ToolStatus::Denied,
                     error: Some("unknown mode".to_string()),
                     result: Some(serde_json::json!({
                         "mode": mode_name,
@@ -98,15 +98,15 @@ async fn handle_fs_mkdir(server: &Server, params: FsMkdirParams) -> anyhow::Resu
 
     let base_decision = match rel_path.as_ref() {
         Ok(rel) => mode.permissions.edit.decision_for_path(rel),
-        Err(_) => pm_core::modes::Decision::Deny,
+        Err(_) => omne_agent_core::modes::Decision::Deny,
     };
     let effective_decision = match mode.tool_overrides.get("fs/mkdir").copied() {
         Some(override_decision) => base_decision.combine(override_decision),
         None => base_decision,
     };
-    if effective_decision == pm_core::modes::Decision::Deny {
+    if effective_decision == omne_agent_core::modes::Decision::Deny {
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+            .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
                 tool_id,
                 turn_id: params.turn_id,
                 tool: "fs/mkdir".to_string(),
@@ -114,9 +114,9 @@ async fn handle_fs_mkdir(server: &Server, params: FsMkdirParams) -> anyhow::Resu
             })
             .await?;
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+            .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                 tool_id,
-                status: pm_protocol::ToolStatus::Denied,
+                status: omne_agent_protocol::ToolStatus::Denied,
                 error: Some("mode denies fs/mkdir".to_string()),
                 result: Some(serde_json::json!({
                     "mode": mode_name,
@@ -132,7 +132,7 @@ async fn handle_fs_mkdir(server: &Server, params: FsMkdirParams) -> anyhow::Resu
         }));
     }
 
-    if effective_decision == pm_core::modes::Decision::Prompt {
+    if effective_decision == omne_agent_core::modes::Decision::Prompt {
         match gate_approval(
             server,
             &thread_rt,
@@ -150,7 +150,7 @@ async fn handle_fs_mkdir(server: &Server, params: FsMkdirParams) -> anyhow::Resu
             ApprovalGate::Approved => {}
             ApprovalGate::Denied { remembered } => {
                 thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                    .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
                         tool_id,
                         turn_id: params.turn_id,
                         tool: "fs/mkdir".to_string(),
@@ -158,9 +158,9 @@ async fn handle_fs_mkdir(server: &Server, params: FsMkdirParams) -> anyhow::Resu
                     })
                     .await?;
                     thread_rt
-                        .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                        .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                             tool_id,
-                            status: pm_protocol::ToolStatus::Denied,
+                            status: omne_agent_protocol::ToolStatus::Denied,
                             error: Some(approval_denied_error(remembered).to_string()),
                             result: Some(serde_json::json!({
                                 "approval_policy": approval_policy,
@@ -183,7 +183,7 @@ async fn handle_fs_mkdir(server: &Server, params: FsMkdirParams) -> anyhow::Resu
     }
 
     thread_rt
-        .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+        .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
             tool_id,
             turn_id: params.turn_id,
             tool: "fs/mkdir".to_string(),
@@ -198,7 +198,7 @@ async fn handle_fs_mkdir(server: &Server, params: FsMkdirParams) -> anyhow::Resu
             sandbox_policy,
             &sandbox_writable_roots,
             Path::new(&params.path),
-            pm_core::PathAccess::Write,
+            omne_agent_core::PathAccess::Write,
             params.recursive,
         )
         .await?;
@@ -221,7 +221,7 @@ async fn handle_fs_mkdir(server: &Server, params: FsMkdirParams) -> anyhow::Resu
             Some(override_decision) => base_decision.combine(override_decision),
             None => base_decision,
         };
-        if effective_decision == pm_core::modes::Decision::Deny {
+        if effective_decision == omne_agent_core::modes::Decision::Deny {
             return Err(tool_denied(
                 "mode denies fs/mkdir".to_string(),
                 serde_json::json!({
@@ -251,9 +251,9 @@ async fn handle_fs_mkdir(server: &Server, params: FsMkdirParams) -> anyhow::Resu
     match outcome {
         Ok((created, path)) => {
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
-                    status: pm_protocol::ToolStatus::Completed,
+                    status: omne_agent_protocol::ToolStatus::Completed,
                     error: None,
                     result: Some(serde_json::json!({
                         "created": created,
@@ -270,9 +270,9 @@ async fn handle_fs_mkdir(server: &Server, params: FsMkdirParams) -> anyhow::Resu
         Err(err) => {
             if let Some(denied) = err.downcast_ref::<ToolDenied>() {
                 thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                         tool_id,
-                        status: pm_protocol::ToolStatus::Denied,
+                        status: omne_agent_protocol::ToolStatus::Denied,
                         error: Some(denied.error.clone()),
                         result: Some(denied.result.clone()),
                     })
@@ -286,9 +286,9 @@ async fn handle_fs_mkdir(server: &Server, params: FsMkdirParams) -> anyhow::Resu
                 ))
             } else {
                 thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                         tool_id,
-                        status: pm_protocol::ToolStatus::Failed,
+                        status: omne_agent_protocol::ToolStatus::Failed,
                         error: Some(err.to_string()),
                         result: None,
                     })

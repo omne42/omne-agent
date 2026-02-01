@@ -33,7 +33,7 @@ struct ToolLoop {
     turn_id: TurnId,
     cancel: CancellationToken,
     turn_priority: TurnPriority,
-    approval_policy: pm_protocol::ApprovalPolicy,
+    approval_policy: omne_agent_protocol::ApprovalPolicy,
     final_model: String,
     provider: String,
     provider_candidates: Vec<String>,
@@ -44,14 +44,13 @@ struct ToolLoop {
     env: ditto_llm::Env,
     tools: Vec<ditto_llm::Tool>,
     instructions: String,
-    turn_input: String,
     input_items: Vec<OpenAiItem>,
     tool_model: Option<String>,
     model_fallbacks: Vec<String>,
     model_client: Arc<dyn ditto_llm::LanguageModel>,
     resolved_attachments: Vec<ResolvedAttachment>,
     pdf_file_id_upload_min_bytes: u64,
-    rule_source: pm_protocol::ModelRoutingRuleSource,
+    rule_source: omne_agent_protocol::ModelRoutingRuleSource,
     rule_id: Option<String>,
     thinking_override: Option<String>,
     cfg: ToolLoopConfig,
@@ -115,7 +114,6 @@ impl ToolLoop {
             env,
             tools,
             instructions,
-            turn_input,
             mut input_items,
             tool_model,
             model_fallbacks,
@@ -127,44 +125,6 @@ impl ToolLoop {
             thinking_override,
             cfg,
         } = self;
-
-        let openai_responses_codex_parity =
-            parse_env_bool("CODE_PM_OPENAI_RESPONSES_CODEX_PARITY", true)
-                && provider_cache
-                    .get(&provider)
-                    .is_some_and(|runtime| runtime.capabilities.reasoning);
-        if openai_responses_codex_parity {
-            return run_openai_responses_codex_parity_loop(
-                server,
-                thread_rt,
-                thread_id,
-                turn_id,
-                cancel,
-                turn_priority,
-                approval_policy,
-                final_model,
-                provider,
-                provider_candidates,
-                provider_cache,
-                provider_config,
-                project_overrides,
-                base_url_override,
-                env,
-                tools,
-                instructions,
-                turn_input,
-                input_items,
-                tool_model,
-                model_fallbacks,
-                resolved_attachments,
-                pdf_file_id_upload_min_bytes,
-                rule_source,
-                rule_id,
-                thinking_override,
-                cfg,
-            )
-            .await;
-        }
 
         let mut last_response_id = String::new();
         let mut last_usage: Option<Value> = None;
@@ -669,16 +629,16 @@ impl ToolLoop {
             let tool_calls_for_event = function_calls
                 .iter()
                 .map(|(tool_name, arguments, call_id)| {
-                    let arguments = pm_core::redact_text(arguments);
+                    let arguments = omne_agent_core::redact_text(arguments);
                     let arguments = truncate_chars(&arguments, 10_000);
-                    pm_protocol::AgentStepToolCall {
+                    omne_agent_protocol::AgentStepToolCall {
                         name: tool_name.clone(),
                         call_id: call_id.clone(),
                         arguments,
                     }
                 })
                 .collect::<Vec<_>>();
-            let mut tool_results_for_event = Vec::<pm_protocol::AgentStepToolResult>::new();
+            let mut tool_results_for_event = Vec::<omne_agent_protocol::AgentStepToolResult>::new();
 
             let signature = step_signature(&function_calls);
             if let Some(kind) = loop_detector.observe(signature) {
@@ -708,9 +668,9 @@ impl ToolLoop {
                                 "tool": tool_name,
                             });
                             let output_json = serde_json::to_string(&output_value)?;
-                            let output_preview = pm_core::redact_text(&output_json);
+                            let output_preview = omne_agent_core::redact_text(&output_json);
                             let output_preview = truncate_chars(&output_preview, 10_000);
-                            tool_results_for_event.push(pm_protocol::AgentStepToolResult {
+                            tool_results_for_event.push(omne_agent_protocol::AgentStepToolResult {
                                 call_id: call_id.clone(),
                                 output: output_preview,
                             });
@@ -823,9 +783,9 @@ impl ToolLoop {
 
                 for (call_id, output_value, hook_messages) in outputs.into_iter().flatten() {
                     let output_json = serde_json::to_string(&output_value)?;
-                    let output_preview = pm_core::redact_text(&output_json);
+                    let output_preview = omne_agent_core::redact_text(&output_json);
                     let output_preview = truncate_chars(&output_preview, 10_000);
-                    tool_results_for_event.push(pm_protocol::AgentStepToolResult {
+                    tool_results_for_event.push(omne_agent_protocol::AgentStepToolResult {
                         call_id: call_id.clone(),
                         output: output_preview,
                     });
@@ -881,9 +841,9 @@ impl ToolLoop {
                     };
 
                     let output_json = serde_json::to_string(&output_value)?;
-                    let output_preview = pm_core::redact_text(&output_json);
+                    let output_preview = omne_agent_core::redact_text(&output_json);
                     let output_preview = truncate_chars(&output_preview, 10_000);
-                    tool_results_for_event.push(pm_protocol::AgentStepToolResult {
+                    tool_results_for_event.push(omne_agent_protocol::AgentStepToolResult {
                         call_id: call_id.clone(),
                         output: output_preview,
                     });
@@ -962,12 +922,4 @@ impl ToolLoop {
             last_text,
         })
     }
-}
-
-#[derive(Debug)]
-struct OpenAiRawLlmResponse {
-    id: String,
-    output_text: String,
-    output_items: Vec<Value>,
-    usage: Option<Value>,
 }

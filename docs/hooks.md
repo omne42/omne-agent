@@ -2,7 +2,7 @@
 
 > 目标：把“安全提醒/环境提示/自动化守门”从 prompt 里剥离出来，变成可版本化、可审计的 hook。
 >
-> 状态：**v0.2.0 已实现最小子集**（可用）：读取 `./.codepm_data/spec/hooks.yaml`，在 `SessionStart/PreToolUse/PostToolUse/Stop` 触发命令，并支持 `additional_context` 注入 + 落盘审计。
+> 状态：**v0.2.0 已实现最小子集**（可用）：读取 `./.omne_agent_data/spec/hooks.yaml`，在 `SessionStart/PreToolUse/PostToolUse/Stop` 触发命令，并支持 `additional_context` 注入 + 落盘审计。
 >
 > 注意：这不是 `docs/workspace_hooks.md` 的 workspace 生命周期 hooks（v0.2.0 已实现；对应 `thread/hook_run`）。
 
@@ -24,11 +24,11 @@
 
 Project config（可提交/可 review）：
 
-- **Canonical**：`./.codepm_data/spec/hooks.yaml`
+- **Canonical**：`./.omne_agent_data/spec/hooks.yaml`
 
 发现顺序（v1 建议写死，避免隐式执行未 review 的脚本）：
 
-1. `./.codepm_data/spec/hooks.yaml`
+1. `./.omne_agent_data/spec/hooks.yaml`
 2. 内置默认（无 hooks）
 
 fail-closed（写死）：
@@ -64,7 +64,7 @@ hook 本质上是“自动触发的执行 + 可选的上下文注入”。
 - hook 的执行必须落盘（等价于普通 tool/process 事件：started/completed + stdout/stderr artifacts）。
 - hook 的每一步命令执行仍走 `process/start`，并受 `execpolicy` 约束（别把 hook 当特权通道）。
 - `additional_context` 的注入发生在 **下一次模型请求** 的上下文构建阶段（同一 turn 内也可以），而不是“去改写已经发生的 tool call”。
-- 超时（写死默认）：单条 hook 命令等待进程退出的超时由 `CODE_PM_HOOK_PROCESS_TIMEOUT_SECS` 控制（默认 `3`，最大 `60`）；超时会 kill 并记失败，但不阻断主流程。
+- 超时（写死默认）：单条 hook 命令等待进程退出的超时由 `OMNE_AGENT_HOOK_PROCESS_TIMEOUT_SECS` 控制（默认 `3`，最大 `60`）；超时会 kill 并记失败，但不阻断主流程。
 
 ### 3.2 输入与输出（可审计）
 
@@ -75,10 +75,10 @@ hook 本质上是“自动触发的执行 + 可选的上下文注入”。
 
 并通过 env 把路径传给 hook 命令：
 
-- `CODE_PM_HOOK_INPUT_PATH`
-- `CODE_PM_HOOK_OUTPUT_PATH`
-- `CODE_PM_HOOK_POINT`（`session_start|pre_tool_use|post_tool_use|stop`）
-- `CODE_PM_HOOK_TOOL`（仅 tool hooks；例如 `file/write`）
+- `OMNE_AGENT_HOOK_INPUT_PATH`
+- `OMNE_AGENT_HOOK_OUTPUT_PATH`
+- `OMNE_AGENT_HOOK_POINT`（`session_start|pre_tool_use|post_tool_use|stop`）
+- `OMNE_AGENT_HOOK_TOOL`（仅 tool hooks；例如 `file/write`）
 
 （进程 stdin 默认为空，因此不要指望从 stdin 读 JSON。）
 
@@ -113,7 +113,7 @@ hooks:
       emit_additional_context: true
   pre_tool_use:
     - when_tools: ["process/start", "file/write", "file/patch", "file/edit"]
-      argv: ["python3", ".codepm_data/spec/hooks/security_reminder.py"]
+      argv: ["python3", ".omne_agent_data/spec/hooks/security_reminder.py"]
       ok_exit_codes: [0]
       emit_additional_context: true
   stop:
@@ -138,6 +138,6 @@ hooks:
 ## 5) 验收（v0.2.0）
 
 - hook 触发必须可在事件流里回放：能定位 `hook_kind + hook_id + 相关 artifacts`。
-- `PreToolUse` 注入的上下文可在 `pm thread events` 里追溯：定位 `tool=hook/run` 的结果字段 `additional_context_path` 指向的文件。
+- `PreToolUse` 注入的上下文可在 `omne-agent thread events` 里追溯：定位 `tool=hook/run` 的结果字段 `additional_context_path` 指向的文件。
 - hook 永远不能提升权限：被 `mode/sandbox/execpolicy` 拒绝的动作，不会因为 hook 而变成 allow。
 - hook 不会递归触发自身：`hook/run`（以及 hook 内部的 `process/start`）不会再次触发 `PreToolUse/PostToolUse`。

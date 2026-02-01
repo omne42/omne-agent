@@ -1,6 +1,6 @@
 use std::sync::OnceLock;
 
-use pm_protocol::ThreadEventKind;
+use omne_agent_protocol::ThreadEventKind;
 use regex::Regex;
 use serde_json::Value;
 
@@ -162,22 +162,22 @@ pub(crate) fn redact_thread_event_kind(kind: &mut ThreadEventKind) {
             if let Some(context_refs) = context_refs {
                 for ctx in context_refs {
                     match ctx {
-                        pm_protocol::ContextRef::File(file) => {
+                        omne_agent_protocol::ContextRef::File(file) => {
                             file.path = redact_text(&file.path);
                         }
-                        pm_protocol::ContextRef::Diff(_diff) => {}
+                        omne_agent_protocol::ContextRef::Diff(_diff) => {}
                     }
                 }
             }
             if let Some(attachments) = attachments {
                 for attachment in attachments {
                     match attachment {
-                        pm_protocol::TurnAttachment::Image(image) => {
+                        omne_agent_protocol::TurnAttachment::Image(image) => {
                             match &mut image.source {
-                                pm_protocol::AttachmentSource::Path { path } => {
+                                omne_agent_protocol::AttachmentSource::Path { path } => {
                                     *path = redact_text(path);
                                 }
-                                pm_protocol::AttachmentSource::Url { url } => {
+                                omne_agent_protocol::AttachmentSource::Url { url } => {
                                     *url = redact_text(url);
                                 }
                             }
@@ -185,12 +185,12 @@ pub(crate) fn redact_thread_event_kind(kind: &mut ThreadEventKind) {
                                 *media_type = redact_text(media_type);
                             }
                         }
-                        pm_protocol::TurnAttachment::File(file) => {
+                        omne_agent_protocol::TurnAttachment::File(file) => {
                             match &mut file.source {
-                                pm_protocol::AttachmentSource::Path { path } => {
+                                omne_agent_protocol::AttachmentSource::Path { path } => {
                                     *path = redact_text(path);
                                 }
-                                pm_protocol::AttachmentSource::Url { url } => {
+                                omne_agent_protocol::AttachmentSource::Url { url } => {
                                     *url = redact_text(url);
                                 }
                             }

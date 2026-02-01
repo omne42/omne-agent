@@ -3,5 +3,6 @@
 
 include!("agent/core.rs");
 include!("agent/tool_loop.rs");
+#[cfg(test)]
 include!("agent/openai_history.rs");
 include!("agent/tools.rs");

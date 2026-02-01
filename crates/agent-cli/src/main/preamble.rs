@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use clap::{Parser, Subcommand, ValueEnum};
-use pm_protocol::{
+use omne_agent_protocol::{
     ApprovalDecision, ApprovalId, ApprovalPolicy, CheckpointId, ProcessId, SandboxPolicy,
     ThreadEvent, ThreadId, TurnId, TurnStatus,
 };
@@ -16,14 +16,17 @@ use serde_json::Value;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
-#[command(name = "pm")]
-#[command(about = "CodePM v0.2.0 agent CLI (drives pm-app-server)", long_about = None)]
+#[command(name = "omne-agent")]
+#[command(
+    about = "omne-agent v0.2.0 agent CLI (drives omne-agent-app-server)",
+    long_about = None
+)]
 struct Cli {
-    /// Override project data root directory (default: `./.codepm_data/`).
+    /// Override project data root directory (default: `./.omne_agent_data/`).
     #[arg(long, global = true)]
-    pm_root: Option<PathBuf>,
+    root: Option<PathBuf>,
 
-    /// Override `pm-app-server` binary path.
+    /// Override `omne-agent-app-server` binary path.
     #[arg(long, global = true)]
     app_server: Option<PathBuf>,
 
@@ -38,7 +41,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Initialize `./.codepm_data/` in the current project.
+    /// Initialize `./.omne_agent_data/` in the current project.
     Init(InitArgs),
     Reference {
         #[command(subcommand)]
@@ -94,7 +97,7 @@ enum Command {
 
 #[derive(Subcommand)]
 enum CommandCommand {
-    /// List available commands under `./.codepm_data/spec/commands/`.
+    /// List available commands under `./.omne_agent_data/spec/commands/`.
     List {
         #[arg(long, default_value_t = false)]
         json: bool,
@@ -291,11 +294,11 @@ enum RepoCommand {
 
 #[derive(Subcommand)]
 enum McpCommand {
-    /// Serve CodePM as an MCP server over stdio (experimental).
+    /// Serve omne-agent as an MCP server over stdio (experimental).
     ///
     /// This exposes a small read-only tool allowlist intended for other MCP clients.
     Serve(McpServeArgs),
-    /// List configured MCP servers (from `.codepm_data/spec/mcp.json`).
+    /// List configured MCP servers (from `.omne_agent_data/spec/mcp.json`).
     ListServers {
         thread_id: ThreadId,
         #[arg(long)]
@@ -366,11 +369,11 @@ struct InitArgs {
     #[arg(long, default_value_t = false)]
     yes: bool,
 
-    /// Enable project config by default (`.codepm_data/config.toml`).
+    /// Enable project config by default (`.omne_agent_data/config.toml`).
     #[arg(long, default_value_t = false)]
     enable_project_config: bool,
 
-    /// Create `.codepm_data/config_local.toml` template (gitignored).
+    /// Create `.omne_agent_data/config_local.toml` template (gitignored).
     #[arg(long, default_value_t = false)]
     create_config_local: bool,
 }
@@ -688,7 +691,7 @@ enum ArtifactCommand {
     },
     Read {
         thread_id: ThreadId,
-        artifact_id: pm_protocol::ArtifactId,
+        artifact_id: omne_agent_protocol::ArtifactId,
         #[arg(long)]
         max_bytes: Option<u64>,
         #[arg(long)]
@@ -698,7 +701,7 @@ enum ArtifactCommand {
     },
     Delete {
         thread_id: ThreadId,
-        artifact_id: pm_protocol::ArtifactId,
+        artifact_id: omne_agent_protocol::ArtifactId,
         #[arg(long)]
         approval_id: Option<ApprovalId>,
         #[arg(long, default_value_t = false)]
@@ -855,7 +858,7 @@ enum CliSandboxNetworkAccess {
     Allow,
 }
 
-impl From<CliSandboxNetworkAccess> for pm_protocol::SandboxNetworkAccess {
+impl From<CliSandboxNetworkAccess> for omne_agent_protocol::SandboxNetworkAccess {
     fn from(value: CliSandboxNetworkAccess) -> Self {
         match value {
             CliSandboxNetworkAccess::Deny => Self::Deny,

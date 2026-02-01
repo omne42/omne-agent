@@ -2,7 +2,7 @@
 
 > Snapshot: `example/agent-gui/aionui` @ `5abe63b0c076`
 >
-> 结论先行：AionUi 的价值不在“它支持很多模型”，而在于它把 **各种 terminal-based agent** 统一成一个 cowork 工作台：自动检测 CLI、每个会话独立上下文、本地 SQLite 存储、强预览面板（9+ 格式）、并提供 `--webui --remote` 把桌面能力远程化。对 `CodePM vNext` 来说，最值得抄的是：**把 agent runner 当成可插拔适配层（检测/配置/协议）+ 把 artifacts/preview 当成一等公民 + 远程控制需要明确安全模型**。
+> 结论先行：AionUi 的价值不在“它支持很多模型”，而在于它把 **各种 terminal-based agent** 统一成一个 cowork 工作台：自动检测 CLI、每个会话独立上下文、本地 SQLite 存储、强预览面板（9+ 格式）、并提供 `--webui --remote` 把桌面能力远程化。对 `omne-agent vNext` 来说，最值得抄的是：**把 agent runner 当成可插拔适配层（检测/配置/协议）+ 把 artifacts/preview 当成一等公民 + 远程控制需要明确安全模型**。
 
 ---
 
@@ -16,7 +16,7 @@
 - 预览面板：PDF/Word/Excel/PPT/Markdown/HTML/Diff/图片等
 - WebUI：`AionUi --webui` / `AionUi --webui --remote`
 
-对 `CodePM`：这就是 RTS 控制台的“态势感知”组件：**你产出的不是 token，是文件、diff、日志、网页与图像**。没有 preview 面板，你的系统就是瞎跑。
+对 `omne-agent`：这就是 RTS 控制台的“态势感知”组件：**你产出的不是 token，是文件、diff、日志、网页与图像**。没有 preview 面板，你的系统就是瞎跑。
 
 ---
 
@@ -41,7 +41,7 @@
 
 实现证据：`example/agent-gui/aionui/src/process/bridge/acpConversationBridge.ts`。
 
-对 `CodePM`：这就是我们需要的 adapter 形态：**runner 发现/选择是控制面能力，不应该散落在一堆脚本文档里**。
+对 `omne-agent`：这就是我们需要的 adapter 形态：**runner 发现/选择是控制面能力，不应该散落在一堆脚本文档里**。
 
 ---
 
@@ -51,7 +51,7 @@
 
 实现证据：`example/agent-gui/aionui/src/process/services/mcpServices/McpService.ts`。
 
-对 `CodePM`：如果 vNext 要做“可扩展工具/资源/提示”，MCP 是现实世界的标准接口；我们不一定要复刻 AionUi 的实现，但要复刻“把 MCP 当一等能力”的态度。
+对 `omne-agent`：如果 vNext 要做“可扩展工具/资源/提示”，MCP 是现实世界的标准接口；我们不一定要复刻 AionUi 的实现，但要复刻“把 MCP 当一等能力”的态度。
 
 ---
 
@@ -69,7 +69,7 @@
 - `example/agent-gui/aionui/src/process/services/previewHistoryService.ts`
 - `example/agent-gui/aionui/src/common/types/preview.ts`
 
-对 `CodePM`：这几乎就是我们想要的 `Artifacts` 子系统：**turn/task 产出物的可预览、可回滚、可对比**。RTS 风格下你会同时产生大量 artifacts，没有“历史与索引”，用户根本找不到东西。
+对 `omne-agent`：这几乎就是我们想要的 `Artifacts` 子系统：**turn/task 产出物的可预览、可回滚、可对比**。RTS 风格下你会同时产生大量 artifacts，没有“历史与索引”，用户根本找不到东西。
 
 ---
 
@@ -84,7 +84,7 @@ AionUi --webui --remote
 
 实现证据：`example/agent-gui/aionui/README.md`、`example/agent-gui/aionui/WEBUI_GUIDE.md`、`example/agent-gui/aionui/package.json`。
 
-对 `CodePM`：远程化对 RTS 控制台很诱人（手机/平板看进度、远程接管），但它强制你回答三个问题：
+对 `omne-agent`：远程化对 RTS 控制台很诱人（手机/平板看进度、远程接管），但它强制你回答三个问题：
 
 1. 认证/鉴权怎么做？
 2. 远程能看到哪些文件/日志/密钥？
@@ -94,7 +94,7 @@ AionUi --webui --remote
 
 ---
 
-## 6) 对 CodePM vNext 的启示（只取精华）
+## 6) 对 omne-agent vNext 的启示（只取精华）
 
 1. **runner 适配层要可插拔**：检测/配置/协议三件事要系统化。
 2. **artifacts/preview 是产品核心，不是锦上添花**：没有预览，RTS 控制台就是盲飞。

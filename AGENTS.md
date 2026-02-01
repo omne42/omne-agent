@@ -4,26 +4,22 @@
 
 - `crates/`: Rust workspace（当前主要实现）
   - `crates/app-server/`: Codex 风格控制面（JSON-RPC over stdio）+ agent loop + tools + JSONL 事件落盘/回放
-  - `crates/agent-cli/`: 人类可用 CLI（驱动 `pm-app-server`）：`ask/watch/inbox/exec/thread/process/approval/artifact`
+  - `crates/agent-cli/`: 人类可用 CLI（驱动 `omne-agent-app-server`）：`ask/watch/inbox/exec/thread/process/approval/artifact`
   - `crates/app-server-protocol/`: app-server JSON-RPC 协议类型；TypeScript/JSON Schema 由此生成
   - `crates/agent-protocol/`: Thread/Turn/Item 事件、ID、tool/process/approval 类型
   - `crates/eventlog/`: append-only JSONL event log + replay/派生 `ThreadState`
   - `crates/core/`: 存储/脱敏/sandbox/path 边界、threads/modes 等通用能力
   - `crates/openai/`: OpenAI Responses API（含 SSE stream）
-  - `crates/jsonrpc/`: JSON-RPC stdio client（`pm` 使用）
   - `crates/execpolicy/`: prefix-rule 执行策略引擎（Codex 子集）
-  - `crates/legacy-git-adapter/`：v0.1.x git adapter（保留参考；v0.2.x 目标是 agent-first CLI）
-  - `crates/legacy-git-http-server/`：v0.1.x git smart-http server（保留参考）
-  - `crates/legacy-cli/`: v0.1.x 遗留 CLI（git pipeline；保留参考）
 - `docs/`: 规划、架构与调研文档
-  - `docs/start.md`: 目标、范围与约束
+  - `docs/start.md`: 入口（quickstart + agent_root 约定）
   - `docs/implementation_plan.md`: Rust 优先的实现计划与里程碑
   - `docs/v0.2.0_parity.md`: v0.2.0 对齐清单（以 agent-first CLI 为中心）
   - `docs/modes.md`: Mode（角色权限边界）规范（可落盘/可审计/可强制）
   - `docs/research/`: 上游快照仓库的设计分析（索引见 `docs/research/README.md`）
 - `example/`: 上游仓库的本地快照，仅供参考；已被 `.gitignore` 忽略（不要在 PR 中修改，也不要将其作为 CI 依赖）
 - `githooks/`: 提交前质量门槛（Conventional Commits + changelog 绑定 + Rust gates）
-- `.codepm_data/`: 项目级数据根（运行时数据 + 可提交 spec/config；不要提交 `.env` 与运行时子目录）
+- `.omne_agent_data/`: 项目级数据根（运行时数据 + 可提交 spec/config；不要提交 `.env` 与运行时子目录）
 
 ## 构建、测试与开发命令
 
@@ -37,7 +33,7 @@
   - `cargo check --workspace --all-targets`
   - `cargo test --workspace`
   - `cargo clippy --workspace --all-targets --all-features -- -D warnings`
-- 运行（示例）：`cargo run -p pm -- --help` / `cargo run -p pm-app-server -- --help`
+- 运行（示例）：`cargo run -p omne-agent -- --help` / `cargo run -p omne-agent-app-server -- --help`
 - 启用 hooks（如未配置）：`git config core.hooksPath githooks`
 
 ## 编码风格与命名约定
@@ -75,7 +71,7 @@
 
 ## Agent 专用说明
 
-- 优先使用 `rg` 搜索；除非必要，避免扫描 `example/`/`target/`/`.codepm_data/`（如 `rg -g'!example/**' -g'!target/**' -g'!.codepm_data/**' "<keyword>"`）。
+- 优先使用 `rg` 搜索；除非必要，避免扫描 `example/`/`target/`/`.omne_agent_data/`（如 `rg -g'!example/**' -g'!target/**' -g'!.omne_agent_data/**' "<keyword>"`）。
 - 保持改动聚焦；除非明确要求，不要更新/改写上游快照内容。
 
 ## 角色定义

@@ -22,24 +22,24 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     if let Some(command) = args.command {
         match command {
-            CliCommand::GenerateTs(output) => pm_app_server_protocol::generate_ts(&output.out_dir)?,
+            CliCommand::GenerateTs(output) => omne_agent_app_server_protocol::generate_ts(&output.out_dir)?,
             CliCommand::GenerateJsonSchema(output) => {
-                pm_app_server_protocol::generate_json_schema(&output.out_dir)?
+                omne_agent_app_server_protocol::generate_json_schema(&output.out_dir)?
             }
         }
         return Ok(());
     }
 
     let cwd = std::env::current_dir()?;
-    let pm_root = args
-        .pm_root
-        .or_else(|| std::env::var_os("CODE_PM_ROOT").map(PathBuf::from))
-        .unwrap_or_else(|| cwd.join(".codepm_data"));
+    let root = args
+        .root
+        .or_else(|| std::env::var_os("OMNE_AGENT_ROOT").map(PathBuf::from))
+        .unwrap_or_else(|| cwd.join(".omne_agent_data"));
 
     let exec_policy = if args.execpolicy_rules.is_empty() {
-        pm_execpolicy::Policy::empty()
+        omne_agent_execpolicy::Policy::empty()
     } else {
-        pm_execpolicy::execpolicycheck::load_policies(&args.execpolicy_rules)?
+        omne_agent_execpolicy::execpolicycheck::load_policies(&args.execpolicy_rules)?
     };
 
     let (notify_tx, _notify_rx) = broadcast::channel::<String>(NOTIFY_CHANNEL_CAPACITY);
@@ -49,7 +49,7 @@ async fn main() -> anyhow::Result<()> {
         cwd,
         notify_tx,
         notify_hub: init_notify_hub()?,
-        thread_store: ThreadStore::new(PmPaths::new(pm_root)),
+        thread_store: ThreadStore::new(AgentPaths::new(root)),
         threads: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         processes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         mcp: Arc::new(tokio::sync::Mutex::new(McpManager::default())),
@@ -119,14 +119,14 @@ where
         let response = match request.method.as_str() {
             "initialize" => {
                 if initialized {
-                    JsonRpcResponse::err(id, CODE_PM_ALREADY_INITIALIZED, "already initialized", None)
+                    JsonRpcResponse::err(id, OMNE_AGENT_ALREADY_INITIALIZED, "already initialized", None)
                 } else {
                     initialized = true;
                     JsonRpcResponse::ok(
                         id,
                         serde_json::json!({
                             "server": {
-                                "name": "pm-app-server",
+                                "name": "omne-agent-app-server",
                                 "version": env!("CARGO_PKG_VERSION"),
                             }
                         }),
@@ -137,10 +137,10 @@ where
                 if initialized {
                     JsonRpcResponse::ok(id, serde_json::json!({ "ok": true }))
                 } else {
-                    JsonRpcResponse::err(id, CODE_PM_NOT_INITIALIZED, "not initialized", None)
+                    JsonRpcResponse::err(id, OMNE_AGENT_NOT_INITIALIZED, "not initialized", None)
                 }
             }
-            _ if !initialized => JsonRpcResponse::err(id, CODE_PM_NOT_INITIALIZED, "not initialized", None),
+            _ if !initialized => JsonRpcResponse::err(id, OMNE_AGENT_NOT_INITIALIZED, "not initialized", None),
             _ => handle_initialized_request(&server, request).await,
         };
 

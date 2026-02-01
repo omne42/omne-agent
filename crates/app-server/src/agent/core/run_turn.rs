@@ -4,7 +4,7 @@ pub async fn run_agent_turn(
     turn_id: TurnId,
     input: String,
     cancel: CancellationToken,
-    turn_priority: pm_protocol::TurnPriority,
+    turn_priority: omne_agent_protocol::TurnPriority,
 ) -> anyhow::Result<()> {
     let (
         thread_id,
@@ -33,7 +33,7 @@ pub async fn run_agent_turn(
     };
 
     let thread_root = match thread_cwd.as_deref() {
-        Some(thread_cwd) => Some(pm_core::resolve_dir(Path::new(thread_cwd), Path::new(".")).await?),
+        Some(thread_cwd) => Some(omne_agent_core::resolve_dir(Path::new(thread_cwd), Path::new(".")).await?),
         None => None,
     };
 
@@ -47,7 +47,7 @@ pub async fn run_agent_turn(
         .clone()
         .or(project_overrides.provider.clone())
         .or_else(|| {
-            std::env::var("CODE_PM_OPENAI_PROVIDER")
+            std::env::var("OMNE_AGENT_OPENAI_PROVIDER")
                 .ok()
                 .filter(|s| !s.trim().is_empty())
         })
@@ -70,7 +70,7 @@ pub async fn run_agent_turn(
         .clone()
         .or(project_overrides.base_url.clone())
         .or_else(|| {
-            std::env::var("CODE_PM_OPENAI_BASE_URL")
+            std::env::var("OMNE_AGENT_OPENAI_BASE_URL")
                 .ok()
                 .filter(|s| !s.trim().is_empty())
         });
@@ -88,7 +88,7 @@ pub async fn run_agent_turn(
         .unwrap_or_else(ditto_llm::ProviderCapabilities::openai_responses);
     if !provider_capabilities.tools {
         anyhow::bail!(
-            "provider does not support tools: provider={provider} (CodePM requires tool calling; set [openai.providers.{provider}.capabilities.tools]=true)"
+            "provider does not support tools: provider={provider} (omne-agent requires tool calling; set [openai.providers.{provider}.capabilities.tools]=true)"
         );
     }
     if !provider_capabilities.streaming {
@@ -109,7 +109,7 @@ pub async fn run_agent_turn(
         auth: provider_config.auth.clone(),
         capabilities: Some(provider_capabilities),
     };
-    let (model_client, openai_responses_client, file_uploader) = if provider_capabilities.reasoning {
+    let (model_client, file_uploader) = if provider_capabilities.reasoning {
         let openai = Arc::new(
             ditto_llm::OpenAI::from_config(&provider_for_llm, &env)
                 .await
@@ -117,7 +117,7 @@ pub async fn run_agent_turn(
         );
         let model_client: Arc<dyn ditto_llm::LanguageModel> = openai.clone();
         let file_uploader: Arc<dyn FileUploader> = openai.clone();
-        (model_client, Some(openai), Some(file_uploader))
+        (model_client, Some(file_uploader))
     } else {
         let chat = Arc::new(
             ditto_llm::OpenAICompatible::from_config(&provider_for_llm, &env)
@@ -126,10 +126,10 @@ pub async fn run_agent_turn(
         );
         let model_client: Arc<dyn ditto_llm::LanguageModel> = chat.clone();
         let file_uploader: Arc<dyn FileUploader> = chat;
-        (model_client, None, Some(file_uploader))
+        (model_client, Some(file_uploader))
     };
 
-    let fallbacks = std::env::var("CODE_PM_OPENAI_FALLBACK_PROVIDERS")
+    let fallbacks = std::env::var("OMNE_AGENT_OPENAI_FALLBACK_PROVIDERS")
         .ok()
         .map(|value| parse_csv_list(&value))
         .unwrap_or_else(|| project_overrides.fallback_providers.clone());
@@ -141,7 +141,6 @@ pub async fn run_agent_turn(
             config: provider_for_llm,
             capabilities: provider_capabilities,
             client: model_client.clone(),
-            openai_responses_client,
             file_uploader,
         },
     );
@@ -150,79 +149,79 @@ pub async fn run_agent_turn(
     let tools = tool_specs_to_ditto_tools(&tool_specs).context("parse tool schemas")?;
 
     let max_agent_steps = parse_env_usize(
-        "CODE_PM_AGENT_MAX_STEPS",
+        "OMNE_AGENT_MAX_STEPS",
         DEFAULT_MAX_AGENT_STEPS,
         1,
         MAX_MAX_AGENT_STEPS,
     );
     let max_tool_calls = parse_env_usize(
-        "CODE_PM_AGENT_MAX_TOOL_CALLS",
+        "OMNE_AGENT_MAX_TOOL_CALLS",
         DEFAULT_MAX_TOOL_CALLS,
         1,
         MAX_MAX_TOOL_CALLS,
     );
     let max_turn_duration = Duration::from_secs(parse_env_u64(
-        "CODE_PM_AGENT_MAX_TURN_SECONDS",
+        "OMNE_AGENT_MAX_TURN_SECONDS",
         DEFAULT_MAX_TURN_SECONDS,
         1,
         MAX_MAX_TURN_SECONDS,
     ));
     let max_openai_request_duration = Duration::from_secs(parse_env_u64(
-        "CODE_PM_AGENT_MAX_OPENAI_REQUEST_SECONDS",
+        "OMNE_AGENT_MAX_OPENAI_REQUEST_SECONDS",
         DEFAULT_MAX_OPENAI_REQUEST_SECONDS,
         1,
         MAX_MAX_OPENAI_REQUEST_SECONDS,
     ));
     let llm_max_attempts = parse_env_usize(
-        "CODE_PM_AGENT_LLM_MAX_ATTEMPTS",
+        "OMNE_AGENT_LLM_MAX_ATTEMPTS",
         DEFAULT_LLM_MAX_ATTEMPTS,
         1,
         MAX_LLM_MAX_ATTEMPTS,
     );
     let llm_retry_base_delay = Duration::from_millis(parse_env_u64(
-        "CODE_PM_AGENT_LLM_RETRY_BASE_DELAY_MS",
+        "OMNE_AGENT_LLM_RETRY_BASE_DELAY_MS",
         DEFAULT_LLM_RETRY_BASE_DELAY_MS,
         0,
         MAX_LLM_RETRY_DELAY_MS,
     ));
     let llm_retry_max_delay = Duration::from_millis(parse_env_u64(
-        "CODE_PM_AGENT_LLM_RETRY_MAX_DELAY_MS",
+        "OMNE_AGENT_LLM_RETRY_MAX_DELAY_MS",
         DEFAULT_LLM_RETRY_MAX_DELAY_MS,
         0,
         MAX_LLM_RETRY_DELAY_MS,
     ));
     let max_total_tokens = parse_env_u64(
-        "CODE_PM_AGENT_MAX_TOTAL_TOKENS",
+        "OMNE_AGENT_MAX_TOTAL_TOKENS",
         DEFAULT_MAX_TOTAL_TOKENS,
         0,
         MAX_MAX_TOTAL_TOKENS,
     );
     let auto_summary_threshold_pct = parse_env_u64(
-        "CODE_PM_AGENT_AUTO_SUMMARY_THRESHOLD_PCT",
+        "OMNE_AGENT_AUTO_SUMMARY_THRESHOLD_PCT",
         DEFAULT_AUTO_SUMMARY_THRESHOLD_PCT,
         1,
         MAX_AUTO_SUMMARY_THRESHOLD_PCT,
     );
     let auto_summary_source_max_chars = parse_env_usize(
-        "CODE_PM_AGENT_AUTO_SUMMARY_SOURCE_MAX_CHARS",
+        "OMNE_AGENT_AUTO_SUMMARY_SOURCE_MAX_CHARS",
         DEFAULT_AUTO_SUMMARY_SOURCE_MAX_CHARS,
         1,
         MAX_AUTO_SUMMARY_SOURCE_MAX_CHARS,
     );
     let auto_summary_tail_items = parse_env_usize(
-        "CODE_PM_AGENT_AUTO_SUMMARY_TAIL_ITEMS",
+        "OMNE_AGENT_AUTO_SUMMARY_TAIL_ITEMS",
         DEFAULT_AUTO_SUMMARY_TAIL_ITEMS,
         0,
         MAX_AUTO_SUMMARY_TAIL_ITEMS,
     );
-    let parallel_tool_calls = parse_env_bool("CODE_PM_AGENT_PARALLEL_TOOL_CALLS", false);
+    let parallel_tool_calls = parse_env_bool("OMNE_AGENT_PARALLEL_TOOL_CALLS", false);
     let max_parallel_tool_calls = parse_env_usize(
-        "CODE_PM_AGENT_MAX_PARALLEL_TOOL_CALLS",
+        "OMNE_AGENT_MAX_PARALLEL_TOOL_CALLS",
         DEFAULT_MAX_PARALLEL_TOOL_CALLS,
         1,
         MAX_MAX_PARALLEL_TOOL_CALLS,
     );
-    let response_format = match std::env::var("CODE_PM_AGENT_RESPONSE_FORMAT_JSON") {
+    let response_format = match std::env::var("OMNE_AGENT_RESPONSE_FORMAT_JSON") {
         Ok(raw) => {
             let raw = raw.trim();
             if raw.is_empty() {
@@ -230,7 +229,7 @@ pub async fn run_agent_turn(
             } else {
                 Some(
                     serde_json::from_str::<ditto_llm::ResponseFormat>(raw)
-                        .context("parse CODE_PM_AGENT_RESPONSE_FORMAT_JSON")?,
+                        .context("parse OMNE_AGENT_RESPONSE_FORMAT_JSON")?,
                 )
             }
         }
@@ -241,7 +240,7 @@ pub async fn run_agent_turn(
 
     if let Some(user_instructions_path) = resolve_user_instructions_path() {
         if let Ok(contents) = tokio::fs::read_to_string(&user_instructions_path).await {
-            let contents = pm_core::redact_text(&contents);
+            let contents = omne_agent_core::redact_text(&contents);
             instructions.push_str("\n\n# User instructions\n\n");
             instructions.push_str(&format!(
                 "_Source: {}_\n\n",
@@ -254,7 +253,7 @@ pub async fn run_agent_turn(
     if let Some(cwd) = thread_cwd.as_deref() {
         let agents_path = PathBuf::from(cwd).join("AGENTS.md");
         if let Ok(contents) = tokio::fs::read_to_string(&agents_path).await {
-            let contents = pm_core::redact_text(&contents);
+            let contents = omne_agent_core::redact_text(&contents);
             instructions.push_str("\n\n# Project instructions (AGENTS.md)\n\n");
             instructions.push_str(&contents);
         }
@@ -303,7 +302,7 @@ pub async fn run_agent_turn(
 
     let attachments = load_turn_attachments(&server, thread_id, turn_id).await?;
     let max_attachments = parse_env_usize(
-        "CODE_PM_AGENT_MAX_ATTACHMENTS",
+        "OMNE_AGENT_MAX_ATTACHMENTS",
         DEFAULT_AGENT_MAX_ATTACHMENTS,
         0,
         MAX_AGENT_MAX_ATTACHMENTS,
@@ -316,13 +315,13 @@ pub async fn run_agent_turn(
         );
     }
     let max_attachment_bytes = parse_env_u64(
-        "CODE_PM_AGENT_MAX_ATTACHMENT_BYTES",
+        "OMNE_AGENT_MAX_ATTACHMENT_BYTES",
         DEFAULT_AGENT_MAX_ATTACHMENT_BYTES,
         0,
         MAX_AGENT_MAX_ATTACHMENT_BYTES,
     );
     let pdf_file_id_upload_min_bytes = parse_env_u64(
-        "CODE_PM_AGENT_PDF_FILE_ID_UPLOAD_MIN_BYTES",
+        "OMNE_AGENT_PDF_FILE_ID_UPLOAD_MIN_BYTES",
         DEFAULT_AGENT_PDF_FILE_ID_UPLOAD_MIN_BYTES,
         0,
         MAX_AGENT_PDF_FILE_ID_UPLOAD_MIN_BYTES,
@@ -343,7 +342,7 @@ pub async fn run_agent_turn(
 
     let (mode_default_model, mode_default_thinking) = match thread_root.as_deref() {
         Some(thread_root) => {
-            let catalog = pm_core::modes::ModeCatalog::load(thread_root).await;
+            let catalog = omne_agent_core::modes::ModeCatalog::load(thread_root).await;
             let def = catalog.mode(&thread_mode);
             (
                 def.and_then(|mode| mode.model.clone()),
@@ -354,7 +353,7 @@ pub async fn run_agent_turn(
     };
 
     let router_config = match thread_root.as_deref() {
-        Some(thread_root) => pm_core::router::load_router_config(thread_root).await?,
+        Some(thread_root) => omne_agent_core::router::load_router_config(thread_root).await?,
         None => None,
     };
     let thread_forced_model = thread_model.is_some();
@@ -363,7 +362,7 @@ pub async fn run_agent_turn(
         .or(mode_default_model.clone())
         .or(project_overrides.model.clone())
         .or_else(|| {
-            std::env::var("CODE_PM_OPENAI_MODEL")
+            std::env::var("OMNE_AGENT_OPENAI_MODEL")
                 .ok()
                 .filter(|s| !s.trim().is_empty())
         })
@@ -371,7 +370,7 @@ pub async fn run_agent_turn(
         .unwrap_or_else(|| DEFAULT_MODEL.to_string());
 
     let routed = if thread_forced_model {
-        pm_core::router::route_model(
+        omne_agent_core::router::route_model(
             router_config.as_ref().map(|loaded| &loaded.config),
             Some(thread_mode.as_str()),
             &input,
@@ -380,9 +379,9 @@ pub async fn run_agent_turn(
             context_tokens_estimate,
         )
     } else if let Some(skill_model) = skill_overrides.model.clone() {
-        pm_core::router::ModelRouteDecision {
+        omne_agent_core::router::ModelRouteDecision {
             selected_model: skill_model,
-            rule_source: pm_protocol::ModelRoutingRuleSource::Skill,
+            rule_source: omne_agent_protocol::ModelRoutingRuleSource::Skill,
             reason: Some(format!(
                 "model forced by skill: {}",
                 skill_overrides.model_sources.join(", ")
@@ -390,7 +389,7 @@ pub async fn run_agent_turn(
             rule_id: None,
         }
     } else {
-        pm_core::router::route_model(
+        omne_agent_core::router::route_model(
             router_config.as_ref().map(|loaded| &loaded.config),
             Some(thread_mode.as_str()),
             &input,
@@ -399,7 +398,7 @@ pub async fn run_agent_turn(
             context_tokens_estimate,
         )
     };
-    let pm_core::router::ModelRouteDecision {
+    let omne_agent_core::router::ModelRouteDecision {
         selected_model,
         rule_source,
         reason,
@@ -417,7 +416,7 @@ pub async fn run_agent_turn(
     let tool_model = if forced_model {
         None
     } else {
-        std::env::var("CODE_PM_AGENT_TOOL_MODEL")
+        std::env::var("OMNE_AGENT_TOOL_MODEL")
             .ok()
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
@@ -431,7 +430,7 @@ pub async fn run_agent_turn(
         }
     }
 
-    let model_fallbacks = std::env::var("CODE_PM_AGENT_FALLBACK_MODELS")
+    let model_fallbacks = std::env::var("OMNE_AGENT_FALLBACK_MODELS")
         .ok()
         .map(|value| parse_csv_list(&value))
         .unwrap_or_default();
@@ -532,7 +531,6 @@ pub async fn run_agent_turn(
         env,
         tools,
         instructions,
-        turn_input: input,
         input_items,
         tool_model,
         model_fallbacks,

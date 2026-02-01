@@ -1,5 +1,5 @@
 [package]
-name = "pm-protocol"
+name = "omne-agent-protocol"
 edition.workspace = true
 rust-version.workspace = true
 version.workspace = true

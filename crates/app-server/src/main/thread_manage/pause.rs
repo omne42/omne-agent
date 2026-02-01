@@ -50,7 +50,7 @@ async fn handle_thread_pause(server: &Server, params: ThreadPauseParams) -> anyh
     }
 
     thread_rt
-        .append_event(pm_protocol::ThreadEventKind::ThreadPaused {
+        .append_event(omne_agent_protocol::ThreadEventKind::ThreadPaused {
             reason: reason.clone(),
         })
         .await?;
@@ -80,7 +80,7 @@ async fn handle_thread_unpause(server: &Server, params: ThreadUnpauseParams) -> 
     }
 
     thread_rt
-        .append_event(pm_protocol::ThreadEventKind::ThreadUnpaused {
+        .append_event(omne_agent_protocol::ThreadEventKind::ThreadUnpaused {
             reason: params.reason,
         })
         .await?;

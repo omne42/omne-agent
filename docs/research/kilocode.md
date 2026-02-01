@@ -2,7 +2,7 @@
 
 > Snapshot: `example/kilocode` @ `e4ced0062c`
 >
-> 结论先行：这个 snapshot **不包含完整的扩展源代码**（未见预期的 `src/`、`webview-ui/` 等目录），但包含大量“工程治理层”的材料：`AGENTS.md`、工作流、技能、模式权限、变更日志、贡献规范等。对 `CodePM` 来说，Kilo Code 的最大价值在于：它展示了一个大型 agent 平台如何做**角色/模式权限**与**fork 维护策略（merge 上游）**。
+> 结论先行：这个 snapshot **不包含完整的扩展源代码**（未见预期的 `src/`、`webview-ui/` 等目录），但包含大量“工程治理层”的材料：`AGENTS.md`、工作流、技能、模式权限、变更日志、贡献规范等。对 `omne-agent` 来说，Kilo Code 的最大价值在于：它展示了一个大型 agent 平台如何做**角色/模式权限**与**fork 维护策略（merge 上游）**。
 
 ---
 
@@ -67,9 +67,9 @@
   - 新文件：`// kilocode_change - new file`
 - 并明确哪些目录不需要 markers、哪些必须有。
 
-> 对 `CodePM`：我们明确要“基于 codex 魔改”。如果我们未来要跟随 codex 上游更新，这套 marker 体系几乎是必需品。建议我们引入类似：
+> 对 `omne-agent`：我们明确要“基于 codex 魔改”。如果我们未来要跟随 codex 上游更新，这套 marker 体系几乎是必需品。建议我们引入类似：
 >
-> - `code_pm_change` / `code_pm_change start/end`
+> - `omne_agent_change` / `omne_agent_change start/end`
 > - 并在 CI 或脚本里检查“修改核心上游文件是否缺 marker”
 
 补充：Kilo 还提到会用 `scripts/kilocode/` 周期性 merge 上游。对我们来说，哪怕第一阶段先手工同步，也建议把“上游同步”当作一个正式工作流来设计（否则魔改越久越难跟）。
@@ -90,7 +90,7 @@
 - 不是全局 sandbox，而是**按角色限制“能做什么 + 能改哪里”**；
 - 且模式本身可配置、可版本化、可分享。
 
-> 对 `CodePM`：我们提出了 Ideator/IdeaCritic/Architect/Coder/Reviewer/Merger/Builder/FrontendStylist 等角色。Kilo 的 mode 权限模型非常适合映射：
+> 对 `omne-agent`：我们提出了 Ideator/IdeaCritic/Architect/Coder/Reviewer/Merger/Builder/FrontendStylist 等角色。Kilo 的 mode 权限模型非常适合映射：
 >
 > - `Reviewer`：read-only + 允许运行有限的检查命令
 > - `FrontendStylist`：只允许 edit `*.css`/`*.scss`/`tailwind config` 等
@@ -112,7 +112,7 @@
 - **并发粒度可控**
 - **每个子任务输入/输出边界清晰**（减少上下文污染、便于重试）
 
-> 对 `CodePM`：这与我们“临时目录 + 并发 task + PR 产出”几乎是同构的；只是 Kilo 的子任务是逻辑拆分，我们的子任务还要落到 `/tmp/{repo}_{session}/tasks/{task}` 的物理隔离。
+> 对 `omne-agent`：这与我们“临时目录 + 并发 task + PR 产出”几乎是同构的；只是 Kilo 的子任务是逻辑拆分，我们的子任务还要落到 `/tmp/{repo}_{session}/tasks/{task}` 的物理隔离。
 
 ### 3.4 Skills = 长期可维护的团队规范沉淀
 
@@ -124,17 +124,17 @@
 - 具体工作流步骤与校验脚本
 - zh-CN/zh-TW/de 的语言特定规范
 
-> 对 `CodePM`：如果我们要做“全生命周期”，最终一定会积累大量“组织级规范”（commit message、PR 模板、目录约定、安全规范）。Skills 文档化 + 可自动触发，是最可维护的方式之一。
+> 对 `omne-agent`：如果我们要做“全生命周期”，最终一定会积累大量“组织级规范”（commit message、PR 模板、目录约定、安全规范）。Skills 文档化 + 可自动触发，是最可维护的方式之一。
 
 ---
 
-## 4. 对 `CodePM` 的落地建议（结合我们“基于 codex 魔改”）
+## 4. 对 `omne-agent` 的落地建议（结合我们“基于 codex 魔改”）
 
 ### 4.1 先引入 fork markers（P0）
 
 在我们开始复制/魔改 `example/codex` 的代码前，就建立：
 
-- `code_pm_change` marker 规范
+- `omne_agent_change` marker 规范
 - 合并上游时的脚本流程（类似 `scripts/kilocode/` 的概念）
 
 ### 4.2 建立“角色 → 权限策略”的配置层（P0/P1）
@@ -149,7 +149,7 @@
 
 Kilo 的 workflows/skills 是纯文本，天然可 review/可复用。我们可以：
 
-- 在 `CodePM` 中引入 `workflows/` 目录（或 `docs/workflows/`）
+- 在 `omne-agent` 中引入 `workflows/` 目录（或 `docs/workflows/`）
 - 用统一 frontmatter 定义 allowed tools / inputs / outputs
 - orchestrator 读取 spec，生成并发 task
 

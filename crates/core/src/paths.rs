@@ -1,14 +1,14 @@
 use std::path::{Path, PathBuf};
 
 use crate::domain::{RepositoryName, SessionId, TaskId};
-use pm_protocol::ThreadId;
+use omne_agent_protocol::ThreadId;
 
 #[derive(Clone, Debug)]
-pub struct PmPaths {
+pub struct AgentPaths {
     root: PathBuf,
 }
 
-impl PmPaths {
+impl AgentPaths {
     pub fn new(root: PathBuf) -> Self {
         Self { root }
     }
@@ -95,7 +95,7 @@ impl SessionPaths {
 }
 
 fn resolve_tmp_root() -> PathBuf {
-    match std::env::var_os("CODE_PM_TMP_ROOT") {
+    match std::env::var_os("OMNE_AGENT_TMP_ROOT") {
         Some(value) if !value.is_empty() => PathBuf::from(value),
         _ => {
             let path = PathBuf::from("/tmp");

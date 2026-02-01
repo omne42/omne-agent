@@ -53,7 +53,7 @@
 
 > 以下描述以“从各仓库根目录运行命令”为准。
 
-### 2.1 `codex_pm/`：已经具备 unrolled loop 的主要骨架
+### 2.1 `omne-agent/`：已经具备 unrolled loop 的主要骨架
 
 - agent loop：`crates/app-server/src/agent/tool_loop.rs`
   - 流式采样（`ditto_llm::LanguageModel::stream`）
@@ -84,7 +84,7 @@
 
 - 文章里的 agent loop 默认假设“模型可调用工具、工具可影响本地环境”；这需要硬边界。
 - `safe-fs-tools` 的 `SandboxPolicy`/`Root`/`SecretRules`/`limits` 非常适合成为：
-  - CodePM 的默认文件系统工具底座（比“随便读写”更可审计、更易控）
+  - omne-agent 的默认文件系统工具底座（比“随便读写”更可审计、更易控）
 
 ### 2.5 `code-checker/`：可以当作“只读分析类工具”的案例
 
@@ -96,7 +96,7 @@
 
 - **两条 loop 的 item 完整度不同**：
   - 默认 loop（`ditto_llm::LanguageModel::stream`）只会生成 `message/function_call/function_call_output` 等基础 item。
-  - Codex parity loop 走 raw `/responses` stream + `/responses/compact`，可以 round-trip 任意 item（含 `compaction`/`encrypted_content`），但目前只在 reasoning provider 且 `CODE_PM_OPENAI_RESPONSES_CODEX_PARITY=1` 时启用。
+  - Codex parity loop 走 raw `/responses` stream + `/responses/compact`，可以 round-trip 任意 item（含 `compaction`/`encrypted_content`），但目前只在 reasoning provider 且 `OMNE_AGENT_OPENAI_RESPONSES_CODEX_PARITY=1` 时启用。
 - **compaction 路线不同**：
   - 我们的 auto summary 是“生成一段 summary 文本并重建 system message + tail items”
   - 文章强调的 `/responses/compact` 会返回 items（含 opaque state）→ 对 OpenAI 的 latent state 保留更强
@@ -115,7 +115,7 @@
 - 把“prompt caching 友好”变成明确约束：
   - tools 的枚举顺序稳定
   - model/sandbox/approval/cwd 变化用“追加 message item”表达（不修改历史 input）
-- 在 `ditto-llm`/`codex_pm` 打通 token usage details（至少 cached_tokens）用于观测与回归
+- 在 `ditto-llm`/`omne-agent` 打通 token usage details（至少 cached_tokens）用于观测与回归
 
 ### Option B：补齐 Responses items 的 raw round-trip（为 ZDR/compaction 铺路）
 
@@ -131,8 +131,8 @@
 ## 5) 快速核对（可复制命令）
 
 ```bash
-# 1) CodePM: agent loop / auto summary / tool 并发
-cd codex_pm
+# 1) omne-agent: agent loop / auto summary / tool 并发
+cd omne-agent
 rg -n "ToolLoop|run_llm_stream_once|auto_compact_summary" crates/app-server/src/agent -S
 rg -n "PARALLEL_TOOL_CALLS|read-only" docs/tool_parallelism.md docs -S
 
@@ -147,12 +147,12 @@ rg -n "TrustMode|list_changed|tools" -S
 
 ---
 
-## 6) CodePM 当前实现：OpenAI Responses Codex Parity（选择 Option B）
+## 6) omne-agent 当前实现：OpenAI Responses Codex Parity（选择 Option B）
 
-为了在 **OpenAI `/responses`** 下做到与 Codex CLI 同一条逻辑链（raw items + prompt caching + `/responses/compact`），我们在 `codex_pm/` 增加了一条“并行历史通道”：
+为了在 **OpenAI `/responses`** 下做到与 Codex CLI 同一条逻辑链（raw items + prompt caching + `/responses/compact`），我们在 `omne-agent/` 增加了一条“并行历史通道”：
 
 - **Raw history 文件（source-of-truth）**：每个 thread 一个 `openai_responses_history.jsonl`
-  - 位置：thread 目录下（由 `pm_core::ThreadStore` 管理）
+  - 位置：thread 目录下（由 `omne_agent_core::ThreadStore` 管理）
   - 记录形态：append-only records（`item` / `compacted` replacement）
   - 文件：`crates/app-server/src/agent/openai_history.rs`
 - **Raw Responses 流式调用**：直接以 raw `input` items 调用 `/responses`，并保存 `response.output_item.done` 的原样 JSON
@@ -162,7 +162,7 @@ rg -n "TrustMode|list_changed|tools" -S
   - legacy 路径保持 `true`；parity 路径传 `false`
   - 关键文件：`crates/app-server/src/agent/tools/dispatch.rs`、`crates/app-server/src/agent/tool_loop.rs`
 - **开关与默认**
-  - env：`CODE_PM_OPENAI_RESPONSES_CODEX_PARITY`（默认 `true`）
+  - env：`OMNE_AGENT_OPENAI_RESPONSES_CODEX_PARITY`（默认 `true`）
   - 仅当 provider 使用 Responses（`capabilities.reasoning=true`）时生效
 
 ⚠️ 风险提示：parity 路径会把更多“原始上下文”写进本地 history（包括 tool outputs）。目前依赖文件权限（unix 下 `0600`）来降低风险；若要做到 Codex PR #1641 的级别（加密存储 + 内存密钥 + ZDR 生命周期），需要进一步演进本地存储层。

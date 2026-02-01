@@ -5,7 +5,7 @@ const CHECKPOINT_MAX_TOTAL_BYTES: u64 = 1024 * 1024 * 1024;
 #[derive(Debug, Serialize, Deserialize)]
 struct CheckpointManifestV1 {
     version: u32,
-    checkpoint_id: pm_protocol::CheckpointId,
+    checkpoint_id: omne_agent_protocol::CheckpointId,
     #[serde(with = "time::serde::rfc3339")]
     created_at: OffsetDateTime,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -62,18 +62,16 @@ struct RestorePlan {
 fn checkpoint_ignored_globs() -> Vec<String> {
     vec![
         ".git/**".to_string(),
-        ".code_pm/**".to_string(),
-        ".codepm/**".to_string(),
         "target/**".to_string(),
         "node_modules/**".to_string(),
         "example/**".to_string(),
-        ".codepm_data/tmp/**".to_string(),
-        ".codepm_data/threads/**".to_string(),
-        ".codepm_data/locks/**".to_string(),
-        ".codepm_data/logs/**".to_string(),
-        ".codepm_data/data/**".to_string(),
-        ".codepm_data/repos/**".to_string(),
-        ".codepm_data/reference/**".to_string(),
+        ".omne_agent_data/tmp/**".to_string(),
+        ".omne_agent_data/threads/**".to_string(),
+        ".omne_agent_data/locks/**".to_string(),
+        ".omne_agent_data/logs/**".to_string(),
+        ".omne_agent_data/data/**".to_string(),
+        ".omne_agent_data/repos/**".to_string(),
+        ".omne_agent_data/reference/**".to_string(),
         "**/.env".to_string(),
         "**/.env.*".to_string(),
         "**/.envrc".to_string(),
@@ -398,7 +396,7 @@ async fn handle_thread_checkpoint_create(
         );
     }
 
-    let checkpoint_id = pm_protocol::CheckpointId::new();
+    let checkpoint_id = omne_agent_protocol::CheckpointId::new();
     let checkpoint_dir = server
         .thread_store
         .thread_dir(params.thread_id)
@@ -409,7 +407,7 @@ async fn handle_thread_checkpoint_create(
     let manifest_path = checkpoint_dir.join("manifest.json");
     let snapshot_ref = format!("artifacts/checkpoints/{checkpoint_id}");
 
-    let label = params.label.map(|label| pm_core::redact_text(&label));
+    let label = params.label.map(|label| omne_agent_core::redact_text(&label));
     let created_at = OffsetDateTime::now_utc();
 
     let outcome = snapshot_workspace_to_dir(
@@ -455,7 +453,7 @@ async fn handle_thread_checkpoint_create(
         .with_context(|| format!("write {}", manifest_path.display()))?;
 
     thread_rt
-        .append_event(pm_protocol::ThreadEventKind::CheckpointCreated {
+        .append_event(omne_agent_protocol::ThreadEventKind::CheckpointCreated {
             checkpoint_id,
             turn_id: None,
             label: label.clone(),
@@ -593,12 +591,12 @@ async fn handle_thread_checkpoint_restore(
         );
     }
 
-    if sandbox_policy == pm_protocol::SandboxPolicy::ReadOnly {
+    if sandbox_policy == omne_agent_protocol::SandboxPolicy::ReadOnly {
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::CheckpointRestored {
+            .append_event(omne_agent_protocol::ThreadEventKind::CheckpointRestored {
                 checkpoint_id: params.checkpoint_id,
                 turn_id: params.turn_id,
-                status: pm_protocol::CheckpointRestoreStatus::Failed,
+                status: omne_agent_protocol::CheckpointRestoreStatus::Failed,
                 reason: Some("sandbox_policy=read_only forbids checkpoint restore".to_string()),
                 report_artifact_id: None,
             })
@@ -640,16 +638,16 @@ async fn handle_thread_checkpoint_restore(
         );
     }
 
-    let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
+    let catalog = omne_agent_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {
         Some(mode) => mode,
         None => {
             let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::CheckpointRestored {
+                .append_event(omne_agent_protocol::ThreadEventKind::CheckpointRestored {
                     checkpoint_id: params.checkpoint_id,
                     turn_id: params.turn_id,
-                    status: pm_protocol::CheckpointRestoreStatus::Failed,
+                    status: omne_agent_protocol::CheckpointRestoreStatus::Failed,
                     reason: Some("unknown mode".to_string()),
                     report_artifact_id: None,
                 })
@@ -659,7 +657,7 @@ async fn handle_thread_checkpoint_restore(
                 "checkpoint_id": params.checkpoint_id,
                 "denied": true,
                 "mode": mode_name,
-                "decision": pm_core::modes::Decision::Deny,
+                "decision": omne_agent_core::modes::Decision::Deny,
                 "available": available,
                 "load_error": catalog.load_error.clone(),
             }));
@@ -676,12 +674,12 @@ async fn handle_thread_checkpoint_restore(
         None => base_decision,
     };
 
-    if effective_decision == pm_core::modes::Decision::Deny {
+    if effective_decision == omne_agent_core::modes::Decision::Deny {
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::CheckpointRestored {
+            .append_event(omne_agent_protocol::ThreadEventKind::CheckpointRestored {
                 checkpoint_id: params.checkpoint_id,
                 turn_id: params.turn_id,
-                status: pm_protocol::CheckpointRestoreStatus::Failed,
+                status: omne_agent_protocol::CheckpointRestoreStatus::Failed,
                 reason: Some("mode denies checkpoint restore".to_string()),
                 report_artifact_id: None,
             })
@@ -721,10 +719,10 @@ async fn handle_thread_checkpoint_restore(
         ApprovalGate::Approved => {}
         ApprovalGate::Denied { remembered: _ } => {
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::CheckpointRestored {
+                .append_event(omne_agent_protocol::ThreadEventKind::CheckpointRestored {
                     checkpoint_id: params.checkpoint_id,
                     turn_id: params.turn_id,
-                    status: pm_protocol::CheckpointRestoreStatus::Failed,
+                    status: omne_agent_protocol::CheckpointRestoreStatus::Failed,
                     reason: Some("approval denied".to_string()),
                     report_artifact_id: None,
                 })
@@ -748,10 +746,10 @@ async fn handle_thread_checkpoint_restore(
 
     if !sandbox_writable_roots.is_empty() {
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::CheckpointRestored {
+            .append_event(omne_agent_protocol::ThreadEventKind::CheckpointRestored {
                 checkpoint_id: params.checkpoint_id,
                 turn_id: params.turn_id,
-                status: pm_protocol::CheckpointRestoreStatus::Failed,
+                status: omne_agent_protocol::CheckpointRestoreStatus::Failed,
                 reason: Some(
                     "checkpoint restore is not supported when sandbox_writable_roots is set"
                         .to_string(),
@@ -771,10 +769,10 @@ async fn handle_thread_checkpoint_restore(
     match result {
         Ok(()) => {
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::CheckpointRestored {
+                .append_event(omne_agent_protocol::ThreadEventKind::CheckpointRestored {
                     checkpoint_id: params.checkpoint_id,
                     turn_id: params.turn_id,
-                    status: pm_protocol::CheckpointRestoreStatus::Ok,
+                    status: omne_agent_protocol::CheckpointRestoreStatus::Ok,
                     reason: None,
                     report_artifact_id: None,
                 })
@@ -789,10 +787,10 @@ async fn handle_thread_checkpoint_restore(
         }
         Err(err) => {
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::CheckpointRestored {
+                .append_event(omne_agent_protocol::ThreadEventKind::CheckpointRestored {
                     checkpoint_id: params.checkpoint_id,
                     turn_id: params.turn_id,
-                    status: pm_protocol::CheckpointRestoreStatus::Failed,
+                    status: omne_agent_protocol::CheckpointRestoreStatus::Failed,
                     reason: Some(err.to_string()),
                     report_artifact_id: None,
                 })

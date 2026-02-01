@@ -24,41 +24,41 @@ async fn handle_thread_fork(server: &Server, params: ThreadForkParams) -> anyhow
     for event in events {
         let kind = event.kind;
         match kind {
-            pm_protocol::ThreadEventKind::ThreadCreated { .. } => {}
-            pm_protocol::ThreadEventKind::ThreadArchived { .. }
-            | pm_protocol::ThreadEventKind::ThreadUnarchived { .. }
-            | pm_protocol::ThreadEventKind::ThreadPaused { .. }
-            | pm_protocol::ThreadEventKind::ThreadUnpaused { .. } => {}
-            kind @ pm_protocol::ThreadEventKind::ThreadConfigUpdated { .. } => {
+            omne_agent_protocol::ThreadEventKind::ThreadCreated { .. } => {}
+            omne_agent_protocol::ThreadEventKind::ThreadArchived { .. }
+            | omne_agent_protocol::ThreadEventKind::ThreadUnarchived { .. }
+            | omne_agent_protocol::ThreadEventKind::ThreadPaused { .. }
+            | omne_agent_protocol::ThreadEventKind::ThreadUnpaused { .. } => {}
+            kind @ omne_agent_protocol::ThreadEventKind::ThreadConfigUpdated { .. } => {
                 forked.append(kind).await?;
             }
-            pm_protocol::ThreadEventKind::TurnStarted { turn_id, .. } if active_turn_id == Some(turn_id) => {}
-            pm_protocol::ThreadEventKind::ModelRouted { turn_id, .. } if active_turn_id == Some(turn_id) => {}
-            pm_protocol::ThreadEventKind::TurnInterruptRequested { turn_id, .. }
+            omne_agent_protocol::ThreadEventKind::TurnStarted { turn_id, .. } if active_turn_id == Some(turn_id) => {}
+            omne_agent_protocol::ThreadEventKind::ModelRouted { turn_id, .. } if active_turn_id == Some(turn_id) => {}
+            omne_agent_protocol::ThreadEventKind::TurnInterruptRequested { turn_id, .. }
                 if active_turn_id == Some(turn_id) => {}
-            pm_protocol::ThreadEventKind::TurnCompleted { turn_id, .. } if active_turn_id == Some(turn_id) => {}
-            pm_protocol::ThreadEventKind::ApprovalRequested { turn_id: Some(turn_id), .. }
+            omne_agent_protocol::ThreadEventKind::TurnCompleted { turn_id, .. } if active_turn_id == Some(turn_id) => {}
+            omne_agent_protocol::ThreadEventKind::ApprovalRequested { turn_id: Some(turn_id), .. }
                 if active_turn_id == Some(turn_id) => {}
-            pm_protocol::ThreadEventKind::AssistantMessage { turn_id: Some(turn_id), .. }
+            omne_agent_protocol::ThreadEventKind::AssistantMessage { turn_id: Some(turn_id), .. }
                 if active_turn_id == Some(turn_id) => {}
-            kind @ pm_protocol::ThreadEventKind::TurnStarted { .. }
-            | kind @ pm_protocol::ThreadEventKind::ModelRouted { .. }
-            | kind @ pm_protocol::ThreadEventKind::TurnInterruptRequested { .. }
-            | kind @ pm_protocol::ThreadEventKind::TurnCompleted { .. }
-            | kind @ pm_protocol::ThreadEventKind::ApprovalRequested { .. }
-            | kind @ pm_protocol::ThreadEventKind::ApprovalDecided { .. }
-            | kind @ pm_protocol::ThreadEventKind::AssistantMessage { .. } => {
+            kind @ omne_agent_protocol::ThreadEventKind::TurnStarted { .. }
+            | kind @ omne_agent_protocol::ThreadEventKind::ModelRouted { .. }
+            | kind @ omne_agent_protocol::ThreadEventKind::TurnInterruptRequested { .. }
+            | kind @ omne_agent_protocol::ThreadEventKind::TurnCompleted { .. }
+            | kind @ omne_agent_protocol::ThreadEventKind::ApprovalRequested { .. }
+            | kind @ omne_agent_protocol::ThreadEventKind::ApprovalDecided { .. }
+            | kind @ omne_agent_protocol::ThreadEventKind::AssistantMessage { .. } => {
                 forked.append(kind).await?;
             }
-            pm_protocol::ThreadEventKind::ToolStarted { .. }
-            | pm_protocol::ThreadEventKind::ToolCompleted { .. }
-            | pm_protocol::ThreadEventKind::AgentStep { .. }
-            | pm_protocol::ThreadEventKind::ProcessStarted { .. }
-            | pm_protocol::ThreadEventKind::ProcessInterruptRequested { .. }
-            | pm_protocol::ThreadEventKind::ProcessKillRequested { .. }
-            | pm_protocol::ThreadEventKind::ProcessExited { .. }
-            | pm_protocol::ThreadEventKind::CheckpointCreated { .. }
-            | pm_protocol::ThreadEventKind::CheckpointRestored { .. } => {}
+            omne_agent_protocol::ThreadEventKind::ToolStarted { .. }
+            | omne_agent_protocol::ThreadEventKind::ToolCompleted { .. }
+            | omne_agent_protocol::ThreadEventKind::AgentStep { .. }
+            | omne_agent_protocol::ThreadEventKind::ProcessStarted { .. }
+            | omne_agent_protocol::ThreadEventKind::ProcessInterruptRequested { .. }
+            | omne_agent_protocol::ThreadEventKind::ProcessKillRequested { .. }
+            | omne_agent_protocol::ThreadEventKind::ProcessExited { .. }
+            | omne_agent_protocol::ThreadEventKind::CheckpointCreated { .. }
+            | omne_agent_protocol::ThreadEventKind::CheckpointRestored { .. } => {}
         }
     }
 

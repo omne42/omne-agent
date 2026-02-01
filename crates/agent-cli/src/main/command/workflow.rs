@@ -6,8 +6,8 @@ struct CommandSummary {
     file: String,
 }
 
-fn workflow_spec_dir(pm_root: &std::path::Path) -> PathBuf {
-    pm_root.join("spec").join("commands")
+fn workflow_spec_dir(agent_root: &std::path::Path) -> PathBuf {
+    agent_root.join("spec").join("commands")
 }
 
 fn validate_workflow_name(name: &str) -> anyhow::Result<()> {
@@ -144,11 +144,11 @@ fn sanitize_frontmatter(
 
 async fn load_workflow_file(cli: &Cli, name: &str) -> anyhow::Result<WorkflowFile> {
     validate_workflow_name(name)?;
-    let pm_root = resolve_pm_root(cli)?;
-    let dir = workflow_spec_dir(&pm_root);
+    let agent_root = resolve_root(cli)?;
+    let dir = workflow_spec_dir(&agent_root);
     if !tokio::fs::try_exists(&dir).await? {
         anyhow::bail!(
-            "commands dir is missing: {} (run `pm init`?)",
+            "commands dir is missing: {} (run `omne-agent init`?)",
             dir.display()
         );
     }
@@ -267,11 +267,11 @@ async fn wait_for_process_exit(
 }
 
 async fn run_command_list(cli: &Cli, json: bool) -> anyhow::Result<()> {
-    let pm_root = resolve_pm_root(cli)?;
-    let dir = workflow_spec_dir(&pm_root);
+    let agent_root = resolve_root(cli)?;
+    let dir = workflow_spec_dir(&agent_root);
     if !tokio::fs::try_exists(&dir).await? {
         anyhow::bail!(
-            "commands dir is missing: {} (run `pm init`?)",
+            "commands dir is missing: {} (run `omne-agent init`?)",
             dir.display()
         );
     }
@@ -352,7 +352,7 @@ async fn run_command_run(
     command: &CommandCommand,
 ) -> anyhow::Result<()> {
     let CommandCommand::Run(args) = command else {
-        anyhow::bail!("command execution is only supported via `pm command run`");
+        anyhow::bail!("command execution is only supported via `omne-agent command run`");
     };
     if args.fan_out_early_return && !args.fan_out {
         anyhow::bail!("--fan-out-early-return requires --fan-out");
@@ -454,13 +454,13 @@ async fn run_command_run(
         process_ids.push(process_id);
     }
 
-    let mut fan_in_artifact_id: Option<pm_protocol::ArtifactId> = None;
+    let mut fan_in_artifact_id: Option<omne_agent_protocol::ArtifactId> = None;
     let mut fan_out_results = Vec::<WorkflowTaskResult>::new();
     let mut fan_out_scheduler: Option<FanOutScheduler> = None;
     if args.fan_out {
         let tasks = parse_workflow_tasks(&rendered_body)?;
         if !tasks.is_empty() {
-            let artifact_id = pm_protocol::ArtifactId::new();
+            let artifact_id = omne_agent_protocol::ArtifactId::new();
             if args.fan_out_early_return {
                 let mut scheduler = FanOutScheduler::start(
                     app,
@@ -497,7 +497,7 @@ async fn run_command_run(
             .collect::<Vec<_>>()
             .join(", ");
         input.push_str(&format!(
-            "Context steps executed. process_id(s)={ids}. Use `pm process inspect/tail/follow` for details.\n\n"
+            "Context steps executed. process_id(s)={ids}. Use `omne-agent process inspect/tail/follow` for details.\n\n"
         ));
     }
     if let Some(artifact_id) = fan_in_artifact_id {
@@ -523,7 +523,7 @@ async fn run_command_run(
         }
         input.push('\n');
         input.push_str(&format!(
-            "Use `pm artifact read {thread_id} {artifact_id}` for the full fan-in summary.\n\n"
+            "Use `omne-agent artifact read {thread_id} {artifact_id}` for the full fan-in summary.\n\n"
         ));
     }
     input.push_str(&rendered_body);
@@ -593,4 +593,3 @@ async fn run_command_run(
 
     Ok(())
 }
-

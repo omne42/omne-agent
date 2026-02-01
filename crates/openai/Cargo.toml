@@ -1,5 +1,5 @@
 [package]
-name = "pm-openai"
+name = "omne-agent-openai"
 edition.workspace = true
 rust-version.workspace = true
 version.workspace = true

@@ -1,0 +1,11 @@
+{
+  "name": "@omne-agent/app-server-client",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Minimal Node.js client for omne-agent-app-server (JSON-RPC over stdio).",
+  "exports": "./src/index.js",
+  "engines": {
+    "node": ">=18"
+  }
+}

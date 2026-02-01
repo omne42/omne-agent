@@ -1,14 +1,14 @@
 # TUI（Terminal UI）：v0.2.0 P0 规格（薄客户端）
 
-> 结论先行：TUI 不是“另一套 core”，只是 `pm-app-server`（JSON-RPC 事件流）的一个投影。**唯一真相**仍然是 `Thread/Turn/Item` 落盘事件与可重放语义。
+> 结论先行：TUI 不是“另一套 core”，只是 `omne-agent-app-server`（JSON-RPC 事件流）的一个投影。**唯一真相**仍然是 `Thread/Turn/Item` 落盘事件与可重放语义。
 >
-> v0.2.0 现状：已落地 `pm`/`pm tui`（默认新建 thread；Esc 回 thread picker；Ctrl-K 指令菜单；Ctrl-C 中断（空闲退出）；transcript scrollback；`item/delta` 流式）以及 Approvals/Processes/Artifacts 弹窗（只调用既有 JSON-RPC；无 stdin/PTY 交互）。
+> v0.2.0 现状：已落地 `omne-agent`/`omne-agent tui`（默认新建 thread；Esc 回 thread picker；Ctrl-K 指令菜单；Ctrl-C 中断（空闲退出）；transcript scrollback；`item/delta` 流式）以及 Approvals/Processes/Artifacts 弹窗（只调用既有 JSON-RPC；无 stdin/PTY 交互）。
 
 ## 1) v0.2.0 P0 目标与边界
 
 ### 1.1 必须做（P0）
 
-- `pm tui`：全屏交互 UI（Rust，Ratatui 风格）。
+- `omne-agent tui`：全屏交互 UI（Rust，Ratatui 风格）。
 - Thread 列表：展示 thread 元信息与 Attention 状态，能进入某个 thread。
 - Thread 视图：
   - 订阅事件并增量渲染 transcript（含 `item/delta` 文本流）。
@@ -26,11 +26,11 @@
 
 ## 2) 架构（数据结构与所有权）
 
-### 2.1 进程边界：TUI = `pm` 的一个前端
+### 2.1 进程边界：TUI = `omne-agent` 的一个前端
 
-默认形态与现有 `pm cli`（REPL 风格）一致：
+默认形态与现有 `omne-agent cli`（REPL 风格）一致：
 
-- `pm`/`pm tui` 优先连接 `<pm_root>/daemon.sock`，失败则 spawn `pm-app-server`，并完成 `initialize/initialized`。
+- `omne-agent`/`omne-agent tui` 优先连接 `<agent_root>/daemon.sock`，失败则 spawn `omne-agent-app-server`，并完成 `initialize/initialized`。
 - TUI 只做两件事：
   1. 消费 notifications + `thread/subscribe` 的重放事件，派生出 UI state；
   2. 把用户动作映射为 JSON-RPC request（`thread/*`、`turn/*`、`approval/*`、`process/*`、`artifact/*`）。
@@ -40,7 +40,7 @@
 - UI 不拥有业务状态；它只缓存派生视图（例如当前 thread 的 `ThreadState`、当前选中的 item）。
 - 断线/崩溃恢复：记录 `since_seq`，重启后用 `thread/state`/`thread/subscribe` 从 `last_seq + 1` 补齐。
 
-> 经验：Codex 的 TUI 直接驱动 core；OpenCode 的 TUI 通过 client/server+事件流驱动。对 CodePM 来说，**我们已经有 app-server + 事件模型**，最简单也最稳的是：TUI 做 thin client，不要再造一套“UI 专用 core”。
+> 经验：Codex 的 TUI 直接驱动 core；OpenCode 的 TUI 通过 client/server+事件流驱动。对 omne-agent 来说，**我们已经有 app-server + 事件模型**，最简单也最稳的是：TUI 做 thin client，不要再造一套“UI 专用 core”。
 
 ## 3) 渲染与性能（别自找麻烦）
 
@@ -56,8 +56,8 @@
 - 进入/退出全屏（alt-screen）要可靠；panic/异常必须恢复终端状态。
 - 打开外部 pager/editor 时，先“暂时恢复终端模式”，结束后再接管（参考 Codex 的 `with_restored` 思路）。
 - 鼠标滚轮：使用终端原生滚动/选择文本（TUI 不启用 mouse capture）。
-- 视口高度：可用 `CODE_PM_TUI_VIEWPORT_HEIGHT=16` 调整 Inline viewport 的高度，留更多空间给上方终端历史。
-- scrollback 开关：可用 `CODE_PM_TUI_SCROLLBACK=0` 关闭 Inline viewport（回到不依赖终端 scrollback 的渲染模式）。
+- 视口高度：可用 `OMNE_AGENT_TUI_VIEWPORT_HEIGHT=16` 调整 Inline viewport 的高度，留更多空间给上方终端历史。
+- scrollback 开关：可用 `OMNE_AGENT_TUI_SCROLLBACK=0` 关闭 Inline viewport（回到不依赖终端 scrollback 的渲染模式）。
 
 ## 5) 测试策略（别把 TUI 变成黑盒）
 

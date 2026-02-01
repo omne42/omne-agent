@@ -14,7 +14,7 @@ fn thread_hook_key(hook: WorkspaceHookName) -> &'static str {
 
 async fn handle_thread_hook_run(server: &Server, params: ThreadHookRunParams) -> anyhow::Result<Value> {
     let (_thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
-    let config_dir = thread_root.join(".codepm_data").join("spec");
+    let config_dir = thread_root.join(".omne_agent_data").join("spec");
     let yaml_path = config_dir.join("workspace.yaml");
     let yml_path = config_dir.join("workspace.yml");
 

@@ -2,7 +2,7 @@ fn redact_tool_output(mut value: Value) -> Value {
     fn walk(value: &mut Value) {
         match value {
             Value::String(s) => {
-                *s = pm_core::redact_text(s);
+                *s = omne_agent_core::redact_text(s);
             }
             Value::Array(items) => {
                 for item in items {

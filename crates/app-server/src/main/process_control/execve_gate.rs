@@ -2,9 +2,9 @@
 const EXECVE_GATE_MCP_PROTOCOL_VERSION: &str = "2025-06-18";
 
 #[cfg(unix)]
-const EXECVE_GATE_TOOL_DECIDE: &str = "codepm.execve.decide";
+const EXECVE_GATE_TOOL_DECIDE: &str = "omne_agent.execve.decide";
 #[cfg(unix)]
-const EXECVE_GATE_TOOL_WAIT: &str = "codepm.execve.wait";
+const EXECVE_GATE_TOOL_WAIT: &str = "omne_agent.execve.wait";
 
 #[cfg(unix)]
 struct ExecveGateHandle {
@@ -24,7 +24,7 @@ struct ExecveGateContext {
     token: String,
     thread_root: PathBuf,
     thread_store: ThreadStore,
-    exec_policy: pm_execpolicy::Policy,
+    exec_policy: omne_agent_execpolicy::Policy,
     thread_rt: Arc<ThreadRuntime>,
 }
 
@@ -225,7 +225,7 @@ async fn handle_mcp_initialize(state: &mut McpInitState, id: Value) -> Value {
         serde_json::json!({
             "protocolVersion": EXECVE_GATE_MCP_PROTOCOL_VERSION,
             "serverInfo": {
-                "name": "codepm-execve-gate",
+                "name": "omne-agent-execve-gate",
                 "version": env!("CARGO_PKG_VERSION"),
             },
             "capabilities": {
@@ -345,7 +345,7 @@ struct ExecveGateDecideArgs {
 #[serde(deny_unknown_fields)]
 struct ExecveGateWaitArgs {
     token: String,
-    approval_id: pm_protocol::ApprovalId,
+    approval_id: omne_agent_protocol::ApprovalId,
     #[serde(default)]
     timeout_ms: Option<u64>,
 }
@@ -400,14 +400,14 @@ async fn handle_execve_gate_decide(
         )
     };
 
-    if sandbox_policy == pm_protocol::SandboxPolicy::ReadOnly {
+    if sandbox_policy == omne_agent_protocol::SandboxPolicy::ReadOnly {
         return Ok(serde_json::json!({
             "decision": "deny",
             "reason": "sandbox_policy=read_only forbids execve",
         }));
     }
 
-    if sandbox_network_access == pm_protocol::SandboxNetworkAccess::Deny
+    if sandbox_network_access == omne_agent_protocol::SandboxNetworkAccess::Deny
         && command_uses_network(&args.argv)
     {
         return Ok(serde_json::json!({
@@ -416,7 +416,7 @@ async fn handle_execve_gate_decide(
         }));
     }
 
-    let catalog = pm_core::modes::ModeCatalog::load(&ctx.thread_root).await;
+    let catalog = omne_agent_core::modes::ModeCatalog::load(&ctx.thread_root).await;
     let mode = match catalog.mode(&mode_name) {
         Some(mode) => mode,
         None => {
@@ -547,7 +547,7 @@ async fn handle_execve_gate_wait(
         since = events.last().map(|e| e.seq).unwrap_or(since);
 
         for event in events {
-            if let pm_protocol::ThreadEventKind::ApprovalDecided {
+            if let omne_agent_protocol::ThreadEventKind::ApprovalDecided {
                 approval_id,
                 decision,
                 remember,
@@ -557,8 +557,8 @@ async fn handle_execve_gate_wait(
             {
                 return Ok(serde_json::json!({
                     "decision": match decision {
-                        pm_protocol::ApprovalDecision::Approved => "run",
-                        pm_protocol::ApprovalDecision::Denied => "deny",
+                        omne_agent_protocol::ApprovalDecision::Approved => "run",
+                        omne_agent_protocol::ApprovalDecision::Denied => "deny",
                     },
                     "remember": remember,
                     "reason": reason,
@@ -608,13 +608,16 @@ fn execve_gate_tools() -> Vec<Value> {
 mod execve_gate_tests {
     use super::*;
 
-    fn build_test_server(pm_root: PathBuf, exec_policy: pm_execpolicy::Policy) -> Server {
+    fn build_test_server(
+        agent_root: PathBuf,
+        exec_policy: omne_agent_execpolicy::Policy,
+    ) -> Server {
         let (notify_tx, _notify_rx) = broadcast::channel::<String>(16);
         Server {
-            cwd: pm_root.clone(),
+            cwd: agent_root.clone(),
             notify_tx,
             notify_hub: default_notify_hub(),
-            thread_store: ThreadStore::new(PmPaths::new(pm_root)),
+            thread_store: ThreadStore::new(AgentPaths::new(agent_root)),
             threads: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             processes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             mcp: Arc::new(tokio::sync::Mutex::new(McpManager::default())),
@@ -690,10 +693,10 @@ mod execve_gate_tests {
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let mut exec_policy = pm_execpolicy::Policy::empty();
+        let mut exec_policy = omne_agent_execpolicy::Policy::empty();
         exec_policy.add_prefix_rule(&["git".to_string()], ExecDecision::Forbidden)?;
 
-        let server = build_test_server(tmp.path().join(".codepm_data"), exec_policy.clone());
+        let server = build_test_server(tmp.path().join(".omne_agent_data"), exec_policy.clone());
         let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -744,10 +747,10 @@ mod execve_gate_tests {
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let mut exec_policy = pm_execpolicy::Policy::empty();
+        let mut exec_policy = omne_agent_execpolicy::Policy::empty();
         exec_policy.add_prefix_rule(&["git".to_string()], ExecDecision::PromptStrict)?;
 
-        let server = build_test_server(tmp.path().join(".codepm_data"), exec_policy.clone());
+        let server = build_test_server(tmp.path().join(".omne_agent_data"), exec_policy.clone());
         let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -786,7 +789,7 @@ mod execve_gate_tests {
         .await?;
         let payload = mcp_payload(&resp)?;
         assert_eq!(payload["decision"], "escalate");
-        let approval_id: pm_protocol::ApprovalId = payload["approval_id"]
+        let approval_id: omne_agent_protocol::ApprovalId = payload["approval_id"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("missing approval_id"))?
             .parse()?;
@@ -795,9 +798,9 @@ mod execve_gate_tests {
             let thread_rt = thread_rt.clone();
             async move {
                 let _ = thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ApprovalDecided {
+                    .append_event(omne_agent_protocol::ThreadEventKind::ApprovalDecided {
                         approval_id,
-                        decision: pm_protocol::ApprovalDecision::Approved,
+                        decision: omne_agent_protocol::ApprovalDecision::Approved,
                         remember: false,
                         reason: Some("ok".to_string()),
                     })

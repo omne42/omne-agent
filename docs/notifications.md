@@ -22,9 +22,9 @@ Attention 的派生语义与状态集合见：
 
 ---
 
-## 1) 已实现：`pm watch --bell`
+## 1) 已实现：`omne-agent watch --bell`
 
-`pm watch --bell` 是单 thread 的事件流订阅：
+`omne-agent watch --bell` 是单 thread 的事件流订阅：
 
 - 从事件流推导状态变化（例如 `ApprovalRequested` → `need_approval`，`TurnCompleted{Stuck}` → `stuck`）。
 - 只有当状态变为 `need_approval|failed|stuck` 才会响铃。
@@ -37,9 +37,9 @@ Attention 的派生语义与状态集合见：
 
 ---
 
-## 2) 已实现：`pm inbox --watch --bell`
+## 2) 已实现：`omne-agent inbox --watch --bell`
 
-`pm inbox --watch --bell` 轮询所有 thread meta：
+`omne-agent inbox --watch --bell` 轮询所有 thread meta：
 
 - 只对 `need_approval|failed|stuck` 响铃。
 - 按 `(thread_id, attention_state)` 去重/节流：相同 thread 的相同状态在 `debounce_window` 内只提醒一次；状态变化才再次提醒。
@@ -61,7 +61,7 @@ Attention 的派生语义与状态集合见：
   - running process 在 `idle_window` 内无新输出（以 stdout/stderr artifacts 的 mtime 近似）
 - 行为：
   - `thread/attention` 输出 `stale_processes=[{process_id, idle_seconds, last_update_at, stdout_path, stderr_path}]`
-  - `pm inbox --bell` / `pm watch --bell` 在 `stale_processes` 从空变非空时提醒一次（节流同上）
+  - `omne-agent inbox --bell` / `omne-agent watch --bell` 在 `stale_processes` 从空变非空时提醒一次（节流同上）
 - 默认阈值建议：`idle_window=300s`；`0` 禁用
 
 建议实现（写死一个简单、可复用的算法）：
@@ -79,7 +79,7 @@ Attention 的派生语义与状态集合见：
 
 配置项：
 
-- `CODE_PM_PROCESS_IDLE_WINDOW_SECONDS`：
+- `OMNE_AGENT_PROCESS_IDLE_WINDOW_SECONDS`：
   - `0` = 禁用
   - `N>0` = idle_window 秒数（默认建议 300）
 
@@ -93,6 +93,6 @@ Attention 的派生语义与状态集合见：
 
 ```bash
 # bell 逻辑（状态推导 + debounce）
-rg -n \"pm inbox\" crates/agent-cli/src/main/watch_inbox.rs
+rg -n \"omne-agent inbox\" crates/agent-cli/src/main/watch_inbox.rs
 rg -n \"maybe_bell\" crates/agent-cli/src/main/watch_inbox.rs
 ```

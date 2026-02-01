@@ -107,7 +107,7 @@ fn build_tools() -> Vec<Value> {
         ),
         tool_function(
             "mcp_list_servers",
-            "List configured MCP servers (from .codepm_data/spec/mcp.json).",
+            "List configured MCP servers (from .omne_agent_data/spec/mcp.json).",
             serde_json::json!({
                 "type": "object",
                 "properties": {},

@@ -19,7 +19,7 @@ async fn handle_process_kill(server: &Server, params: ProcessKillParams) -> anyh
         )
     };
 
-    let tool_id = pm_protocol::ToolId::new();
+    let tool_id = omne_agent_protocol::ToolId::new();
     let approval_params = serde_json::json!({
         "process_id": params.process_id,
         "reason": params.reason.clone(),
@@ -37,15 +37,15 @@ async fn handle_process_kill(server: &Server, params: ProcessKillParams) -> anyh
         return Ok(result);
     }
 
-    let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
+    let catalog = omne_agent_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {
         Some(mode) => mode,
         None => {
             let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
-            let decision = pm_core::modes::Decision::Deny;
+            let decision = omne_agent_core::modes::Decision::Deny;
 
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
                     tool_id,
                     turn_id: params.turn_id,
                     tool: "process/kill".to_string(),
@@ -53,9 +53,9 @@ async fn handle_process_kill(server: &Server, params: ProcessKillParams) -> anyh
                 })
                 .await?;
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
-                    status: pm_protocol::ToolStatus::Denied,
+                    status: omne_agent_protocol::ToolStatus::Denied,
                     error: Some("unknown mode".to_string()),
                     result: Some(serde_json::json!({
                         "mode": mode_name,
@@ -81,9 +81,9 @@ async fn handle_process_kill(server: &Server, params: ProcessKillParams) -> anyh
         Some(override_decision) => base_decision.combine(override_decision),
         None => base_decision,
     };
-    if effective_decision == pm_core::modes::Decision::Deny {
+    if effective_decision == omne_agent_core::modes::Decision::Deny {
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+            .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
                 tool_id,
                 turn_id: params.turn_id,
                 tool: "process/kill".to_string(),
@@ -91,9 +91,9 @@ async fn handle_process_kill(server: &Server, params: ProcessKillParams) -> anyh
             })
             .await?;
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+            .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                 tool_id,
-                status: pm_protocol::ToolStatus::Denied,
+                status: omne_agent_protocol::ToolStatus::Denied,
                 error: Some("mode denies process/kill".to_string()),
                 result: Some(serde_json::json!({
                     "mode": mode_name,
@@ -109,7 +109,7 @@ async fn handle_process_kill(server: &Server, params: ProcessKillParams) -> anyh
         }));
     }
 
-    if effective_decision == pm_core::modes::Decision::Prompt {
+    if effective_decision == omne_agent_core::modes::Decision::Prompt {
         match gate_approval(
             server,
             &thread_rt,
@@ -127,7 +127,7 @@ async fn handle_process_kill(server: &Server, params: ProcessKillParams) -> anyh
             ApprovalGate::Approved => {}
             ApprovalGate::Denied { remembered } => {
                 thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                    .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
                         tool_id,
                         turn_id: params.turn_id,
                         tool: "process/kill".to_string(),
@@ -135,9 +135,9 @@ async fn handle_process_kill(server: &Server, params: ProcessKillParams) -> anyh
                     })
                     .await?;
                     thread_rt
-                        .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                        .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                             tool_id,
-                            status: pm_protocol::ToolStatus::Denied,
+                            status: omne_agent_protocol::ToolStatus::Denied,
                             error: Some(approval_denied_error(remembered).to_string()),
                             result: Some(serde_json::json!({
                                 "approval_policy": approval_policy,
@@ -161,7 +161,7 @@ async fn handle_process_kill(server: &Server, params: ProcessKillParams) -> anyh
     }
 
     thread_rt
-        .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+        .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
             tool_id,
             turn_id: params.turn_id,
             tool: "process/kill".to_string(),
@@ -177,9 +177,9 @@ async fn handle_process_kill(server: &Server, params: ProcessKillParams) -> anyh
         .await;
 
     thread_rt
-        .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+        .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
             tool_id,
-            status: pm_protocol::ToolStatus::Completed,
+            status: omne_agent_protocol::ToolStatus::Completed,
             error: None,
             result: Some(serde_json::json!({ "ok": true })),
         })
@@ -212,7 +212,7 @@ async fn handle_process_interrupt(
         )
     };
 
-    let tool_id = pm_protocol::ToolId::new();
+    let tool_id = omne_agent_protocol::ToolId::new();
     let approval_params = serde_json::json!({
         "process_id": params.process_id,
         "reason": params.reason.clone(),
@@ -230,15 +230,15 @@ async fn handle_process_interrupt(
         return Ok(result);
     }
 
-    let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
+    let catalog = omne_agent_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {
         Some(mode) => mode,
         None => {
             let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
-            let decision = pm_core::modes::Decision::Deny;
+            let decision = omne_agent_core::modes::Decision::Deny;
 
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
                     tool_id,
                     turn_id: params.turn_id,
                     tool: "process/interrupt".to_string(),
@@ -246,9 +246,9 @@ async fn handle_process_interrupt(
                 })
                 .await?;
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
-                    status: pm_protocol::ToolStatus::Denied,
+                    status: omne_agent_protocol::ToolStatus::Denied,
                     error: Some("unknown mode".to_string()),
                     result: Some(serde_json::json!({
                         "mode": mode_name,
@@ -274,9 +274,9 @@ async fn handle_process_interrupt(
         Some(override_decision) => base_decision.combine(override_decision),
         None => base_decision,
     };
-    if effective_decision == pm_core::modes::Decision::Deny {
+    if effective_decision == omne_agent_core::modes::Decision::Deny {
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+            .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
                 tool_id,
                 turn_id: params.turn_id,
                 tool: "process/interrupt".to_string(),
@@ -284,9 +284,9 @@ async fn handle_process_interrupt(
             })
             .await?;
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+            .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                 tool_id,
-                status: pm_protocol::ToolStatus::Denied,
+                status: omne_agent_protocol::ToolStatus::Denied,
                 error: Some("mode denies process/interrupt".to_string()),
                 result: Some(serde_json::json!({
                     "mode": mode_name,
@@ -302,7 +302,7 @@ async fn handle_process_interrupt(
         }));
     }
 
-    if effective_decision == pm_core::modes::Decision::Prompt {
+    if effective_decision == omne_agent_core::modes::Decision::Prompt {
         match gate_approval(
             server,
             &thread_rt,
@@ -320,7 +320,7 @@ async fn handle_process_interrupt(
             ApprovalGate::Approved => {}
             ApprovalGate::Denied { remembered } => {
                 thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                    .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
                         tool_id,
                         turn_id: params.turn_id,
                         tool: "process/interrupt".to_string(),
@@ -328,9 +328,9 @@ async fn handle_process_interrupt(
                     })
                     .await?;
                     thread_rt
-                        .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                        .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                             tool_id,
-                            status: pm_protocol::ToolStatus::Denied,
+                            status: omne_agent_protocol::ToolStatus::Denied,
                             error: Some(approval_denied_error(remembered).to_string()),
                             result: Some(serde_json::json!({
                                 "approval_policy": approval_policy,
@@ -354,7 +354,7 @@ async fn handle_process_interrupt(
     }
 
     thread_rt
-        .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+        .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
             tool_id,
             turn_id: params.turn_id,
             tool: "process/interrupt".to_string(),
@@ -370,9 +370,9 @@ async fn handle_process_interrupt(
         .await;
 
     thread_rt
-        .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+        .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
             tool_id,
-            status: pm_protocol::ToolStatus::Completed,
+            status: omne_agent_protocol::ToolStatus::Completed,
             error: None,
             result: Some(serde_json::json!({ "ok": true })),
         })

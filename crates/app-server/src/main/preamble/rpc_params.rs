@@ -92,7 +92,7 @@ struct ThreadDiffParams {
     #[serde(default)]
     turn_id: Option<TurnId>,
     #[serde(default)]
-    approval_id: Option<pm_protocol::ApprovalId>,
+    approval_id: Option<omne_agent_protocol::ApprovalId>,
     #[serde(default)]
     max_bytes: Option<u64>,
     #[serde(default)]
@@ -105,7 +105,7 @@ struct ThreadPatchParams {
     #[serde(default)]
     turn_id: Option<TurnId>,
     #[serde(default)]
-    approval_id: Option<pm_protocol::ApprovalId>,
+    approval_id: Option<omne_agent_protocol::ApprovalId>,
     #[serde(default)]
     max_bytes: Option<u64>,
     #[serde(default)]
@@ -127,11 +127,11 @@ struct ThreadCheckpointListParams {
 #[derive(Debug, Deserialize)]
 struct ThreadCheckpointRestoreParams {
     thread_id: ThreadId,
-    checkpoint_id: pm_protocol::CheckpointId,
+    checkpoint_id: omne_agent_protocol::CheckpointId,
     #[serde(default)]
     turn_id: Option<TurnId>,
     #[serde(default)]
-    approval_id: Option<pm_protocol::ApprovalId>,
+    approval_id: Option<omne_agent_protocol::ApprovalId>,
 }
 
 #[derive(Debug, Deserialize, Clone, Copy)]
@@ -148,7 +148,7 @@ struct ThreadHookRunParams {
     #[serde(default)]
     turn_id: Option<TurnId>,
     #[serde(default)]
-    approval_id: Option<pm_protocol::ApprovalId>,
+    approval_id: Option<omne_agent_protocol::ApprovalId>,
     hook: WorkspaceHookName,
 }
 
@@ -156,13 +156,13 @@ struct ThreadHookRunParams {
 struct ThreadConfigureParams {
     thread_id: ThreadId,
     #[serde(default)]
-    approval_policy: Option<pm_protocol::ApprovalPolicy>,
+    approval_policy: Option<omne_agent_protocol::ApprovalPolicy>,
     #[serde(default)]
-    sandbox_policy: Option<pm_protocol::SandboxPolicy>,
+    sandbox_policy: Option<omne_agent_protocol::SandboxPolicy>,
     #[serde(default)]
     sandbox_writable_roots: Option<Vec<String>>,
     #[serde(default)]
-    sandbox_network_access: Option<pm_protocol::SandboxNetworkAccess>,
+    sandbox_network_access: Option<omne_agent_protocol::SandboxNetworkAccess>,
     #[serde(default)]
     mode: Option<String>,
     #[serde(default)]
@@ -213,11 +213,11 @@ struct TurnStartParams {
     thread_id: ThreadId,
     input: String,
     #[serde(default)]
-    context_refs: Option<Vec<pm_protocol::ContextRef>>,
+    context_refs: Option<Vec<omne_agent_protocol::ContextRef>>,
     #[serde(default)]
-    attachments: Option<Vec<pm_protocol::TurnAttachment>>,
+    attachments: Option<Vec<omne_agent_protocol::TurnAttachment>>,
     #[serde(default)]
-    priority: Option<pm_protocol::TurnPriority>,
+    priority: Option<omne_agent_protocol::TurnPriority>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -234,7 +234,7 @@ struct ProcessStartParams {
     #[serde(default)]
     turn_id: Option<TurnId>,
     #[serde(default)]
-    approval_id: Option<pm_protocol::ApprovalId>,
+    approval_id: Option<omne_agent_protocol::ApprovalId>,
     argv: Vec<String>,
     #[serde(default)]
     cwd: Option<String>,
@@ -252,7 +252,7 @@ struct ProcessKillParams {
     #[serde(default)]
     turn_id: Option<TurnId>,
     #[serde(default)]
-    approval_id: Option<pm_protocol::ApprovalId>,
+    approval_id: Option<omne_agent_protocol::ApprovalId>,
     #[serde(default)]
     reason: Option<String>,
 }
@@ -263,7 +263,7 @@ struct ProcessInterruptParams {
     #[serde(default)]
     turn_id: Option<TurnId>,
     #[serde(default)]
-    approval_id: Option<pm_protocol::ApprovalId>,
+    approval_id: Option<omne_agent_protocol::ApprovalId>,
     #[serde(default)]
     reason: Option<String>,
 }
@@ -281,7 +281,7 @@ struct ProcessTailParams {
     #[serde(default)]
     turn_id: Option<TurnId>,
     #[serde(default)]
-    approval_id: Option<pm_protocol::ApprovalId>,
+    approval_id: Option<omne_agent_protocol::ApprovalId>,
     stream: ProcessStream,
     #[serde(default)]
     max_lines: Option<usize>,
@@ -293,7 +293,7 @@ struct ProcessFollowParams {
     #[serde(default)]
     turn_id: Option<TurnId>,
     #[serde(default)]
-    approval_id: Option<pm_protocol::ApprovalId>,
+    approval_id: Option<omne_agent_protocol::ApprovalId>,
     stream: ProcessStream,
     #[serde(default)]
     since_offset: u64,
@@ -307,7 +307,7 @@ struct ProcessInspectParams {
     #[serde(default)]
     turn_id: Option<TurnId>,
     #[serde(default)]
-    approval_id: Option<pm_protocol::ApprovalId>,
+    approval_id: Option<omne_agent_protocol::ApprovalId>,
     #[serde(default)]
     max_lines: Option<usize>,
 }
@@ -334,7 +334,7 @@ struct FileReadParams {
     #[serde(default)]
     turn_id: Option<TurnId>,
     #[serde(default)]
-    approval_id: Option<pm_protocol::ApprovalId>,
+    approval_id: Option<omne_agent_protocol::ApprovalId>,
     #[serde(default)]
     root: Option<FileRoot>,
     path: String,
@@ -348,7 +348,7 @@ struct FileGlobParams {
     #[serde(default)]
     turn_id: Option<TurnId>,
     #[serde(default)]
-    approval_id: Option<pm_protocol::ApprovalId>,
+    approval_id: Option<omne_agent_protocol::ApprovalId>,
     #[serde(default)]
     root: Option<FileRoot>,
     #[serde(default)]
@@ -364,7 +364,7 @@ struct FileGrepParams {
     #[serde(default)]
     turn_id: Option<TurnId>,
     #[serde(default)]
-    approval_id: Option<pm_protocol::ApprovalId>,
+    approval_id: Option<omne_agent_protocol::ApprovalId>,
     #[serde(default)]
     root: Option<FileRoot>,
     #[serde(default)]
@@ -388,7 +388,7 @@ struct RepoSearchParams {
     #[serde(default)]
     turn_id: Option<TurnId>,
     #[serde(default)]
-    approval_id: Option<pm_protocol::ApprovalId>,
+    approval_id: Option<omne_agent_protocol::ApprovalId>,
     #[serde(default)]
     root: Option<FileRoot>,
     query: String,
@@ -410,7 +410,7 @@ struct RepoIndexParams {
     #[serde(default)]
     turn_id: Option<TurnId>,
     #[serde(default)]
-    approval_id: Option<pm_protocol::ApprovalId>,
+    approval_id: Option<omne_agent_protocol::ApprovalId>,
     #[serde(default)]
     root: Option<FileRoot>,
     #[serde(default)]
@@ -425,7 +425,7 @@ struct RepoSymbolsParams {
     #[serde(default)]
     turn_id: Option<TurnId>,
     #[serde(default)]
-    approval_id: Option<pm_protocol::ApprovalId>,
+    approval_id: Option<omne_agent_protocol::ApprovalId>,
     #[serde(default)]
     root: Option<FileRoot>,
     #[serde(default)]
@@ -444,7 +444,7 @@ struct FileWriteParams {
     #[serde(default)]
     turn_id: Option<TurnId>,
     #[serde(default)]
-    approval_id: Option<pm_protocol::ApprovalId>,
+    approval_id: Option<omne_agent_protocol::ApprovalId>,
     path: String,
     text: String,
     #[serde(default)]
@@ -457,7 +457,7 @@ struct FilePatchParams {
     #[serde(default)]
     turn_id: Option<TurnId>,
     #[serde(default)]
-    approval_id: Option<pm_protocol::ApprovalId>,
+    approval_id: Option<omne_agent_protocol::ApprovalId>,
     path: String,
     patch: String,
     #[serde(default)]
@@ -470,7 +470,7 @@ struct FileEditParams {
     #[serde(default)]
     turn_id: Option<TurnId>,
     #[serde(default)]
-    approval_id: Option<pm_protocol::ApprovalId>,
+    approval_id: Option<omne_agent_protocol::ApprovalId>,
     path: String,
     edits: Vec<FileEditOp>,
     #[serde(default)]
@@ -491,7 +491,7 @@ struct FileDeleteParams {
     #[serde(default)]
     turn_id: Option<TurnId>,
     #[serde(default)]
-    approval_id: Option<pm_protocol::ApprovalId>,
+    approval_id: Option<omne_agent_protocol::ApprovalId>,
     path: String,
     #[serde(default)]
     recursive: bool,
@@ -503,7 +503,7 @@ struct FsMkdirParams {
     #[serde(default)]
     turn_id: Option<TurnId>,
     #[serde(default)]
-    approval_id: Option<pm_protocol::ApprovalId>,
+    approval_id: Option<omne_agent_protocol::ApprovalId>,
     path: String,
     #[serde(default)]
     recursive: bool,
@@ -515,7 +515,7 @@ struct ArtifactWriteParams {
     #[serde(default)]
     turn_id: Option<TurnId>,
     #[serde(default)]
-    approval_id: Option<pm_protocol::ApprovalId>,
+    approval_id: Option<omne_agent_protocol::ApprovalId>,
     #[serde(default)]
     artifact_id: Option<ArtifactId>,
     artifact_type: String,
@@ -529,7 +529,7 @@ struct ArtifactListParams {
     #[serde(default)]
     turn_id: Option<TurnId>,
     #[serde(default)]
-    approval_id: Option<pm_protocol::ApprovalId>,
+    approval_id: Option<omne_agent_protocol::ApprovalId>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -538,7 +538,7 @@ struct ArtifactReadParams {
     #[serde(default)]
     turn_id: Option<TurnId>,
     #[serde(default)]
-    approval_id: Option<pm_protocol::ApprovalId>,
+    approval_id: Option<omne_agent_protocol::ApprovalId>,
     artifact_id: ArtifactId,
     #[serde(default)]
     max_bytes: Option<u64>,
@@ -550,15 +550,15 @@ struct ArtifactDeleteParams {
     #[serde(default)]
     turn_id: Option<TurnId>,
     #[serde(default)]
-    approval_id: Option<pm_protocol::ApprovalId>,
+    approval_id: Option<omne_agent_protocol::ApprovalId>,
     artifact_id: ArtifactId,
 }
 
 #[derive(Debug, Deserialize)]
 struct ApprovalDecideParams {
     thread_id: ThreadId,
-    approval_id: pm_protocol::ApprovalId,
-    decision: pm_protocol::ApprovalDecision,
+    approval_id: omne_agent_protocol::ApprovalId,
+    decision: omne_agent_protocol::ApprovalDecision,
     #[serde(default)]
     remember: bool,
     #[serde(default)]

@@ -2,7 +2,7 @@
 
 > 目标：把“外部工具生态”接入做成标准接口：可配置、可审计、可回放、可收口。
 >
-> 状态：v0.2.x 已落地 **MCP client（stdio 最小子集）**；并提供 **实验性 MCP server（stdio）**：`pm mcp serve`（只读 allowlist + 每次调用落盘审计）。
+> 状态：v0.2.x 已落地 **MCP client（stdio 最小子集）**；并提供 **实验性 MCP server（stdio）**：`omne-agent mcp serve`（只读 allowlist + 每次调用落盘审计）。
 >
 > 背景参考：`docs/research/codex.md`、`docs/research/openai-cli-agent.md`、`docs/research/claude-code.md`。
 >
@@ -15,7 +15,7 @@
 范围（v1 最小子集；v0.2.x 已实现 client 侧）：
 
 - MCP client：连接一个或多个 MCP servers，获取 tools/resources/prompts，并在 agent loop 中可调用。
-- MCP server（实验）：让其它 MCP clients 把 CodePM 当作一个工具（暴露受限能力子集）。
+- MCP server（实验）：让其它 MCP clients 把 omne-agent 当作一个工具（暴露受限能力子集）。
 
 非目标（先别碰）：
 
@@ -32,7 +32,7 @@
 
 MCP 属于“执行外部二进制 + 任意 side-effect”的高风险能力，v1 建议 **默认关闭**：
 
-- `CODE_PM_ENABLE_MCP=true` 才允许启用 MCP client（**未启用时不读取配置文件**）。
+- `OMNE_AGENT_ENABLE_MCP=true` 才允许启用 MCP client（**未启用时不读取配置文件**）。
 - 未启用时：
   - 不读取配置文件（即使存在）。
   - `mcp/*` 调用一律返回错误（fail-closed），且不得启动任何外部进程。
@@ -41,12 +41,12 @@ MCP 属于“执行外部二进制 + 任意 side-effect”的高风险能力，v
 
 Project config（可提交/可 review）：
 
-- **Canonical**：`./.codepm_data/spec/mcp.json`
+- **Canonical**：`./.omne_agent_data/spec/mcp.json`
 
 发现顺序建议与 `docs/modes.md`/`docs/model_routing.md` 保持一致（高 → 低）：
 
-1. env：`CODE_PM_MCP_FILE`（绝对或相对路径；相对路径按 thread cwd（workspace root）解析）
-2. `./.codepm_data/spec/mcp.json`
+1. env：`OMNE_AGENT_MCP_FILE`（绝对或相对路径；相对路径按 thread cwd（workspace root）解析）
+2. `./.omne_agent_data/spec/mcp.json`
 3. 内置默认（空配置：不启用任何 server）
 
 fail-closed（写死）：
@@ -129,10 +129,10 @@ v0.2.x 实现口径（最小）：
   - `mcp_list_resources`
   - `mcp_call`
 - CLI：
-  - `pm mcp list-servers <thread_id>`
-  - `pm mcp list-tools <thread_id> <server>`
-  - `pm mcp list-resources <thread_id> <server>`
-  - `pm mcp call <thread_id> <server> <tool> --arguments-json '<json>'`
+  - `omne-agent mcp list-servers <thread_id>`
+  - `omne-agent mcp list-tools <thread_id> <server>`
+  - `omne-agent mcp list-resources <thread_id> <server>`
+  - `omne-agent mcp call <thread_id> <server> <tool> --arguments-json '<json>'`
 
 > 注意：MCP 不能绕过 execpolicy。即使 MCP server 内部执行命令，也必须在它自己的侧做 policy；本地侧只能保证“我们何时允许调用它”。
 >
@@ -147,11 +147,11 @@ v0.2.x 实现口径（最小）：
 
 ---
 
-## 2) MCP server（让外部把 CodePM 当工具）（实验）
+## 2) MCP server（让外部把 omne-agent 当工具）（实验）
 
 目标：
 
-- 让其它 MCP clients 调用 CodePM 的受限能力子集（例如：thread list/attention、artifact list/read、process tail）。
+- 让其它 MCP clients 调用 omne-agent 的受限能力子集（例如：thread list/attention、artifact list/read、process tail）。
 
 最小原则：
 
@@ -162,18 +162,18 @@ v0.2.x 实现口径（最小）：
 
 建议暴露的最小工具子集（占位）：
 
-- `pm.thread.list_meta`
-- `pm.thread.attention`
-- `pm.thread.subscribe`
-- `pm.artifact.list/read`
-- `pm.process.list/inspect/tail/follow`
+- `omne-agent.thread.list_meta`
+- `omne-agent.thread.attention`
+- `omne-agent.thread.subscribe`
+- `omne-agent.artifact.list/read`
+- `omne-agent.process.list/inspect/tail/follow`
 
-### 2.1 v0.2.x 现状：`pm mcp serve`（stdio）
+### 2.1 v0.2.x 现状：`omne-agent mcp serve`（stdio）
 
 最小用法（由外部 MCP client 启动该进程并通过 stdio 交互）：
 
 ```bash
-pm mcp serve
+omne-agent mcp serve
 ```
 
 审计：
@@ -183,16 +183,16 @@ pm mcp serve
 
 暴露的工具（只读 allowlist；通过 `tools/list` 返回）：
 
-- `pm.thread.list_meta`
-- `pm.thread.attention`
-- `pm.thread.state`
-- `pm.thread.events`
-- `pm.artifact.list`
-- `pm.artifact.read`
-- `pm.process.list`
-- `pm.process.inspect`
-- `pm.process.tail`
-- `pm.process.follow`
+- `omne-agent.thread.list_meta`
+- `omne-agent.thread.attention`
+- `omne-agent.thread.state`
+- `omne-agent.thread.events`
+- `omne-agent.artifact.list`
+- `omne-agent.artifact.read`
+- `omne-agent.process.list`
+- `omne-agent.process.inspect`
+- `omne-agent.process.tail`
+- `omne-agent.process.follow`
 
 ---
 
@@ -200,11 +200,11 @@ pm mcp serve
 
 MCP client：
 
-- 指定 `./.codepm_data/spec/mcp.json` 后，`pm` 能列出 servers 与 tools/resources。
-- 调用 `mcp/call` 时必须产生审批事件（`ApprovalRequested`），且可在 `pm inbox` 中看到阻塞。
+- 指定 `./.omne_agent_data/spec/mcp.json` 后，`omne-agent` 能列出 servers 与 tools/resources。
+- 调用 `mcp/call` 时必须产生审批事件（`ApprovalRequested`），且可在 `omne-agent inbox` 中看到阻塞。
 - MCP server 进程 stdout/stderr 必须落盘并可 `process/tail`。
 
 MCP server：
 
-- 外部 MCP client 能调用 `pm.thread.list_meta` 并得到结果。
+- 外部 MCP client 能调用 `omne-agent.thread.list_meta` 并得到结果。
 - 所有外部调用都能在本地 thread 事件里回放（审计链完整）。

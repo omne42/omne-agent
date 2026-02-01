@@ -19,7 +19,7 @@ pub use crate::events::{
 };
 pub use crate::hooks::{CommandHookRunner, HookRunner, NoopHookRunner};
 pub use crate::orchestrator::{Architect, Coder, Merger, Orchestrator, RuleBasedArchitect};
-pub use crate::paths::{PmPaths, SessionPaths, TaskPaths};
+pub use crate::paths::{AgentPaths, SessionPaths, TaskPaths};
 pub use crate::redaction::redact_text;
 pub use crate::sandbox::{
     PathAccess, resolve_dir, resolve_dir_unrestricted, resolve_file, resolve_file_unrestricted,

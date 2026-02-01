@@ -1,12 +1,12 @@
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
 pub struct FileWriteParams {
-    pub thread_id: pm_protocol::ThreadId,
+    pub thread_id: omne_agent_protocol::ThreadId,
     #[serde(default)]
     #[ts(optional)]
-    pub turn_id: Option<pm_protocol::TurnId>,
+    pub turn_id: Option<omne_agent_protocol::TurnId>,
     #[serde(default)]
     #[ts(optional)]
-    pub approval_id: Option<pm_protocol::ApprovalId>,
+    pub approval_id: Option<omne_agent_protocol::ApprovalId>,
     pub path: String,
     pub text: String,
     #[serde(default)]
@@ -16,13 +16,13 @@ pub struct FileWriteParams {
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
 pub struct FilePatchParams {
-    pub thread_id: pm_protocol::ThreadId,
+    pub thread_id: omne_agent_protocol::ThreadId,
     #[serde(default)]
     #[ts(optional)]
-    pub turn_id: Option<pm_protocol::TurnId>,
+    pub turn_id: Option<omne_agent_protocol::TurnId>,
     #[serde(default)]
     #[ts(optional)]
-    pub approval_id: Option<pm_protocol::ApprovalId>,
+    pub approval_id: Option<omne_agent_protocol::ApprovalId>,
     pub path: String,
     pub patch: String,
     #[serde(default)]

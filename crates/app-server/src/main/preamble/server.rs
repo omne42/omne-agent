@@ -1,13 +1,16 @@
 #[derive(Parser)]
-#[command(name = "pm-app-server")]
-#[command(about = "CodePM v0.2.0 app-server (JSON-RPC over stdio)", long_about = None)]
+#[command(name = "omne-agent-app-server")]
+#[command(
+    about = "omne-agent v0.2.0 app-server (JSON-RPC over stdio)",
+    long_about = None
+)]
 struct Args {
     #[command(subcommand)]
     command: Option<CliCommand>,
 
-    /// Override project data root directory (default: `./.codepm_data/`).
+    /// Override project data root directory (default: `./.omne_agent_data/`).
     #[arg(long)]
-    pm_root: Option<PathBuf>,
+    root: Option<PathBuf>,
 
     /// Listen on a Unix socket instead of stdio (daemon mode).
     #[arg(long, value_name = "PATH")]
@@ -120,8 +123,8 @@ impl JsonRpcResponse {
 const JSONRPC_METHOD_NOT_FOUND: i64 = -32601;
 const JSONRPC_INVALID_PARAMS: i64 = -32602;
 const JSONRPC_INTERNAL_ERROR: i64 = -32603;
-const CODE_PM_NOT_INITIALIZED: i64 = -32_000;
-const CODE_PM_ALREADY_INITIALIZED: i64 = -32_001;
+const OMNE_AGENT_NOT_INITIALIZED: i64 = -32_000;
+const OMNE_AGENT_ALREADY_INITIALIZED: i64 = -32_001;
 
 #[cfg(feature = "notify")]
 type NotifyHub = Option<notify_kit::Hub>;
@@ -167,7 +170,7 @@ struct Server {
     processes: Arc<tokio::sync::Mutex<HashMap<ProcessId, ProcessEntry>>>,
     mcp: Arc<tokio::sync::Mutex<McpManager>>,
     disk_warning: Arc<tokio::sync::Mutex<HashMap<ThreadId, DiskWarningState>>>,
-    exec_policy: pm_execpolicy::Policy,
+    exec_policy: omne_agent_execpolicy::Policy,
     db_vfs: Option<DbVfsHttpClient>,
 }
 
@@ -229,17 +232,17 @@ enum ProcessCommand {
 }
 
 struct ThreadRuntime {
-    handle: tokio::sync::Mutex<pm_core::ThreadHandle>,
+    handle: tokio::sync::Mutex<omne_agent_core::ThreadHandle>,
     active_turn: tokio::sync::Mutex<Option<ActiveTurn>>,
     notify_tx: broadcast::Sender<String>,
     #[cfg_attr(not(feature = "notify"), allow(dead_code))]
     notify_hub: NotifyHub,
 }
 
-fn validate_context_refs(refs: &[pm_protocol::ContextRef]) -> anyhow::Result<()> {
+fn validate_context_refs(refs: &[omne_agent_protocol::ContextRef]) -> anyhow::Result<()> {
     for ctx in refs {
         match ctx {
-            pm_protocol::ContextRef::File(file) => {
+            omne_agent_protocol::ContextRef::File(file) => {
                 if file.path.trim().is_empty() {
                     anyhow::bail!("context_refs.file.path must be non-empty");
                 }
@@ -265,7 +268,7 @@ fn validate_context_refs(refs: &[pm_protocol::ContextRef]) -> anyhow::Result<()>
                     }
                 }
             }
-            pm_protocol::ContextRef::Diff(diff) => {
+            omne_agent_protocol::ContextRef::Diff(diff) => {
                 if let Some(max_bytes) = diff.max_bytes {
                     if max_bytes == 0 {
                         anyhow::bail!("context_refs.diff.max_bytes must be >= 1");
@@ -277,17 +280,17 @@ fn validate_context_refs(refs: &[pm_protocol::ContextRef]) -> anyhow::Result<()>
     Ok(())
 }
 
-fn validate_turn_attachments(attachments: &[pm_protocol::TurnAttachment]) -> anyhow::Result<()> {
+fn validate_turn_attachments(attachments: &[omne_agent_protocol::TurnAttachment]) -> anyhow::Result<()> {
     for attachment in attachments {
         match attachment {
-            pm_protocol::TurnAttachment::Image(image) => {
+            omne_agent_protocol::TurnAttachment::Image(image) => {
                 match &image.source {
-                    pm_protocol::AttachmentSource::Path { path } => {
+                    omne_agent_protocol::AttachmentSource::Path { path } => {
                         if path.trim().is_empty() {
                             anyhow::bail!("attachments.image.source.path must be non-empty");
                         }
                     }
-                    pm_protocol::AttachmentSource::Url { url } => {
+                    omne_agent_protocol::AttachmentSource::Url { url } => {
                         if url.trim().is_empty() {
                             anyhow::bail!("attachments.image.source.url must be non-empty");
                         }
@@ -299,14 +302,14 @@ fn validate_turn_attachments(attachments: &[pm_protocol::TurnAttachment]) -> any
                     }
                 }
             }
-            pm_protocol::TurnAttachment::File(file) => {
+            omne_agent_protocol::TurnAttachment::File(file) => {
                 match &file.source {
-                    pm_protocol::AttachmentSource::Path { path } => {
+                    omne_agent_protocol::AttachmentSource::Path { path } => {
                         if path.trim().is_empty() {
                             anyhow::bail!("attachments.file.source.path must be non-empty");
                         }
                     }
-                    pm_protocol::AttachmentSource::Url { url } => {
+                    omne_agent_protocol::AttachmentSource::Url { url } => {
                         if url.trim().is_empty() {
                             anyhow::bail!("attachments.file.source.url must be non-empty");
                         }
@@ -328,7 +331,7 @@ fn validate_turn_attachments(attachments: &[pm_protocol::TurnAttachment]) -> any
 
 impl ThreadRuntime {
     fn new(
-        handle: pm_core::ThreadHandle,
+        handle: omne_agent_core::ThreadHandle,
         notify_tx: broadcast::Sender<String>,
         notify_hub: NotifyHub,
     ) -> Self {
@@ -358,24 +361,24 @@ impl ThreadRuntime {
         self.emit_notification("thread/event", event);
 
         match &event.kind {
-            pm_protocol::ThreadEventKind::TurnStarted { .. } => {
+            omne_agent_protocol::ThreadEventKind::TurnStarted { .. } => {
                 self.emit_notification("turn/started", event);
             }
-            pm_protocol::ThreadEventKind::TurnCompleted { .. } => {
+            omne_agent_protocol::ThreadEventKind::TurnCompleted { .. } => {
                 self.emit_notification("turn/completed", event);
             }
-            pm_protocol::ThreadEventKind::ToolStarted { .. }
-            | pm_protocol::ThreadEventKind::ProcessStarted { .. }
-            | pm_protocol::ThreadEventKind::ApprovalRequested { .. } => {
+            omne_agent_protocol::ThreadEventKind::ToolStarted { .. }
+            | omne_agent_protocol::ThreadEventKind::ProcessStarted { .. }
+            | omne_agent_protocol::ThreadEventKind::ApprovalRequested { .. } => {
                 self.emit_notification("item/started", event);
             }
-            pm_protocol::ThreadEventKind::ToolCompleted { .. }
-            | pm_protocol::ThreadEventKind::ProcessExited { .. }
-            | pm_protocol::ThreadEventKind::ApprovalDecided { .. }
-            | pm_protocol::ThreadEventKind::AssistantMessage { .. } => {
+            omne_agent_protocol::ThreadEventKind::ToolCompleted { .. }
+            | omne_agent_protocol::ThreadEventKind::ProcessExited { .. }
+            | omne_agent_protocol::ThreadEventKind::ApprovalDecided { .. }
+            | omne_agent_protocol::ThreadEventKind::AssistantMessage { .. } => {
                 self.emit_notification("item/completed", event);
             }
-            pm_protocol::ThreadEventKind::AgentStep { .. } => {
+            omne_agent_protocol::ThreadEventKind::AgentStep { .. } => {
                 self.emit_notification("item/completed", event);
                 self.emit_notification("agent/step", event);
             }
@@ -404,9 +407,9 @@ impl ThreadRuntime {
         self: Arc<Self>,
         server: Arc<Server>,
         input: String,
-        context_refs: Option<Vec<pm_protocol::ContextRef>>,
-        attachments: Option<Vec<pm_protocol::TurnAttachment>>,
-        priority: pm_protocol::TurnPriority,
+        context_refs: Option<Vec<omne_agent_protocol::ContextRef>>,
+        attachments: Option<Vec<omne_agent_protocol::TurnAttachment>>,
+        priority: omne_agent_protocol::TurnPriority,
     ) -> anyhow::Result<TurnId> {
         let mut handle = self.handle.lock().await;
         let state = handle.state();
@@ -439,7 +442,7 @@ impl ThreadRuntime {
         let turn_id = TurnId::new();
         let input_for_event = input.clone();
         let event = handle
-            .append(pm_protocol::ThreadEventKind::TurnStarted {
+            .append(omne_agent_protocol::ThreadEventKind::TurnStarted {
                 turn_id,
                 input: input_for_event,
                 context_refs,
@@ -469,7 +472,7 @@ impl ThreadRuntime {
 
     async fn append_event(
         &self,
-        kind: pm_protocol::ThreadEventKind,
+        kind: omne_agent_protocol::ThreadEventKind,
     ) -> anyhow::Result<ThreadEvent> {
         let mut handle = self.handle.lock().await;
         let event = handle.append(kind).await?;
@@ -499,7 +502,7 @@ impl ThreadRuntime {
             return Ok(());
         }
         let event = handle
-            .append(pm_protocol::ThreadEventKind::TurnInterruptRequested { turn_id, reason })
+            .append(omne_agent_protocol::ThreadEventKind::TurnInterruptRequested { turn_id, reason })
             .await?;
         drop(handle);
         self.emit_event_notifications(&event);
@@ -514,7 +517,7 @@ impl ThreadRuntime {
         turn_id: TurnId,
         cancel: CancellationToken,
         input: String,
-        priority: pm_protocol::TurnPriority,
+        priority: omne_agent_protocol::TurnPriority,
     ) {
         let agent_fut =
             agent::run_agent_turn(server.clone(), self.clone(), turn_id, input, cancel.clone(), priority);
@@ -542,7 +545,7 @@ impl ThreadRuntime {
         let mut handle = self.handle.lock().await;
         let thread_id = handle.thread_id();
         if let Ok(event) = handle
-            .append(pm_protocol::ThreadEventKind::TurnCompleted {
+            .append(omne_agent_protocol::ThreadEventKind::TurnCompleted {
                 turn_id,
                 status,
                 reason,

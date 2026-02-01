@@ -2,7 +2,7 @@ mod preset {
     use std::path::{Path, PathBuf};
 
     use anyhow::Context;
-    use pm_protocol::{ApprovalPolicy, SandboxNetworkAccess, SandboxPolicy, ThreadId};
+    use omne_agent_protocol::{ApprovalPolicy, SandboxNetworkAccess, SandboxPolicy, ThreadId};
     use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,10 +100,10 @@ mod preset {
         Ok(Some(canon))
     }
 
-    fn ensure_within_spec_dir(pm_root: &Path, file: &Path) -> anyhow::Result<()> {
-        let spec_dir = pm_root.join("spec");
+    fn ensure_within_spec_dir(agent_root: &Path, file: &Path) -> anyhow::Result<()> {
+        let spec_dir = agent_root.join("spec");
         if !spec_dir.exists() {
-            anyhow::bail!("spec dir is missing: {} (run `pm init`?)", spec_dir.display());
+            anyhow::bail!("spec dir is missing: {} (run `omne-agent init`?)", spec_dir.display());
         }
 
         let spec_dir = std::fs::canonicalize(&spec_dir)
@@ -244,8 +244,8 @@ mod preset {
         file: PathBuf,
         json: bool,
     ) -> anyhow::Result<()> {
-        let pm_root = super::resolve_pm_root(cli)?;
-        ensure_within_spec_dir(&pm_root, &file)?;
+        let agent_root = super::resolve_root(cli)?;
+        ensure_within_spec_dir(&agent_root, &file)?;
 
         let preset = read_preset_file(&file).await?;
         apply_preset(app, thread_id, &preset).await?;

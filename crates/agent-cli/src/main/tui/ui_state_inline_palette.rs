@@ -118,7 +118,7 @@
             }
 
             let mut roots = Vec::<PathBuf>::new();
-            if let Ok(dir) = std::env::var("CODE_PM_SKILLS_DIR") {
+            if let Ok(dir) = std::env::var("OMNE_AGENT_SKILLS_DIR") {
                 let dir = dir.trim();
                 if !dir.is_empty() {
                     roots.push(PathBuf::from(dir));
@@ -126,11 +126,11 @@
             }
             if let Some(thread_cwd) = self.thread_cwd.as_deref() {
                 let root = PathBuf::from(thread_cwd);
-                roots.push(root.join(".codepm_data").join("spec").join("skills"));
+                roots.push(root.join(".omne_agent_data").join("spec").join("skills"));
                 roots.push(root.join(".codex").join("skills"));
             }
             if let Some(home) = home_dir() {
-                roots.push(home.join(".codepm_data").join("spec").join("skills"));
+                roots.push(home.join(".omne_agent_data").join("spec").join("skills"));
             }
 
             let mut names = std::collections::BTreeSet::<String>::new();

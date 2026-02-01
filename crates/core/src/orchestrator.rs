@@ -14,7 +14,7 @@ use crate::events::{
     EventBus, MergeSummary, PullRequestSummary, RunEvent, SessionSummary, TaskSummary,
 };
 use crate::hooks::HookRunner;
-use crate::paths::{PmPaths, SessionPaths};
+use crate::paths::{AgentPaths, SessionPaths};
 use crate::storage::Storage;
 
 #[async_trait]
@@ -181,7 +181,7 @@ pub struct Orchestrator {
 impl Orchestrator {
     pub async fn run(
         &self,
-        pm_paths: &PmPaths,
+        agent_paths: &AgentPaths,
         repo: Repository,
         mut request: RunRequest,
     ) -> anyhow::Result<RunResult> {
@@ -354,7 +354,7 @@ impl Orchestrator {
         if let Some(hook) = &request.hook {
             self.events.emit(RunEvent::HookStarted);
             match self
-                .run_hook(pm_paths, session_paths.as_ref(), &result, hook)
+                .run_hook(agent_paths, session_paths.as_ref(), &result, hook)
                 .await
             {
                 Ok(()) => {
@@ -649,13 +649,13 @@ impl Orchestrator {
 
     async fn run_hook(
         &self,
-        pm_paths: &PmPaths,
+        agent_paths: &AgentPaths,
         session_paths: &SessionPaths,
         result: &RunResult,
         hook: &HookSpec,
     ) -> anyhow::Result<()> {
         self.hook_runner
-            .run(hook, pm_paths, session_paths, result)
+            .run(hook, agent_paths, session_paths, result)
             .await?;
         info!(session_id = %result.session.id, "hook executed");
         Ok(())

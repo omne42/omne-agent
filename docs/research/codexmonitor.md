@@ -58,9 +58,9 @@ README 指明：
 这对我们有直接启示：
 
 - `codex app-server` 是一个稳定的“UI/backend 分离”协议层；
-- 我们的 `CodePM` 若要有 UI/远端控制，优先考虑复用 app-server 风格的 JSON-RPC over stdio/uds/tcp。
+- 我们的 `omne-agent` 若要有 UI/远端控制，优先考虑复用 app-server 风格的 JSON-RPC over stdio/uds/tcp。
 
-补充：CodexMonitor 同时实现了“approval request 的响应”（README 的 Tauri IPC Surface 列出 `respond_to_server_request`），这意味着 UI 端可以像一个“审批终端”一样驱动后端执行。对 `CodePM` 而言，这个交互模式非常适合做“PR 合并前需要人工确认”的工作流。
+补充：CodexMonitor 同时实现了“approval request 的响应”（README 的 Tauri IPC Surface 列出 `respond_to_server_request`），这意味着 UI 端可以像一个“审批终端”一样驱动后端执行。对 `omne-agent` 而言，这个交互模式非常适合做“PR 合并前需要人工确认”的工作流。
 
 ### 2.2 Worktree 管理：安全命名 + 唯一路径 + 清理/回填
 
@@ -90,7 +90,7 @@ README 指明：
 - `--3way` 能在一定程度上自动 resolve；
 - `--binary` 支持二进制改动（非常关键）。
 
-> 对 `CodePM` 的价值：我们未来的 `Merger` 可能会遇到“多 PR 并发修改同文件”。即使我们不使用 worktree，也可以用同样的 patch 技术实现“从 task workspace 回填到合并 workspace”。
+> 对 `omne-agent` 的价值：我们未来的 `Merger` 可能会遇到“多 PR 并发修改同文件”。即使我们不使用 worktree，也可以用同样的 patch 技术实现“从 task workspace 回填到合并 workspace”。
 
 ### 2.4 文件列表：忽略大目录、保持体验
 
@@ -110,7 +110,7 @@ README 指明：
 - 有 token auth handshake（第一条请求必须 `auth`）。
 - 支持一批核心方法（workspaces、threads、reviews、models、skills、respond_to_server_request 等）。
 
-> 对 `CodePM` 的启示：我们如果要“hook 回主流程/远端编排/集群 worker”，强烈建议从一开始就把 orchestrator 的控制面做成可远端的协议（最小实现可先 HTTP webhook，再升级成 JSON-RPC/GRPC）。
+> 对 `omne-agent` 的启示：我们如果要“hook 回主流程/远端编排/集群 worker”，强烈建议从一开始就把 orchestrator 的控制面做成可远端的协议（最小实现可先 HTTP webhook，再升级成 JSON-RPC/GRPC）。
 
 ---
 
@@ -123,7 +123,7 @@ README 指明：
 
 ---
 
-## 5. 对 `CodePM` 的可复用建议（按优先级）
+## 5. 对 `omne-agent` 的可复用建议（按优先级）
 
 ### P0（立刻可用）
 

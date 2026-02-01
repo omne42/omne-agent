@@ -161,61 +161,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
-name = "axum"
-version = "0.7.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "edca88bc138befd0323b20752846e6587272d3b03b0343c8ea28a6f819e6e71f"
-dependencies = [
- "async-trait",
- "axum-core",
- "bytes",
- "futures-util",
- "http",
- "http-body",
- "http-body-util",
- "hyper",
- "hyper-util",
- "itoa",
- "matchit",
- "memchr",
- "mime",
- "percent-encoding",
- "pin-project-lite",
- "rustversion",
- "serde",
- "serde_json",
- "serde_path_to_error",
- "serde_urlencoded",
- "sync_wrapper",
- "tokio",
- "tower",
- "tower-layer",
- "tower-service",
- "tracing",
-]
-
-[[package]]
-name = "axum-core"
-version = "0.4.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09f2bd6146b97ae3359fa0cc6d6b376d9539582c7b4220f041a33ec24c226199"
-dependencies = [
- "async-trait",
- "bytes",
- "futures-util",
- "http",
- "http-body",
- "http-body-util",
- "mime",
- "pin-project-lite",
- "rustversion",
- "sync_wrapper",
- "tower-layer",
- "tower-service",
- "tracing",
-]
-
-[[package]]
 name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -379,27 +324,6 @@ name = "cmp_any"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e9b18233253483ce2f65329a24072ec414db782531bdbb7d0bbc4bd2ce6b7e21"
-
-[[package]]
-name = "code-pm"
-version = "0.1.1"
-dependencies = [
- "anyhow",
- "async-trait",
- "axum",
- "clap",
- "pm-core",
- "pm-git",
- "pm-http",
- "reqwest",
- "serde",
- "serde_json",
- "tempfile",
- "time",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
 
 [[package]]
 name = "colorchoice"
@@ -619,7 +543,7 @@ dependencies = [
 
 [[package]]
 name = "ditto-llm"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "bytes",
@@ -968,12 +892,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
 
 [[package]]
-name = "httpdate"
-version = "1.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
-
-[[package]]
 name = "hyper"
 version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -986,7 +904,6 @@ dependencies = [
  "http",
  "http-body",
  "httparse",
- "httpdate",
  "itoa",
  "pin-project-lite",
  "pin-utils",
@@ -1411,10 +1328,31 @@ dependencies = [
 ]
 
 [[package]]
-name = "matchit"
-version = "0.7.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e7465ac9959cc2b1404e8e2367b43684a6d13790fe23056cc8c6c5a6b7bcb94"
+name = "mcp-jsonrpc"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "futures-util",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
+name = "mcp-kit"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "mcp-jsonrpc",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+]
 
 [[package]]
 name = "memchr"
@@ -1553,6 +1491,161 @@ dependencies = [
 ]
 
 [[package]]
+name = "omne-agent"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "clap",
+ "crossterm",
+ "futures-util",
+ "mcp-jsonrpc",
+ "omne-agent-protocol",
+ "ratatui",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "time",
+ "tokio",
+ "tracing-subscriber",
+ "unicode-width",
+ "walkdir",
+]
+
+[[package]]
+name = "omne-agent-app-server"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64",
+ "clap",
+ "diffy",
+ "ditto-llm",
+ "futures-util",
+ "globset",
+ "mcp-jsonrpc",
+ "mcp-kit",
+ "nix 0.29.0",
+ "notify-kit",
+ "omne-agent-app-server-protocol",
+ "omne-agent-core",
+ "omne-agent-eventlog",
+ "omne-agent-execpolicy",
+ "omne-agent-protocol",
+ "regex",
+ "reqwest",
+ "safe-fs-tools",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "thiserror 1.0.69",
+ "time",
+ "tokio",
+ "tokio-util",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+ "tree-sitter",
+ "tree-sitter-rust",
+ "walkdir",
+]
+
+[[package]]
+name = "omne-agent-app-server-protocol"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "omne-agent-protocol",
+ "schemars",
+ "serde",
+ "serde_json",
+ "ts-rs",
+]
+
+[[package]]
+name = "omne-agent-core"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "globset",
+ "omne-agent-eventlog",
+ "omne-agent-protocol",
+ "regex",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "thiserror 1.0.69",
+ "time",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "omne-agent-eventlog"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "fs2",
+ "omne-agent-protocol",
+ "serde_json",
+ "tempfile",
+ "time",
+ "tokio",
+]
+
+[[package]]
+name = "omne-agent-execpolicy"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "clap",
+ "serde",
+ "serde_json",
+ "shlex",
+ "starlark",
+ "tempfile",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "omne-agent-execve-wrapper"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "serde_json",
+]
+
+[[package]]
+name = "omne-agent-openai"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "futures-util",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
+name = "omne-agent-protocol"
+version = "0.1.1"
+dependencies = [
+ "schemars",
+ "serde",
+ "serde_json",
+ "time",
+ "ts-rs",
+ "uuid",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1629,223 +1722,6 @@ name = "pin-utils"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
-
-[[package]]
-name = "pm"
-version = "0.1.1"
-dependencies = [
- "anyhow",
- "clap",
- "crossterm",
- "futures-util",
- "pm-jsonrpc",
- "pm-protocol",
- "ratatui",
- "serde",
- "serde_json",
- "serde_yaml",
- "time",
- "tokio",
- "tracing-subscriber",
- "unicode-width",
- "walkdir",
-]
-
-[[package]]
-name = "pm-app-server"
-version = "0.1.1"
-dependencies = [
- "anyhow",
- "async-trait",
- "base64",
- "clap",
- "diffy",
- "ditto-llm",
- "futures-util",
- "globset",
- "nix 0.29.0",
- "notify-kit",
- "pm-app-server-protocol",
- "pm-core",
- "pm-eventlog",
- "pm-execpolicy",
- "pm-jsonrpc",
- "pm-mcp-kit",
- "pm-protocol",
- "regex",
- "reqwest",
- "safe-fs-tools",
- "serde",
- "serde_json",
- "serde_yaml",
- "tempfile",
- "thiserror 1.0.69",
- "time",
- "tokio",
- "tokio-util",
- "toml",
- "tracing",
- "tracing-subscriber",
- "tree-sitter",
- "tree-sitter-rust",
- "walkdir",
-]
-
-[[package]]
-name = "pm-app-server-protocol"
-version = "0.1.1"
-dependencies = [
- "anyhow",
- "pm-protocol",
- "schemars",
- "serde",
- "serde_json",
- "ts-rs",
-]
-
-[[package]]
-name = "pm-core"
-version = "0.1.1"
-dependencies = [
- "anyhow",
- "async-trait",
- "globset",
- "pm-eventlog",
- "pm-protocol",
- "regex",
- "serde",
- "serde_json",
- "serde_yaml",
- "tempfile",
- "thiserror 1.0.69",
- "time",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "pm-eventlog"
-version = "0.1.1"
-dependencies = [
- "anyhow",
- "fs2",
- "pm-protocol",
- "serde_json",
- "tempfile",
- "time",
- "tokio",
-]
-
-[[package]]
-name = "pm-execpolicy"
-version = "0.1.1"
-dependencies = [
- "anyhow",
- "clap",
- "serde",
- "serde_json",
- "shlex",
- "starlark",
- "tempfile",
- "thiserror 1.0.69",
-]
-
-[[package]]
-name = "pm-execve-wrapper"
-version = "0.1.1"
-dependencies = [
- "anyhow",
- "serde_json",
-]
-
-[[package]]
-name = "pm-git"
-version = "0.1.1"
-dependencies = [
- "anyhow",
- "async-trait",
- "fs2",
- "pm-core",
- "serde_json",
- "tempfile",
- "time",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "pm-http"
-version = "0.1.1"
-dependencies = [
- "anyhow",
- "axum",
- "bytes",
- "http-body-util",
- "pm-core",
- "pm-git",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tokio-util",
- "tower",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "pm-jsonrpc"
-version = "0.1.1"
-dependencies = [
- "anyhow",
- "bytes",
- "futures-util",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
- "tokio-util",
-]
-
-[[package]]
-name = "pm-mcp-kit"
-version = "0.1.1"
-dependencies = [
- "anyhow",
- "pm-jsonrpc",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "pm-openai"
-version = "0.1.1"
-dependencies = [
- "anyhow",
- "bytes",
- "futures-util",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
- "tokio-util",
-]
-
-[[package]]
-name = "pm-protocol"
-version = "0.1.1"
-dependencies = [
- "schemars",
- "serde",
- "serde_json",
- "time",
- "ts-rs",
- "uuid",
-]
 
 [[package]]
 name = "potential_utf"
@@ -2397,17 +2273,6 @@ dependencies = [
  "serde",
  "serde_core",
  "zmij",
-]
-
-[[package]]
-name = "serde_path_to_error"
-version = "0.1.20"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "10a9ff822e371bb5403e391ecd83e182e0e77ba7f6fe0160b795797109d1b457"
-dependencies = [
- "itoa",
- "serde",
- "serde_core",
 ]
 
 [[package]]
@@ -2991,7 +2856,6 @@ dependencies = [
  "tokio",
  "tower-layer",
  "tower-service",
- "tracing",
 ]
 
 [[package]]
@@ -3030,7 +2894,6 @@ version = "0.1.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63e71662fa4b2a2c3a26f570f037eb95bb1f85397f3cd8076caed2f026a6d100"
 dependencies = [
- "log",
  "pin-project-lite",
  "tracing-attributes",
  "tracing-core",

@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use fs2::FileExt;
-use pm_protocol::{
+use omne_agent_protocol::{
     ApprovalId, ApprovalPolicy, EventSeq, ProcessId, SandboxNetworkAccess, SandboxPolicy,
     ThreadEvent, ThreadEventKind, ThreadId, TurnId, TurnStatus,
 };
@@ -567,7 +567,7 @@ fn usage_cache_input_tokens(usage: &serde_json::Value) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pm_protocol::{ThreadEventKind, ThreadId};
+    use omne_agent_protocol::{ThreadEventKind, ThreadId};
 
     #[tokio::test]
     async fn writer_appends_with_contiguous_seq() -> anyhow::Result<()> {
@@ -583,8 +583,8 @@ mod tests {
             .await?;
         let e2 = w
             .append(ThreadEventKind::TurnCompleted {
-                turn_id: pm_protocol::TurnId::new(),
-                status: pm_protocol::TurnStatus::Completed,
+                turn_id: omne_agent_protocol::TurnId::new(),
+                status: omne_agent_protocol::TurnStatus::Completed,
                 reason: None,
             })
             .await?;
@@ -712,7 +712,7 @@ mod tests {
                 input: "hello".to_string(),
                 context_refs: None,
                 attachments: None,
-                priority: pm_protocol::TurnPriority::Foreground,
+                priority: omne_agent_protocol::TurnPriority::Foreground,
             },
         )?;
         assert!(state.failed_processes.is_empty());

@@ -10,10 +10,10 @@ async fn gate_doom_loop(
     thread_rt: &Arc<super::ThreadRuntime>,
     thread_id: ThreadId,
     turn_id: TurnId,
-    approval_policy: pm_protocol::ApprovalPolicy,
+    approval_policy: omne_agent_protocol::ApprovalPolicy,
     kind: &'static str,
     signature: u64,
-    tool_calls_for_event: &[pm_protocol::AgentStepToolCall],
+    tool_calls_for_event: &[omne_agent_protocol::AgentStepToolCall],
     cancel: CancellationToken,
 ) -> anyhow::Result<DoomLoopDecision> {
     let tool_calls_for_prompt = tool_calls_for_event
@@ -54,8 +54,8 @@ async fn gate_doom_loop(
             let outcome =
                 wait_for_approval_outcome(server, thread_id, approval_id, cancel).await?;
             match outcome.decision {
-                pm_protocol::ApprovalDecision::Approved => Ok(DoomLoopDecision::Approved),
-                pm_protocol::ApprovalDecision::Denied => Ok(DoomLoopDecision::Denied {
+                omne_agent_protocol::ApprovalDecision::Approved => Ok(DoomLoopDecision::Approved),
+                omne_agent_protocol::ApprovalDecision::Denied => Ok(DoomLoopDecision::Denied {
                     remembered: outcome.remember,
                 }),
             }

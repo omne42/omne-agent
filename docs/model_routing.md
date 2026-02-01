@@ -16,7 +16,7 @@
 - 多 provider 抽象仍是 TODO（capability flags 已有最小实现；见 `docs/v0.2.0_parity.md`）。
 - role/keyword/subagent 的自动路由（MVP 已实现；见下文 Router）。
 - 自动升降级（cheap→strong）已实现最小切片：模型 fallback（见 §5）。
-- tool 调用“轻模型”通道已实现（`CODE_PM_AGENT_TOOL_MODEL`，见 §6）。
+- tool 调用“轻模型”通道已实现（`OMNE_AGENT_TOOL_MODEL`，见 §6）。
 - 429/5xx/timeout 的 provider fallback 已实现（见 §4）。
 
 ---
@@ -28,22 +28,22 @@
 `provider` 的生效顺序（用于派生 base_url/auth/default_model）：
 
 1. project config（当 `project_config.enabled=true`）：`openai.provider`
-2. env：`CODE_PM_OPENAI_PROVIDER`
+2. env：`OMNE_AGENT_OPENAI_PROVIDER`
 3. default：`openai-codex-apikey`
 
 当前 turn 的 `model` 生效顺序为：
 
 1. thread config（来自 `ThreadConfigUpdated` 事件）
 2. project config（当 `project_config.enabled=true`）：`openai.model`
-3. env：`CODE_PM_OPENAI_MODEL`
+3. env：`OMNE_AGENT_OPENAI_MODEL`
 4. provider default（当存在）：`openai.providers.<provider>.default_model`
 5. default：`model="gpt-4.1"`
 
 当前 turn 的 `openai_base_url` 生效顺序为：
 
 1. thread config（来自 `ThreadConfigUpdated` 事件）
-2. project overrides（当 `project_config.enabled=true`）：`.codepm_data/.env` 的 `CODE_PM_OPENAI_BASE_URL`（可选）
-3. env：`CODE_PM_OPENAI_BASE_URL`
+2. project overrides（当 `project_config.enabled=true`）：`.omne_agent_data/.env` 的 `OMNE_AGENT_OPENAI_BASE_URL`（可选）
+3. env：`OMNE_AGENT_OPENAI_BASE_URL`
 4. provider base_url：`openai.providers.<provider>.base_url`（或 builtin default）
 5. default：`openai_base_url="https://api.openai.com/v1"`
 
@@ -52,7 +52,7 @@
 ### 1.2 落盘（可回放）
 
 - 每次 assistant 输出会落盘 `AssistantMessage { model: Option<String>, response_id, token_usage? }`。
-- 每个 turn 会落盘一次 `ModelRouted { selected_model, rule_source, reason?, rule_id? }`，用于回答“这次用哪个模型、为什么”。（实现对照：`pm_protocol::ThreadEventKind::ModelRouted`）
+- 每个 turn 会落盘一次 `ModelRouted { selected_model, rule_source, reason?, rule_id? }`，用于回答“这次用哪个模型、为什么”。（实现对照：`omne_agent_protocol::ThreadEventKind::ModelRouted`）
 
 ---
 
@@ -75,13 +75,13 @@
 ### 2.2 CLI（可复制）
 
 ```bash
-pm thread config-explain <thread_id> --json
+omne-agent thread config-explain <thread_id> --json
 ```
 
 列出 provider 可用模型（`GET /models` + provider allowlist）：
 
 ```bash
-pm thread models <thread_id> --json
+omne-agent thread models <thread_id> --json
 ```
 
 实现对照：
@@ -100,13 +100,13 @@ pm thread models <thread_id> --json
 
 ### 3.2 配置文件位置（建议写死）
 
-约定：Router 属于项目可提交 spec（`./.codepm_data/spec/`）；运行时数据位于 `.codepm_data/{tmp,threads,...}`，不参与发现/解析。
+约定：Router 属于项目可提交 spec（`./.omne_agent_data/spec/`）；运行时数据位于 `.omne_agent_data/{tmp,threads,...}`，不参与发现/解析。
 
 发现顺序（高 → 低）建议写死：
 
-1. env：`CODE_PM_ROUTER_FILE`（绝对或相对路径；相对路径按 thread cwd 解析）
-2. `./.codepm_data/spec/router.yaml`（推荐）
-3. `./.codepm_data/spec/router.json`（可选；也支持 `router.yml`）
+1. env：`OMNE_AGENT_ROUTER_FILE`（绝对或相对路径；相对路径按 thread cwd 解析）
+2. `./.omne_agent_data/spec/router.yaml`（推荐）
+3. `./.omne_agent_data/spec/router.json`（可选；也支持 `router.yml`）
 
 若 env 指向的文件不存在，或 Router 文件解析失败：直接报错（fail-closed），避免“以为生效但其实没生效”。
 
@@ -176,7 +176,7 @@ project_override: null
 
 验收（未来实现时）：
 
-- `pm thread events <thread_id> --json` 能看到每个 turn 的 `selected_model + reason + rule_source`。
+- `omne-agent thread events <thread_id> --json` 能看到每个 turn 的 `selected_model + reason + rule_source`。
 
 ---
 
@@ -241,14 +241,14 @@ keyword_rules:
 
 fallback provider 列表来源（高 → 低）：
 
-1. env：`CODE_PM_OPENAI_FALLBACK_PROVIDERS="p1,p2,p3"`（逗号分隔）
+1. env：`OMNE_AGENT_OPENAI_FALLBACK_PROVIDERS="p1,p2,p3"`（逗号分隔）
 2. project config（需 `project_config.enabled=true`）：`openai.fallback_providers = ["p1", "p2"]`
 
 重试参数（env）：
 
-- `CODE_PM_AGENT_LLM_MAX_ATTEMPTS`（默认 `3`）
-- `CODE_PM_AGENT_LLM_RETRY_BASE_DELAY_MS`（默认 `200`）
-- `CODE_PM_AGENT_LLM_RETRY_MAX_DELAY_MS`（默认 `2000`）
+- `OMNE_AGENT_LLM_MAX_ATTEMPTS`（默认 `3`）
+- `OMNE_AGENT_LLM_RETRY_BASE_DELAY_MS`（默认 `200`）
+- `OMNE_AGENT_LLM_RETRY_MAX_DELAY_MS`（默认 `2000`）
 
 ### 4.3 落盘与可解释性
 
@@ -271,7 +271,7 @@ fallback provider 列表来源（高 → 低）：
 
 fallback model 列表来源：
 
-- env：`CODE_PM_AGENT_FALLBACK_MODELS="m1,m2,m3"`（逗号分隔；按顺序尝试）
+- env：`OMNE_AGENT_FALLBACK_MODELS="m1,m2,m3"`（逗号分隔；按顺序尝试）
 
 约束：
 
@@ -290,13 +290,13 @@ fallback model 列表来源：
 
 ### 6.1 配置
 
-- env：`CODE_PM_AGENT_TOOL_MODEL="<model>"`（可选；为空/未设置则不启用）
-- 若 thread config 强制了 `model`（例如 subagent 显式指定模型）：忽略 `CODE_PM_AGENT_TOOL_MODEL`
+- env：`OMNE_AGENT_TOOL_MODEL="<model>"`（可选；为空/未设置则不启用）
+- 若 thread config 强制了 `model`（例如 subagent 显式指定模型）：忽略 `OMNE_AGENT_TOOL_MODEL`
 
 ### 6.2 行为（实现口径）
 
 - tool phase：
-  - LLM 请求使用 `CODE_PM_AGENT_TOOL_MODEL`
+  - LLM 请求使用 `OMNE_AGENT_TOOL_MODEL`
   - tools 仍为 `auto`（允许调用工具）
   - 不发送 `item/delta`（避免把中间“碎碎念”流到客户端）
   - tool phase 的 assistant 文本不会注入后续上下文（只保留 tool calls 与 tool results）

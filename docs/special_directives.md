@@ -75,13 +75,13 @@ v0.2.0 最小建议（先钉死 4 个 at，别继续扩面）：
     - local path 会在 agent side 读取文件并 base64 编码后发送；必须满足：
       - thread `allowed_tools` 包含 `file/read`；
       - 当前 mode 对该路径的 read 权限为 allow（含 `tool_overrides.file/read` 合并）。
-    - size 上限由 `CODE_PM_AGENT_MAX_ATTACHMENT_BYTES` 强制（单文件上限）。
-    - count 上限由 `CODE_PM_AGENT_MAX_ATTACHMENTS` 强制（每 turn 上限）。
+    - size 上限由 `OMNE_AGENT_MAX_ATTACHMENT_BYTES` 强制（单文件上限）。
+    - count 上限由 `OMNE_AGENT_MAX_ATTACHMENTS` 强制（每 turn 上限）。
 - `@pdf <path|url>`
   - 语义：把 PDF 作为输入附件（file attachment，`media_type="application/pdf"`）。
   - v0.2.0 实现：同 `@image`，但注入为 file content part。
     - local path 默认会读取文件并 base64 编码后发送；
-    - 当 `CODE_PM_AGENT_PDF_FILE_ID_UPLOAD_MIN_BYTES>0` 且 PDF 大小达到阈值时，agent 会优先尝试上传到 provider 的 `/files` 获取 `file_id`，并将附件以 `file_id` 形式注入（上传失败会回退到 base64）。
+    - 当 `OMNE_AGENT_PDF_FILE_ID_UPLOAD_MIN_BYTES>0` 且 PDF 大小达到阈值时，agent 会优先尝试上传到 provider 的 `/files` 获取 `file_id`，并将附件以 `file_id` 形式注入（上传失败会回退到 base64）。
   - 安全边界（写死）：同 `@image`。
 
 关联规范：
@@ -157,8 +157,8 @@ v0.2.0 最小建议（先钉死 4 个 at，别继续扩面）：
 
 ## 5) 验收（v0.2.0）
 
-- `pm` CLI 会从输入开头解析并剥离 `@file`/`@diff`，转为 `turn/start.context_refs`（模型不需要做文本解析）。
-- `pm` CLI 会从输入开头解析并剥离 `@image`/`@pdf`，转为 `turn/start.attachments`（模型不需要做文本解析）。
+- `omne-agent` CLI 会从输入开头解析并剥离 `@file`/`@diff`，转为 `turn/start.context_refs`（模型不需要做文本解析）。
+- `omne-agent` CLI 会从输入开头解析并剥离 `@image`/`@pdf`，转为 `turn/start.attachments`（模型不需要做文本解析）。
 - `turn/start` 接收结构化 `context_refs`（旧客户端仍可只发 `input`）。
 - `turn/start` 接收结构化 `attachments`（旧客户端仍可只发 `input`）。
 - 结构化输入会随 `TurnStarted.context_refs`/`TurnStarted.attachments` 落盘，可回放定位。

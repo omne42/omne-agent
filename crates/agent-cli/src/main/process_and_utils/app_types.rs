@@ -1,6 +1,6 @@
 struct App {
-    rpc: pm_jsonrpc::Client,
-    notifications: Option<tokio::sync::mpsc::Receiver<pm_jsonrpc::Notification>>,
+    rpc: mcp_jsonrpc::Client,
+    notifications: Option<tokio::sync::mpsc::Receiver<mcp_jsonrpc::Notification>>,
 }
 
 struct RepoSearchRequest {
@@ -62,11 +62,11 @@ fn split_special_directives(
     input: &str,
 ) -> anyhow::Result<(
     String,
-    Vec<pm_protocol::ContextRef>,
-    Vec<pm_protocol::TurnAttachment>,
+    Vec<omne_agent_protocol::ContextRef>,
+    Vec<omne_agent_protocol::TurnAttachment>,
 )> {
-    let mut refs = Vec::<pm_protocol::ContextRef>::new();
-    let mut attachments = Vec::<pm_protocol::TurnAttachment>::new();
+    let mut refs = Vec::<omne_agent_protocol::ContextRef>::new();
+    let mut attachments = Vec::<omne_agent_protocol::TurnAttachment>::new();
     let lines = input.lines().collect::<Vec<_>>();
 
     let mut idx = 0usize;
@@ -85,7 +85,7 @@ fn split_special_directives(
         if trimmed.starts_with("@file ") || trimmed.starts_with("@file\t") {
             let spec = trimmed["@file".len()..].trim();
             let (path, start_line, end_line) = parse_file_ref_spec(spec)?;
-            refs.push(pm_protocol::ContextRef::File(pm_protocol::ContextRefFile {
+            refs.push(omne_agent_protocol::ContextRef::File(omne_agent_protocol::ContextRefFile {
                 path,
                 start_line,
                 end_line,
@@ -100,7 +100,7 @@ fn split_special_directives(
             anyhow::bail!("@diff does not accept arguments");
         }
         if trimmed == "@diff" {
-            refs.push(pm_protocol::ContextRef::Diff(pm_protocol::ContextRefDiff { max_bytes: None }));
+            refs.push(omne_agent_protocol::ContextRef::Diff(omne_agent_protocol::ContextRefDiff { max_bytes: None }));
             did_parse = true;
             idx += 1;
             continue;
@@ -112,16 +112,16 @@ fn split_special_directives(
         if trimmed.starts_with("@image ") || trimmed.starts_with("@image\t") {
             let spec = trimmed["@image".len()..].trim();
             let source = if spec.starts_with("http://") || spec.starts_with("https://") {
-                pm_protocol::AttachmentSource::Url {
+                omne_agent_protocol::AttachmentSource::Url {
                     url: spec.to_string(),
                 }
             } else {
-                pm_protocol::AttachmentSource::Path {
+                omne_agent_protocol::AttachmentSource::Path {
                     path: spec.to_string(),
                 }
             };
-            attachments.push(pm_protocol::TurnAttachment::Image(
-                pm_protocol::TurnAttachmentImage {
+            attachments.push(omne_agent_protocol::TurnAttachment::Image(
+                omne_agent_protocol::TurnAttachmentImage {
                     source,
                     media_type: None,
                 },
@@ -137,16 +137,16 @@ fn split_special_directives(
         if trimmed.starts_with("@pdf ") || trimmed.starts_with("@pdf\t") {
             let spec = trimmed["@pdf".len()..].trim();
             let source = if spec.starts_with("http://") || spec.starts_with("https://") {
-                pm_protocol::AttachmentSource::Url {
+                omne_agent_protocol::AttachmentSource::Url {
                     url: spec.to_string(),
                 }
             } else {
-                pm_protocol::AttachmentSource::Path {
+                omne_agent_protocol::AttachmentSource::Path {
                     path: spec.to_string(),
                 }
             };
-            attachments.push(pm_protocol::TurnAttachment::File(
-                pm_protocol::TurnAttachmentFile {
+            attachments.push(omne_agent_protocol::TurnAttachment::File(
+                omne_agent_protocol::TurnAttachmentFile {
                     source,
                     media_type: "application/pdf".to_string(),
                     filename: None,
@@ -212,4 +212,3 @@ fn parse_file_ref_spec(spec: &str) -> anyhow::Result<(String, Option<u64>, Optio
 
     Ok((path, start_line, end_line))
 }
-

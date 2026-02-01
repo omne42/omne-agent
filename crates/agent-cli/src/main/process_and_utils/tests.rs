@@ -21,14 +21,14 @@ mod special_directives_tests {
         assert!(attachments.is_empty());
         assert!(matches!(
             &refs[0],
-            pm_protocol::ContextRef::File(pm_protocol::ContextRefFile {
+            omne_agent_protocol::ContextRef::File(omne_agent_protocol::ContextRefFile {
                 path,
                 start_line: Some(1),
                 end_line: Some(3),
                 ..
             }) if path == "crates/core/src/redaction.rs"
         ));
-        assert!(matches!(&refs[1], pm_protocol::ContextRef::Diff(_)));
+        assert!(matches!(&refs[1], omne_agent_protocol::ContextRef::Diff(_)));
         Ok(())
     }
 
@@ -52,15 +52,15 @@ mod special_directives_tests {
         assert!(refs.is_empty());
         assert!(matches!(
             &attachments[0],
-            pm_protocol::TurnAttachment::Image(pm_protocol::TurnAttachmentImage {
-                source: pm_protocol::AttachmentSource::Path { path },
+            omne_agent_protocol::TurnAttachment::Image(omne_agent_protocol::TurnAttachmentImage {
+                source: omne_agent_protocol::AttachmentSource::Path { path },
                 ..
             }) if path == "assets/example.png"
         ));
         assert!(matches!(
             &attachments[1],
-            pm_protocol::TurnAttachment::File(pm_protocol::TurnAttachmentFile {
-                source: pm_protocol::AttachmentSource::Url { url },
+            omne_agent_protocol::TurnAttachment::File(omne_agent_protocol::TurnAttachmentFile {
+                source: omne_agent_protocol::AttachmentSource::Url { url },
                 media_type,
                 ..
             }) if url == "https://example.com/file.pdf" && media_type == "application/pdf"

@@ -16,7 +16,7 @@ async fn handle_repo_symbols(server: &Server, params: RepoSymbolsParams) -> anyh
         .unwrap_or(1024 * 1024)
         .min(16 * 1024 * 1024);
     let max_symbols = params.max_symbols.unwrap_or(5000).min(50_000);
-    let tool_id = pm_protocol::ToolId::new();
+    let tool_id = omne_agent_protocol::ToolId::new();
 
     let approval_params = serde_json::json!({
         "root": file_root.as_str(),
@@ -38,15 +38,15 @@ async fn handle_repo_symbols(server: &Server, params: RepoSymbolsParams) -> anyh
         return Ok(result);
     }
 
-    let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
+    let catalog = omne_agent_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {
         Some(mode) => mode,
         None => {
             let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
-            let decision = pm_core::modes::Decision::Deny;
+            let decision = omne_agent_core::modes::Decision::Deny;
 
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
                     tool_id,
                     turn_id: params.turn_id,
                     tool: "repo/symbols".to_string(),
@@ -54,9 +54,9 @@ async fn handle_repo_symbols(server: &Server, params: RepoSymbolsParams) -> anyh
                 })
                 .await?;
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
-                    status: pm_protocol::ToolStatus::Denied,
+                    status: omne_agent_protocol::ToolStatus::Denied,
                     error: Some("unknown mode".to_string()),
                     result: Some(serde_json::json!({
                         "mode": mode_name,
@@ -82,9 +82,9 @@ async fn handle_repo_symbols(server: &Server, params: RepoSymbolsParams) -> anyh
         Some(override_decision) => base_decision.combine(override_decision),
         None => base_decision,
     };
-    if effective_decision == pm_core::modes::Decision::Deny {
+    if effective_decision == omne_agent_core::modes::Decision::Deny {
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+            .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
                 tool_id,
                 turn_id: params.turn_id,
                 tool: "repo/symbols".to_string(),
@@ -92,9 +92,9 @@ async fn handle_repo_symbols(server: &Server, params: RepoSymbolsParams) -> anyh
             })
             .await?;
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+            .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                 tool_id,
-                status: pm_protocol::ToolStatus::Denied,
+                status: omne_agent_protocol::ToolStatus::Denied,
                 error: Some("mode denies repo/symbols".to_string()),
                 result: Some(serde_json::json!({
                     "mode": mode_name,
@@ -110,7 +110,7 @@ async fn handle_repo_symbols(server: &Server, params: RepoSymbolsParams) -> anyh
         }));
     }
 
-    if effective_decision == pm_core::modes::Decision::Prompt {
+    if effective_decision == omne_agent_core::modes::Decision::Prompt {
         match gate_approval(
             server,
             &thread_rt,
@@ -128,7 +128,7 @@ async fn handle_repo_symbols(server: &Server, params: RepoSymbolsParams) -> anyh
             ApprovalGate::Approved => {}
             ApprovalGate::Denied { remembered } => {
                 thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                    .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
                         tool_id,
                         turn_id: params.turn_id,
                         tool: "repo/symbols".to_string(),
@@ -136,9 +136,9 @@ async fn handle_repo_symbols(server: &Server, params: RepoSymbolsParams) -> anyh
                     })
                     .await?;
                 thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                         tool_id,
-                        status: pm_protocol::ToolStatus::Denied,
+                        status: omne_agent_protocol::ToolStatus::Denied,
                         error: Some(approval_denied_error(remembered).to_string()),
                         result: Some(serde_json::json!({
                             "approval_policy": approval_policy,
@@ -162,7 +162,7 @@ async fn handle_repo_symbols(server: &Server, params: RepoSymbolsParams) -> anyh
     }
 
     thread_rt
-        .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+        .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
             tool_id,
             turn_id: params.turn_id,
             tool: "repo/symbols".to_string(),
@@ -367,9 +367,9 @@ async fn handle_repo_symbols(server: &Server, params: RepoSymbolsParams) -> anyh
     match outcome {
         Ok((artifact_response, completed)) => {
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
-                    status: pm_protocol::ToolStatus::Completed,
+                    status: omne_agent_protocol::ToolStatus::Completed,
                     error: None,
                     result: Some(completed),
                 })
@@ -378,9 +378,9 @@ async fn handle_repo_symbols(server: &Server, params: RepoSymbolsParams) -> anyh
         }
         Err(err) => {
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
-                    status: pm_protocol::ToolStatus::Failed,
+                    status: omne_agent_protocol::ToolStatus::Failed,
                     error: Some(err.to_string()),
                     result: None,
                 })

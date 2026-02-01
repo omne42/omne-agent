@@ -62,7 +62,7 @@ async fn run_process_actor(args: ProcessActorArgs) {
                         }
                         if !interrupt_logged {
                             let _ = thread_rt
-                                .append_event(pm_protocol::ThreadEventKind::ProcessInterruptRequested {
+                                .append_event(omne_agent_protocol::ThreadEventKind::ProcessInterruptRequested {
                                     process_id,
                                     reason: interrupt_reason.clone(),
                                 })
@@ -78,7 +78,7 @@ async fn run_process_actor(args: ProcessActorArgs) {
                             kill_reason = reason;
                         }
                         if !kill_logged {
-                            let _ = thread_rt.append_event(pm_protocol::ThreadEventKind::ProcessKillRequested {
+                            let _ = thread_rt.append_event(omne_agent_protocol::ThreadEventKind::ProcessKillRequested {
                                 process_id,
                                 reason: kill_reason.clone(),
                             }).await;
@@ -102,7 +102,7 @@ async fn run_process_actor(args: ProcessActorArgs) {
 
                 let exit_code = status.code();
                 let exited = thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ProcessExited {
+                    .append_event(omne_agent_protocol::ThreadEventKind::ProcessExited {
                         process_id,
                         exit_code,
                         reason: kill_reason.clone().or_else(|| interrupt_reason.clone()),

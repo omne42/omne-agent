@@ -54,9 +54,9 @@ PR #1641 的核心诉求是：**让 Codex CLI 在“Zero Data Retention (ZDR)”
 
 ---
 
-## 5) 对我们当前目录（CodePM 这组仓库）的直接启发
+## 5) 对我们当前目录（omne-agent 这组仓库）的直接启发
 
-对 `codex_pm/`（CodePM app-server）来说，最关键的不是 sqlite 这个实现细节，而是一个原则：
+对 `omne-agent/`（omne-agent app-server）来说，最关键的不是 sqlite 这个实现细节，而是一个原则：
 
 - **如果你为了对齐 Responses 的“unrolled stateless loop / compaction / encrypted_content round-trip”而必须保存 raw items，那么就必须重新评估“本地存储敏感数据”的边界**。
 
@@ -66,4 +66,3 @@ PR #1641 的核心诉求是：**让 Codex CLI 在“Zero Data Retention (ZDR)”
 - 若要“与 Codex CLI 完全对齐”的 Responses 路线，就需要一个 **raw history** 通道（不依赖 redacted events 来重建 prompt）。
 
 这正是 PR #1641 要解决的矛盾：**既要保留足够精确的上下文（包括 tool outputs），又要把落盘风险降到可接受水平**。
-

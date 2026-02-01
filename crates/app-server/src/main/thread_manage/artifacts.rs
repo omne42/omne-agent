@@ -44,9 +44,9 @@ async fn handle_thread_clear_artifacts(
         }
     }
 
-    let tool_id = pm_protocol::ToolId::new();
+    let tool_id = omne_agent_protocol::ToolId::new();
     thread_rt
-        .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+        .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
             tool_id,
             turn_id: None,
             tool: "thread/clear_artifacts".to_string(),
@@ -67,9 +67,9 @@ async fn handle_thread_clear_artifacts(
     };
 
     thread_rt
-        .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+        .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
             tool_id,
-            status: pm_protocol::ToolStatus::Completed,
+            status: omne_agent_protocol::ToolStatus::Completed,
             error: None,
             result: Some(serde_json::json!({
                 "removed": removed,

@@ -1,6 +1,6 @@
 async fn run_tool_call_once(
     server: &super::Server,
-    thread_id: pm_protocol::ThreadId,
+    thread_id: omne_agent_protocol::ThreadId,
     turn_id: Option<TurnId>,
     tool_name: &str,
     args: Value,
@@ -383,7 +383,7 @@ async fn run_tool_call_once(
         }
         "thread_state" => {
             let args: ThreadStateArgs = serde_json::from_value(args)?;
-            let thread_id: pm_protocol::ThreadId = args.thread_id.parse()?;
+            let thread_id: omne_agent_protocol::ThreadId = args.thread_id.parse()?;
             let rt = server.get_or_load_thread(thread_id).await?;
             let handle = rt.handle.lock().await;
             let state = handle.state();
@@ -412,7 +412,7 @@ async fn run_tool_call_once(
         }
         "thread_events" => {
             let args: ThreadEventsArgs = serde_json::from_value(args)?;
-            let thread_id: pm_protocol::ThreadId = args.thread_id.parse()?;
+            let thread_id: omne_agent_protocol::ThreadId = args.thread_id.parse()?;
             let since = EventSeq(args.since_seq);
 
             let mut events = server
@@ -606,7 +606,7 @@ async fn run_tool_call_once(
             let task_previews = plans
                 .iter()
                 .map(|task| {
-                    let input_preview = pm_core::redact_text(&truncate_chars(&task.input, 400));
+                    let input_preview = omne_agent_core::redact_text(&truncate_chars(&task.input, 400));
                     serde_json::json!({
                         "id": task.id.clone(),
                         "spawn_mode": spawn_mode_label(task.spawn_mode),
@@ -636,7 +636,7 @@ async fn run_tool_call_once(
                 "openai_base_url": default_openai_base_url,
             });
 
-            let tool_id = pm_protocol::ToolId::new();
+            let tool_id = omne_agent_protocol::ToolId::new();
             let (thread_rt, thread_root) = super::load_thread_root(server, thread_id).await?;
             let (approval_policy, mode_name, thread_cwd) = {
                 let handle = thread_rt.handle.lock().await;
@@ -647,12 +647,12 @@ async fn run_tool_call_once(
                 anyhow::anyhow!("thread cwd is missing: {}", thread_id)
             })?;
 
-            let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
+            let catalog = omne_agent_core::modes::ModeCatalog::load(&thread_root).await;
             let Some(mode) = catalog.mode(&mode_name) else {
                 let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
-                let decision = pm_core::modes::Decision::Deny;
+                let decision = omne_agent_core::modes::Decision::Deny;
                 thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                    .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
                         tool_id,
                         turn_id,
                         tool: "subagent/spawn".to_string(),
@@ -660,9 +660,9 @@ async fn run_tool_call_once(
                     })
                     .await?;
                 thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                         tool_id,
-                        status: pm_protocol::ToolStatus::Denied,
+                        status: omne_agent_protocol::ToolStatus::Denied,
                         error: Some("unknown mode".to_string()),
                         result: Some(serde_json::json!({
                             "mode": mode_name,
@@ -689,7 +689,7 @@ async fn run_tool_call_once(
                 .collect::<Vec<_>>();
             if !isolated_tasks.is_empty() {
                 thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                    .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
                         tool_id,
                         turn_id,
                         tool: "subagent/spawn".to_string(),
@@ -697,9 +697,9 @@ async fn run_tool_call_once(
                     })
                     .await?;
                 thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                         tool_id,
-                        status: pm_protocol::ToolStatus::Denied,
+                        status: omne_agent_protocol::ToolStatus::Denied,
                         error: Some("workspace_mode=isolated_write is not supported yet".to_string()),
                         result: Some(serde_json::json!({
                             "workspace_mode": workspace_mode_label(AgentSpawnWorkspaceMode::IsolatedWrite),
@@ -721,9 +721,9 @@ async fn run_tool_call_once(
                 None => base_decision,
             };
 
-            if effective_decision == pm_core::modes::Decision::Deny {
+            if effective_decision == omne_agent_core::modes::Decision::Deny {
                 thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                    .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
                         tool_id,
                         turn_id,
                         tool: "subagent/spawn".to_string(),
@@ -731,9 +731,9 @@ async fn run_tool_call_once(
                     })
                     .await?;
                 thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                         tool_id,
-                        status: pm_protocol::ToolStatus::Denied,
+                        status: omne_agent_protocol::ToolStatus::Denied,
                         error: Some("mode denies subagent/spawn".to_string()),
                         result: Some(serde_json::json!({
                             "mode": mode_name,
@@ -750,7 +750,7 @@ async fn run_tool_call_once(
             }
 
             let max_concurrent_subagents =
-                parse_env_usize("CODE_PM_MAX_CONCURRENT_SUBAGENTS", 4, 0, 64);
+                parse_env_usize("OMNE_AGENT_MAX_CONCURRENT_SUBAGENTS", 4, 0, 64);
             if let Some(allowed) = mode.permissions.subagent.spawn.allowed_modes.as_ref() {
                 let mut disallowed = std::collections::BTreeSet::<String>::new();
                 for task in &plans {
@@ -761,7 +761,7 @@ async fn run_tool_call_once(
                 if !disallowed.is_empty() {
                     let requested_modes = disallowed.into_iter().collect::<Vec<_>>();
                     thread_rt
-                        .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                        .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
                             tool_id,
                             turn_id,
                             tool: "subagent/spawn".to_string(),
@@ -769,9 +769,9 @@ async fn run_tool_call_once(
                         })
                         .await?;
                     thread_rt
-                        .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                        .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                             tool_id,
-                            status: pm_protocol::ToolStatus::Denied,
+                            status: omne_agent_protocol::ToolStatus::Denied,
                             error: Some("mode forbids spawning this subagent mode".to_string()),
                             result: Some(serde_json::json!({
                                 "mode": mode_name,
@@ -804,7 +804,7 @@ async fn run_tool_call_once(
                     .collect::<Vec<_>>();
 
                 thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                    .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
                         tool_id,
                         turn_id,
                         tool: "subagent/spawn".to_string(),
@@ -812,9 +812,9 @@ async fn run_tool_call_once(
                     })
                     .await?;
                 thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                         tool_id,
-                        status: pm_protocol::ToolStatus::Denied,
+                        status: omne_agent_protocol::ToolStatus::Denied,
                         error: Some(format!(
                             "max_concurrent_subagents limit reached: active={active}, max={max_concurrent_subagents}"
                         )),
@@ -833,7 +833,7 @@ async fn run_tool_call_once(
                 }));
             }
 
-            if effective_decision == pm_core::modes::Decision::Prompt {
+            if effective_decision == omne_agent_core::modes::Decision::Prompt {
                 match super::gate_approval(
                     server,
                     &thread_rt,
@@ -851,7 +851,7 @@ async fn run_tool_call_once(
                     super::ApprovalGate::Approved => {}
                     super::ApprovalGate::Denied { remembered } => {
                         thread_rt
-                            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                            .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
                                 tool_id,
                                 turn_id,
                                 tool: "subagent/spawn".to_string(),
@@ -859,9 +859,9 @@ async fn run_tool_call_once(
                             })
                             .await?;
                         thread_rt
-                            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                            .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                                 tool_id,
-                                status: pm_protocol::ToolStatus::Denied,
+                                status: omne_agent_protocol::ToolStatus::Denied,
                                 error: Some(super::approval_denied_error(remembered).to_string()),
                                 result: Some(serde_json::json!({
                                     "approval_policy": approval_policy,
@@ -884,7 +884,7 @@ async fn run_tool_call_once(
             }
 
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
                     tool_id,
                     turn_id,
                     tool: "subagent/spawn".to_string(),
@@ -917,7 +917,7 @@ async fn run_tool_call_once(
                         super::ThreadConfigureParams {
                             thread_id: spawned.thread_id,
                             approval_policy: approval_override,
-                            sandbox_policy: Some(pm_protocol::SandboxPolicy::ReadOnly),
+                            sandbox_policy: Some(omne_agent_protocol::SandboxPolicy::ReadOnly),
                             sandbox_writable_roots: None,
                             sandbox_network_access: None,
                             mode: Some(plan.mode.clone()),
@@ -968,9 +968,9 @@ async fn run_tool_call_once(
             match outcome {
                 Ok(tasks) => {
                     thread_rt
-                        .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                        .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                             tool_id,
-                            status: pm_protocol::ToolStatus::Completed,
+                            status: omne_agent_protocol::ToolStatus::Completed,
                             error: None,
                             result: Some(serde_json::json!({
                                 "tasks": tasks,
@@ -984,9 +984,9 @@ async fn run_tool_call_once(
                 }
                 Err(err) => {
                     thread_rt
-                        .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                        .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                             tool_id,
-                            status: pm_protocol::ToolStatus::Failed,
+                            status: omne_agent_protocol::ToolStatus::Failed,
                             error: Some(err.to_string()),
                             result: None,
                         })

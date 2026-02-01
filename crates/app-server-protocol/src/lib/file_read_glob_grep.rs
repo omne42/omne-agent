@@ -7,13 +7,13 @@ pub enum FileRoot {
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
 pub struct FileReadParams {
-    pub thread_id: pm_protocol::ThreadId,
+    pub thread_id: omne_agent_protocol::ThreadId,
     #[serde(default)]
     #[ts(optional)]
-    pub turn_id: Option<pm_protocol::TurnId>,
+    pub turn_id: Option<omne_agent_protocol::TurnId>,
     #[serde(default)]
     #[ts(optional)]
-    pub approval_id: Option<pm_protocol::ApprovalId>,
+    pub approval_id: Option<omne_agent_protocol::ApprovalId>,
     #[serde(default)]
     #[ts(optional)]
     pub root: Option<FileRoot>,
@@ -25,13 +25,13 @@ pub struct FileReadParams {
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
 pub struct FileGlobParams {
-    pub thread_id: pm_protocol::ThreadId,
+    pub thread_id: omne_agent_protocol::ThreadId,
     #[serde(default)]
     #[ts(optional)]
-    pub turn_id: Option<pm_protocol::TurnId>,
+    pub turn_id: Option<omne_agent_protocol::TurnId>,
     #[serde(default)]
     #[ts(optional)]
-    pub approval_id: Option<pm_protocol::ApprovalId>,
+    pub approval_id: Option<omne_agent_protocol::ApprovalId>,
     #[serde(default)]
     #[ts(optional)]
     pub root: Option<FileRoot>,
@@ -50,13 +50,13 @@ pub struct FileGlobParams {
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
 pub struct FileGrepParams {
-    pub thread_id: pm_protocol::ThreadId,
+    pub thread_id: omne_agent_protocol::ThreadId,
     #[serde(default)]
     #[ts(optional)]
-    pub turn_id: Option<pm_protocol::TurnId>,
+    pub turn_id: Option<omne_agent_protocol::TurnId>,
     #[serde(default)]
     #[ts(optional)]
-    pub approval_id: Option<pm_protocol::ApprovalId>,
+    pub approval_id: Option<omne_agent_protocol::ApprovalId>,
     #[serde(default)]
     #[ts(optional)]
     pub root: Option<FileRoot>,

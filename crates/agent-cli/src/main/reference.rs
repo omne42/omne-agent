@@ -35,17 +35,17 @@ struct ReferenceRepoStats {
     entries_skipped: u64,
 }
 
-fn resolve_pm_root(cli: &Cli) -> anyhow::Result<PathBuf> {
+fn resolve_root(cli: &Cli) -> anyhow::Result<PathBuf> {
     let cwd = std::env::current_dir()?;
     Ok(cli
-        .pm_root
+        .root
         .clone()
-        .or_else(|| std::env::var_os("CODE_PM_ROOT").map(PathBuf::from))
-        .unwrap_or_else(|| cwd.join(".codepm_data")))
+        .or_else(|| std::env::var_os("OMNE_AGENT_ROOT").map(PathBuf::from))
+        .unwrap_or_else(|| cwd.join(".omne_agent_data")))
 }
 
 async fn run_reference(cli: &Cli, command: ReferenceCommand) -> anyhow::Result<()> {
-    let pm_root = resolve_pm_root(cli)?;
+    let agent_root = resolve_root(cli)?;
 
     match command {
         ReferenceCommand::Import {
@@ -58,11 +58,11 @@ async fn run_reference(cli: &Cli, command: ReferenceCommand) -> anyhow::Result<(
                 .unwrap_or(DEFAULT_MAX_REFERENCE_FILE_BYTES)
                 .clamp(1, MAX_MAX_REFERENCE_FILE_BYTES);
 
-            let report = reference_repo_import(&pm_root, &from, force, max_file_bytes).await?;
+            let report = reference_repo_import(&agent_root, &from, force, max_file_bytes).await?;
             print_json_or_pretty(json, &serde_json::to_value(report)?)?;
         }
         ReferenceCommand::Status { json } => {
-            let status = reference_repo_status(&pm_root).await?;
+            let status = reference_repo_status(&agent_root).await?;
             print_json_or_pretty(json, &status)?;
         }
     }
@@ -70,8 +70,8 @@ async fn run_reference(cli: &Cli, command: ReferenceCommand) -> anyhow::Result<(
     Ok(())
 }
 
-async fn reference_repo_status(pm_root: &Path) -> anyhow::Result<Value> {
-    let ref_dir = pm_root.join("reference");
+async fn reference_repo_status(agent_root: &Path) -> anyhow::Result<Value> {
+    let ref_dir = agent_root.join("reference");
     let repo_dir = ref_dir.join("repo");
     let manifest_path = ref_dir.join("manifest.json");
 
@@ -88,7 +88,7 @@ async fn reference_repo_status(pm_root: &Path) -> anyhow::Result<Value> {
     };
 
     Ok(serde_json::json!({
-        "pm_root": pm_root.display().to_string(),
+        "root": agent_root.display().to_string(),
         "repo_dir": repo_dir.display().to_string(),
         "repo_present": repo_present,
         "manifest_path": manifest_path.display().to_string(),
@@ -98,23 +98,23 @@ async fn reference_repo_status(pm_root: &Path) -> anyhow::Result<Value> {
 }
 
 async fn reference_repo_import(
-    pm_root: &Path,
+    agent_root: &Path,
     from: &Path,
     force: bool,
     max_file_bytes: u64,
 ) -> anyhow::Result<ReferenceRepoManifest> {
-    let pm_root = pm_root.to_path_buf();
+    let agent_root = agent_root.to_path_buf();
     let from = from.to_path_buf();
 
     tokio::task::spawn_blocking(move || {
-        do_reference_repo_import(&pm_root, &from, force, max_file_bytes)
+        do_reference_repo_import(&agent_root, &from, force, max_file_bytes)
     })
     .await
     .context("join reference repo import task")?
 }
 
 fn do_reference_repo_import(
-    pm_root: &Path,
+    agent_root: &Path,
     from: &Path,
     force: bool,
     max_file_bytes: u64,
@@ -123,7 +123,7 @@ fn do_reference_repo_import(
         anyhow::bail!("source is not a directory: {}", from.display());
     }
 
-    let ref_dir = pm_root.join("reference");
+    let ref_dir = agent_root.join("reference");
     let repo_dir = ref_dir.join("repo");
     let manifest_path = ref_dir.join("manifest.json");
 

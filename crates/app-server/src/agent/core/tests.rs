@@ -216,7 +216,6 @@ mod attachment_upload_tests {
             },
             capabilities: ditto_llm::ProviderCapabilities::openai_responses(),
             client: Arc::new(DummyLanguageModel),
-            openai_responses_client: None,
             file_uploader,
         }
     }
@@ -357,22 +356,22 @@ mod loop_detection_tests {
 mod auto_summary_tests {
     use super::*;
 
-    use pm_core::{PmPaths, ThreadStore};
-    use pm_protocol::TurnStatus;
+    use omne_agent_core::{AgentPaths, ThreadStore};
+    use omne_agent_protocol::TurnStatus;
     use tokio::sync::broadcast;
 
-    fn build_test_server(pm_root: PathBuf) -> crate::Server {
+    fn build_test_server(agent_root: PathBuf) -> crate::Server {
         let (notify_tx, _notify_rx) = broadcast::channel::<String>(16);
         crate::Server {
-            cwd: pm_root.clone(),
+            cwd: agent_root.clone(),
             notify_tx,
             notify_hub: crate::default_notify_hub(),
-            thread_store: ThreadStore::new(PmPaths::new(pm_root)),
+            thread_store: ThreadStore::new(AgentPaths::new(agent_root)),
             threads: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             processes: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             mcp: Arc::new(tokio::sync::Mutex::new(crate::McpManager::default())),
             disk_warning: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
-            exec_policy: pm_execpolicy::Policy::empty(),
+            exec_policy: omne_agent_execpolicy::Policy::empty(),
             db_vfs: None,
         }
     }
@@ -392,7 +391,7 @@ mod auto_summary_tests {
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = build_test_server(tmp.path().join(".codepm_data"));
+        let server = build_test_server(tmp.path().join(".omne_agent_data"));
         let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -400,16 +399,16 @@ mod auto_summary_tests {
         let thread_rt = server.get_or_load_thread(thread_id).await?;
         let turn_id1 = TurnId::new();
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::TurnStarted {
+            .append_event(omne_agent_protocol::ThreadEventKind::TurnStarted {
                 turn_id: turn_id1,
                 input: "first".to_string(),
                 context_refs: None,
                 attachments: None,
-                priority: pm_protocol::TurnPriority::Foreground,
+                priority: omne_agent_protocol::TurnPriority::Foreground,
             })
             .await?;
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::AssistantMessage {
+            .append_event(omne_agent_protocol::ThreadEventKind::AssistantMessage {
                 turn_id: Some(turn_id1),
                 text: "hello".to_string(),
                 model: None,
@@ -418,7 +417,7 @@ mod auto_summary_tests {
             })
             .await?;
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::TurnCompleted {
+            .append_event(omne_agent_protocol::ThreadEventKind::TurnCompleted {
                 turn_id: turn_id1,
                 status: TurnStatus::Completed,
                 reason: None,
@@ -441,12 +440,12 @@ mod auto_summary_tests {
 
         let turn_id2 = TurnId::new();
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::TurnStarted {
+            .append_event(omne_agent_protocol::ThreadEventKind::TurnStarted {
                 turn_id: turn_id2,
                 input: "second".to_string(),
                 context_refs: None,
                 attachments: None,
-                priority: pm_protocol::TurnPriority::Foreground,
+                priority: omne_agent_protocol::TurnPriority::Foreground,
             })
             .await?;
 

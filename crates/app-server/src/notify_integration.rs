@@ -2,19 +2,19 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use anyhow::Context;
-use pm_protocol::{ThreadEvent, ThreadEventKind, TurnStatus};
+use omne_agent_protocol::{ThreadEvent, ThreadEventKind, TurnStatus};
 
 pub(crate) fn init_notify_hub_from_env() -> anyhow::Result<Option<notify_kit::Hub>> {
     let mut sinks: Vec<Arc<dyn notify_kit::Sink>> = Vec::new();
 
-    if parse_env_bool("CODE_PM_NOTIFY_SOUND")? {
-        let command_argv = parse_env_json_string_array("CODE_PM_NOTIFY_SOUND_CMD_JSON")?;
+    if parse_env_bool("OMNE_AGENT_NOTIFY_SOUND")? {
+        let command_argv = parse_env_json_string_array("OMNE_AGENT_NOTIFY_SOUND_CMD_JSON")?;
         sinks.push(Arc::new(notify_kit::SoundSink::new(
             notify_kit::SoundConfig { command_argv },
         )));
     }
 
-    if let Some(webhook_url) = std::env::var("CODE_PM_NOTIFY_FEISHU_WEBHOOK_URL")
+    if let Some(webhook_url) = std::env::var("OMNE_AGENT_NOTIFY_FEISHU_WEBHOOK_URL")
         .ok()
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
@@ -28,7 +28,7 @@ pub(crate) fn init_notify_hub_from_env() -> anyhow::Result<Option<notify_kit::Hu
         return Ok(None);
     }
 
-    let enabled_kinds = parse_env_event_kinds("CODE_PM_NOTIFY_EVENTS")?;
+    let enabled_kinds = parse_env_event_kinds("OMNE_AGENT_NOTIFY_EVENTS")?;
 
     let hub = notify_kit::Hub::new(
         notify_kit::HubConfig {

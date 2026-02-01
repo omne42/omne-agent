@@ -311,7 +311,7 @@
             self.thinking_turn_id = Some(turn_id);
         }
 
-        fn handle_notification(&mut self, note: pm_jsonrpc::Notification) -> anyhow::Result<()> {
+        fn handle_notification(&mut self, note: mcp_jsonrpc::Notification) -> anyhow::Result<()> {
             match note.method.as_str() {
                 "item/delta" => {
                     let params = note.params.as_object().context("delta params is not object")?;

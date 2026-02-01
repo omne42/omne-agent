@@ -7,7 +7,7 @@ struct ApprovalOutcome {
 
 async fn wait_for_approval_outcome(
     server: &super::Server,
-    thread_id: pm_protocol::ThreadId,
+    thread_id: omne_agent_protocol::ThreadId,
     approval_id: ApprovalId,
     cancel: CancellationToken,
 ) -> anyhow::Result<ApprovalOutcome> {

@@ -8,19 +8,19 @@
 
 ## 0) v0.2.0 现状：已有原语（可手工达成）
 
-v0.2.0 已提供最小的 `pm preset` import/export（无 secrets；通过 `thread/config-explain` + `thread/configure` 落盘 `ThreadConfigUpdated`）。
+v0.2.0 已提供最小的 `omne-agent preset` import/export（无 secrets；通过 `thread/config-explain` + `thread/configure` 落盘 `ThreadConfigUpdated`）。
 
 ### 0.1 导出（export）
 
 ```bash
-pm preset export <thread_id> --out .codepm_data/spec/presets/coder-default.yaml
+omne-agent preset export <thread_id> --out .omne_agent_data/spec/presets/coder-default.yaml
 ```
 
 可选元信息：
 
 ```bash
-pm preset export <thread_id> \
-  --out .codepm_data/spec/presets/coder-default.yaml \
+omne-agent preset export <thread_id> \
+  --out .omne_agent_data/spec/presets/coder-default.yaml \
   --name coder-default \
   --description "safe defaults for this repo"
 ```
@@ -28,20 +28,20 @@ pm preset export <thread_id> \
 ### 0.2 导入（import）
 
 ```bash
-pm preset import <thread_id> --file .codepm_data/spec/presets/coder-default.yaml
+omne-agent preset import <thread_id> --file .omne_agent_data/spec/presets/coder-default.yaml
 ```
 
 约束：
 
-- `import` 默认只允许从 `<pm_root>/spec/` 下加载（可提交/可 review）；`pm_root` 默认是 `<cwd>/.codepm_data`，可用 `--pm-root` 覆盖。
+- `import` 默认只允许从 `<agent_root>/spec/` 下加载（可提交/可 review）；`agent_root` 默认是 `<cwd>/.omne_agent_data`，可用 `--root` 覆盖。
 - preset 文件严格 allowlist（`deny_unknown_fields`），未知字段直接报错。
 - preset 文件不包含任何 secrets；密钥只来自运行环境（见 `docs/redaction.md`）。
 
 ### 0.3 仍可手工（调试/兜底）
 
 ```bash
-pm thread config-explain <thread_id> --json
-pm thread configure <thread_id> --help
+omne-agent thread config-explain <thread_id> --json
+omne-agent thread configure <thread_id> --help
 ```
 
 ---
@@ -52,26 +52,26 @@ pm thread configure <thread_id> --help
 
 建议的 preset 文件位置：
 
-- Canonical：`./.codepm_data/spec/presets/<name>.yaml`
-- Default：`./.codepm_data/spec/preset.yaml`（可选；作为“项目默认 preset”）
+- Canonical：`./.omne_agent_data/spec/presets/<name>.yaml`
+- Default：`./.omne_agent_data/spec/preset.yaml`（可选；作为“项目默认 preset”）
 
 v1 建议（写死）：
 
 - preset **不自动生效**：不会因为文件存在就隐式改变 thread 配置。
 - preset 只能通过显式动作生效：
-  - 人类显式 `pm preset import ...`（或等价 API）把 preset 物化为一次 `ThreadConfigUpdated`。
-  - 人类显式 `pm preset export ...` 从当前 thread 导出一个可 review 的文件。
+  - 人类显式 `omne-agent preset import ...`（或等价 API）把 preset 物化为一次 `ThreadConfigUpdated`。
+  - 人类显式 `omne-agent preset export ...` 从当前 thread 导出一个可 review 的文件。
 - 信任边界（写死）：
-  - v1 只允许从 `./.codepm_data/spec/` 下加载 preset（可提交/可 review）。
+  - v1 只允许从 `./.omne_agent_data/spec/` 下加载 preset（可提交/可 review）。
   - 不从 env/网络/任意绝对路径隐式加载。
-  - 不从 `.codepm_data/{tmp,threads,data,repos,locks,logs}/` 这类运行时目录加载。
+  - 不从 `.omne_agent_data/{tmp,threads,data,repos,locks,logs}/` 这类运行时目录加载。
 
 建议的发现/覆盖顺序（从低到高，越后越强）：
 
 生效层级（与现状保持一致）：
 
 1. default（硬编码）
-2. env（如 `CODE_PM_OPENAI_MODEL`/`CODE_PM_OPENAI_BASE_URL`，见 `docs/model_routing.md`）
+2. env（如 `OMNE_AGENT_OPENAI_MODEL`/`OMNE_AGENT_OPENAI_BASE_URL`，见 `docs/model_routing.md`）
 3. thread（`ThreadConfigUpdated` 事件）
 
 preset/CLI flags 的关系：
@@ -113,8 +113,8 @@ thread_config:
 
 可选字段（TODO，先别承诺实现）：
 
-- `execpolicy_rules`: `["./.codepm_data/spec/execpolicy/*.rules", ...]`
-  - 备注：execpolicy 目前是 **app-server 全局启动参数**（`pm --execpolicy-rules <path>`），不是 thread 配置；preset 里最多作为“启动建议/提示”，导入到已运行的 app-server 不应静默生效。
+- `execpolicy_rules`: `["./.omne_agent_data/spec/execpolicy/*.rules", ...]`
+  - 备注：execpolicy 目前是 **app-server 全局启动参数**（`omne-agent --execpolicy-rules <path>`），不是 thread 配置；preset 里最多作为“启动建议/提示”，导入到已运行的 app-server 不应静默生效。
 
 硬规则（再次强调）：
 
@@ -122,8 +122,8 @@ thread_config:
 
 ### 2.2 目录与可提交性
 
-- preset 属于“项目可提交配置”，建议放在 `./.codepm_data/spec/`（见 `docs/runtime_layout.md`）。
-- `.codepm_data/` 下只有 `spec/` 承载可迁移 preset；其它子目录都是运行时数据，不承载 preset。
+- preset 属于“项目可提交配置”，建议放在 `./.omne_agent_data/spec/`（见 `docs/runtime_layout.md`）。
+- `.omne_agent_data/` 下只有 `spec/` 承载可迁移 preset；其它子目录都是运行时数据，不承载 preset。
 
 ---
 
@@ -164,13 +164,13 @@ thread_config:
 
 安全约束（硬规则）：
 
-- 导出严格 allowlist；**不导出任何密钥/令牌**（例如 `OPENAI_API_KEY`/`CODE_PM_OPENAI_API_KEY`）。
+- 导出严格 allowlist；**不导出任何密钥/令牌**（例如 `OPENAI_API_KEY`/`OMNE_AGENT_OPENAI_API_KEY`）。
 - 若未来引入 provider 配置与 secret refs：导出只允许“引用/占位符”（例如 `{{ENV:OPENAI_API_KEY}}`），绝不写明文。
 
 ---
 
 ## 5) DoD（v0.2.0 最小实现）
 
-- `pm preset export <id> --out .codepm_data/spec/presets/x.yaml` 生成的文件里不包含任何 token 形态（例如 `rg -n \"sk-\" .codepm_data/spec/presets/x.yaml` 命中为 0）。
-- `pm preset import <id> --file .codepm_data/spec/presets/x.yaml` 后，`pm thread config-explain <id> --json` 的 `effective` 与 preset 对齐。
+- `omne-agent preset export <id> --out .omne_agent_data/spec/presets/x.yaml` 生成的文件里不包含任何 token 形态（例如 `rg -n \"sk-\" .omne_agent_data/spec/presets/x.yaml` 命中为 0）。
+- `omne-agent preset import <id> --file .omne_agent_data/spec/presets/x.yaml` 后，`omne-agent thread config-explain <id> --json` 的 `effective` 与 preset 对齐。
 - （如果实现了独立层）`thread/config/explain.layers` 能看到 `preset` 来源与元信息（name/hash）。

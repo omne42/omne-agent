@@ -9,13 +9,13 @@
 - `docs/implementation_plan.md`：vNext 实现计划与里程碑
 - `docs/rts_workflow.md`：目标态使用流程（RTS 风格）
 - `docs/development_process.md`：重新开发流程（Agent-first）
-- `docs/start.md`：入口（含 v0.1.1 legacy 背景）
+- `docs/start.md`：入口（quickstart + agent_root 约定）
 
 ## 2) 运行时与协议（v0.2.0 已实现为主）
 
 - `docs/thread_event_model.md`：Thread/Turn/Item 与 JSONL 回放口径
-- `docs/codepm_data.md`：`./.codepm_data/` 目录约定（项目配置 + 运行时数据）
-- `docs/runtime_layout.md`：`pm_root`（默认 `./.codepm_data/`）目录结构与“从 ID 定位到文件”
+- `docs/omne_agent_data.md`：`./.omne_agent_data/` 目录约定（项目配置 + 运行时数据）
+- `docs/runtime_layout.md`：`agent_root`（默认 `./.omne_agent_data/`）目录结构与“从 ID 定位到文件”
 - `docs/modes.md`：Mode（角色权限边界）与合并语义
 - `docs/approvals.md`：Approvals 事件模型与 policy（含 Escalate TODO）
 - `docs/execpolicy.md`：ExecPolicy（`process/start` 命令前缀规则）
@@ -25,7 +25,7 @@
 - `docs/notifications.md`：通知与 bell（含 stale process TODO）
 - `docs/budgets.md`：Budgets/timeout → `Stuck`（含 loop/summary TODO）
 - `docs/tool_parallelism.md`：read-only tool 并发口径
-- `docs/workspace_hooks.md`：Workspace hooks（`.codepm_data/spec/workspace.yaml`）
+- `docs/workspace_hooks.md`：Workspace hooks（`.omne_agent_data/spec/workspace.yaml`）
 - `docs/reference_repo.md`：Reference repo/snapshot（只读参考；v0.2.0 最小实现）
 
 ## 3) 目标态/未实现规格（TODO 草案）
@@ -51,21 +51,21 @@
 
 ## 5) 命令约定（可复制）
 
-如果你没安装 `pm` 到 PATH，用 `cargo run` 运行（所有文档里的 `pm ...` 都可按此替换）：
+如果你没安装 `omne-agent` 到 PATH，用 `cargo run` 运行（所有文档里的 `omne-agent ...` 都可按此替换）：
 
 ```bash
-$ cargo run -p pm -- --help
-$ cargo run -p pm-app-server -- --help
+$ cargo run -p omne-agent -- --help
+$ cargo run -p omne-agent-app-server -- --help
 
 # 全屏 TUI（默认新建 thread）
-$ cargo run -p pm
+$ cargo run -p omne-agent
 # 或显式：
-$ cargo run -p pm -- tui
+$ cargo run -p omne-agent -- tui
 
 # 交互式 CLI（REPL 风格）
-$ cargo run -p pm -- cli
+$ cargo run -p omne-agent -- cli
 # 兼容别名：
-$ cargo run -p pm -- repl
+$ cargo run -p omne-agent -- repl
 ```
 
 快速搜索：
@@ -77,4 +77,4 @@ $ rg "<keyword>" crates
 
 配置目录约定：
 
-- `./.codepm_data/`：项目级数据根（运行时 threads/artifacts；项目级覆盖配置 `config.toml` + secrets `.env`；项目 spec 在 `.codepm_data/spec/`）
+- `./.omne_agent_data/`：项目级数据根（运行时 threads/artifacts；项目级覆盖配置 `config.toml` + secrets `.env`；项目 spec 在 `.omne_agent_data/spec/`）

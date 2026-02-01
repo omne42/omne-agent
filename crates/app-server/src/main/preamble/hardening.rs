@@ -9,9 +9,9 @@ use anyhow::Context;
 use clap::{Parser, Subcommand};
 use diffy::{Patch, apply};
 use globset::Glob;
-use pm_core::{PmPaths, ThreadStore};
-use pm_execpolicy::{Decision as ExecDecision, RuleMatch as ExecRuleMatch};
-use pm_protocol::{
+use omne_agent_core::{AgentPaths, ThreadStore};
+use omne_agent_execpolicy::{Decision as ExecDecision, RuleMatch as ExecRuleMatch};
+use omne_agent_protocol::{
     ArtifactId, ArtifactMetadata, ArtifactProvenance, EventSeq, ProcessId, ThreadEvent, ThreadId,
     TurnId, TurnStatus,
 };
@@ -29,7 +29,7 @@ use walkdir::WalkDir;
 
 const CHILD_PROCESS_ENV_SCRUB_KEYS: &[&str] = &[
     "OPENAI_API_KEY",
-    "CODE_PM_OPENAI_API_KEY",
+    "OMNE_AGENT_OPENAI_API_KEY",
     "ANTHROPIC_API_KEY",
     "OPENROUTER_API_KEY",
     "GEMINI_API_KEY",
@@ -44,7 +44,7 @@ const DEFAULT_THREAD_DISK_WARNING_BYTES: u64 = 10 * 1024 * 1024 * 1024;
 const DEFAULT_THREAD_DISK_CHECK_DEBOUNCE_MS: u64 = 30_000;
 const DEFAULT_THREAD_DISK_REPORT_DEBOUNCE_MS: u64 = 30 * 60_000;
 
-const CODE_PM_HARDENING_ENV: &str = "CODE_PM_HARDENING";
+const OMNE_AGENT_HARDENING_ENV: &str = "OMNE_AGENT_HARDENING";
 const HARDENING_ITEM_RLIMIT_CORE: &str = "rlimit_core";
 const HARDENING_ITEM_UMASK: &str = "umask";
 const HARDENING_ITEM_DUMPABLE: &str = "prctl_dumpable";
@@ -53,7 +53,7 @@ const HARDENING_ITEM_ENV_NO_COLOR: &str = "env.NO_COLOR";
 const HARDENING_ITEM_ENV_PAGER: &str = "env.PAGER";
 
 fn process_log_max_bytes_per_part() -> u64 {
-    std::env::var("CODE_PM_PROCESS_LOG_MAX_BYTES_PER_PART")
+    std::env::var("OMNE_AGENT_PROCESS_LOG_MAX_BYTES_PER_PART")
         .ok()
         .and_then(|value| value.trim().parse::<u64>().ok())
         .filter(|value| *value > 0)
@@ -62,7 +62,7 @@ fn process_log_max_bytes_per_part() -> u64 {
 }
 
 fn process_idle_window() -> Option<Duration> {
-    let value = std::env::var("CODE_PM_PROCESS_IDLE_WINDOW_SECONDS")
+    let value = std::env::var("OMNE_AGENT_PROCESS_IDLE_WINDOW_SECONDS")
         .ok()
         .and_then(|value| value.trim().parse::<u64>().ok())
         .unwrap_or(DEFAULT_PROCESS_IDLE_WINDOW_SECONDS);
@@ -74,7 +74,7 @@ fn process_idle_window() -> Option<Duration> {
 }
 
 fn thread_disk_warning_threshold_bytes() -> Option<u64> {
-    let value = std::env::var("CODE_PM_THREAD_DISK_WARNING_BYTES")
+    let value = std::env::var("OMNE_AGENT_THREAD_DISK_WARNING_BYTES")
         .ok()
         .and_then(|value| value.trim().parse::<u64>().ok())
         .unwrap_or(DEFAULT_THREAD_DISK_WARNING_BYTES);
@@ -83,7 +83,7 @@ fn thread_disk_warning_threshold_bytes() -> Option<u64> {
 
 fn thread_disk_check_debounce() -> Duration {
     Duration::from_millis(
-        std::env::var("CODE_PM_THREAD_DISK_CHECK_DEBOUNCE_MS")
+        std::env::var("OMNE_AGENT_THREAD_DISK_CHECK_DEBOUNCE_MS")
             .ok()
             .and_then(|value| value.trim().parse::<u64>().ok())
             .unwrap_or(DEFAULT_THREAD_DISK_CHECK_DEBOUNCE_MS),
@@ -92,7 +92,7 @@ fn thread_disk_check_debounce() -> Duration {
 
 fn thread_disk_report_debounce() -> Duration {
     Duration::from_millis(
-        std::env::var("CODE_PM_THREAD_DISK_REPORT_DEBOUNCE_MS")
+        std::env::var("OMNE_AGENT_THREAD_DISK_REPORT_DEBOUNCE_MS")
             .ok()
             .and_then(|value| value.trim().parse::<u64>().ok())
             .unwrap_or(DEFAULT_THREAD_DISK_REPORT_DEBOUNCE_MS),
@@ -128,23 +128,23 @@ impl HardeningMode {
         let raw = raw.trim();
         if raw.is_empty() {
             anyhow::bail!(
-                "{CODE_PM_HARDENING_ENV} must be `off` or `best_effort` (got empty string)"
+                "{OMNE_AGENT_HARDENING_ENV} must be `off` or `best_effort` (got empty string)"
             );
         }
         match raw.to_ascii_lowercase().as_str() {
             "off" => Ok(Self::Off),
             "best_effort" => Ok(Self::BestEffort),
             _ => anyhow::bail!(
-                "{CODE_PM_HARDENING_ENV} must be `off` or `best_effort` (got `{raw}`)"
+                "{OMNE_AGENT_HARDENING_ENV} must be `off` or `best_effort` (got `{raw}`)"
             ),
         }
     }
 
     fn from_env() -> anyhow::Result<Self> {
-        match std::env::var(CODE_PM_HARDENING_ENV) {
+        match std::env::var(OMNE_AGENT_HARDENING_ENV) {
             Ok(value) => Self::parse(Some(&value)),
             Err(std::env::VarError::NotPresent) => Ok(Self::BestEffort),
-            Err(err) => Err(err).context(format!("read {CODE_PM_HARDENING_ENV}")),
+            Err(err) => Err(err).context(format!("read {OMNE_AGENT_HARDENING_ENV}")),
         }
     }
 }
@@ -272,4 +272,3 @@ fn apply_child_process_env_defaults(
     apply_default(cmd, extra_env, "NO_COLOR", "1");
     apply_default(cmd, extra_env, "PAGER", "cat");
 }
-

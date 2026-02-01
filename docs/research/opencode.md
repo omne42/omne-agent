@@ -2,7 +2,7 @@
 
 > Snapshot: `example/opencode` @ `3fd0043d1`
 >
-> 结论先行：OpenCode 的定位是“开源 AI coding agent”，强调 **provider-agnostic**、**TUI-first**、**client/server**、**内置 LSP**。对 `CodePM` 来说，它最值得学习的是“把 agent 做成一个真正的软件系统”的工程化：**Project/Session/Message/Part 的数据建模、文件存储抽象与迁移、instance-scoped state、事件总线、worktree 生命周期与命名策略**。
+> 结论先行：OpenCode 的定位是“开源 AI coding agent”，强调 **provider-agnostic**、**TUI-first**、**client/server**、**内置 LSP**。对 `omne-agent` 来说，它最值得学习的是“把 agent 做成一个真正的软件系统”的工程化：**Project/Session/Message/Part 的数据建模、文件存储抽象与迁移、instance-scoped state、事件总线、worktree 生命周期与命名策略**。
 
 ---
 
@@ -78,7 +78,7 @@
 - `snapshot/`、`patch/`、`format/`：变更生成、格式化、快照/回滚（对长任务很关键）。
 - `scheduler/`：调度/并发/节流（对应“多任务并行”的系统需求）。
 
-> 对 `CodePM`：这份目录结构可以视为我们未来“全生命周期系统”理想形态的一个参考原型（即使我们不抄代码，也应该抄“边界怎么拆”）。
+> 对 `omne-agent`：这份目录结构可以视为我们未来“全生命周期系统”理想形态的一个参考原型（即使我们不抄代码，也应该抄“边界怎么拆”）。
 
 ---
 
@@ -92,7 +92,7 @@
 - 文件查找/读取、状态查询
 - provider/config/agent 等“解析当前目录上下文”API
 
-> 对 `CodePM`：我们提出的“Repo → Session → Task/PR”与 OpenCode 的“Project → Session → Message/Part”是同构的。我们可以直接借鉴其 API 粒度与资源路径风格。
+> 对 `omne-agent`：我们提出的“Repo → Session → Task/PR”与 OpenCode 的“Project → Session → Message/Part”是同构的。我们可以直接借鉴其 API 粒度与资源路径风格。
 
 ---
 
@@ -115,7 +115,7 @@ Storage 内置 `MIGRATIONS` 队列：
 - 每次启动时补跑未执行迁移，并写回版本号。
 - 迁移逻辑可以非常“工程化”：复制旧目录结构、重算 projectID、拆分/重写 session summary 等。
 
-> 对 `CodePM`：我们未来一定会扩展 session/pr/task 的 JSON schema。OpenCode 的 migration 机制非常值得从 Day 1 引入，否则后期会被历史数据拖死。
+> 对 `omne-agent`：我们未来一定会扩展 session/pr/task 的 JSON schema。OpenCode 的 migration 机制非常值得从 Day 1 引入，否则后期会被历史数据拖死。
 
 ---
 
@@ -149,7 +149,7 @@ Storage 内置 `MIGRATIONS` 队列：
 - `Instance.state(init, dispose)`：为每个 directory 创建 state，并在 dispose 时触发事件。
 - `containsPath()`：判断路径是否在 project/worktree 边界内，避免“worktree= / 导致所有路径都被认为在边界内”的漏洞（安全细节很到位）。
 
-> 对 `CodePM`：我们也需要 `RepoContext`/`SessionContext` 以及“按 repo 锁、按 session 隔离”的状态管理。Instance 模式能让业务代码不必处处传递 directory/worktree。
+> 对 `omne-agent`：我们也需要 `RepoContext`/`SessionContext` 以及“按 repo 锁、按 session 隔离”的状态管理。Instance 模式能让业务代码不必处处传递 directory/worktree。
 
 ---
 
@@ -174,7 +174,7 @@ Storage 内置 `MIGRATIONS` 队列：
 - reset（推测是清理/重建，源码后半段可补齐）
 - 可选 `startCommand`：worktree 创建后自动执行启动命令（跨平台：win32 用 `cmd /c`，其它用 `bash -lc`）
 
-> 对 `CodePM`：我们当前更偏向 `/tmp/{repo}_{session}/tasks/{task}/repo` 的 clone 隔离，但 worktree 的“快速创建/低成本/可回填”依然非常有价值；尤其未来我们想做“同 repo 多并发分支”的长运行服务时。
+> 对 `omne-agent`：我们当前更偏向 `/tmp/{repo}_{session}/tasks/{task}/repo` 的 clone 隔离，但 worktree 的“快速创建/低成本/可回填”依然非常有价值；尤其未来我们想做“同 repo 多并发分支”的长运行服务时。
 
 ---
 
@@ -196,7 +196,7 @@ Storage 内置 `MIGRATIONS` 队列：
 
 ---
 
-## 8. 对 `CodePM` 的具体借鉴清单（可落地）
+## 8. 对 `omne-agent` 的具体借鉴清单（可落地）
 
 ### P0（建议直接照搬/翻译到 Rust）
 

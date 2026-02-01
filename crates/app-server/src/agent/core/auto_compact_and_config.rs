@@ -60,7 +60,7 @@ async fn auto_compact_summary(
     if summary_text.is_empty() {
         return Ok(false);
     }
-    let summary_text = pm_core::redact_text(summary_text);
+    let summary_text = omne_agent_core::redact_text(summary_text);
     let summary_text = truncate_chars(&summary_text, 20_000);
 
     let artifact_value = match crate::handle_artifact_write(
@@ -126,7 +126,7 @@ async fn auto_compact_summary(
 }
 
 fn resolve_user_instructions_path() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("CODE_PM_USER_INSTRUCTIONS_FILE") {
+    if let Ok(path) = std::env::var("OMNE_AGENT_USER_INSTRUCTIONS_FILE") {
         let path = path.trim();
         if !path.is_empty() {
             return Some(PathBuf::from(path));
@@ -134,7 +134,7 @@ fn resolve_user_instructions_path() -> Option<PathBuf> {
     }
 
     let home = home_dir()?;
-    Some(home.join(".codepm_data").join("AGENTS.md"))
+    Some(home.join(".omne_agent_data").join("AGENTS.md"))
 }
 
 fn builtin_openai_provider_config(provider: &str) -> Option<ditto_llm::ProviderConfig> {
@@ -295,18 +295,18 @@ fn normalize_optional_thinking(value: Option<String>) -> anyhow::Result<Option<S
 async fn load_skill(name: &str, thread_root: PathBuf) -> anyhow::Result<Option<LoadedSkill>> {
     let mut roots = Vec::<PathBuf>::new();
 
-    if let Ok(dir) = std::env::var("CODE_PM_SKILLS_DIR") {
+    if let Ok(dir) = std::env::var("OMNE_AGENT_SKILLS_DIR") {
         let dir = dir.trim();
         if !dir.is_empty() {
             roots.push(PathBuf::from(dir));
         }
     }
 
-    roots.push(thread_root.join(".codepm_data").join("spec").join("skills"));
+    roots.push(thread_root.join(".omne_agent_data").join("spec").join("skills"));
     roots.push(thread_root.join(".codex").join("skills"));
 
     if let Some(home) = home_dir() {
-        roots.push(home.join(".codepm_data").join("spec").join("skills"));
+        roots.push(home.join(".omne_agent_data").join("spec").join("skills"));
     }
 
     let candidates = [name.to_string(), name.to_ascii_lowercase()];
@@ -330,7 +330,7 @@ async fn load_skill(name: &str, thread_root: PathBuf) -> anyhow::Result<Option<L
             let model = normalize_optional_string(frontmatter.model);
             let thinking = normalize_optional_thinking(frontmatter.thinking)
                 .with_context(|| format!("parse skill thinking {}", path.display()))?;
-            let body = pm_core::redact_text(body);
+            let body = omne_agent_core::redact_text(body);
 
             return Ok(Some(LoadedSkill {
                 path,
@@ -508,7 +508,7 @@ fn usage_total_tokens(usage: &Value) -> Option<u64> {
 }
 
 async fn thread_total_tokens_used(
-    thread_store: &pm_core::ThreadStore,
+    thread_store: &omne_agent_core::ThreadStore,
     thread_id: ThreadId,
 ) -> anyhow::Result<u64> {
     Ok(thread_store

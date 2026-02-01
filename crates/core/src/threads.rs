@@ -2,20 +2,24 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
-use pm_eventlog::{EventLogWriter, ThreadState, read_events_since as read_events_since_jsonl};
-use pm_protocol::{EventSeq, ProcessId, ThreadEvent, ThreadEventKind, ThreadId, TurnStatus};
+use omne_agent_eventlog::{
+    EventLogWriter, ThreadState, read_events_since as read_events_since_jsonl,
+};
+use omne_agent_protocol::{
+    EventSeq, ProcessId, ThreadEvent, ThreadEventKind, ThreadId, TurnStatus,
+};
 
-use crate::PmPaths;
+use crate::AgentPaths;
 
 const EVENTS_LOG_FILE_NAME: &str = "events.jsonl";
 
 #[derive(Clone, Debug)]
 pub struct ThreadStore {
-    paths: PmPaths,
+    paths: AgentPaths,
 }
 
 impl ThreadStore {
-    pub fn new(paths: PmPaths) -> Self {
+    pub fn new(paths: AgentPaths) -> Self {
         Self { paths }
     }
 
@@ -96,7 +100,7 @@ impl ThreadStore {
 
         let events = handle.events_since(EventSeq::ZERO).await?;
         let mut active_processes = HashSet::<ProcessId>::new();
-        let mut active_tools = HashSet::<pm_protocol::ToolId>::new();
+        let mut active_tools = HashSet::<omne_agent_protocol::ToolId>::new();
         for event in events {
             match event.kind {
                 ThreadEventKind::ProcessStarted { process_id, .. } => {
@@ -127,7 +131,7 @@ impl ThreadStore {
             handle
                 .append(ThreadEventKind::ToolCompleted {
                     tool_id,
-                    status: pm_protocol::ToolStatus::Cancelled,
+                    status: omne_agent_protocol::ToolStatus::Cancelled,
                     error: Some("recovered incomplete tool on resume".to_string()),
                     result: None,
                 })
@@ -238,18 +242,18 @@ mod tests {
     #[tokio::test]
     async fn append_redacts_sensitive_tokens() -> anyhow::Result<()> {
         let dir = tempfile::tempdir()?;
-        let store = ThreadStore::new(PmPaths::new(dir.path().join(".codepm_data")));
+        let store = ThreadStore::new(AgentPaths::new(dir.path().join(".omne_agent_data")));
 
         let mut thread = store.create_thread(PathBuf::from("/tmp")).await?;
         let thread_id = thread.thread_id();
-        let turn_id = pm_protocol::TurnId::new();
+        let turn_id = omne_agent_protocol::TurnId::new();
         thread
             .append(ThreadEventKind::TurnStarted {
                 turn_id,
                 input: "token=sk-1234567890abcdefghijklmnop".to_string(),
                 context_refs: None,
                 attachments: None,
-                priority: pm_protocol::TurnPriority::Foreground,
+                priority: omne_agent_protocol::TurnPriority::Foreground,
             })
             .await?;
         drop(thread);
@@ -274,18 +278,18 @@ mod tests {
     #[tokio::test]
     async fn resume_repairs_incomplete_turn() -> anyhow::Result<()> {
         let dir = tempfile::tempdir()?;
-        let store = ThreadStore::new(PmPaths::new(dir.path().join(".codepm_data")));
+        let store = ThreadStore::new(AgentPaths::new(dir.path().join(".omne_agent_data")));
 
         let mut thread = store.create_thread(PathBuf::from("/tmp")).await?;
         let thread_id = thread.thread_id();
-        let turn_id = pm_protocol::TurnId::new();
+        let turn_id = omne_agent_protocol::TurnId::new();
         thread
             .append(ThreadEventKind::TurnStarted {
                 turn_id,
                 input: "x".to_string(),
                 context_refs: None,
                 attachments: None,
-                priority: pm_protocol::TurnPriority::Foreground,
+                priority: omne_agent_protocol::TurnPriority::Foreground,
             })
             .await?;
         drop(thread);

@@ -42,14 +42,14 @@ async fn rel_path_is_secret_cannot_be_bypassed_via_symlink() {
     let link = root.join("link");
     symlink(&env, &link).expect("symlink");
 
-    let resolved = pm_core::resolve_file(
+    let resolved = omne_agent_core::resolve_file(
         &root,
         std::path::Path::new("link"),
-        pm_core::PathAccess::Read,
+        omne_agent_core::PathAccess::Read,
         false,
     )
         .await
         .expect("resolve");
-    let rel = pm_core::modes::relative_path_under_root(&root, &resolved).expect("relative path");
+    let rel = omne_agent_core::modes::relative_path_under_root(&root, &resolved).expect("relative path");
     assert!(rel_path_is_secret(&rel), "expected .env to be treated as secret");
 }

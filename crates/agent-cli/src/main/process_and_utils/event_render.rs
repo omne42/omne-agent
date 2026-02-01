@@ -4,38 +4,38 @@ fn render_event(event: &ThreadEvent) {
         .format(&time::format_description::well_known::Rfc3339);
     let ts = ts.unwrap_or_else(|_| "<time>".to_string());
     match &event.kind {
-        pm_protocol::ThreadEventKind::ThreadCreated { cwd } => {
+        omne_agent_protocol::ThreadEventKind::ThreadCreated { cwd } => {
             println!("[{ts}] thread created cwd={cwd}");
         }
-        pm_protocol::ThreadEventKind::ThreadArchived { reason } => {
+        omne_agent_protocol::ThreadEventKind::ThreadArchived { reason } => {
             println!(
                 "[{ts}] thread archived reason={}",
                 reason.as_deref().unwrap_or("")
             );
         }
-        pm_protocol::ThreadEventKind::ThreadUnarchived { reason } => {
+        omne_agent_protocol::ThreadEventKind::ThreadUnarchived { reason } => {
             println!(
                 "[{ts}] thread unarchived reason={}",
                 reason.as_deref().unwrap_or("")
             );
         }
-        pm_protocol::ThreadEventKind::ThreadPaused { reason } => {
+        omne_agent_protocol::ThreadEventKind::ThreadPaused { reason } => {
             println!(
                 "[{ts}] thread paused reason={}",
                 reason.as_deref().unwrap_or("")
             );
         }
-        pm_protocol::ThreadEventKind::ThreadUnpaused { reason } => {
+        omne_agent_protocol::ThreadEventKind::ThreadUnpaused { reason } => {
             println!(
                 "[{ts}] thread unpaused reason={}",
                 reason.as_deref().unwrap_or("")
             );
         }
-        pm_protocol::ThreadEventKind::TurnStarted { turn_id, input, .. } => {
+        omne_agent_protocol::ThreadEventKind::TurnStarted { turn_id, input, .. } => {
             println!("[{ts}] turn started {turn_id}");
             println!("user: {input}");
         }
-        pm_protocol::ThreadEventKind::ModelRouted {
+        omne_agent_protocol::ThreadEventKind::ModelRouted {
             turn_id,
             selected_model,
             rule_source,
@@ -48,13 +48,13 @@ fn render_event(event: &ThreadEvent) {
                 reason.as_deref().unwrap_or("")
             );
         }
-        pm_protocol::ThreadEventKind::TurnInterruptRequested { turn_id, reason } => {
+        omne_agent_protocol::ThreadEventKind::TurnInterruptRequested { turn_id, reason } => {
             println!(
                 "[{ts}] turn interrupt requested {turn_id} reason={}",
                 reason.as_deref().unwrap_or("")
             );
         }
-        pm_protocol::ThreadEventKind::TurnCompleted {
+        omne_agent_protocol::ThreadEventKind::TurnCompleted {
             turn_id,
             status,
             reason,
@@ -64,7 +64,7 @@ fn render_event(event: &ThreadEvent) {
                 reason.as_deref().unwrap_or("")
             );
         }
-        pm_protocol::ThreadEventKind::ThreadConfigUpdated {
+        omne_agent_protocol::ThreadEventKind::ThreadConfigUpdated {
             approval_policy,
             sandbox_policy,
             sandbox_writable_roots,
@@ -85,14 +85,14 @@ fn render_event(event: &ThreadEvent) {
                 openai_base_url.as_deref().unwrap_or("")
             );
         }
-        pm_protocol::ThreadEventKind::ApprovalRequested {
+        omne_agent_protocol::ThreadEventKind::ApprovalRequested {
             approval_id,
             action,
             ..
         } => {
             println!("[{ts}] approval requested {approval_id} action={action}");
         }
-        pm_protocol::ThreadEventKind::ApprovalDecided {
+        omne_agent_protocol::ThreadEventKind::ApprovalDecided {
             approval_id,
             decision,
             remember,
@@ -103,16 +103,16 @@ fn render_event(event: &ThreadEvent) {
                 reason.as_deref().unwrap_or("")
             );
         }
-        pm_protocol::ThreadEventKind::ToolStarted { tool, .. } => {
+        omne_agent_protocol::ThreadEventKind::ToolStarted { tool, .. } => {
             println!("[{ts}] tool started {tool}");
         }
-        pm_protocol::ThreadEventKind::ToolCompleted { status, error, .. } => {
+        omne_agent_protocol::ThreadEventKind::ToolCompleted { status, error, .. } => {
             println!(
                 "[{ts}] tool completed status={status:?} error={}",
                 error.as_deref().unwrap_or("")
             );
         }
-        pm_protocol::ThreadEventKind::AgentStep {
+        omne_agent_protocol::ThreadEventKind::AgentStep {
             turn_id,
             step,
             model,
@@ -131,7 +131,7 @@ fn render_event(event: &ThreadEvent) {
                 println!("{text}");
             }
         }
-        pm_protocol::ThreadEventKind::AssistantMessage { text, model, .. } => {
+        omne_agent_protocol::ThreadEventKind::AssistantMessage { text, model, .. } => {
             if let Some(model) = model {
                 println!("[{ts}] assistant (model={model}):");
             } else {
@@ -139,12 +139,12 @@ fn render_event(event: &ThreadEvent) {
             }
             println!("{text}");
         }
-        pm_protocol::ThreadEventKind::ProcessStarted {
+        omne_agent_protocol::ThreadEventKind::ProcessStarted {
             process_id, argv, ..
         } => {
             println!("[{ts}] process started {process_id} argv={argv:?}");
         }
-        pm_protocol::ThreadEventKind::ProcessInterruptRequested {
+        omne_agent_protocol::ThreadEventKind::ProcessInterruptRequested {
             process_id, reason, ..
         } => {
             println!(
@@ -152,7 +152,7 @@ fn render_event(event: &ThreadEvent) {
                 reason.as_deref().unwrap_or("")
             );
         }
-        pm_protocol::ThreadEventKind::ProcessKillRequested {
+        omne_agent_protocol::ThreadEventKind::ProcessKillRequested {
             process_id, reason, ..
         } => {
             println!(
@@ -160,7 +160,7 @@ fn render_event(event: &ThreadEvent) {
                 reason.as_deref().unwrap_or("")
             );
         }
-        pm_protocol::ThreadEventKind::ProcessExited {
+        omne_agent_protocol::ThreadEventKind::ProcessExited {
             process_id,
             exit_code,
             reason,
@@ -173,7 +173,7 @@ fn render_event(event: &ThreadEvent) {
                 reason.as_deref().unwrap_or("")
             );
         }
-        pm_protocol::ThreadEventKind::CheckpointCreated {
+        omne_agent_protocol::ThreadEventKind::CheckpointCreated {
             checkpoint_id,
             label,
             snapshot_ref,
@@ -184,7 +184,7 @@ fn render_event(event: &ThreadEvent) {
                 label.as_deref().unwrap_or("")
             );
         }
-        pm_protocol::ThreadEventKind::CheckpointRestored {
+        omne_agent_protocol::ThreadEventKind::CheckpointRestored {
             checkpoint_id,
             status,
             reason,

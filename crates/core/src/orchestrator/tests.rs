@@ -141,8 +141,8 @@ async fn rule_based_architect_falls_back_to_single_task() -> anyhow::Result<()> 
 #[tokio::test]
 async fn concurrent_tasks_preserve_input_order() -> anyhow::Result<()> {
     let dir = tempfile::tempdir()?;
-    let pm_paths = PmPaths::new(dir.path().join(".codepm_data"));
-    let storage = FsStorage::new(pm_paths.data_dir());
+    let agent_paths = AgentPaths::new(dir.path().join(".omne_agent_data"));
+    let storage = FsStorage::new(agent_paths.data_dir());
 
     let events = EventBus::new(256);
 
@@ -181,7 +181,7 @@ async fn concurrent_tasks_preserve_input_order() -> anyhow::Result<()> {
 
     let result = orchestrator
         .run(
-            &pm_paths,
+            &agent_paths,
             repo.clone(),
             RunRequest {
                 pr_name: crate::domain::PrName::sanitize("test"),
@@ -213,8 +213,8 @@ async fn concurrent_tasks_preserve_input_order() -> anyhow::Result<()> {
 #[tokio::test]
 async fn run_emits_basic_events() -> anyhow::Result<()> {
     let dir = tempfile::tempdir()?;
-    let pm_paths = PmPaths::new(dir.path().join(".codepm_data"));
-    let storage = FsStorage::new(pm_paths.data_dir());
+    let agent_paths = AgentPaths::new(dir.path().join(".omne_agent_data"));
+    let storage = FsStorage::new(agent_paths.data_dir());
 
     let events = EventBus::new(256);
     let mut rx = events.subscribe();
@@ -247,7 +247,7 @@ async fn run_emits_basic_events() -> anyhow::Result<()> {
         },
     ];
 
-    let pm_paths_run = pm_paths.clone();
+    let agent_paths_run = agent_paths.clone();
     let repo_run = repo.clone();
     let request = RunRequest {
         pr_name: crate::domain::PrName::sanitize("test"),
@@ -260,7 +260,8 @@ async fn run_emits_basic_events() -> anyhow::Result<()> {
         cargo_test: false,
         auto_merge: true,
     };
-    let run = tokio::spawn(async move { orchestrator.run(&pm_paths_run, repo_run, request).await });
+    let run =
+        tokio::spawn(async move { orchestrator.run(&agent_paths_run, repo_run, request).await });
 
     let mut saw_session = false;
     let mut saw_tasks_planned = false;
@@ -341,8 +342,8 @@ impl Coder for PanicOnTaskCoder {
 #[tokio::test]
 async fn run_skips_merge_when_auto_merge_disabled() -> anyhow::Result<()> {
     let dir = tempfile::tempdir()?;
-    let pm_paths = PmPaths::new(dir.path().join(".codepm_data"));
-    let storage = FsStorage::new(pm_paths.data_dir());
+    let agent_paths = AgentPaths::new(dir.path().join(".omne_agent_data"));
+    let storage = FsStorage::new(agent_paths.data_dir());
 
     let events = EventBus::default();
 
@@ -376,7 +377,7 @@ async fn run_skips_merge_when_auto_merge_disabled() -> anyhow::Result<()> {
 
     let result = orchestrator
         .run(
-            &pm_paths,
+            &agent_paths,
             repo.clone(),
             RunRequest {
                 pr_name: crate::domain::PrName::sanitize("test"),
@@ -411,8 +412,8 @@ async fn run_skips_merge_when_auto_merge_disabled() -> anyhow::Result<()> {
 #[tokio::test]
 async fn concurrent_tasks_convert_panics_to_failed_prs() -> anyhow::Result<()> {
     let dir = tempfile::tempdir()?;
-    let pm_paths = PmPaths::new(dir.path().join(".codepm_data"));
-    let storage = FsStorage::new(pm_paths.data_dir());
+    let agent_paths = AgentPaths::new(dir.path().join(".omne_agent_data"));
+    let storage = FsStorage::new(agent_paths.data_dir());
 
     let repo = Repository {
         name: crate::domain::RepositoryName::sanitize("repo"),
@@ -449,7 +450,7 @@ async fn concurrent_tasks_convert_panics_to_failed_prs() -> anyhow::Result<()> {
 
     let result = orchestrator
         .run(
-            &pm_paths,
+            &agent_paths,
             repo.clone(),
             RunRequest {
                 pr_name: crate::domain::PrName::sanitize("test"),

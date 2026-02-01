@@ -6,7 +6,7 @@ async fn handle_mcp_list_servers(server: &Server, params: McpListServersParams) 
         (state.approval_policy, state.mode.clone(), state.allowed_tools.clone())
     };
 
-    let tool_id = pm_protocol::ToolId::new();
+    let tool_id = omne_agent_protocol::ToolId::new();
     let approval_params = serde_json::json!({});
     if let Some(result) = enforce_thread_allowed_tools(
         &thread_rt,
@@ -24,15 +24,15 @@ async fn handle_mcp_list_servers(server: &Server, params: McpListServersParams) 
         return deny_mcp_disabled(&thread_rt, tool_id, params.turn_id, "mcp/list_servers", approval_params).await;
     }
 
-    let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
+    let catalog = omne_agent_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {
         Some(mode) => mode,
         None => {
             let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
-            let decision = pm_core::modes::Decision::Deny;
+            let decision = omne_agent_core::modes::Decision::Deny;
 
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
                     tool_id,
                     turn_id: params.turn_id,
                     tool: "mcp/list_servers".to_string(),
@@ -40,9 +40,9 @@ async fn handle_mcp_list_servers(server: &Server, params: McpListServersParams) 
                 })
                 .await?;
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
-                    status: pm_protocol::ToolStatus::Denied,
+                    status: omne_agent_protocol::ToolStatus::Denied,
                     error: Some("unknown mode".to_string()),
                     result: Some(serde_json::json!({
                         "mode": mode_name,
@@ -68,9 +68,9 @@ async fn handle_mcp_list_servers(server: &Server, params: McpListServersParams) 
         Some(override_decision) => base_decision.combine(override_decision),
         None => base_decision,
     };
-    if effective_decision == pm_core::modes::Decision::Deny {
+    if effective_decision == omne_agent_core::modes::Decision::Deny {
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+            .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
                 tool_id,
                 turn_id: params.turn_id,
                 tool: "mcp/list_servers".to_string(),
@@ -78,9 +78,9 @@ async fn handle_mcp_list_servers(server: &Server, params: McpListServersParams) 
             })
             .await?;
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+            .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                 tool_id,
-                status: pm_protocol::ToolStatus::Denied,
+                status: omne_agent_protocol::ToolStatus::Denied,
                 error: Some("mode denies mcp/list_servers".to_string()),
                 result: Some(serde_json::json!({
                     "mode": mode_name,
@@ -96,7 +96,7 @@ async fn handle_mcp_list_servers(server: &Server, params: McpListServersParams) 
         }));
     }
 
-    if effective_decision == pm_core::modes::Decision::Prompt {
+    if effective_decision == omne_agent_core::modes::Decision::Prompt {
         match gate_approval(
             server,
             &thread_rt,
@@ -114,7 +114,7 @@ async fn handle_mcp_list_servers(server: &Server, params: McpListServersParams) 
             ApprovalGate::Approved => {}
             ApprovalGate::Denied { remembered } => {
                 thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                    .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
                         tool_id,
                         turn_id: params.turn_id,
                         tool: "mcp/list_servers".to_string(),
@@ -122,9 +122,9 @@ async fn handle_mcp_list_servers(server: &Server, params: McpListServersParams) 
                     })
                     .await?;
                 thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                         tool_id,
-                        status: pm_protocol::ToolStatus::Denied,
+                        status: omne_agent_protocol::ToolStatus::Denied,
                         error: Some(approval_denied_error(remembered).to_string()),
                         result: Some(serde_json::json!({
                             "approval_policy": approval_policy,
@@ -148,7 +148,7 @@ async fn handle_mcp_list_servers(server: &Server, params: McpListServersParams) 
     }
 
     thread_rt
-        .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+        .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
             tool_id,
             turn_id: params.turn_id,
             tool: "mcp/list_servers".to_string(),
@@ -174,9 +174,9 @@ async fn handle_mcp_list_servers(server: &Server, params: McpListServersParams) 
     });
 
     thread_rt
-        .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+        .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
             tool_id,
-            status: pm_protocol::ToolStatus::Completed,
+            status: omne_agent_protocol::ToolStatus::Completed,
             error: None,
             result: Some(serde_json::json!({
                 "servers": servers.len(),
@@ -253,7 +253,7 @@ async fn handle_mcp_call(server: &Server, params: McpCallParams) -> anyhow::Resu
 struct McpActionRequest {
     thread_id: ThreadId,
     turn_id: Option<TurnId>,
-    approval_id: Option<pm_protocol::ApprovalId>,
+    approval_id: Option<omne_agent_protocol::ApprovalId>,
     action: &'static str,
     tool_params: Value,
     require_prompt_strict: bool,
@@ -275,7 +275,7 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
         )
     };
 
-    let tool_id = pm_protocol::ToolId::new();
+    let tool_id = omne_agent_protocol::ToolId::new();
     let Some(server_name) = req.tool_params.get("server").and_then(|v| v.as_str()) else {
         anyhow::bail!("server is required");
     };
@@ -313,9 +313,9 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
         return deny_mcp_disabled(&thread_rt, tool_id, req.turn_id, req.action, approval_params).await;
     }
 
-    if sandbox_policy == pm_protocol::SandboxPolicy::ReadOnly {
+    if sandbox_policy == omne_agent_protocol::SandboxPolicy::ReadOnly {
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+            .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
                 tool_id,
                 turn_id: req.turn_id,
                 tool: req.action.to_string(),
@@ -323,9 +323,9 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
             })
             .await?;
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+            .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                 tool_id,
-                status: pm_protocol::ToolStatus::Denied,
+                status: omne_agent_protocol::ToolStatus::Denied,
                 error: Some("sandbox_policy=read_only forbids mcp".to_string()),
                 result: Some(serde_json::json!({
                     "sandbox_policy": sandbox_policy,
@@ -342,7 +342,7 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
     let cfg = load_mcp_config(&thread_root).await?;
     let Some(server_cfg) = cfg.servers.get(server_name) else {
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+            .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
                 tool_id,
                 turn_id: req.turn_id,
                 tool: req.action.to_string(),
@@ -350,9 +350,9 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
             })
             .await?;
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+            .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                 tool_id,
-                status: pm_protocol::ToolStatus::Failed,
+                status: omne_agent_protocol::ToolStatus::Failed,
                 error: Some("unknown mcp server".to_string()),
                 result: Some(serde_json::json!({
                     "server": server_name,
@@ -367,11 +367,11 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
         }));
     };
 
-    if sandbox_network_access == pm_protocol::SandboxNetworkAccess::Deny
+    if sandbox_network_access == omne_agent_protocol::SandboxNetworkAccess::Deny
         && command_uses_network(&server_cfg.argv)
     {
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+            .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
                 tool_id,
                 turn_id: req.turn_id,
                 tool: req.action.to_string(),
@@ -379,9 +379,9 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
             })
             .await?;
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+            .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                 tool_id,
-                status: pm_protocol::ToolStatus::Denied,
+                status: omne_agent_protocol::ToolStatus::Denied,
                 error: Some("sandbox_network_access=deny forbids this command".to_string()),
                 result: Some(serde_json::json!({
                     "sandbox_network_access": sandbox_network_access,
@@ -395,15 +395,15 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
         }));
     }
 
-    let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
+    let catalog = omne_agent_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {
         Some(mode) => mode,
         None => {
             let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
-            let decision = pm_core::modes::Decision::Deny;
+            let decision = omne_agent_core::modes::Decision::Deny;
 
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
                     tool_id,
                     turn_id: req.turn_id,
                     tool: req.action.to_string(),
@@ -411,9 +411,9 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
                 })
                 .await?;
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
-                    status: pm_protocol::ToolStatus::Denied,
+                    status: omne_agent_protocol::ToolStatus::Denied,
                     error: Some("unknown mode".to_string()),
                     result: Some(serde_json::json!({
                         "mode": mode_name,
@@ -439,9 +439,9 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
         Some(override_decision) => base_decision.combine(override_decision),
         None => base_decision,
     };
-    if effective_mode_decision == pm_core::modes::Decision::Deny {
+    if effective_mode_decision == omne_agent_core::modes::Decision::Deny {
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+            .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
                 tool_id,
                 turn_id: req.turn_id,
                 tool: req.action.to_string(),
@@ -449,9 +449,9 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
             })
             .await?;
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+            .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                 tool_id,
-                status: pm_protocol::ToolStatus::Denied,
+                status: omne_agent_protocol::ToolStatus::Denied,
                 error: Some(format!("mode denies {}", req.action)),
                 result: Some(serde_json::json!({
                     "mode": mode_name,
@@ -475,7 +475,7 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
                 Ok(policy) => policy,
                 Err(err) => {
                     thread_rt
-                        .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                        .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
                             tool_id,
                             turn_id: req.turn_id,
                             tool: req.action.to_string(),
@@ -483,9 +483,9 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
                         })
                         .await?;
                     thread_rt
-                        .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                        .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                             tool_id,
-                            status: pm_protocol::ToolStatus::Denied,
+                            status: omne_agent_protocol::ToolStatus::Denied,
                             error: Some("failed to load mode execpolicy rules".to_string()),
                             result: Some(serde_json::json!({
                                 "mode": mode_name,
@@ -518,7 +518,7 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
 
     if effective_exec_decision == ExecDecision::Forbidden {
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+            .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
                 tool_id,
                 turn_id: req.turn_id,
                 tool: req.action.to_string(),
@@ -526,9 +526,9 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
             })
             .await?;
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+            .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                 tool_id,
-                status: pm_protocol::ToolStatus::Denied,
+                status: omne_agent_protocol::ToolStatus::Denied,
                 error: Some("execpolicy forbids this command".to_string()),
                 result: Some(serde_json::json!({
                     "decision": ExecDecision::Forbidden,
@@ -555,7 +555,7 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
     }
 
     let needs_approval = req.require_prompt_strict
-        || effective_mode_decision == pm_core::modes::Decision::Prompt
+        || effective_mode_decision == omne_agent_core::modes::Decision::Prompt
         || matches!(
             effective_exec_decision,
             ExecDecision::Prompt | ExecDecision::PromptStrict
@@ -578,7 +578,7 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
             ApprovalGate::Approved => {}
             ApprovalGate::Denied { remembered } => {
                 thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                    .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
                         tool_id,
                         turn_id: req.turn_id,
                         tool: req.action.to_string(),
@@ -586,9 +586,9 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
                     })
                     .await?;
                 thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                         tool_id,
-                        status: pm_protocol::ToolStatus::Denied,
+                        status: omne_agent_protocol::ToolStatus::Denied,
                         error: Some(approval_denied_error(remembered).to_string()),
                         result: Some(serde_json::json!({
                             "approval_policy": approval_policy,
@@ -612,7 +612,7 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
     }
 
     thread_rt
-        .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+        .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
             tool_id,
             turn_id: req.turn_id,
             tool: req.action.to_string(),
@@ -664,9 +664,9 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
     match result {
         Ok(v) => {
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
-                    status: pm_protocol::ToolStatus::Completed,
+                    status: omne_agent_protocol::ToolStatus::Completed,
                     error: None,
                     result: Some(serde_json::json!({
                         "process_id": process_id,
@@ -680,9 +680,9 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
         }
         Err(err) => {
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
-                    status: pm_protocol::ToolStatus::Failed,
+                    status: omne_agent_protocol::ToolStatus::Failed,
                     error: Some(err.to_string()),
                     result: Some(serde_json::json!({
                         "process_id": process_id,

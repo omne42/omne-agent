@@ -24,7 +24,7 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
             state.allowed_tools.clone(),
         )
     };
-    let tool_id = pm_protocol::ToolId::new();
+    let tool_id = omne_agent_protocol::ToolId::new();
 
     let approval_params = serde_json::json!({
         "path": params.path.clone(),
@@ -43,9 +43,9 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
     {
         return Ok(result);
     }
-    if sandbox_policy == pm_protocol::SandboxPolicy::ReadOnly {
+    if sandbox_policy == omne_agent_protocol::SandboxPolicy::ReadOnly {
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+            .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
                 tool_id,
                 turn_id: params.turn_id,
                 tool: "file/edit".to_string(),
@@ -53,9 +53,9 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
             })
             .await?;
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+            .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                 tool_id,
-                status: pm_protocol::ToolStatus::Denied,
+                status: omne_agent_protocol::ToolStatus::Denied,
                 error: Some("sandbox_policy=read_only forbids file/edit".to_string()),
                 result: Some(serde_json::json!({
                     "sandbox_policy": sandbox_policy,
@@ -69,12 +69,12 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
         }));
     }
 
-    let rel_path = pm_core::modes::relative_path_under_root(&thread_root, Path::new(&params.path));
+    let rel_path = omne_agent_core::modes::relative_path_under_root(&thread_root, Path::new(&params.path));
     if let Ok(rel) = rel_path.as_ref()
         && rel_path_is_secret(rel)
     {
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+            .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
                 tool_id,
                 turn_id: params.turn_id,
                 tool: "file/edit".to_string(),
@@ -82,9 +82,9 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
             })
             .await?;
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+            .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                 tool_id,
-                status: pm_protocol::ToolStatus::Denied,
+                status: omne_agent_protocol::ToolStatus::Denied,
                 error: Some("refusing to edit secrets file (.env)".to_string()),
                 result: Some(serde_json::json!({
                     "reason": "secrets file is always denied",
@@ -96,15 +96,15 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
             "denied": true,
         }));
     }
-    let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
+    let catalog = omne_agent_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {
         Some(mode) => mode,
         None => {
             let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
-            let decision = pm_core::modes::Decision::Deny;
+            let decision = omne_agent_core::modes::Decision::Deny;
 
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
                     tool_id,
                     turn_id: params.turn_id,
                     tool: "file/edit".to_string(),
@@ -112,9 +112,9 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
                 })
                 .await?;
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
-                    status: pm_protocol::ToolStatus::Denied,
+                    status: omne_agent_protocol::ToolStatus::Denied,
                     error: Some("unknown mode".to_string()),
                     result: Some(serde_json::json!({
                         "mode": mode_name,
@@ -137,15 +137,15 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
 
     let base_decision = match rel_path.as_ref() {
         Ok(rel) => mode.permissions.edit.decision_for_path(rel),
-        Err(_) => pm_core::modes::Decision::Deny,
+        Err(_) => omne_agent_core::modes::Decision::Deny,
     };
     let effective_decision = match mode.tool_overrides.get("file/edit").copied() {
         Some(override_decision) => base_decision.combine(override_decision),
         None => base_decision,
     };
-    if effective_decision == pm_core::modes::Decision::Deny {
+    if effective_decision == omne_agent_core::modes::Decision::Deny {
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+            .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
                 tool_id,
                 turn_id: params.turn_id,
                 tool: "file/edit".to_string(),
@@ -153,9 +153,9 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
             })
             .await?;
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+            .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                 tool_id,
-                status: pm_protocol::ToolStatus::Denied,
+                status: omne_agent_protocol::ToolStatus::Denied,
                 error: Some("mode denies file/edit".to_string()),
                 result: Some(serde_json::json!({
                     "mode": mode_name,
@@ -171,7 +171,7 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
         }));
     }
 
-    if effective_decision == pm_core::modes::Decision::Prompt {
+    if effective_decision == omne_agent_core::modes::Decision::Prompt {
         match gate_approval(
             server,
             &thread_rt,
@@ -189,7 +189,7 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
             ApprovalGate::Approved => {}
             ApprovalGate::Denied { remembered } => {
                 thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                    .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
                         tool_id,
                         turn_id: params.turn_id,
                         tool: "file/edit".to_string(),
@@ -197,9 +197,9 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
                     })
                     .await?;
                     thread_rt
-                        .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                        .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                             tool_id,
-                            status: pm_protocol::ToolStatus::Denied,
+                            status: omne_agent_protocol::ToolStatus::Denied,
                             error: Some(approval_denied_error(remembered).to_string()),
                             result: Some(serde_json::json!({
                                 "approval_policy": approval_policy,
@@ -222,7 +222,7 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
     }
 
     thread_rt
-        .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+        .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
             tool_id,
             turn_id: params.turn_id,
             tool: "file/edit".to_string(),
@@ -237,7 +237,7 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
     let db_vfs = server.db_vfs.clone();
     let outcome: anyhow::Result<(String, bool, usize, usize)> = async {
         if let Some(db_vfs) = db_vfs {
-            let rel = pm_core::modes::relative_path_under_root(&thread_root, Path::new(&params.path))?;
+            let rel = omne_agent_core::modes::relative_path_under_root(&thread_root, Path::new(&params.path))?;
             if rel_path_is_secret(&rel) {
                 return Err(tool_denied(
                     "refusing to edit secrets file (.env)".to_string(),
@@ -251,7 +251,7 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
                 Some(override_decision) => base_decision.combine(override_decision),
                 None => base_decision,
             };
-            if effective_decision == pm_core::modes::Decision::Deny {
+            if effective_decision == omne_agent_core::modes::Decision::Deny {
                 return Err(tool_denied(
                     "mode denies file/edit".to_string(),
                     serde_json::json!({
@@ -333,7 +333,7 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
                 sandbox_policy,
                 &sandbox_writable_roots,
                 Path::new(&params.path),
-                pm_core::PathAccess::Write,
+                omne_agent_core::PathAccess::Write,
                 false,
             )
             .await?;
@@ -352,7 +352,7 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
                 Some(override_decision) => base_decision.combine(override_decision),
                 None => base_decision,
             };
-            if effective_decision == pm_core::modes::Decision::Deny {
+            if effective_decision == omne_agent_core::modes::Decision::Deny {
                 return Err(tool_denied(
                     "mode denies file/edit".to_string(),
                     serde_json::json!({
@@ -413,9 +413,9 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
     match outcome {
         Ok((resolved_path, changed, replacements, bytes_written)) => {
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
-                    status: pm_protocol::ToolStatus::Completed,
+                    status: omne_agent_protocol::ToolStatus::Completed,
                     error: None,
                     result: Some(serde_json::json!({
                         "changed": changed,
@@ -435,9 +435,9 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
         Err(err) => {
             if let Some(denied) = err.downcast_ref::<ToolDenied>() {
                 thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                         tool_id,
-                        status: pm_protocol::ToolStatus::Denied,
+                        status: omne_agent_protocol::ToolStatus::Denied,
                         error: Some(denied.error.clone()),
                         result: Some(denied.result.clone()),
                     })
@@ -451,9 +451,9 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
                 ))
             } else {
                 thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                         tool_id,
-                        status: pm_protocol::ToolStatus::Failed,
+                        status: omne_agent_protocol::ToolStatus::Failed,
                         error: Some(err.to_string()),
                         result: None,
                     })
@@ -478,7 +478,7 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
             state.allowed_tools.clone(),
         )
     };
-    let tool_id = pm_protocol::ToolId::new();
+    let tool_id = omne_agent_protocol::ToolId::new();
 
     let approval_params = serde_json::json!({
         "path": params.path.clone(),
@@ -496,9 +496,9 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
     {
         return Ok(result);
     }
-    if sandbox_policy == pm_protocol::SandboxPolicy::ReadOnly {
+    if sandbox_policy == omne_agent_protocol::SandboxPolicy::ReadOnly {
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+            .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
                 tool_id,
                 turn_id: params.turn_id,
                 tool: "file/delete".to_string(),
@@ -506,9 +506,9 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
             })
             .await?;
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+            .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                 tool_id,
-                status: pm_protocol::ToolStatus::Denied,
+                status: omne_agent_protocol::ToolStatus::Denied,
                 error: Some("sandbox_policy=read_only forbids file/delete".to_string()),
                 result: Some(serde_json::json!({
                     "sandbox_policy": sandbox_policy,
@@ -522,12 +522,12 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
         }));
     }
 
-    let rel_path = pm_core::modes::relative_path_under_root(&thread_root, Path::new(&params.path));
+    let rel_path = omne_agent_core::modes::relative_path_under_root(&thread_root, Path::new(&params.path));
     if let Ok(rel) = rel_path.as_ref()
         && rel_path_is_secret(rel)
     {
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+            .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
                 tool_id,
                 turn_id: params.turn_id,
                 tool: "file/delete".to_string(),
@@ -535,9 +535,9 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
             })
             .await?;
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+            .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                 tool_id,
-                status: pm_protocol::ToolStatus::Denied,
+                status: omne_agent_protocol::ToolStatus::Denied,
                 error: Some("refusing to delete secrets file (.env)".to_string()),
                 result: Some(serde_json::json!({
                     "reason": "secrets file is always denied",
@@ -549,15 +549,15 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
             "denied": true,
         }));
     }
-    let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
+    let catalog = omne_agent_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {
         Some(mode) => mode,
         None => {
             let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
-            let decision = pm_core::modes::Decision::Deny;
+            let decision = omne_agent_core::modes::Decision::Deny;
 
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
                     tool_id,
                     turn_id: params.turn_id,
                     tool: "file/delete".to_string(),
@@ -565,9 +565,9 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
                 })
                 .await?;
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
-                    status: pm_protocol::ToolStatus::Denied,
+                    status: omne_agent_protocol::ToolStatus::Denied,
                     error: Some("unknown mode".to_string()),
                     result: Some(serde_json::json!({
                         "mode": mode_name,
@@ -590,15 +590,15 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
 
     let base_decision = match rel_path.as_ref() {
         Ok(rel) => mode.permissions.edit.decision_for_path(rel),
-        Err(_) => pm_core::modes::Decision::Deny,
+        Err(_) => omne_agent_core::modes::Decision::Deny,
     };
     let effective_decision = match mode.tool_overrides.get("file/delete").copied() {
         Some(override_decision) => base_decision.combine(override_decision),
         None => base_decision,
     };
-    if effective_decision == pm_core::modes::Decision::Deny {
+    if effective_decision == omne_agent_core::modes::Decision::Deny {
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+            .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
                 tool_id,
                 turn_id: params.turn_id,
                 tool: "file/delete".to_string(),
@@ -606,9 +606,9 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
             })
             .await?;
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+            .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                 tool_id,
-                status: pm_protocol::ToolStatus::Denied,
+                status: omne_agent_protocol::ToolStatus::Denied,
                 error: Some("mode denies file/delete".to_string()),
                 result: Some(serde_json::json!({
                     "mode": mode_name,
@@ -624,7 +624,7 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
         }));
     }
 
-    if effective_decision == pm_core::modes::Decision::Prompt {
+    if effective_decision == omne_agent_core::modes::Decision::Prompt {
         match gate_approval(
             server,
             &thread_rt,
@@ -642,7 +642,7 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
             ApprovalGate::Approved => {}
             ApprovalGate::Denied { remembered } => {
                 thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                    .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
                         tool_id,
                         turn_id: params.turn_id,
                         tool: "file/delete".to_string(),
@@ -650,9 +650,9 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
                     })
                     .await?;
                     thread_rt
-                        .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                        .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                             tool_id,
-                            status: pm_protocol::ToolStatus::Denied,
+                            status: omne_agent_protocol::ToolStatus::Denied,
                             error: Some(approval_denied_error(remembered).to_string()),
                             result: Some(serde_json::json!({
                                 "approval_policy": approval_policy,
@@ -675,7 +675,7 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
     }
 
     thread_rt
-        .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+        .append_event(omne_agent_protocol::ThreadEventKind::ToolStarted {
             tool_id,
             turn_id: params.turn_id,
             tool: "file/delete".to_string(),
@@ -687,7 +687,7 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
     let db_vfs = server.db_vfs.clone();
     let outcome: anyhow::Result<(bool, String)> = async {
         if let Some(db_vfs) = db_vfs {
-            let rel = pm_core::modes::relative_path_under_root(&thread_root, Path::new(&params.path))?;
+            let rel = omne_agent_core::modes::relative_path_under_root(&thread_root, Path::new(&params.path))?;
             if rel.as_os_str().is_empty() {
                 anyhow::bail!("refusing to delete workspace root");
             }
@@ -696,7 +696,7 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
                 Some(override_decision) => base_decision.combine(override_decision),
                 None => base_decision,
             };
-            if effective_decision == pm_core::modes::Decision::Deny {
+            if effective_decision == omne_agent_core::modes::Decision::Deny {
                 return Err(tool_denied(
                     "mode denies file/delete".to_string(),
                     serde_json::json!({
@@ -785,7 +785,7 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
                 sandbox_policy,
                 &sandbox_writable_roots,
                 Path::new(&params.path),
-                pm_core::PathAccess::Write,
+                omne_agent_core::PathAccess::Write,
                 false,
             )
             .await?;
@@ -808,7 +808,7 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
                 Some(override_decision) => base_decision.combine(override_decision),
                 None => base_decision,
             };
-            if effective_decision == pm_core::modes::Decision::Deny {
+            if effective_decision == omne_agent_core::modes::Decision::Deny {
                 return Err(tool_denied(
                     "mode denies file/delete".to_string(),
                     serde_json::json!({
@@ -850,9 +850,9 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
     match outcome {
         Ok((deleted, resolved_path)) => {
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
-                    status: pm_protocol::ToolStatus::Completed,
+                    status: omne_agent_protocol::ToolStatus::Completed,
                     error: None,
                     result: Some(serde_json::json!({
                         "deleted": deleted,
@@ -869,9 +869,9 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
         Err(err) => {
             if let Some(denied) = err.downcast_ref::<ToolDenied>() {
                 thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                         tool_id,
-                        status: pm_protocol::ToolStatus::Denied,
+                        status: omne_agent_protocol::ToolStatus::Denied,
                         error: Some(denied.error.clone()),
                         result: Some(denied.result.clone()),
                     })
@@ -885,9 +885,9 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
                 ))
             } else {
                 thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    .append_event(omne_agent_protocol::ThreadEventKind::ToolCompleted {
                         tool_id,
-                        status: pm_protocol::ToolStatus::Failed,
+                        status: omne_agent_protocol::ToolStatus::Failed,
                         error: Some(err.to_string()),
                         result: None,
                     })

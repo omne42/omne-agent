@@ -7,8 +7,8 @@
     use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyModifiers};
     use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
     use futures_util::StreamExt;
-    use pm_jsonrpc::ClientHandle;
-    use pm_protocol::{
+    use mcp_jsonrpc::ClientHandle;
+    use omne_agent_protocol::{
         ApprovalDecision, ApprovalId, ArtifactId, ArtifactMetadata, ModelRoutingRuleSource,
         ProcessId, ThreadEvent, ThreadEventKind, ThreadId, ToolId, ToolStatus, TurnId, TurnStatus,
     };
@@ -120,7 +120,7 @@
         handle: ClientHandle,
         thread_id: ThreadId,
         input: String,
-        priority: Option<pm_protocol::TurnPriority>,
+        priority: Option<omne_agent_protocol::TurnPriority>,
     ) -> anyhow::Result<TurnStartInFlight> {
         let (input, context_refs, attachments) = super::split_special_directives(&input)?;
         let input_for_request = input.clone();
@@ -208,7 +208,7 @@
         flush_transcript_to_scrollback(&mut terminal, &mut state)?;
         terminal.draw(|f| draw_ui(f, &mut state))?;
 
-        let startup_timeout = std::env::var("CODE_PM_TUI_STARTUP_TIMEOUT_MS")
+        let startup_timeout = std::env::var("OMNE_AGENT_TUI_STARTUP_TIMEOUT_MS")
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
             .filter(|value| *value > 0)
@@ -515,7 +515,7 @@
     }
 
     fn tui_scrollback_enabled() -> bool {
-        env_bool("CODE_PM_TUI_SCROLLBACK").unwrap_or_else(|| std::io::stdout().is_terminal())
+        env_bool("OMNE_AGENT_TUI_SCROLLBACK").unwrap_or_else(|| std::io::stdout().is_terminal())
     }
 
     fn tui_viewport_height(max_height: u16) -> u16 {
@@ -524,7 +524,7 @@
         } else {
             24
         };
-        std::env::var("CODE_PM_TUI_VIEWPORT_HEIGHT")
+        std::env::var("OMNE_AGENT_TUI_VIEWPORT_HEIGHT")
             .ok()
             .and_then(|value| value.trim().parse::<u16>().ok())
             .filter(|value| *value > 0)

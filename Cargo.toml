@@ -1,5 +1,15 @@
 [workspace]
-members = ["crates/*"]
+members = [
+    "crates/agent-cli",
+    "crates/agent-protocol",
+    "crates/app-server",
+    "crates/app-server-protocol",
+    "crates/core",
+    "crates/eventlog",
+    "crates/execpolicy",
+    "crates/execve-wrapper",
+    "crates/openai",
+]
 resolver = "2"
 
 [workspace.package]

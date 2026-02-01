@@ -1,30 +1,30 @@
 impl App {
     async fn connect(cli: &Cli) -> anyhow::Result<Self> {
         let cwd = std::env::current_dir()?;
-        let pm_root = cli
-            .pm_root
+        let agent_root = cli
+            .root
             .clone()
-            .or_else(|| std::env::var_os("CODE_PM_ROOT").map(PathBuf::from))
-            .unwrap_or_else(|| cwd.join(".codepm_data"));
+            .or_else(|| std::env::var_os("OMNE_AGENT_ROOT").map(PathBuf::from))
+            .unwrap_or_else(|| cwd.join(".omne_agent_data"));
 
         let server = cli.app_server.clone().unwrap_or_else(|| {
-            default_app_server_path().unwrap_or_else(|| PathBuf::from("pm-app-server"))
+            default_app_server_path().unwrap_or_else(|| PathBuf::from("omne-agent-app-server"))
         });
 
-        let init_timeout = std::env::var("CODE_PM_RPC_INIT_TIMEOUT_MS")
+        let init_timeout = std::env::var("OMNE_AGENT_RPC_INIT_TIMEOUT_MS")
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
             .filter(|value| *value > 0)
             .map(Duration::from_millis)
             .unwrap_or_else(|| Duration::from_millis(1500));
 
-        let socket_path = pm_root.join("daemon.sock");
+        let socket_path = agent_root.join("daemon.sock");
         let bypass_daemon = should_bypass_daemon(&socket_path, &server);
 
         let build_spawn_argv = || {
             let mut argv: Vec<OsString> = Vec::new();
-            argv.push("--pm-root".into());
-            argv.push(pm_root.clone().into_os_string());
+            argv.push("--root".into());
+            argv.push(agent_root.clone().into_os_string());
             for path in &cli.execpolicy_rules {
                 argv.push("--execpolicy-rules".into());
                 argv.push(path.clone().into_os_string());
@@ -34,14 +34,14 @@ impl App {
 
         let (mut rpc, used_daemon) = if bypass_daemon {
             (
-                pm_jsonrpc::Client::spawn(server.clone(), build_spawn_argv()).await?,
+                mcp_jsonrpc::Client::spawn(server.clone(), build_spawn_argv()).await?,
                 false,
             )
         } else {
-            match pm_jsonrpc::Client::connect_unix(&socket_path).await {
+            match mcp_jsonrpc::Client::connect_unix(&socket_path).await {
                 Ok(client) => (client, true),
                 Err(_) => (
-                    pm_jsonrpc::Client::spawn(server.clone(), build_spawn_argv()).await?,
+                    mcp_jsonrpc::Client::spawn(server.clone(), build_spawn_argv()).await?,
                     false,
                 ),
             }
@@ -51,7 +51,7 @@ impl App {
         if let Err(err) = init_result {
             if used_daemon {
                 let mut fresh =
-                    pm_jsonrpc::Client::spawn(server.clone(), build_spawn_argv()).await?;
+                    mcp_jsonrpc::Client::spawn(server.clone(), build_spawn_argv()).await?;
                 init_rpc(&mut fresh, init_timeout).await?;
                 rpc = fresh;
             } else {
@@ -68,11 +68,11 @@ impl App {
 
     fn take_notifications(
         &mut self,
-    ) -> Option<tokio::sync::mpsc::Receiver<pm_jsonrpc::Notification>> {
+    ) -> Option<tokio::sync::mpsc::Receiver<mcp_jsonrpc::Notification>> {
         self.notifications.take()
     }
 
-    fn rpc_handle(&self) -> pm_jsonrpc::ClientHandle {
+    fn rpc_handle(&self) -> mcp_jsonrpc::ClientHandle {
         self.rpc.handle()
     }
 
@@ -131,7 +131,7 @@ impl App {
             .turn_start(
                 forked.thread_id,
                 input,
-                Some(pm_protocol::TurnPriority::Background),
+                Some(omne_agent_protocol::TurnPriority::Background),
             )
             .await?;
         Ok(serde_json::json!({
@@ -398,7 +398,7 @@ impl App {
     async fn checkpoint_restore(
         &mut self,
         thread_id: ThreadId,
-        checkpoint_id: pm_protocol::CheckpointId,
+        checkpoint_id: omne_agent_protocol::CheckpointId,
         approval_id: Option<ApprovalId>,
     ) -> anyhow::Result<Value> {
         let v = self
@@ -418,7 +418,7 @@ impl App {
     async fn thread_configure(&mut self, args: ThreadConfigureArgs) -> anyhow::Result<()> {
         let approval_policy: Option<ApprovalPolicy> = args.approval_policy.map(Into::into);
         let sandbox_policy: Option<SandboxPolicy> = args.sandbox_policy.map(Into::into);
-        let sandbox_network_access: Option<pm_protocol::SandboxNetworkAccess> =
+        let sandbox_network_access: Option<omne_agent_protocol::SandboxNetworkAccess> =
             args.sandbox_network_access.map(Into::into);
         let _ = self
             .rpc(
@@ -444,7 +444,7 @@ impl App {
         &mut self,
         thread_id: ThreadId,
         input: String,
-        priority: Option<pm_protocol::TurnPriority>,
+        priority: Option<omne_agent_protocol::TurnPriority>,
     ) -> anyhow::Result<TurnId> {
         let (input, context_refs, attachments) = split_special_directives(&input)?;
         let v = self
@@ -809,7 +809,7 @@ impl App {
     async fn artifact_read(
         &mut self,
         thread_id: ThreadId,
-        artifact_id: pm_protocol::ArtifactId,
+        artifact_id: omne_agent_protocol::ArtifactId,
         max_bytes: Option<u64>,
         approval_id: Option<ApprovalId>,
     ) -> anyhow::Result<Value> {
@@ -831,7 +831,7 @@ impl App {
     async fn artifact_delete(
         &mut self,
         thread_id: ThreadId,
-        artifact_id: pm_protocol::ArtifactId,
+        artifact_id: omne_agent_protocol::ArtifactId,
         approval_id: Option<ApprovalId>,
     ) -> anyhow::Result<Value> {
         let v = self

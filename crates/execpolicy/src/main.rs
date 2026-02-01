@@ -1,10 +1,10 @@
 use anyhow::Result;
 use clap::Parser;
 
-use pm_execpolicy::execpolicycheck::ExecPolicyCheckCommand;
+use omne_agent_execpolicy::execpolicycheck::ExecPolicyCheckCommand;
 
 #[derive(Parser)]
-#[command(name = "pm-execpolicy")]
+#[command(name = "omne-agent-execpolicy")]
 enum Cli {
     Check(ExecPolicyCheckCommand),
 }

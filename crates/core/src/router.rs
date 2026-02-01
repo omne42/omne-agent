@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
-use pm_protocol::ModelRoutingRuleSource;
+use omne_agent_protocol::ModelRoutingRuleSource;
 use serde::Deserialize;
 
 #[derive(Debug, Clone)]
@@ -98,7 +98,7 @@ fn select_router_config_path(
         return Some((RouterConfigSource::Env, path));
     }
 
-    let spec_dir = thread_root.join(".codepm_data").join("spec");
+    let spec_dir = thread_root.join(".omne_agent_data").join("spec");
     let yaml = spec_dir.join("router.yaml");
     if yaml.exists() {
         return Some((RouterConfigSource::Project, yaml));
@@ -232,7 +232,7 @@ async fn load_router_config_impl(
 }
 
 pub async fn load_router_config(thread_root: &Path) -> anyhow::Result<Option<LoadedRouterConfig>> {
-    let env_router_file = std::env::var("CODE_PM_ROUTER_FILE").ok();
+    let env_router_file = std::env::var("OMNE_AGENT_ROUTER_FILE").ok();
     load_router_config_impl(thread_root, env_router_file.as_deref()).await
 }
 
@@ -338,9 +338,9 @@ mod tests {
     async fn loads_router_yaml_from_project_spec_dir() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let root = tmp.path();
-        tokio::fs::create_dir_all(root.join(".codepm_data/spec")).await?;
+        tokio::fs::create_dir_all(root.join(".omne_agent_data/spec")).await?;
         tokio::fs::write(
-            root.join(".codepm_data/spec/router.yaml"),
+            root.join(".omne_agent_data/spec/router.yaml"),
             r#"
 version: 1
 role_defaults:

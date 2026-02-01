@@ -1,0 +1,12 @@
+{
+  "name": "@omne-agent/omne-agent",
+  "private": true,
+  "version": "0.0.0",
+  "description": "omne-agent Node launcher (thin wrapper around Rust binaries).",
+  "bin": {
+    "omne-agent": "./bin/omne-agent.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

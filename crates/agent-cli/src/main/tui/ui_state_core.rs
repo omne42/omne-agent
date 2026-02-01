@@ -196,7 +196,7 @@
                 .and_then(|v| v.get("model_context_window"))
                 .and_then(|v| v.as_u64());
 
-            self.header.mcp_enabled = env_truthy("CODE_PM_ENABLE_MCP");
+            self.header.mcp_enabled = env_truthy("OMNE_AGENT_ENABLE_MCP");
             Ok(())
         }
 

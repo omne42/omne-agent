@@ -2,7 +2,7 @@
 
 > Snapshot: `example/agent-gui/superset` @ `8d1737342f77`
 >
-> 结论先行：Superset 把“并行跑 10+ CLI agent”这件事讲清楚了：**worktree 只是隔离代码，真正难的是隔离外部资源与环境**。它用 `.superset/config.json` 声明 `setup/teardown` 生命周期脚本，并在脚本里用 workspace 名做 key，自动创建/销毁 Neon branch、起/停 ElectricSQL 容器、写 workspace 专属 `.env`（含端口映射）。对 `CodePM vNext` 来说，这就是 RTS 风格需要的“单位补给线”：没有脚本化生命周期，你的并发只会制造混乱。
+> 结论先行：Superset 把“并行跑 10+ CLI agent”这件事讲清楚了：**worktree 只是隔离代码，真正难的是隔离外部资源与环境**。它用 `.superset/config.json` 声明 `setup/teardown` 生命周期脚本，并在脚本里用 workspace 名做 key，自动创建/销毁 Neon branch、起/停 ElectricSQL 容器、写 workspace 专属 `.env`（含端口映射）。对 `omne-agent vNext` 来说，这就是 RTS 风格需要的“单位补给线”：没有脚本化生命周期，你的并发只会制造混乱。
 
 ---
 
@@ -32,7 +32,7 @@
 
 实现证据：`example/agent-gui/superset/.superset/config.json`。
 
-对 `CodePM`：这就是我们需要的“生命周期接口”最小形态。别把环境准备塞进 prompt 或 UI 手册里，**写成脚本，变成契约**。
+对 `omne-agent`：这就是我们需要的“生命周期接口”最小形态。别把环境准备塞进 prompt 或 UI 手册里，**写成脚本，变成契约**。
 
 ---
 
@@ -80,7 +80,7 @@
 
 实现证据：`example/agent-gui/superset/.superset/setup.sh`。
 
-对 `CodePM`：如果我们要 RTS 风格跑多 workspace，“端口/外部资源隔离”必须是第一等需求，不是之后再补的优化。
+对 `omne-agent`：如果我们要 RTS 风格跑多 workspace，“端口/外部资源隔离”必须是第一等需求，不是之后再补的优化。
 
 ---
 
@@ -93,7 +93,7 @@
 
 实现证据：`example/agent-gui/superset/.superset/teardown.sh`。
 
-对 `CodePM`：RTS 风格意味着你会开很多“临时单位”。没有 teardown，你就是在给自己制造长期垃圾与隐性成本（外部资源、容器、端口占用、云账单）。
+对 `omne-agent`：RTS 风格意味着你会开很多“临时单位”。没有 teardown，你就是在给自己制造长期垃圾与隐性成本（外部资源、容器、端口占用、云账单）。
 
 ---
 
@@ -112,11 +112,11 @@
 - worktree 要用，但**setup 要自动化**
 - 端口要用 env-based mapping，避免冲突
 
-对 `CodePM`：这套 pipeline 就是“SLG/回合制”的基础节奏；RTS 的差异只是你同时跑更多回合，但**每个回合仍必须可观测、可暂停、可收口**。
+对 `omne-agent`：这套 pipeline 就是“SLG/回合制”的基础节奏；RTS 的差异只是你同时跑更多回合，但**每个回合仍必须可观测、可暂停、可收口**。
 
 ---
 
-## 6) 对 CodePM vNext 的启示（只取精华）
+## 6) 对 omne-agent vNext 的启示（只取精华）
 
 1. **Workspace 生命周期必须脚本化**：至少要有 `setup/run/teardown(archive)` 三段。
 2. **外部资源隔离优先于 git**：DB/端口/容器/缓存是并发的真实冲突源。

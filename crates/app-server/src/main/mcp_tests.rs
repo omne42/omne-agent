@@ -13,10 +13,8 @@ mod mcp_tests {
     #[tokio::test]
     async fn load_mcp_config_parses_valid_file() {
         let dir = tempfile::tempdir().unwrap();
-        let spec_dir = dir.path().join(".codepm_data").join("spec");
-        tokio::fs::create_dir_all(&spec_dir).await.unwrap();
         tokio::fs::write(
-            spec_dir.join("mcp.json"),
+            dir.path().join("mcp.json"),
             r#"{ "version": 1, "servers": { "rg": { "transport": "stdio", "argv": ["mcp-rg", "--stdio"], "env": { "NO_COLOR": "1" } } } }"#,
         )
         .await
@@ -33,10 +31,8 @@ mod mcp_tests {
     #[tokio::test]
     async fn load_mcp_config_denies_unknown_fields() {
         let dir = tempfile::tempdir().unwrap();
-        let spec_dir = dir.path().join(".codepm_data").join("spec");
-        tokio::fs::create_dir_all(&spec_dir).await.unwrap();
         tokio::fs::write(
-            spec_dir.join("mcp.json"),
+            dir.path().join("mcp.json"),
             r#"{ "version": 1, "servers": {}, "extra": 123 }"#,
         )
         .await
@@ -44,16 +40,14 @@ mod mcp_tests {
 
         let err = load_mcp_config(dir.path()).await.unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("parse"), "err={msg}");
+        assert!(msg.contains("unknown field") || msg.contains("parse"), "err={msg}");
     }
 
     #[tokio::test]
     async fn load_mcp_config_denies_invalid_server_names() {
         let dir = tempfile::tempdir().unwrap();
-        let spec_dir = dir.path().join(".codepm_data").join("spec");
-        tokio::fs::create_dir_all(&spec_dir).await.unwrap();
         tokio::fs::write(
-            spec_dir.join("mcp.json"),
+            dir.path().join("mcp.json"),
             r#"{ "version": 1, "servers": { "bad name": { "transport": "stdio", "argv": ["x"] } } }"#,
         )
         .await

@@ -10,7 +10,7 @@
 
 当满足全部条件时，app-server 会在一个 turn 内并发执行 tool calls：
 
-1. `CODE_PM_AGENT_PARALLEL_TOOL_CALLS=true`
+1. `OMNE_AGENT_PARALLEL_TOOL_CALLS=true`
 2. 同一次模型响应里包含 **2 个或以上** tool calls
 3. 这些 tool 都被判定为 read-only（见下文列表）
 
@@ -55,8 +55,8 @@
 
 ## 3) 配置（env）
 
-- `CODE_PM_AGENT_PARALLEL_TOOL_CALLS`：默认 `false`
-- `CODE_PM_AGENT_MAX_PARALLEL_TOOL_CALLS`：默认 `8`，最大 `128`
+- `OMNE_AGENT_PARALLEL_TOOL_CALLS`：默认 `false`
+- `OMNE_AGENT_MAX_PARALLEL_TOOL_CALLS`：默认 `8`，最大 `128`
 
 建议：
 

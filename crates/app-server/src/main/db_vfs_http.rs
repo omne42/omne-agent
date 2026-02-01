@@ -8,10 +8,10 @@ struct DbVfsHttpClient {
 
 impl DbVfsHttpClient {
     fn from_env() -> anyhow::Result<Option<Self>> {
-        let raw = match std::env::var("CODE_PM_DB_VFS_URL") {
+        let raw = match std::env::var("OMNE_AGENT_DB_VFS_URL") {
             Ok(value) => value,
             Err(std::env::VarError::NotPresent) => return Ok(None),
-            Err(err) => return Err(anyhow::anyhow!("read CODE_PM_DB_VFS_URL: {err}")),
+            Err(err) => return Err(anyhow::anyhow!("read OMNE_AGENT_DB_VFS_URL: {err}")),
         };
         let trimmed = raw.trim();
         if trimmed.is_empty() {

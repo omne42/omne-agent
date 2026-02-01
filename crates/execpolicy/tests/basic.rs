@@ -1,8 +1,10 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use pm_execpolicy::{Decision, Error, Evaluation, Policy, PolicyParser, RuleMatch, RuleRef};
-use pm_execpolicy::{PatternToken, PrefixPattern, PrefixRule};
+use omne_agent_execpolicy::{
+    Decision, Error, Evaluation, Policy, PolicyParser, RuleMatch, RuleRef,
+};
+use omne_agent_execpolicy::{PatternToken, PrefixPattern, PrefixRule};
 
 fn tokens(cmd: &[&str]) -> Vec<String> {
     cmd.iter().map(std::string::ToString::to_string).collect()

@@ -1,12 +1,12 @@
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
 pub struct FileEditParams {
-    pub thread_id: pm_protocol::ThreadId,
+    pub thread_id: omne_agent_protocol::ThreadId,
     #[serde(default)]
     #[ts(optional)]
-    pub turn_id: Option<pm_protocol::TurnId>,
+    pub turn_id: Option<omne_agent_protocol::TurnId>,
     #[serde(default)]
     #[ts(optional)]
-    pub approval_id: Option<pm_protocol::ApprovalId>,
+    pub approval_id: Option<omne_agent_protocol::ApprovalId>,
     pub path: String,
     pub edits: Vec<FileEditOp>,
     #[serde(default)]
@@ -25,13 +25,13 @@ pub struct FileEditOp {
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
 pub struct FileDeleteParams {
-    pub thread_id: pm_protocol::ThreadId,
+    pub thread_id: omne_agent_protocol::ThreadId,
     #[serde(default)]
     #[ts(optional)]
-    pub turn_id: Option<pm_protocol::TurnId>,
+    pub turn_id: Option<omne_agent_protocol::TurnId>,
     #[serde(default)]
     #[ts(optional)]
-    pub approval_id: Option<pm_protocol::ApprovalId>,
+    pub approval_id: Option<omne_agent_protocol::ApprovalId>,
     pub path: String,
     #[serde(default)]
     pub recursive: bool,

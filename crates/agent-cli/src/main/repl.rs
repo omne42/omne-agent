@@ -15,7 +15,7 @@ impl Drop for AbortOnDrop {
 
 async fn run_repl(app: &mut App) -> anyhow::Result<()> {
     if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
-        anyhow::bail!("interactive mode requires a TTY (try `pm ask ...` or `pm exec ...`)");
+        anyhow::bail!("interactive mode requires a TTY (try `omne-agent ask ...` or `omne-agent exec ...`)");
     }
 
     let cwd = std::env::current_dir()?.display().to_string();
@@ -40,7 +40,7 @@ async fn run_repl(app: &mut App) -> anyhow::Result<()> {
 
     let notification_tx = spawn_repl_notification_hub(app);
 
-    eprintln!("pm cli");
+    eprintln!("omne-agent cli");
     eprintln!("cwd: {cwd}");
     eprintln!("thread: {thread_id}");
     eprintln!("approval_policy: manual (use `/set approval_policy ...` to change)");
@@ -51,7 +51,7 @@ async fn run_repl(app: &mut App) -> anyhow::Result<()> {
     let mut state = ReplState { thread_id, since_seq };
 
     loop {
-        print!("pm[{}]> ", thread_id_short(state.thread_id));
+        print!("omne-agent[{}]> ", thread_id_short(state.thread_id));
         std::io::stdout().flush().ok();
         let mut line = String::new();
         let bytes = std::io::stdin().read_line(&mut line)?;
@@ -100,9 +100,9 @@ fn thread_id_short(thread_id: ThreadId) -> String {
 
 fn spawn_repl_notification_hub(
     app: &mut App,
-) -> Option<tokio::sync::broadcast::Sender<pm_jsonrpc::Notification>> {
+) -> Option<tokio::sync::broadcast::Sender<mcp_jsonrpc::Notification>> {
     let mut rx = app.take_notifications()?;
-    let (tx, _rx0) = tokio::sync::broadcast::channel::<pm_jsonrpc::Notification>(1024);
+    let (tx, _rx0) = tokio::sync::broadcast::channel::<mcp_jsonrpc::Notification>(1024);
     let tx2 = tx.clone();
     tokio::spawn(async move {
         while let Some(note) = rx.recv().await {
@@ -116,7 +116,7 @@ async fn repl_run_turn(
     app: &mut App,
     state: &mut ReplState,
     input: String,
-    notification_tx: Option<&tokio::sync::broadcast::Sender<pm_jsonrpc::Notification>>,
+    notification_tx: Option<&tokio::sync::broadcast::Sender<mcp_jsonrpc::Notification>>,
 ) -> anyhow::Result<()> {
     let turn_id = app.turn_start(state.thread_id, input, None).await?;
     eprintln!("turn: {turn_id}");
@@ -183,7 +183,7 @@ async fn repl_run_turn(
             render_event_for_ask(event, did_stream);
 
             match &event.kind {
-                pm_protocol::ThreadEventKind::ApprovalRequested {
+                omne_agent_protocol::ThreadEventKind::ApprovalRequested {
                     approval_id,
                     turn_id: Some(approval_turn_id),
                     action,
@@ -191,10 +191,10 @@ async fn repl_run_turn(
                 } if *approval_turn_id == turn_id => {
                     pending_approvals.push((*approval_id, action.clone(), params.clone()));
                 }
-                pm_protocol::ThreadEventKind::ApprovalDecided { approval_id, .. } => {
+                omne_agent_protocol::ThreadEventKind::ApprovalDecided { approval_id, .. } => {
                     decided_approvals.insert(*approval_id);
                 }
-                pm_protocol::ThreadEventKind::TurnCompleted { turn_id: id, .. } if *id == turn_id => {
+                omne_agent_protocol::ThreadEventKind::TurnCompleted { turn_id: id, .. } if *id == turn_id => {
                     if did_stream {
                         drop(streaming_handle.take());
                         println!();
@@ -231,7 +231,7 @@ async fn repl_run_command(
     app: &mut App,
     state: &mut ReplState,
     cmdline: &str,
-    _notification_tx: Option<&tokio::sync::broadcast::Sender<pm_jsonrpc::Notification>>,
+    _notification_tx: Option<&tokio::sync::broadcast::Sender<mcp_jsonrpc::Notification>>,
 ) -> anyhow::Result<()> {
     let tokens = cmdline.split_whitespace().collect::<Vec<_>>();
     let Some(cmd) = tokens.first().copied() else {
@@ -491,7 +491,7 @@ fn parse_reason_flag(args: &[&str]) -> Option<String> {
 
 fn print_repl_help() {
     println!(
-        r#"pm cli commands:
+        r#"omne-agent cli commands:
   /help                         show this help
   /exit | /quit                 exit cli
 

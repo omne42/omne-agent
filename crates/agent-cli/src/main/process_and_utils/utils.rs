@@ -1,4 +1,4 @@
-async fn init_rpc(rpc: &mut pm_jsonrpc::Client, timeout: Duration) -> anyhow::Result<()> {
+async fn init_rpc(rpc: &mut mcp_jsonrpc::Client, timeout: Duration) -> anyhow::Result<()> {
     tokio::time::timeout(timeout, async {
         let _ = rpc.request("initialize", serde_json::json!({})).await?;
         let _ = rpc.request("initialized", serde_json::json!({})).await?;
@@ -40,9 +40,9 @@ fn should_bypass_daemon(socket_path: &Path, server_path: &Path) -> bool {
 
 fn app_server_exe_name() -> &'static str {
     if cfg!(windows) {
-        "pm-app-server.exe"
+        "omne-agent-app-server.exe"
     } else {
-        "pm-app-server"
+        "omne-agent-app-server"
     }
 }
 
@@ -65,7 +65,7 @@ fn ensure_approval_and_denial_handled(action: &str, value: &Value) -> anyhow::Re
             .and_then(|v| v.as_str())
             .unwrap_or("<missing approval_id>");
         anyhow::bail!(
-            "{action} needs approval: pm approval decide {thread_id} {approval_id} --approve (then re-run with --approval-id {approval_id})"
+            "{action} needs approval: omne-agent approval decide {thread_id} {approval_id} --approve (then re-run with --approval-id {approval_id})"
         );
     }
 

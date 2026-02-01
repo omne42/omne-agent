@@ -221,7 +221,7 @@ assistant: Streaming...
             state.active_thread = Some(thread_id);
 
             let event = ThreadEvent {
-                seq: pm_protocol::EventSeq(1),
+                seq: omne_agent_protocol::EventSeq(1),
                 timestamp: time::OffsetDateTime::now_utc(),
                 thread_id,
                 kind: ThreadEventKind::TurnStarted {
@@ -229,7 +229,7 @@ assistant: Streaming...
                     input: "执行ls -a".to_string(),
                     context_refs: None,
                     attachments: None,
-                    priority: pm_protocol::TurnPriority::Foreground,
+                    priority: omne_agent_protocol::TurnPriority::Foreground,
                 },
             };
 
@@ -256,7 +256,7 @@ assistant: Streaming...
             });
 
             let event = ThreadEvent {
-                seq: pm_protocol::EventSeq(1),
+                seq: omne_agent_protocol::EventSeq(1),
                 timestamp: time::OffsetDateTime::now_utc(),
                 thread_id,
                 kind: ThreadEventKind::AgentStep {
@@ -265,12 +265,12 @@ assistant: Streaming...
                     model: "gpt-test".to_string(),
                     response_id: "resp_1".to_string(),
                     text: None,
-                    tool_calls: vec![pm_protocol::AgentStepToolCall {
+                    tool_calls: vec![omne_agent_protocol::AgentStepToolCall {
                         name: "exec_command".to_string(),
                         call_id: "call_1".to_string(),
                         arguments: "{}".to_string(),
                     }],
-                    tool_results: vec![pm_protocol::AgentStepToolResult {
+                    tool_results: vec![omne_agent_protocol::AgentStepToolResult {
                         call_id: "call_1".to_string(),
                         output: serde_json::to_string(&tool_output)?,
                     }],
@@ -298,7 +298,7 @@ assistant: Streaming...
             state.active_thread = Some(thread_id);
 
             state.apply_event(&ThreadEvent {
-                seq: pm_protocol::EventSeq(1),
+                seq: omne_agent_protocol::EventSeq(1),
                 timestamp: time::OffsetDateTime::now_utc(),
                 thread_id,
                 kind: ThreadEventKind::ProcessStarted {
@@ -318,7 +318,7 @@ assistant: Streaming...
             });
 
             state.apply_event(&ThreadEvent {
-                seq: pm_protocol::EventSeq(2),
+                seq: omne_agent_protocol::EventSeq(2),
                 timestamp: time::OffsetDateTime::now_utc(),
                 thread_id,
                 kind: ThreadEventKind::AgentStep {
@@ -327,7 +327,7 @@ assistant: Streaming...
                     model: "gpt-test".to_string(),
                     response_id: "resp_1".to_string(),
                     text: None,
-                    tool_calls: vec![pm_protocol::AgentStepToolCall {
+                    tool_calls: vec![omne_agent_protocol::AgentStepToolCall {
                         name: "process_start".to_string(),
                         call_id: "call_start".to_string(),
                         arguments: serde_json::to_string(&serde_json::json!({
@@ -335,7 +335,7 @@ assistant: Streaming...
                             "cwd": "/repo",
                         }))?,
                     }],
-                    tool_results: vec![pm_protocol::AgentStepToolResult {
+                    tool_results: vec![omne_agent_protocol::AgentStepToolResult {
                         call_id: "call_start".to_string(),
                         output: serde_json::to_string(&start_output)?,
                     }],
@@ -355,7 +355,7 @@ assistant: Streaming...
             });
 
             state.apply_event(&ThreadEvent {
-                seq: pm_protocol::EventSeq(3),
+                seq: omne_agent_protocol::EventSeq(3),
                 timestamp: time::OffsetDateTime::now_utc(),
                 thread_id,
                 kind: ThreadEventKind::AgentStep {
@@ -364,7 +364,7 @@ assistant: Streaming...
                     model: "gpt-test".to_string(),
                     response_id: "resp_2".to_string(),
                     text: None,
-                    tool_calls: vec![pm_protocol::AgentStepToolCall {
+                    tool_calls: vec![omne_agent_protocol::AgentStepToolCall {
                         name: "process_inspect".to_string(),
                         call_id: "call_inspect".to_string(),
                         arguments: serde_json::to_string(&serde_json::json!({
@@ -372,7 +372,7 @@ assistant: Streaming...
                             "max_lines": 200,
                         }))?,
                     }],
-                    tool_results: vec![pm_protocol::AgentStepToolResult {
+                    tool_results: vec![omne_agent_protocol::AgentStepToolResult {
                         call_id: "call_inspect".to_string(),
                         output: serde_json::to_string(&inspect_output)?,
                     }],
@@ -406,7 +406,7 @@ assistant: Streaming...
             state.active_thread = Some(thread_id);
 
             state.apply_event(&ThreadEvent {
-                seq: pm_protocol::EventSeq(1),
+                seq: omne_agent_protocol::EventSeq(1),
                 timestamp: time::OffsetDateTime::now_utc(),
                 thread_id,
                 kind: ThreadEventKind::ProcessStarted {
@@ -424,7 +424,7 @@ assistant: Streaming...
             });
 
             state.apply_event(&ThreadEvent {
-                seq: pm_protocol::EventSeq(2),
+                seq: omne_agent_protocol::EventSeq(2),
                 timestamp: time::OffsetDateTime::now_utc(),
                 thread_id,
                 kind: ThreadEventKind::AgentStep {
@@ -433,7 +433,7 @@ assistant: Streaming...
                     model: "gpt-test".to_string(),
                     response_id: "resp_1".to_string(),
                     text: None,
-                    tool_calls: vec![pm_protocol::AgentStepToolCall {
+                    tool_calls: vec![omne_agent_protocol::AgentStepToolCall {
                         name: "process_tail".to_string(),
                         call_id: "call_tail".to_string(),
                         arguments: serde_json::to_string(&serde_json::json!({
@@ -442,7 +442,7 @@ assistant: Streaming...
                             "max_lines": 200,
                         }))?,
                     }],
-                    tool_results: vec![pm_protocol::AgentStepToolResult {
+                    tool_results: vec![omne_agent_protocol::AgentStepToolResult {
                         call_id: "call_tail".to_string(),
                         output: serde_json::to_string(&tail_output)?,
                     }],
@@ -473,7 +473,7 @@ assistant: Streaming...
             state.active_thread = Some(thread_id);
 
             state.apply_event(&ThreadEvent {
-                seq: pm_protocol::EventSeq(1),
+                seq: omne_agent_protocol::EventSeq(1),
                 timestamp: time::OffsetDateTime::now_utc(),
                 thread_id,
                 kind: ThreadEventKind::AgentStep {
@@ -497,7 +497,7 @@ assistant: Streaming...
             assert!(!state.token_usage_by_response.contains_key("resp_1"));
 
             state.apply_event(&ThreadEvent {
-                seq: pm_protocol::EventSeq(2),
+                seq: omne_agent_protocol::EventSeq(2),
                 timestamp: time::OffsetDateTime::now_utc(),
                 thread_id,
                 kind: ThreadEventKind::AssistantMessage {
@@ -527,7 +527,7 @@ assistant: Streaming...
             state.active_thread = Some(thread_id);
 
             state.apply_event(&ThreadEvent {
-                seq: pm_protocol::EventSeq(1),
+                seq: omne_agent_protocol::EventSeq(1),
                 timestamp: time::OffsetDateTime::now_utc(),
                 thread_id,
                 kind: ThreadEventKind::AgentStep {
@@ -552,7 +552,7 @@ assistant: Streaming...
             assert_eq!(state.total_tokens_used, 110);
 
             state.apply_event(&ThreadEvent {
-                seq: pm_protocol::EventSeq(2),
+                seq: omne_agent_protocol::EventSeq(2),
                 timestamp: time::OffsetDateTime::now_utc(),
                 thread_id,
                 kind: ThreadEventKind::AssistantMessage {

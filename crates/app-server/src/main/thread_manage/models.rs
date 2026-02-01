@@ -19,7 +19,7 @@ async fn handle_thread_models(server: &Server, params: ThreadModelsParams) -> an
         .clone()
         .or(project_provider)
         .or_else(|| {
-            std::env::var("CODE_PM_OPENAI_PROVIDER")
+            std::env::var("OMNE_AGENT_OPENAI_PROVIDER")
                 .ok()
                 .filter(|s| !s.trim().is_empty())
         })
@@ -42,7 +42,7 @@ async fn handle_thread_models(server: &Server, params: ThreadModelsParams) -> an
         .clone()
         .or(project_base_url)
         .or_else(|| {
-            std::env::var("CODE_PM_OPENAI_BASE_URL")
+            std::env::var("OMNE_AGENT_OPENAI_BASE_URL")
                 .ok()
                 .filter(|s| !s.trim().is_empty())
         })
@@ -54,7 +54,7 @@ async fn handle_thread_models(server: &Server, params: ThreadModelsParams) -> an
         .clone()
         .or(project_model.clone())
         .or_else(|| {
-            std::env::var("CODE_PM_OPENAI_MODEL")
+            std::env::var("OMNE_AGENT_OPENAI_MODEL")
                 .ok()
                 .filter(|s| !s.trim().is_empty())
         })

@@ -59,7 +59,7 @@ struct WorkflowTaskResult {
 #[derive(Debug)]
 struct FanOutScheduler {
     tasks: Vec<WorkflowTask>,
-    fan_in_artifact_id: pm_protocol::ArtifactId,
+    fan_in_artifact_id: omne_agent_protocol::ArtifactId,
     concurrency_limit: usize,
     subagent_fork: bool,
     parent_cwd: Option<String>,

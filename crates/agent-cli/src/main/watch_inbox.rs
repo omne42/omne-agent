@@ -400,17 +400,17 @@ fn maybe_bell_per_thread(
 
 fn attention_state_update(event: &ThreadEvent) -> Option<&'static str> {
     match &event.kind {
-        pm_protocol::ThreadEventKind::ApprovalRequested { .. } => Some("need_approval"),
-        pm_protocol::ThreadEventKind::TurnStarted { .. } => Some("running"),
-        pm_protocol::ThreadEventKind::TurnCompleted { status, .. } => match status {
+        omne_agent_protocol::ThreadEventKind::ApprovalRequested { .. } => Some("need_approval"),
+        omne_agent_protocol::ThreadEventKind::TurnStarted { .. } => Some("running"),
+        omne_agent_protocol::ThreadEventKind::TurnCompleted { status, .. } => match status {
             TurnStatus::Completed => Some("done"),
             TurnStatus::Interrupted => Some("interrupted"),
             TurnStatus::Failed => Some("failed"),
             TurnStatus::Cancelled => Some("cancelled"),
             TurnStatus::Stuck => Some("stuck"),
         },
-        pm_protocol::ThreadEventKind::ProcessStarted { .. } => Some("running"),
-        pm_protocol::ThreadEventKind::ProcessExited { exit_code, .. } => match exit_code {
+        omne_agent_protocol::ThreadEventKind::ProcessStarted { .. } => Some("running"),
+        omne_agent_protocol::ThreadEventKind::ProcessExited { exit_code, .. } => match exit_code {
             Some(code) if *code != 0 => Some("failed"),
             _ => None,
         },

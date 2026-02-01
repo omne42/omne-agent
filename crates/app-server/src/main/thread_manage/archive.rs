@@ -93,7 +93,7 @@ async fn handle_thread_archive(server: &Server, params: ThreadArchiveParams) -> 
     }
 
     thread_rt
-        .append_event(pm_protocol::ThreadEventKind::ThreadArchived {
+        .append_event(omne_agent_protocol::ThreadEventKind::ThreadArchived {
             reason: reason.clone(),
         })
         .await?;
@@ -124,7 +124,7 @@ async fn handle_thread_unarchive(server: &Server, params: ThreadUnarchiveParams)
     }
 
     thread_rt
-        .append_event(pm_protocol::ThreadEventKind::ThreadUnarchived {
+        .append_event(omne_agent_protocol::ThreadEventKind::ThreadUnarchived {
             reason: params.reason,
         })
         .await?;

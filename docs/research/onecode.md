@@ -2,7 +2,7 @@
 
 > Snapshot: `example/agent-gui/1code` @ `e23a4695d5ee`
 >
-> 结论先行：1Code 的核心不是“又一个聊天 UI”，而是把 **Claude Code 的执行**放进一个可控的桌面工作台：每个会话一个 worktree、可后台运行、实时 diff/工具可见，并且把“创建 worktree 后要做的脏活（复制 env/装依赖/起服务）”做成**可版本化的配置文件**。对 `CodePM vNext` 来说，它最值得抄的是：**工作区生命周期脚本化（setup-worktree）+ plan/agent 模式硬切换 + 把 side effects 做成可观察事件**；而不是它的内建 git client。
+> 结论先行：1Code 的核心不是“又一个聊天 UI”，而是把 **Claude Code 的执行**放进一个可控的桌面工作台：每个会话一个 worktree、可后台运行、实时 diff/工具可见，并且把“创建 worktree 后要做的脏活（复制 env/装依赖/起服务）”做成**可版本化的配置文件**。对 `omne-agent vNext` 来说，它最值得抄的是：**工作区生命周期脚本化（setup-worktree）+ plan/agent 模式硬切换 + 把 side effects 做成可观察事件**；而不是它的内建 git client。
 
 ---
 
@@ -16,7 +16,7 @@
 - **Plan mode**：先澄清问题 → 结构化 plan → 预览 → 再执行（把“先想清楚”变成硬门槛）。
 - **Local-first**：不把代码同步到云端。
 
-对 `CodePM` 的启示：你要做 RTS 风格，核心不是并发数，而是**注意力管理**：让用户知道“哪个 agent 在干嘛、哪里需要我介入”，并且任何落盘/命令执行都能追溯。
+对 `omne-agent` 的启示：你要做 RTS 风格，核心不是并发数，而是**注意力管理**：让用户知道“哪个 agent 在干嘛、哪里需要我介入”，并且任何落盘/命令执行都能追溯。
 
 ---
 
@@ -59,7 +59,7 @@
 
 实现证据：`example/agent-gui/1code/src/main/lib/git/worktree-config.ts`。
 
-对 `CodePM`：你不需要发明复杂 DSL。**一个 repo 内可版本化的 JSON + “固定生命周期钩子”**就能干掉 80% 的“并发 worktree 开发的环境脏活”。
+对 `omne-agent`：你不需要发明复杂 DSL。**一个 repo 内可版本化的 JSON + “固定生命周期钩子”**就能干掉 80% 的“并发 worktree 开发的环境脏活”。
 
 ---
 
@@ -73,11 +73,11 @@
 
 实现证据：`example/agent-gui/1code/src/main/lib/git/security/git-commands.ts`。
 
-对 `CodePM`：这类 wrapper 的价值不是“封装 git”，而是**把可被注入/误用的命令面缩到最小**。对应到 vNext，我们的核心执行层也应当如此：把工具执行变成“语义化工具 + 强类型输入”，而不是任意字符串 shell。
+对 `omne-agent`：这类 wrapper 的价值不是“封装 git”，而是**把可被注入/误用的命令面缩到最小**。对应到 vNext，我们的核心执行层也应当如此：把工具执行变成“语义化工具 + 强类型输入”，而不是任意字符串 shell。
 
 ---
 
-## 4) 对 CodePM vNext 的启示（只取精华）
+## 4) 对 omne-agent vNext 的启示（只取精华）
 
 1. **把 worktree/workspace lifecycle 规范化**：至少要有 `setup` hook（类似 1Code 的 `setup-worktree`）。
 2. **plan/agent 模式必须是硬门槛**：默认先 plan，再允许执行 side effects（RTS 控制台要能“暂停/步进”）。

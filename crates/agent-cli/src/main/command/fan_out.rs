@@ -3,10 +3,10 @@ impl FanOutScheduler {
         app: &mut App,
         parent_thread_id: ThreadId,
         tasks: Vec<WorkflowTask>,
-        fan_in_artifact_id: pm_protocol::ArtifactId,
+        fan_in_artifact_id: omne_agent_protocol::ArtifactId,
         subagent_fork: bool,
     ) -> anyhow::Result<Self> {
-        let max_concurrent_subagents = parse_env_usize("CODE_PM_MAX_CONCURRENT_SUBAGENTS", 4, 0, 64);
+        let max_concurrent_subagents = parse_env_usize("OMNE_AGENT_MAX_CONCURRENT_SUBAGENTS", 4, 0, 64);
         let concurrency_limit = if max_concurrent_subagents == 0 {
             tasks.len().max(1)
         } else {
@@ -108,7 +108,7 @@ impl FanOutScheduler {
                     serde_json::json!({
                         "thread_id": forked.thread_id,
                         "approval_policy": null,
-                        "sandbox_policy": pm_protocol::SandboxPolicy::ReadOnly,
+                        "sandbox_policy": omne_agent_protocol::SandboxPolicy::ReadOnly,
                         "sandbox_writable_roots": null,
                         "sandbox_network_access": null,
                         "mode": "reviewer",
@@ -141,7 +141,7 @@ impl FanOutScheduler {
                 .turn_start(
                     forked.thread_id,
                     input,
-                    Some(pm_protocol::TurnPriority::Background),
+                    Some(omne_agent_protocol::TurnPriority::Background),
                 )
                 .await?;
             self.active.push(FanOutActiveTask {
@@ -168,19 +168,19 @@ impl FanOutScheduler {
 
                 for event in resp.events {
                     match event.kind {
-                        pm_protocol::ThreadEventKind::AssistantMessage {
+                        omne_agent_protocol::ThreadEventKind::AssistantMessage {
                             turn_id: Some(msg_turn_id),
                             text,
                             ..
                         } if msg_turn_id == turn_id => {
                             self.active[idx].assistant_text = Some(text);
                         }
-                        pm_protocol::ThreadEventKind::ApprovalRequested { .. } => {
+                        omne_agent_protocol::ThreadEventKind::ApprovalRequested { .. } => {
                             anyhow::bail!(
-                                "fan-out task needs approval (thread_id={thread_id}); use `pm inbox`"
+                                "fan-out task needs approval (thread_id={thread_id}); use `omne-agent inbox`"
                             );
                         }
-                        pm_protocol::ThreadEventKind::TurnCompleted {
+                        omne_agent_protocol::ThreadEventKind::TurnCompleted {
                             turn_id: completed_turn_id,
                             status,
                             reason,

@@ -9,7 +9,7 @@ use crate::model_limits::resolve_model_limits;
 use base64::Engine;
 use futures_util::stream::{self, StreamExt};
 use ditto_llm::ThinkingIntensity;
-use pm_protocol::{
+use omne_agent_protocol::{
     ApprovalDecision, ApprovalId, ArtifactId, ArtifactMetadata, EventSeq, ThreadEventKind, ThreadId,
     TurnId, TurnPriority,
 };
@@ -149,7 +149,7 @@ impl LlmWorkerPool {
 
     fn from_env() -> Self {
         let max_concurrent = parse_env_usize(
-            "CODE_PM_MAX_CONCURRENT_LLM_REQUESTS",
+            "OMNE_AGENT_MAX_CONCURRENT_LLM_REQUESTS",
             DEFAULT_MAX_CONCURRENT_LLM_REQUESTS,
             0,
             MAX_MAX_CONCURRENT_LLM_REQUESTS,
@@ -162,7 +162,7 @@ impl LlmWorkerPool {
         }
 
         let reserve = parse_env_usize(
-            "CODE_PM_LLM_FOREGROUND_RESERVE",
+            "OMNE_AGENT_LLM_FOREGROUND_RESERVE",
             DEFAULT_LLM_FOREGROUND_RESERVE,
             0,
             max_concurrent,
@@ -273,7 +273,7 @@ fn tool_call_signature(tool_name: &str, args: &Value) -> u64 {
 }
 
 fn tool_call_signature_from_raw(tool_name: &str, arguments: &str) -> u64 {
-    let redacted = pm_core::redact_text(arguments);
+    let redacted = omne_agent_core::redact_text(arguments);
     match serde_json::from_str::<Value>(&redacted) {
         Ok(args) => tool_call_signature(tool_name, &args),
         Err(_) => {
@@ -446,7 +446,7 @@ fn render_items_for_summary(items: &[OpenAiItem], max_chars: usize) -> String {
                 let name = item.get("name").and_then(Value::as_str).unwrap_or("");
                 let call_id = item.get("call_id").and_then(Value::as_str).unwrap_or("");
                 let arguments_raw = item.get("arguments").and_then(Value::as_str).unwrap_or("");
-                let arguments = pm_core::redact_text(arguments_raw);
+                let arguments = omne_agent_core::redact_text(arguments_raw);
                 let args_preview = truncate_chars(&arguments, 200);
                 out.push_str("[tool_call] ");
                 out.push_str(name.trim());
@@ -461,7 +461,7 @@ fn render_items_for_summary(items: &[OpenAiItem], max_chars: usize) -> String {
             "function_call_output" => {
                 let call_id = item.get("call_id").and_then(Value::as_str).unwrap_or("");
                 let output_raw = item.get("output").and_then(Value::as_str).unwrap_or("");
-                let output = pm_core::redact_text(output_raw);
+                let output = omne_agent_core::redact_text(output_raw);
                 let output_preview = truncate_chars(&output, 500);
                 out.push_str("[tool_output] call_id=");
                 out.push_str(call_id.trim());
@@ -705,7 +705,6 @@ struct ProviderRuntime {
     config: ditto_llm::ProviderConfig,
     capabilities: ditto_llm::ProviderCapabilities,
     client: Arc<dyn ditto_llm::LanguageModel>,
-    openai_responses_client: Option<Arc<ditto_llm::OpenAI>>,
     file_uploader: Option<Arc<dyn FileUploader>>,
 }
 
@@ -791,7 +790,7 @@ fn llm_error_prefers_model_fallback(err: &LlmAttemptError) -> bool {
 }
 
 fn llm_error_summary(err: &LlmAttemptError) -> String {
-    let text = pm_core::redact_text(&err.to_string());
+    let text = omne_agent_core::redact_text(&err.to_string());
     truncate_chars(&text, 300)
 }
 
@@ -829,7 +828,7 @@ async fn build_provider_runtime(
         .unwrap_or_else(ditto_llm::ProviderCapabilities::openai_responses);
     if !provider_capabilities.tools {
         anyhow::bail!(
-            "provider does not support tools: provider={provider} (CodePM requires tool calling; set [openai.providers.{provider}.capabilities.tools]=true)"
+            "provider does not support tools: provider={provider} (omne-agent requires tool calling; set [openai.providers.{provider}.capabilities.tools]=true)"
         );
     }
     if !provider_capabilities.streaming {
@@ -857,7 +856,7 @@ async fn build_provider_runtime(
         capabilities: Some(provider_capabilities),
     };
 
-    let (client, openai_responses_client, file_uploader) = if provider_capabilities.reasoning {
+    let (client, file_uploader) = if provider_capabilities.reasoning {
         let openai = Arc::new(
             ditto_llm::OpenAI::from_config(&provider_for_llm, env)
                 .await
@@ -865,7 +864,7 @@ async fn build_provider_runtime(
         );
         let client: Arc<dyn ditto_llm::LanguageModel> = openai.clone();
         let file_uploader: Arc<dyn FileUploader> = openai.clone();
-        (client, Some(openai), Some(file_uploader))
+        (client, Some(file_uploader))
     } else {
         let chat = Arc::new(
             ditto_llm::OpenAICompatible::from_config(&provider_for_llm, env)
@@ -874,14 +873,13 @@ async fn build_provider_runtime(
         );
         let client: Arc<dyn ditto_llm::LanguageModel> = chat.clone();
         let file_uploader: Arc<dyn FileUploader> = chat;
-        (client, None, Some(file_uploader))
+        (client, Some(file_uploader))
     };
 
     Ok(ProviderRuntime {
         config: provider_for_llm,
         capabilities: provider_capabilities,
         client,
-        openai_responses_client,
         file_uploader,
     })
 }

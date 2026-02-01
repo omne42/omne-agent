@@ -123,7 +123,7 @@ async fn run_ask(app: &mut App, args: AskArgs) -> anyhow::Result<()> {
         for event in &resp.events {
             let did_stream = saw_delta.load(Ordering::Relaxed);
             render_event_for_ask(event, did_stream);
-            if let pm_protocol::ThreadEventKind::ApprovalRequested {
+            if let omne_agent_protocol::ThreadEventKind::ApprovalRequested {
                 approval_id,
                 turn_id: Some(approval_turn_id),
                 action,
@@ -145,7 +145,7 @@ async fn run_ask(app: &mut App, args: AskArgs) -> anyhow::Result<()> {
                 )
                 .await?;
             }
-            if let pm_protocol::ThreadEventKind::TurnCompleted { turn_id: id, .. } = &event.kind
+            if let omne_agent_protocol::ThreadEventKind::TurnCompleted { turn_id: id, .. } = &event.kind
                 && *id == turn_id
             {
                 if did_stream {
@@ -282,7 +282,7 @@ where
         for event in &resp.events {
             let did_stream = saw_delta.load(Ordering::Relaxed);
             render_event_for_ask(event, did_stream);
-            if let pm_protocol::ThreadEventKind::ApprovalRequested {
+            if let omne_agent_protocol::ThreadEventKind::ApprovalRequested {
                 approval_id,
                 turn_id: Some(approval_turn_id),
                 action,
@@ -304,7 +304,7 @@ where
                 )
                 .await?;
             }
-            if let pm_protocol::ThreadEventKind::TurnCompleted { turn_id: id, .. } = &event.kind
+            if let omne_agent_protocol::ThreadEventKind::TurnCompleted { turn_id: id, .. } = &event.kind
                 && *id == turn_id
             {
                 if did_stream {
@@ -391,7 +391,7 @@ async fn run_exec(app: &mut App, args: ExecArgs) -> anyhow::Result<i32> {
 
         for event in &resp.events {
             match &event.kind {
-                pm_protocol::ThreadEventKind::AssistantMessage {
+                omne_agent_protocol::ThreadEventKind::AssistantMessage {
                     turn_id: Some(id),
                     text,
                     model,
@@ -403,7 +403,7 @@ async fn run_exec(app: &mut App, args: ExecArgs) -> anyhow::Result<i32> {
                     assistant_response_id = response_id.clone();
                     assistant_token_usage = token_usage.clone();
                 }
-                pm_protocol::ThreadEventKind::ApprovalRequested {
+                omne_agent_protocol::ThreadEventKind::ApprovalRequested {
                     approval_id,
                     turn_id: Some(approval_turn_id),
                     action,
@@ -427,7 +427,7 @@ async fn run_exec(app: &mut App, args: ExecArgs) -> anyhow::Result<i32> {
                                 *approval_id,
                                 ApprovalDecision::Approved,
                                 args.remember,
-                                Some("auto-approved by pm exec".to_string()),
+                                Some("auto-approved by omne-agent exec".to_string()),
                             )
                             .await?;
                         }
@@ -437,13 +437,13 @@ async fn run_exec(app: &mut App, args: ExecArgs) -> anyhow::Result<i32> {
                                 *approval_id,
                                 ApprovalDecision::Denied,
                                 args.remember,
-                                Some("auto-denied by pm exec".to_string()),
+                                Some("auto-denied by omne-agent exec".to_string()),
                             )
                             .await?;
                         }
                     }
                 }
-                pm_protocol::ThreadEventKind::TurnCompleted {
+                omne_agent_protocol::ThreadEventKind::TurnCompleted {
                     turn_id: id,
                     status,
                     reason,
@@ -504,7 +504,7 @@ fn render_event_for_ask(event: &ThreadEvent, streamed_assistant: bool) {
         .format(&time::format_description::well_known::Rfc3339);
     let ts = ts.unwrap_or_else(|_| "<time>".to_string());
     match &event.kind {
-        pm_protocol::ThreadEventKind::AssistantMessage { text, model, .. } => {
+        omne_agent_protocol::ThreadEventKind::AssistantMessage { text, model, .. } => {
             if streamed_assistant {
                 return;
             }
@@ -528,52 +528,52 @@ fn render_event_for_ask(event: &ThreadEvent, streamed_assistant: bool) {
 fn render_event_to<W: std::io::Write>(
     writer: &mut W,
     ts: String,
-    kind: &pm_protocol::ThreadEventKind,
+    kind: &omne_agent_protocol::ThreadEventKind,
 ) {
     match kind {
-        pm_protocol::ThreadEventKind::ThreadCreated { cwd } => {
+        omne_agent_protocol::ThreadEventKind::ThreadCreated { cwd } => {
             let _ = writeln!(writer, "[{ts}] thread created cwd={cwd}");
         }
-        pm_protocol::ThreadEventKind::ThreadArchived { reason } => {
+        omne_agent_protocol::ThreadEventKind::ThreadArchived { reason } => {
             let _ = writeln!(
                 writer,
                 "[{ts}] thread archived reason={}",
                 reason.as_deref().unwrap_or("")
             );
         }
-        pm_protocol::ThreadEventKind::ThreadUnarchived { reason } => {
+        omne_agent_protocol::ThreadEventKind::ThreadUnarchived { reason } => {
             let _ = writeln!(
                 writer,
                 "[{ts}] thread unarchived reason={}",
                 reason.as_deref().unwrap_or("")
             );
         }
-        pm_protocol::ThreadEventKind::ThreadPaused { reason } => {
+        omne_agent_protocol::ThreadEventKind::ThreadPaused { reason } => {
             let _ = writeln!(
                 writer,
                 "[{ts}] thread paused reason={}",
                 reason.as_deref().unwrap_or("")
             );
         }
-        pm_protocol::ThreadEventKind::ThreadUnpaused { reason } => {
+        omne_agent_protocol::ThreadEventKind::ThreadUnpaused { reason } => {
             let _ = writeln!(
                 writer,
                 "[{ts}] thread unpaused reason={}",
                 reason.as_deref().unwrap_or("")
             );
         }
-        pm_protocol::ThreadEventKind::TurnStarted { turn_id, input, .. } => {
+        omne_agent_protocol::ThreadEventKind::TurnStarted { turn_id, input, .. } => {
             let _ = writeln!(writer, "[{ts}] turn started {turn_id}");
             let _ = writeln!(writer, "user: {input}");
         }
-        pm_protocol::ThreadEventKind::TurnInterruptRequested { turn_id, reason } => {
+        omne_agent_protocol::ThreadEventKind::TurnInterruptRequested { turn_id, reason } => {
             let _ = writeln!(
                 writer,
                 "[{ts}] turn interrupt requested {turn_id} reason={}",
                 reason.as_deref().unwrap_or("")
             );
         }
-        pm_protocol::ThreadEventKind::TurnCompleted {
+        omne_agent_protocol::ThreadEventKind::TurnCompleted {
             turn_id,
             status,
             reason,
@@ -584,7 +584,7 @@ fn render_event_to<W: std::io::Write>(
                 reason.as_deref().unwrap_or("")
             );
         }
-        pm_protocol::ThreadEventKind::ThreadConfigUpdated {
+        omne_agent_protocol::ThreadEventKind::ThreadConfigUpdated {
             approval_policy,
             sandbox_policy,
             sandbox_writable_roots,
@@ -606,7 +606,7 @@ fn render_event_to<W: std::io::Write>(
                 openai_base_url.as_deref().unwrap_or("")
             );
         }
-        pm_protocol::ThreadEventKind::ApprovalRequested {
+        omne_agent_protocol::ThreadEventKind::ApprovalRequested {
             approval_id,
             action,
             ..
@@ -616,7 +616,7 @@ fn render_event_to<W: std::io::Write>(
                 "[{ts}] approval requested {approval_id} action={action}"
             );
         }
-        pm_protocol::ThreadEventKind::ApprovalDecided {
+        omne_agent_protocol::ThreadEventKind::ApprovalDecided {
             approval_id,
             decision,
             remember,
@@ -628,22 +628,22 @@ fn render_event_to<W: std::io::Write>(
                 reason.as_deref().unwrap_or("")
             );
         }
-        pm_protocol::ThreadEventKind::ToolStarted { tool, .. } => {
+        omne_agent_protocol::ThreadEventKind::ToolStarted { tool, .. } => {
             let _ = writeln!(writer, "[{ts}] tool started {tool}");
         }
-        pm_protocol::ThreadEventKind::ToolCompleted { status, error, .. } => {
+        omne_agent_protocol::ThreadEventKind::ToolCompleted { status, error, .. } => {
             let _ = writeln!(
                 writer,
                 "[{ts}] tool completed status={status:?} error={}",
                 error.as_deref().unwrap_or("")
             );
         }
-        pm_protocol::ThreadEventKind::ProcessStarted {
+        omne_agent_protocol::ThreadEventKind::ProcessStarted {
             process_id, argv, ..
         } => {
             let _ = writeln!(writer, "[{ts}] process started {process_id} argv={argv:?}");
         }
-        pm_protocol::ThreadEventKind::ProcessInterruptRequested {
+        omne_agent_protocol::ThreadEventKind::ProcessInterruptRequested {
             process_id, reason, ..
         } => {
             let _ = writeln!(
@@ -652,7 +652,7 @@ fn render_event_to<W: std::io::Write>(
                 reason.as_deref().unwrap_or("")
             );
         }
-        pm_protocol::ThreadEventKind::ProcessKillRequested {
+        omne_agent_protocol::ThreadEventKind::ProcessKillRequested {
             process_id, reason, ..
         } => {
             let _ = writeln!(
@@ -661,7 +661,7 @@ fn render_event_to<W: std::io::Write>(
                 reason.as_deref().unwrap_or("")
             );
         }
-        pm_protocol::ThreadEventKind::ProcessExited {
+        omne_agent_protocol::ThreadEventKind::ProcessExited {
             process_id,
             exit_code,
             reason,
