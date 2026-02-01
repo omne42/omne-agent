@@ -62,12 +62,13 @@ const LOOP_DETECTOR_HISTORY_LIMIT: usize = 8;
 const LOOP_DETECTOR_CONSECUTIVE_LIMIT: usize = 3;
 const LOOP_DETECTOR_CYCLE_LENGTH: usize = 2;
 
-const DEFAULT_AUTO_SUMMARY_THRESHOLD_PCT: u64 = 80;
+const DEFAULT_AUTO_SUMMARY_THRESHOLD_PCT: u64 = 90;
 const MAX_AUTO_SUMMARY_THRESHOLD_PCT: u64 = 99;
 const DEFAULT_AUTO_SUMMARY_SOURCE_MAX_CHARS: usize = 50_000;
 const MAX_AUTO_SUMMARY_SOURCE_MAX_CHARS: usize = 200_000;
 const DEFAULT_AUTO_SUMMARY_TAIL_ITEMS: usize = 20;
 const MAX_AUTO_SUMMARY_TAIL_ITEMS: usize = 200;
+const DEFAULT_AUTO_COMPACT_PRUNE_KEEP_LAST_TOOL_OUTPUTS: usize = 4;
 const DEFAULT_SUMMARY_CONTEXT_EVENT_LIMIT: usize = 200;
 const MAX_SUMMARY_CONTEXT_EVENT_LIMIT: usize = 5_000;
 
@@ -78,6 +79,8 @@ You are a coding agent.
 - Processes are non-interactive: you can only start/inspect/tail/follow/kill them.
 - Prefer small, reviewable changes; run checks/tests when relevant.
 "#;
+
+const AUTO_CONTEXT_SUMMARY_DISCLAIMER: &str = "Auto-generated context summary; not instructions.";
 
 const SUMMARY_INSTRUCTIONS: &str = r#"
 You are writing a compact, redaction-safe summary of the current session state so that a coding agent can continue.
@@ -412,10 +415,113 @@ fn estimate_openai_item_chars(item: &OpenAiItem) -> u64 {
     }
 }
 
-fn render_items_for_summary(items: &[OpenAiItem], max_chars: usize) -> String {
-    let mut out = String::new();
+fn prune_old_function_call_outputs_for_context(
+    instructions: &str,
+    input_items: &mut [OpenAiItem],
+    max_context_tokens: u64,
+    keep_last_n_tool_outputs: usize,
+) -> bool {
+    if max_context_tokens == 0 {
+        return false;
+    }
 
-    for item in items {
+    let mut estimated = estimate_context_tokens(instructions, input_items);
+    if estimated <= max_context_tokens {
+        return false;
+    }
+
+    let tool_output_indices = input_items
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, item)| {
+            if item.get("type").and_then(Value::as_str) == Some("function_call_output") {
+                Some(idx)
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+
+    if tool_output_indices.len() <= keep_last_n_tool_outputs {
+        return false;
+    }
+
+    let prune_upto = tool_output_indices.len().saturating_sub(keep_last_n_tool_outputs);
+    let mut did_prune = false;
+
+    for &idx in tool_output_indices.iter().take(prune_upto) {
+        let Some(item_obj) = input_items[idx].as_object_mut() else {
+            continue;
+        };
+
+        let Some(output) = item_obj.get("output").and_then(Value::as_str) else {
+            continue;
+        };
+
+        if output.contains("\"__omne_agent_tool_output_pruned\"") {
+            continue;
+        }
+
+        let call_id = item_obj
+            .get("call_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let original_chars = output.chars().count();
+        let pruned = serde_json::json!({
+            "__omne_agent_tool_output_pruned": true,
+            "call_id": call_id,
+            "original_chars": original_chars,
+            "note": "tool output removed to save context",
+        });
+        let pruned_json = serde_json::to_string(&pruned)
+            .unwrap_or_else(|_| "{\"__omne_agent_tool_output_pruned\":true}".to_string());
+        item_obj.insert("output".to_string(), Value::String(pruned_json));
+        did_prune = true;
+
+        estimated = estimate_context_tokens(instructions, input_items);
+        if estimated <= max_context_tokens {
+            break;
+        }
+    }
+
+    did_prune
+}
+
+fn is_auto_context_summary_message_item(item: &OpenAiItem) -> bool {
+    if item.get("type").and_then(Value::as_str) != Some("message") {
+        return false;
+    }
+    if item.get("role").and_then(Value::as_str) != Some("user") {
+        return false;
+    }
+    let Some(content) = item.get("content").and_then(Value::as_array) else {
+        return false;
+    };
+    for part in content {
+        let part_kind = part.get("type").and_then(Value::as_str).unwrap_or("");
+        if part_kind != "input_text" && part_kind != "output_text" {
+            continue;
+        }
+        let Some(text) = part.get("text").and_then(Value::as_str) else {
+            continue;
+        };
+        return text
+            .trim_start()
+            .starts_with(AUTO_CONTEXT_SUMMARY_DISCLAIMER);
+    }
+    false
+}
+
+fn render_items_for_summary(items: &[OpenAiItem], max_chars: usize) -> String {
+    let mut lines = Vec::<String>::new();
+    let mut total_chars = 0usize;
+
+    for item in items.iter().rev() {
+        if is_auto_context_summary_message_item(item) {
+            continue;
+        }
+
         let kind = item.get("type").and_then(Value::as_str).unwrap_or("");
         match kind {
             "message" => {
@@ -435,10 +541,13 @@ fn render_items_for_summary(items: &[OpenAiItem], max_chars: usize) -> String {
                         if text.trim().is_empty() {
                             continue;
                         }
-                        out.push_str(role);
-                        out.push_str(": ");
-                        out.push_str(text.trim());
-                        out.push('\n');
+                        let mut line = String::new();
+                        line.push_str(role);
+                        line.push_str(": ");
+                        line.push_str(text.trim());
+                        line.push('\n');
+                        total_chars = total_chars.saturating_add(line.chars().count());
+                        lines.push(line);
                     }
                 }
             }
@@ -448,38 +557,45 @@ fn render_items_for_summary(items: &[OpenAiItem], max_chars: usize) -> String {
                 let arguments_raw = item.get("arguments").and_then(Value::as_str).unwrap_or("");
                 let arguments = omne_agent_core::redact_text(arguments_raw);
                 let args_preview = truncate_chars(&arguments, 200);
-                out.push_str("[tool_call] ");
-                out.push_str(name.trim());
-                out.push_str(" call_id=");
-                out.push_str(call_id.trim());
+                let mut line = String::new();
+                line.push_str("[tool_call] ");
+                line.push_str(name.trim());
+                line.push_str(" call_id=");
+                line.push_str(call_id.trim());
                 if !args_preview.trim().is_empty() {
-                    out.push_str(" args=");
-                    out.push_str(args_preview.trim());
+                    line.push_str(" args=");
+                    line.push_str(args_preview.trim());
                 }
-                out.push('\n');
+                line.push('\n');
+                total_chars = total_chars.saturating_add(line.chars().count());
+                lines.push(line);
             }
             "function_call_output" => {
                 let call_id = item.get("call_id").and_then(Value::as_str).unwrap_or("");
                 let output_raw = item.get("output").and_then(Value::as_str).unwrap_or("");
                 let output = omne_agent_core::redact_text(output_raw);
                 let output_preview = truncate_chars(&output, 500);
-                out.push_str("[tool_output] call_id=");
-                out.push_str(call_id.trim());
+                let mut line = String::new();
+                line.push_str("[tool_output] call_id=");
+                line.push_str(call_id.trim());
                 if !output_preview.trim().is_empty() {
-                    out.push_str(" output=");
-                    out.push_str(output_preview.trim());
+                    line.push_str(" output=");
+                    line.push_str(output_preview.trim());
                 }
-                out.push('\n');
+                line.push('\n');
+                total_chars = total_chars.saturating_add(line.chars().count());
+                lines.push(line);
             }
             _ => {}
         }
 
-        if max_chars > 0 && out.chars().count() > max_chars.saturating_mul(2) {
+        if max_chars > 0 && total_chars > max_chars.saturating_mul(2) {
             break;
         }
     }
 
-    truncate_chars(&out, max_chars)
+    lines.reverse();
+    truncate_chars(&lines.concat(), max_chars)
 }
 
 #[derive(Debug, Clone)]
@@ -803,7 +919,6 @@ fn retry_backoff_delay(failure_count: usize, base: Duration, max: Duration) -> D
     let delay = base * multiplier;
     if delay > max { max } else { delay }
 }
-
 async fn build_provider_runtime(
     provider: &str,
     project_overrides: &ProjectOpenAiOverrides,

@@ -7,6 +7,7 @@ async fn auto_compact_summary(
         thread_id,
         turn_id,
         model,
+        context_window,
         llm,
         turn_priority,
         max_openai_request_duration,
@@ -61,7 +62,11 @@ async fn auto_compact_summary(
         return Ok(false);
     }
     let summary_text = omne_agent_core::redact_text(summary_text);
-    let summary_text = truncate_chars(&summary_text, 20_000);
+    let summary_text_full = truncate_chars(&summary_text, 20_000);
+    let summary_text_for_prompt = truncate_chars(
+        &summary_text_full,
+        auto_compact_summary_max_chars(context_window, model),
+    );
 
     let artifact_value = match crate::handle_artifact_write(
         server,
@@ -72,7 +77,7 @@ async fn auto_compact_summary(
             artifact_id: None,
             artifact_type: "summary".to_string(),
             summary: "Summary (auto compact)".to_string(),
-            text: summary_text.clone(),
+            text: summary_text_full.clone(),
         },
     )
     .await
@@ -98,31 +103,224 @@ async fn auto_compact_summary(
         .cloned()
         .and_then(|value| serde_json::from_value::<ArtifactId>(value).ok());
 
-    let tail_count = cfg.tail_items.min(input_items.len());
-    let mut tail = input_items
-        .iter()
-        .rev()
-        .take(tail_count)
-        .cloned()
-        .collect::<Vec<_>>();
-    tail.reverse();
+    let tail = if let Some(max_tokens) = auto_compact_tail_token_budget(context_window, model) {
+        select_auto_compact_tail_items(input_items, max_tokens, cfg.tail_items)
+    } else {
+        let tail_count = cfg.tail_items.min(input_items.len());
+        let mut tail = input_items
+            .iter()
+            .rev()
+            .take(tail_count)
+            .cloned()
+            .collect::<Vec<_>>();
+        tail.reverse();
+        tail
+    };
 
-    let mut system_text = String::new();
-    system_text.push_str("# Context summary\n\n");
-    system_text.push_str(summary_text.trim());
+    let mut summary_message = String::new();
+    summary_message.push_str(AUTO_CONTEXT_SUMMARY_DISCLAIMER);
+    summary_message.push_str("\n\n# Context summary\n\n");
+    summary_message.push_str(summary_text_for_prompt.trim());
     if let Some(artifact_id) = artifact_id {
-        system_text.push_str(&format!("\n\n(summary artifact_id: {artifact_id})"));
+        summary_message.push_str(&format!("\n\n(summary artifact_id: {artifact_id})"));
     }
 
     input_items.clear();
     input_items.push(serde_json::json!({
         "type": "message",
-        "role": "system",
-        "content": [{ "type": "input_text", "text": system_text }],
+        "role": "user",
+        "content": [{ "type": "input_text", "text": summary_message }],
     }));
     input_items.extend(tail);
 
     Ok(true)
+}
+
+const AUTO_COMPACT_TAIL_BUDGET_PCT: u64 = 25;
+const AUTO_COMPACT_TAIL_BUDGET_MAX_TOKENS: u64 = 20_000;
+const AUTO_COMPACT_SUMMARY_MAX_TOKENS: u64 = 5_000;
+
+fn auto_compact_tail_token_budget(context_window: Option<u64>, model: &str) -> Option<u64> {
+    let context_window = context_window?;
+    if context_window == 0 {
+        return None;
+    }
+    let effective =
+        crate::model_limits::effective_context_window_for_model(model, context_window);
+    if effective == 0 {
+        return None;
+    }
+    let budget = effective.saturating_mul(AUTO_COMPACT_TAIL_BUDGET_PCT) / 100;
+    Some(budget.min(AUTO_COMPACT_TAIL_BUDGET_MAX_TOKENS))
+}
+
+fn auto_compact_summary_max_chars(context_window: Option<u64>, model: &str) -> usize {
+    let Some(context_window) = context_window else {
+        return 20_000;
+    };
+    if context_window == 0 {
+        return 20_000;
+    }
+    let effective =
+        crate::model_limits::effective_context_window_for_model(model, context_window);
+    if effective == 0 {
+        return 20_000;
+    }
+    let budget_tokens = effective.saturating_mul(AUTO_COMPACT_TAIL_BUDGET_PCT) / 100;
+    let budget_tokens = budget_tokens.min(AUTO_COMPACT_SUMMARY_MAX_TOKENS);
+    budget_tokens
+        .saturating_mul(4)
+        .min(usize::MAX as u64) as usize
+}
+
+fn estimate_openai_item_tokens(item: &OpenAiItem) -> u64 {
+    (estimate_openai_item_chars(item).saturating_add(3)) / 4
+}
+
+fn truncate_openai_item_to_fit(item: &OpenAiItem, max_tokens: u64) -> Option<OpenAiItem> {
+    if max_tokens == 0 {
+        return None;
+    }
+
+    let max_chars = max_tokens
+        .saturating_mul(4)
+        .min(usize::MAX as u64) as usize;
+    let kind = item.get("type").and_then(Value::as_str).unwrap_or("");
+
+    match kind {
+        "message" => {
+            let mut item = item.clone();
+            let Some(item_obj) = item.as_object_mut() else {
+                return None;
+            };
+            let Some(content) = item_obj.get_mut("content").and_then(Value::as_array_mut) else {
+                return None;
+            };
+
+            let mut remaining_chars = max_chars;
+            for part in content.iter_mut() {
+                let part_kind = part.get("type").and_then(Value::as_str).unwrap_or("");
+                if part_kind != "input_text" && part_kind != "output_text" {
+                    continue;
+                }
+                let Some(text) = part.get("text").and_then(Value::as_str) else {
+                    continue;
+                };
+                if remaining_chars == 0 {
+                    part.as_object_mut()
+                        .map(|obj| obj.insert("text".to_string(), Value::String(String::new())));
+                    continue;
+                }
+                let text_len = text.chars().count();
+                if text_len > remaining_chars {
+                    let truncated = truncate_chars(text, remaining_chars);
+                    part.as_object_mut().map(|obj| {
+                        obj.insert("text".to_string(), Value::String(truncated))
+                    });
+                    remaining_chars = 0;
+                } else {
+                    remaining_chars = remaining_chars.saturating_sub(text_len);
+                }
+            }
+
+            if estimate_openai_item_tokens(&item) <= max_tokens {
+                Some(item)
+            } else {
+                None
+            }
+        }
+        "function_call_output" => {
+            let call_id = item
+                .get("call_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let original_chars = item
+                .get("output")
+                .and_then(Value::as_str)
+                .map(|s| s.chars().count())
+                .unwrap_or(0);
+            let pruned = serde_json::json!({
+                "__omne_agent_tool_output_pruned": true,
+                "call_id": call_id,
+                "original_chars": original_chars,
+                "note": "tool output removed to save context",
+            });
+            let pruned_json = serde_json::to_string(&pruned)
+                .unwrap_or_else(|_| "{\"__omne_agent_tool_output_pruned\":true}".to_string());
+
+            let mut item = item.clone();
+            item.as_object_mut()
+                .map(|obj| obj.insert("output".to_string(), Value::String(pruned_json)));
+
+            if estimate_openai_item_tokens(&item) <= max_tokens {
+                Some(item)
+            } else {
+                None
+            }
+        }
+        "function_call" => {
+            let mut item = item.clone();
+            let Some(obj) = item.as_object_mut() else {
+                return None;
+            };
+            if let Some(arguments) = obj.get("arguments").and_then(Value::as_str) {
+                if arguments.chars().count() > max_chars {
+                    let truncated = truncate_chars(arguments, max_chars);
+                    obj.insert("arguments".to_string(), Value::String(truncated));
+                }
+            }
+
+            if estimate_openai_item_tokens(&item) <= max_tokens {
+                Some(item)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn select_auto_compact_tail_items(
+    items: &[OpenAiItem],
+    max_tokens: u64,
+    max_items: usize,
+) -> Vec<OpenAiItem> {
+    if max_items == 0 || max_tokens == 0 || items.is_empty() {
+        return Vec::new();
+    }
+
+    let mut used_tokens = 0u64;
+    let mut selected_rev = Vec::<OpenAiItem>::new();
+
+    for item in items.iter().rev() {
+        if selected_rev.len() >= max_items {
+            break;
+        }
+        if is_auto_context_summary_message_item(item) {
+            continue;
+        }
+
+        let remaining_tokens = max_tokens.saturating_sub(used_tokens);
+        if remaining_tokens == 0 {
+            break;
+        }
+
+        let item_tokens = estimate_openai_item_tokens(item);
+        if item_tokens <= remaining_tokens {
+            selected_rev.push(item.clone());
+            used_tokens = used_tokens.saturating_add(item_tokens);
+            continue;
+        }
+
+        if let Some(truncated) = truncate_openai_item_to_fit(item, remaining_tokens) {
+            selected_rev.push(truncated);
+        }
+        break;
+    }
+
+    selected_rev.reverse();
+    selected_rev
 }
 
 fn resolve_user_instructions_path() -> Option<PathBuf> {

@@ -148,15 +148,20 @@ v0.2.0 最小实现（写死边界）：
 
 v0.2.0 最小实现（写死边界）：
 
-- 触发条件：当 `OMNE_AGENT_MAX_TOTAL_TOKENS>0` 且 turn 内累计 token 使用量达到阈值时（默认 `80%`；可用 `OMNE_AGENT_AUTO_SUMMARY_THRESHOLD_PCT` 覆盖）。
+- 触发条件（优先）：当**当前请求上下文**（instructions + in-memory items）估算 token 达到模型的 `best_context` 时开始压缩（别名：`auto_compact_token_limit`；未配置 `best_context` 时，默认≈`max_context * 90%`，别名：`context_window`）。
+- 触发条件（fallback）：当模型 context window 未知时，才会回退到 `OMNE_AGENT_MAX_TOTAL_TOKENS>0` 且 turn 内累计 token 使用量达到阈值时（默认 `90%`；可用 `OMNE_AGENT_AUTO_SUMMARY_THRESHOLD_PCT` 覆盖）。
 - 产物：用 `artifact/write` 写入 `artifact_type="summary"`（文本会自动脱敏），且 provenance 指向触发的 `turn_id`。
 - 上下文重建：当 thread 存在 `summary` artifact 时，后续 turn 构建上下文会优先使用：
-  - `system` summary + summary 之后最近 `K` 条事件（默认 `200`；可用 `OMNE_AGENT_SUMMARY_CONTEXT_EVENT_LIMIT` 覆盖）
+  - `user` summary（带免责声明）+ summary 之后最近 `K` 条事件（默认 `200`；可用 `OMNE_AGENT_SUMMARY_CONTEXT_EVENT_LIMIT` 覆盖）
   - 避免每个 turn 都把全量历史塞回模型导致继续膨胀。
-- 本次 turn 的后续请求：触发 summary 后，会把当前 in-memory 上下文压缩为 `system` summary + 最近少量 tail items（默认 `20`；可用 `OMNE_AGENT_AUTO_SUMMARY_TAIL_ITEMS` 覆盖）。
+- 本次 turn 的后续请求：触发 summary 后，会把当前 in-memory 上下文压缩为 `user` summary（带免责声明）+ 最近少量 tail items（默认 `20`；可用 `OMNE_AGENT_AUTO_SUMMARY_TAIL_ITEMS` 覆盖；同时受 token 预算约束）。
+- tool output 处理（参考 opencode）：触发阈值时会先 prune 老的 `function_call_output`（保留结构/`call_id`，但清掉大 output），再尝试 summary compact。
 
 相关参数（可选）：
 
+- `.omne_agent_data/config.toml`（`[openai.models]`）：
+  - `max_context`（别名：`context_window`）：模型最大上下文（tokens）。
+  - `best_context`（别名：`auto_compact_token_limit`）：超过后触发压缩（tokens；可不配）。
 - `OMNE_AGENT_AUTO_SUMMARY_SOURCE_MAX_CHARS`：生成 summary 时用于拼接 transcript 的最大字符数（默认 `50000`）。
 
 仍是 TODO：

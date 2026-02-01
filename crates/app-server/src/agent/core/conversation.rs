@@ -22,11 +22,12 @@ async fn build_conversation(
         if !summary_text.trim().is_empty() {
             input.push(serde_json::json!({
                 "type": "message",
-                "role": "system",
+                "role": "user",
                 "content": [{
                     "type": "input_text",
                     "text": format!(
-                        "# Context summary\n\n{}\n\n(summary artifact_id: {})",
+                        "{}\n\n# Context summary\n\n{}\n\n(summary artifact_id: {})",
+                        AUTO_CONTEXT_SUMMARY_DISCLAIMER,
                         summary_text.trim(),
                         meta.artifact_id
                     ),

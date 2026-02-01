@@ -436,6 +436,8 @@ async fn handle_thread_config_explain(
             "openai_base_url": effective_openai_base_url,
             "allowed_tools": effective_allowed_tools,
             "model_context_window": model_context_window,
+            "model_max_context_window": limits.context_window,
+            "model_best_context_window": limits.auto_compact_token_limit,
             "auto_compact_token_limit": limits.auto_compact_token_limit,
         },
         "mode_catalog": {

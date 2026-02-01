@@ -453,7 +453,7 @@ mod auto_summary_tests {
         assert!(
             items.iter().any(|item| {
                 item.get("type").and_then(Value::as_str) == Some("message")
-                    && item.get("role").and_then(Value::as_str) == Some("system")
+                    && item.get("role").and_then(Value::as_str) == Some("user")
                     && item
                         .get("content")
                         .and_then(Value::as_array)
@@ -467,7 +467,7 @@ mod auto_summary_tests {
                             })
                         })
             }),
-            "expected system summary message"
+            "expected user summary message"
         );
         assert!(
             items.iter().any(|item| {

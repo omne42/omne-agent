@@ -150,14 +150,34 @@ impl ToolLoop {
         }
         let mut model_idx = 0usize;
 
-        if !attempted_auto_summary
+        let model_config = ditto_llm::select_model_config(&project_overrides.models, &model);
+        let limits = resolve_model_limits(&model, model_config);
+        let auto_compact_context_limit = limits.auto_compact_token_limit;
+
+        let mut context_limit_exceeded = auto_compact_context_limit.is_some_and(|limit| {
+            estimate_context_tokens(&instructions, &input_items) >= limit
+        });
+        if context_limit_exceeded
+            && let Some(limit) = auto_compact_context_limit
+            && prune_old_function_call_outputs_for_context(
+                &instructions,
+                &mut input_items,
+                limit,
+                DEFAULT_AUTO_COMPACT_PRUNE_KEEP_LAST_TOOL_OUTPUTS,
+            )
+        {
+            context_limit_exceeded = estimate_context_tokens(&instructions, &input_items) >= limit;
+        }
+
+        let budget_limit_exceeded = auto_compact_context_limit.is_none()
             && should_auto_compact(
                 total_tokens_used,
                 cfg.auto_compact_token_limit,
                 cfg.max_total_tokens,
                 cfg.auto_summary_threshold_pct,
-            )
-        {
+            );
+
+        if !attempted_auto_summary && (context_limit_exceeded || budget_limit_exceeded) {
             attempted_auto_summary = true;
             let summary_cfg = AutoCompactSummaryConfig {
                 source_max_chars: cfg.auto_summary_source_max_chars,
@@ -168,6 +188,7 @@ impl ToolLoop {
                 thread_id,
                 turn_id,
                 model: &model,
+                context_window: limits.context_window,
                 llm: model_client.clone(),
                 turn_priority,
                 max_openai_request_duration: cfg.max_openai_request_duration,
@@ -859,14 +880,35 @@ impl ToolLoop {
                 }
             }
 
-            if !attempted_auto_summary
+            let model_config = ditto_llm::select_model_config(&project_overrides.models, &model);
+            let limits = resolve_model_limits(&model, model_config);
+            let auto_compact_context_limit = limits.auto_compact_token_limit;
+
+            let mut context_limit_exceeded = auto_compact_context_limit.is_some_and(|limit| {
+                estimate_context_tokens(&instructions, &input_items) >= limit
+            });
+            if context_limit_exceeded
+                && let Some(limit) = auto_compact_context_limit
+                && prune_old_function_call_outputs_for_context(
+                    &instructions,
+                    &mut input_items,
+                    limit,
+                    DEFAULT_AUTO_COMPACT_PRUNE_KEEP_LAST_TOOL_OUTPUTS,
+                )
+            {
+                context_limit_exceeded =
+                    estimate_context_tokens(&instructions, &input_items) >= limit;
+            }
+
+            let budget_limit_exceeded = auto_compact_context_limit.is_none()
                 && should_auto_compact(
                     total_tokens_used,
                     cfg.auto_compact_token_limit,
                     cfg.max_total_tokens,
                     cfg.auto_summary_threshold_pct,
-                )
-            {
+                );
+
+            if !attempted_auto_summary && (context_limit_exceeded || budget_limit_exceeded) {
                 attempted_auto_summary = true;
                 let summary_cfg = AutoCompactSummaryConfig {
                     source_max_chars: cfg.auto_summary_source_max_chars,
@@ -877,6 +919,7 @@ impl ToolLoop {
                     thread_id,
                     turn_id,
                     model: &model,
+                    context_window: limits.context_window,
                     llm: model_client.clone(),
                     turn_priority,
                     max_openai_request_duration: cfg.max_openai_request_duration,

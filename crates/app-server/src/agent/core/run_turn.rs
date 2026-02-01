@@ -570,6 +570,7 @@ struct AutoCompactSummaryContext<'a> {
     thread_id: ThreadId,
     turn_id: TurnId,
     model: &'a str,
+    context_window: Option<u64>,
     llm: Arc<dyn ditto_llm::LanguageModel>,
     turn_priority: TurnPriority,
     max_openai_request_duration: Duration,

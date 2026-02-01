@@ -22,6 +22,8 @@
 - Process log rotate 命名统一为 `*.segment-0001.log`。
 - 部分通用能力拆为独立仓库并通过 path 依赖复用：`mcp-kit`、`safe-fs-tools`。
 - Node packages（分发方向的最小落地）：`packages/omne-agent`、`packages/app-server-client`。
+- Auto compact：支持 `best_context`/`max_context`（模型配置别名），并在超阈值时先 prune 老的 tool output，再做 summary 重建上下文。
+- Dev：pre-commit 禁止新增/修改 `partNN.*` 风格文件名。
 
 ### Security
 

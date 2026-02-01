@@ -73,7 +73,7 @@ async fn handle_thread_models(server: &Server, params: ThreadModelsParams) -> an
     let env = ditto_llm::Env {
         dotenv: project.dotenv,
     };
-    let provider_client = ditto_llm::OpenAiProvider::from_config(
+    let provider_client = ditto_llm::OpenAiModelsProvider::from_config(
         provider.clone(),
         &provider_for_listing,
         &env,
