@@ -198,7 +198,7 @@ async fn handle_file_grep(server: &Server, params: FileGrepParams) -> anyhow::Re
                 params.query.clone(),
                 params.is_regex,
                 params.include_glob.clone(),
-                Some(String::new()),
+                None,
             )
             .await;
 
@@ -260,10 +260,16 @@ async fn handle_file_grep(server: &Server, params: FileGrepParams) -> anyhow::Re
                         })),
                     })
                     .await?;
-                return Ok(serde_json::json!({
+                let mut result = serde_json::json!({
                     "tool_id": tool_id,
                     "denied": true,
-                }));
+                    "db_vfs_code": err.code,
+                    "db_vfs_status": err.status.map(|status| status.as_u16()),
+                });
+                if err.code.as_deref() == Some("not_permitted") {
+                    result["reason"] = serde_json::Value::String(err.message.clone());
+                }
+                return Ok(result);
             }
             Err(err) => {
                 thread_rt

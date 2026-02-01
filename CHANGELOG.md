@@ -195,6 +195,7 @@
 ### Fixed
 - docs：`docs/v0.2.0_parity.md` 更新 Transformers 状态，标记 ditto-llm 接入已落地。
 - docs(research)：修正 `docs/research/claude-code-router.md` 中对 CCR 文档的引用路径，指向 `example/claude-code-router/...` 快照目录。
+- `pm-app-server`：启用 DB-VFS 时，`file/glob`/`file/grep` 不再隐式使用空 `path_prefix`（避免无意“全 workspace”扫描，改由 DB-VFS 侧强制 scope）；当 DB-VFS 返回 `not_permitted` 时在 tool result 中附带 `reason` 便于调用方收敛查询范围。
 - `pm` TUI：启动阶段先渲染 “connecting...” 并将 `thread/start`/`thread/resume` 启动上限固定为 5s（`CODE_PM_TUI_STARTUP_TIMEOUT_MS` 仅允许缩短），避免卡死黑屏。
 - `pm` TUI：状态栏信息移至底部并移除全局/主视图边框，呈现终端式布局。
 - `pm` TUI：状态栏仅在错误时使用红色，避免 `loading models...` 等正常状态出现红字。

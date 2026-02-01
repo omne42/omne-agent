@@ -165,11 +165,7 @@ async fn handle_file_glob(server: &Server, params: FileGlobParams) -> anyhow::Re
         && let Some(db_vfs) = server.db_vfs.clone()
     {
         let resp = db_vfs
-            .glob(
-                params.thread_id.to_string(),
-                params.pattern.clone(),
-                Some(String::new()),
-            )
+            .glob(params.thread_id.to_string(), params.pattern.clone(), None)
             .await;
 
         match resp {
@@ -211,10 +207,16 @@ async fn handle_file_glob(server: &Server, params: FileGlobParams) -> anyhow::Re
                         })),
                     })
                     .await?;
-                return Ok(serde_json::json!({
+                let mut result = serde_json::json!({
                     "tool_id": tool_id,
                     "denied": true,
-                }));
+                    "db_vfs_code": err.code,
+                    "db_vfs_status": err.status.map(|status| status.as_u16()),
+                });
+                if err.code.as_deref() == Some("not_permitted") {
+                    result["reason"] = serde_json::Value::String(err.message.clone());
+                }
+                return Ok(result);
             }
             Err(err) => {
                 thread_rt
