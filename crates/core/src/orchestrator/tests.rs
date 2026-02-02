@@ -203,6 +203,12 @@ async fn concurrent_tasks_preserve_input_order() -> anyhow::Result<()> {
         .map(|pr| pr.id.as_str().to_string())
         .collect();
     assert_eq!(ids, vec!["a", "b", "c"]);
+    assert!(
+        result
+            .prs
+            .iter()
+            .all(|pr| pr.head_branch.starts_with("omne/"))
+    );
 
     let session_paths = SessionPaths::new(&repo.name, result.session.id);
     let _ = tokio::fs::remove_dir_all(session_paths.root()).await;
@@ -471,6 +477,12 @@ async fn concurrent_tasks_convert_panics_to_failed_prs() -> anyhow::Result<()> {
     assert_eq!(result.prs[1].id.as_str(), "b");
     assert_eq!(result.prs[2].id.as_str(), "c");
     assert_eq!(result.prs[1].status, PullRequestStatus::Failed);
+    assert!(
+        result
+            .prs
+            .iter()
+            .all(|pr| pr.head_branch.starts_with("omne/"))
+    );
 
     let session_paths = SessionPaths::new(&repo.name, result.session.id);
     let _ = tokio::fs::remove_dir_all(session_paths.root()).await;

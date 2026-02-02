@@ -160,6 +160,11 @@ struct DiskWarningState {
     last_reported_at: Option<tokio::time::Instant>,
 }
 
+struct CargoTargetWarningState {
+    last_checked_at: Option<tokio::time::Instant>,
+    last_reported_at: Option<tokio::time::Instant>,
+}
+
 #[derive(Clone)]
 struct Server {
     cwd: PathBuf,
@@ -170,6 +175,7 @@ struct Server {
     processes: Arc<tokio::sync::Mutex<HashMap<ProcessId, ProcessEntry>>>,
     mcp: Arc<tokio::sync::Mutex<McpManager>>,
     disk_warning: Arc<tokio::sync::Mutex<HashMap<ThreadId, DiskWarningState>>>,
+    cargo_target_warning: Arc<tokio::sync::Mutex<HashMap<String, CargoTargetWarningState>>>,
     exec_policy: omne_agent_execpolicy::Policy,
     db_vfs: Option<DbVfsHttpClient>,
 }

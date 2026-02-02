@@ -622,6 +622,7 @@ mod execve_gate_tests {
             processes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             mcp: Arc::new(tokio::sync::Mutex::new(McpManager::default())),
             disk_warning: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            cargo_target_warning: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             exec_policy,
             db_vfs: None,
         }

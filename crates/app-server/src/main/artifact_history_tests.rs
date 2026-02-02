@@ -13,6 +13,7 @@ mod artifact_history_tests {
             processes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             mcp: Arc::new(tokio::sync::Mutex::new(McpManager::default())),
             disk_warning: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            cargo_target_warning: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             exec_policy: omne_agent_execpolicy::Policy::empty(),
             db_vfs: None,
         }

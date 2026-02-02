@@ -23,6 +23,10 @@ impl ThreadStore {
         Self { paths }
     }
 
+    pub fn agent_paths(&self) -> &AgentPaths {
+        &self.paths
+    }
+
     pub fn thread_dir(&self, thread_id: ThreadId) -> PathBuf {
         self.paths.thread_dir(thread_id)
     }

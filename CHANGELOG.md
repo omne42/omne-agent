@@ -20,11 +20,14 @@
 ### Changed
 
 - Process log rotate 命名统一为 `*.segment-0001.log`。
+- Core orchestrator：任务 PR 的 head branch 统一加 `omne/` 前缀（保留 `ai/...` 层级）。
+- App-server：对 `cargo` 进程默认注入共享的 `CARGO_TARGET_DIR`（按 repo 复用），并在超阈值时生成 `cargo_target_report` artifact 提醒清理。
 - 部分通用能力拆为独立仓库并通过 path 依赖复用：`mcp-kit`、`safe-fs-tools`。
 - Node packages（分发方向的最小落地）：`packages/omne-agent`、`packages/app-server-client`。
 - Auto compact：支持 `best_context`/`max_context`（模型配置别名），并在超阈值时先 prune 老的 tool output，再做 summary 重建上下文。
 - Dev：pre-commit 禁止新增/修改 `partNN.*` 风格文件名。
 - Docs：新增内嵌 Git 的实现计划（`docs/plans/embedded_git.md`）。
+- Docs：新增本地 GitHub（Forgejo）PR 工作流计划（`docs/plans/local_github.md`）。
 
 ### Security
 

@@ -415,6 +415,8 @@ async fn handle_process_start_inner(
         combined_env.extend(extra_env.clone());
     }
 
+    let mut cargo_target_dir_for_warning: Option<PathBuf> = None;
+
     let mut execve_gate: Option<ExecveGateHandle> = None;
     #[cfg(unix)]
     {
@@ -471,6 +473,33 @@ async fn handle_process_start_inner(
                 combined_env.insert("OMNE_AGENT_TURN_ID".to_string(), turn_id.to_string());
             }
         }
+    }
+
+    if is_cargo_command(&params.argv) {
+        if !combined_env.contains_key("CARGO_TARGET_DIR") && std::env::var_os("CARGO_TARGET_DIR").is_none() {
+            if let Some(target_dir) = resolve_shared_cargo_target_dir(server, &cwd_path).await {
+                combined_env.insert(
+                    "CARGO_TARGET_DIR".to_string(),
+                    target_dir.display().to_string(),
+                );
+            }
+        }
+
+        cargo_target_dir_for_warning = combined_env
+            .get("CARGO_TARGET_DIR")
+            .cloned()
+            .or_else(|| std::env::var("CARGO_TARGET_DIR").ok())
+            .map(PathBuf::from)
+            .and_then(|value| {
+                if value.as_os_str().is_empty() {
+                    return None;
+                }
+                Some(if value.is_absolute() {
+                    value
+                } else {
+                    cwd_path.join(value)
+                })
+            });
     }
 
     let mut cmd = Command::new(&params.argv[0]);
@@ -556,6 +585,7 @@ async fn handle_process_start_inner(
         .insert(process_id, entry.clone());
 
     tokio::spawn(run_process_actor(ProcessActorArgs {
+        server: Arc::new(server.clone()),
         thread_rt,
         process_id,
         child,
@@ -564,6 +594,7 @@ async fn handle_process_start_inner(
         stderr_task,
         execve_gate,
         info: entry.info.clone(),
+        cargo_target_dir: cargo_target_dir_for_warning,
     }));
 
     Ok(serde_json::json!({
@@ -637,6 +668,7 @@ mod process_start_tests {
             processes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             mcp: Arc::new(tokio::sync::Mutex::new(McpManager::default())),
             disk_warning: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            cargo_target_warning: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             exec_policy: omne_agent_execpolicy::Policy::empty(),
             db_vfs: None,
         }

@@ -44,6 +44,10 @@ const DEFAULT_THREAD_DISK_WARNING_BYTES: u64 = 10 * 1024 * 1024 * 1024;
 const DEFAULT_THREAD_DISK_CHECK_DEBOUNCE_MS: u64 = 30_000;
 const DEFAULT_THREAD_DISK_REPORT_DEBOUNCE_MS: u64 = 30 * 60_000;
 
+const DEFAULT_CARGO_TARGET_WARNING_BYTES: u64 = 200 * 1024 * 1024 * 1024;
+const DEFAULT_CARGO_TARGET_CHECK_DEBOUNCE_MS: u64 = 60_000;
+const DEFAULT_CARGO_TARGET_REPORT_DEBOUNCE_MS: u64 = 30 * 60_000;
+
 const OMNE_AGENT_HARDENING_ENV: &str = "OMNE_AGENT_HARDENING";
 const HARDENING_ITEM_RLIMIT_CORE: &str = "rlimit_core";
 const HARDENING_ITEM_UMASK: &str = "umask";
@@ -96,6 +100,32 @@ fn thread_disk_report_debounce() -> Duration {
             .ok()
             .and_then(|value| value.trim().parse::<u64>().ok())
             .unwrap_or(DEFAULT_THREAD_DISK_REPORT_DEBOUNCE_MS),
+    )
+}
+
+fn cargo_target_warning_threshold_bytes() -> Option<u64> {
+    let value = std::env::var("OMNE_AGENT_CARGO_TARGET_WARNING_BYTES")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or(DEFAULT_CARGO_TARGET_WARNING_BYTES);
+    if value == 0 { None } else { Some(value) }
+}
+
+fn cargo_target_check_debounce() -> Duration {
+    Duration::from_millis(
+        std::env::var("OMNE_AGENT_CARGO_TARGET_CHECK_DEBOUNCE_MS")
+            .ok()
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .unwrap_or(DEFAULT_CARGO_TARGET_CHECK_DEBOUNCE_MS),
+    )
+}
+
+fn cargo_target_report_debounce() -> Duration {
+    Duration::from_millis(
+        std::env::var("OMNE_AGENT_CARGO_TARGET_REPORT_DEBOUNCE_MS")
+            .ok()
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .unwrap_or(DEFAULT_CARGO_TARGET_REPORT_DEBOUNCE_MS),
     )
 }
 

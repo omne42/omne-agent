@@ -403,10 +403,18 @@ impl Orchestrator {
         request: Arc<RunRequest>,
         tasks: &[TaskSpec],
     ) -> anyhow::Result<Vec<PullRequest>> {
+        fn ensure_omne_pr_prefix(pr: &mut PullRequest) {
+            const PREFIX: &str = "omne/";
+            if pr.head_branch.starts_with(PREFIX) {
+                return;
+            }
+            pr.head_branch.insert_str(0, PREFIX);
+        }
+
         let failed_pr = |task_id: &crate::domain::TaskId, checks: CheckSummary| PullRequest {
             id: task_id.clone(),
             head_branch: format!(
-                "ai/{}/{}/{}/failed",
+                "omne/ai/{}/{}/{}/failed",
                 session.pr_name.as_str(),
                 session.id,
                 task_id.as_str()
@@ -519,7 +527,8 @@ impl Orchestrator {
                     let checks = self
                         .task_failure_checks(session_paths.as_ref(), &task_id, &err)
                         .await;
-                    let pr = failed_pr(&task_id, checks);
+                    let mut pr = failed_pr(&task_id, checks);
+                    ensure_omne_pr_prefix(&mut pr);
                     self.events.emit(RunEvent::TaskFinished {
                         pr: PullRequestSummary {
                             id: pr.id.clone(),
@@ -546,7 +555,7 @@ impl Orchestrator {
                 }
             };
 
-            let pr = match result {
+            let mut pr = match result {
                 Ok(pr) => pr,
                 Err(err) => {
                     warn!(task_id = %task.id, error = %err, "task failed");
@@ -556,6 +565,7 @@ impl Orchestrator {
                     failed_pr(&task.id, checks)
                 }
             };
+            ensure_omne_pr_prefix(&mut pr);
             self.events.emit(RunEvent::TaskFinished {
                 pr: PullRequestSummary {
                     id: pr.id.clone(),

@@ -238,6 +238,7 @@ async fn spawn_mcp_connection(
         .insert(process_id, entry.clone());
 
     tokio::spawn(run_process_actor(ProcessActorArgs {
+        server: Arc::new(server.clone()),
         thread_rt: thread_rt.clone(),
         process_id,
         child,
@@ -246,6 +247,7 @@ async fn spawn_mcp_connection(
         stderr_task: Some(stderr_task),
         execve_gate: None,
         info: entry.info.clone(),
+        cargo_target_dir: None,
     }));
 
     let initialize_params = serde_json::json!({
