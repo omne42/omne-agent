@@ -59,3 +59,49 @@
 
 - **TUI**：继续放在 Rust（`crates/agent-cli`，`omne-agent tui`），thin client，见 `docs/tui.md`。
 - **GUI**：放在 Node/TypeScript（未来 `packages/gui` 或独立 repo），thin client，通过 `omne-agent-app-server` 协议驱动；不要复制任何 core 语义到前端。
+
+---
+
+## v0.2.x：跟进 Codex 上游（266 commits）（TODO）
+
+背景：
+
+- Codex 上游快照从 `079fd2adb96bf1b66f3d339e6ee0c0b71f35c322` 更新到 `a90ff831e7d7a049c5638cda6fa72f2abc0b62e6`（差 `266` 次提交）。
+- 变更面很大（Rust core/tui/app-server/protocol + sandbox/network-proxy + CI/release + file-search + connectors + personality + smart approvals 等）。
+
+### t0 - 先做“可审计的差异调研”（必须先做）
+
+- [ ] 产出一份可追溯的调研文档：`docs/research/codex-upstream-delta-079fd2adb-a90ff831e.md`
+  - 必须包含：按目录/主题分组的提交清单、关键协议/API 变化点、以及“对 omne-agent 的建议采纳/不采纳”结论。
+  - 必须在文档顶部记录：调研日期 + 对应 Codex commit range。
+  - 最小验收（可复制）：`rg -n "codex-upstream-delta-079fd2adb-a90ff831e" docs/research` 能找到该文档且包含上述字段。
+
+### 候选采纳点（先列清单，后在 t0 文档里给结论）
+
+- [ ] `Personality`（prompt 风格模板化 + thread/config 可控 + TUI 入口）
+  - 落点：`crates/core`（thread config）、`crates/app-server`（preamble/instructions 注入）、`crates/agent-cli`（TUI/CLI 命令）。
+  - 验收：能在同一 thread 内切换 personality 并落盘事件；`cargo test -p omne-agent-app-server` 覆盖一次切换路径。
+- [ ] `Smart approvals`（减少重复确认，但仍然落盘审计）
+  - 目标：在不放宽 `deny` 前提下，把“低风险 prompt”自动化；保持 `ApprovalRequested/Decided` 成对写入。
+  - 落点：`crates/app-server` 的 approval gate；`docs/approvals.md` 同步策略矩阵。
+  - 验收：新增/更新用例覆盖 remembered decision / prompt_strict 不可自动化。
+- [ ] `ExecPolicy` 与“requirements”（规则来源统一、可解释）
+  - 目标：把 execpolicy rules 的来源层级（global/mode/thread/requirements）做成可解释输出，并保持 fail-closed。
+  - 落点：`crates/execpolicy` + `crates/app-server` 配置加载 + `docs/execpolicy.md`。
+  - 验收：`omne-agent thread config-explain <thread>` 能解释有效规则来源；`cargo test --workspace` 覆盖至少 1 条解释路径。
+- [ ] `Network sandbox`（network-proxy / 平台差异）
+  - 目标：在非 Linux 场景也能对出站网络做收口（至少为 “禁止公网 + 只允许 loopback/allowlist” 提供硬约束手段）。
+  - 落点：`crates/core` hardening/sandbox；必要时新增独立 crate（但先证明必要性）。
+  - 验收：给出可复制的本机验证步骤（至少包含 1 条被阻断与 1 条被允许的请求）。
+- [ ] `Connectors`（目录 + runtime 可用性合并）
+  - 目标：把“可安装的外部能力”与“当前 thread 可调用的工具”拆开建模并合并展示（可用于 forge/第三方工具生态）。
+  - 落点：`docs/mcp.md` + 可能新增 `crates/*`（先在 t0 调研文档里说明最小可行范围）。
+  - 验收：能列出 connectors 列表（即便为空）且输出可审计（artifact/event）。
+- [ ] `File search`（multi-root + perf）
+  - 目标：当 thread CWD 变化或多 repo/worktree 场景下，repo/search 仍然可预测且性能稳定。
+  - 落点：`docs/repo_index.md` + `crates/*` 的 repo/search 实现。
+  - 验收：新增基准/测试（至少 1 条）证明多 root 结果正确。
+- [ ] `Protocol / thread` 细节对齐：thread/read、archive/unarchive、ephemeral thread、plan items/compaction items 等
+  - 目标：明确哪些是“必要能力”，哪些是 Codex 内部产品特化；避免盲目对齐。
+  - 落点：`crates/app-server-protocol` + `docs/thread_event_model.md`。
+  - 验收：协议变更后 `generate-ts` / `generate-json-schema` 可跑通，并有最小 e2e 测试覆盖。

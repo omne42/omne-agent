@@ -28,6 +28,8 @@
 - Dev：pre-commit 禁止新增/修改 `partNN.*` 风格文件名。
 - Docs：新增内嵌 Git 的实现计划（`docs/plans/embedded_git.md`）。
 - Docs：新增本地 GitHub（Forgejo）PR 工作流计划（`docs/plans/local_github.md`）。
+- Docs：新增 Codex 上游 `079fd2adb..a90ff831e` 差异调研与 `v0.2.x` 跟进 TODO 清单（`docs/research/codex-upstream-delta-079fd2adb-a90ff831e.md`、`docs/TODO.md`）。
+- Deps：同步 `Cargo.lock`，更新 path 依赖到 `mcp-jsonrpc`/`mcp-kit` `0.3.0`，并引入 `notify-kit` 签名链路所需依赖（`base64`/`hmac`/`sha2`）。
 
 ### Security
 
