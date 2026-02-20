@@ -619,7 +619,7 @@ dependencies = [
 
 [[package]]
 name = "ditto-llm"
-version = "0.1.1"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1417,6 +1417,36 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0e7465ac9959cc2b1404e8e2367b43684a6d13790fe23056cc8c6c5a6b7bcb94"
 
 [[package]]
+name = "mcp-jsonrpc"
+version = "1.0.0"
+dependencies = [
+ "bytes",
+ "futures-util",
+ "libc",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
+name = "mcp-kit"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "futures-util",
+ "libc",
+ "mcp-jsonrpc",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+]
+
+[[package]]
 name = "memchr"
 version = "2.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1627,7 +1657,7 @@ dependencies = [
  "clap",
  "crossterm",
  "futures-util",
- "pm-jsonrpc",
+ "mcp-jsonrpc",
  "pm-protocol",
  "ratatui",
  "serde",
@@ -1652,13 +1682,13 @@ dependencies = [
  "ditto-llm",
  "futures-util",
  "globset",
+ "mcp-jsonrpc",
+ "mcp-kit",
  "nix 0.29.0",
  "pm-app-server-protocol",
  "pm-core",
  "pm-eventlog",
  "pm-execpolicy",
- "pm-jsonrpc",
- "pm-mcp-kit",
  "pm-protocol",
  "regex",
  "reqwest",
@@ -1780,33 +1810,6 @@ dependencies = [
  "tower",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "pm-jsonrpc"
-version = "0.1.1"
-dependencies = [
- "anyhow",
- "bytes",
- "futures-util",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
- "tokio-util",
-]
-
-[[package]]
-name = "pm-mcp-kit"
-version = "0.1.1"
-dependencies = [
- "anyhow",
- "pm-jsonrpc",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
 ]
 
 [[package]]
@@ -2238,12 +2241,15 @@ checksum = "a50f4cf475b65d88e057964e0e9bb1f0aa9bbb2036dc65c64596b42932536984"
 
 [[package]]
 name = "safe-fs-tools"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "diffy",
  "globset",
+ "libc",
+ "memchr",
  "regex",
  "serde",
+ "tempfile",
  "thiserror 1.0.69",
  "walkdir",
  "windows-sys 0.52.0",

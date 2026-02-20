@@ -158,18 +158,18 @@ async fn handle_mcp_list_servers(server: &Server, params: McpListServersParams) 
 
     let cfg = load_mcp_config(&thread_root).await?;
     let servers = cfg
-        .servers
+        .servers()
         .iter()
         .map(|(name, cfg)| McpServerDescriptor {
-            name: name.clone(),
-            transport: cfg.transport,
-            argv: cfg.argv.clone(),
-            env_keys: cfg.env.keys().cloned().collect(),
+            name: name.to_string(),
+            transport: cfg.transport(),
+            argv: cfg.argv().to_vec(),
+            env_keys: cfg.env().keys().cloned().collect(),
         })
         .collect::<Vec<_>>();
 
     let result = serde_json::json!({
-        "config_path": cfg.path.as_ref().map(|p| p.display().to_string()),
+        "config_path": cfg.path().as_ref().map(|p| p.display().to_string()),
         "servers": servers,
     });
 
@@ -340,7 +340,7 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
     }
 
     let cfg = load_mcp_config(&thread_root).await?;
-    let Some(server_cfg) = cfg.servers.get(server_name) else {
+    let Some(server_cfg) = cfg.servers().get(server_name) else {
         thread_rt
             .append_event(pm_protocol::ThreadEventKind::ToolStarted {
                 tool_id,
@@ -368,7 +368,7 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
     };
 
     if sandbox_network_access == pm_protocol::SandboxNetworkAccess::Deny
-        && command_uses_network(&server_cfg.argv)
+        && command_uses_network(server_cfg.argv())
     {
         thread_rt
             .append_event(pm_protocol::ThreadEventKind::ToolStarted {
@@ -468,7 +468,7 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
     }
 
     let exec_matches = if mode.command_execpolicy_rules.is_empty() {
-        server.exec_policy.matches_for_command(&server_cfg.argv, None)
+        server.exec_policy.matches_for_command(server_cfg.argv(), None)
     } else {
         let mode_exec_policy =
             match load_mode_exec_policy(&thread_root, &mode.command_execpolicy_rules).await {
@@ -505,7 +505,7 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
             };
 
         let combined = merge_exec_policies(&server.exec_policy, &mode_exec_policy);
-        combined.matches_for_command(&server_cfg.argv, None)
+        combined.matches_for_command(server_cfg.argv(), None)
     };
     let exec_decision = exec_matches.iter().map(ExecRuleMatch::decision).max();
     let effective_exec_decision = match exec_decision {

@@ -144,10 +144,10 @@ async fn spawn_mcp_connection(
     server_name: &str,
     server_cfg: &McpServerConfig,
 ) -> anyhow::Result<McpConnection> {
-    if !matches!(server_cfg.transport, McpTransport::Stdio) {
+    if !matches!(server_cfg.transport(), McpTransport::Stdio) {
         anyhow::bail!("unsupported mcp transport (expected stdio)");
     }
-    if server_cfg.argv.is_empty() {
+    if server_cfg.argv().is_empty() {
         anyhow::bail!("mcp server argv must not be empty");
     }
 
@@ -164,12 +164,12 @@ async fn spawn_mcp_connection(
     let stdout_path = process_dir.join("stdout.log");
     let stderr_path = process_dir.join("stderr.log");
 
-    let mut cmd = Command::new(&server_cfg.argv[0]);
-    cmd.args(server_cfg.argv.iter().skip(1));
+    let mut cmd = Command::new(&server_cfg.argv()[0]);
+    cmd.args(server_cfg.argv().iter().skip(1));
     cmd.current_dir(thread_root);
     cmd.stderr(std::process::Stdio::piped());
-    cmd.envs(server_cfg.env.iter());
-    apply_child_process_env_defaults(&mut cmd, Some(&server_cfg.env));
+    cmd.envs(server_cfg.env().iter());
+    apply_child_process_env_defaults(&mut cmd, Some(server_cfg.env()));
     scrub_child_process_env(&mut cmd);
     let max_bytes_per_part = process_log_max_bytes_per_part();
     cmd.kill_on_drop(true);
@@ -184,10 +184,11 @@ async fn spawn_mcp_connection(
         pm_jsonrpc::SpawnOptions {
             stdout_log: Some(stdout_log),
             limits: Default::default(),
+            ..Default::default()
         },
     )
     .await
-    .with_context(|| format!("spawn mcp server {:?} ({server_name})", server_cfg.argv))?;
+    .with_context(|| format!("spawn mcp server {:?} ({server_name})", server_cfg.argv()))?;
     let _ = client.take_notifications();
     let mut child = client
         .take_child()
@@ -204,7 +205,7 @@ async fn spawn_mcp_connection(
         .append_event(pm_protocol::ThreadEventKind::ProcessStarted {
             process_id,
             turn_id,
-            argv: server_cfg.argv.clone(),
+            argv: server_cfg.argv().to_vec(),
             cwd: thread_root.display().to_string(),
             stdout_path: stdout_path.display().to_string(),
             stderr_path: stderr_path.display().to_string(),
@@ -216,7 +217,7 @@ async fn spawn_mcp_connection(
         process_id,
         thread_id,
         turn_id,
-        argv: server_cfg.argv.clone(),
+        argv: server_cfg.argv().to_vec(),
         cwd: thread_root.display().to_string(),
         started_at: started_at.clone(),
         status: ProcessStatus::Running,
@@ -391,4 +392,3 @@ async fn deny_mcp_disabled(
         "env": CODE_PM_ENABLE_MCP_ENV,
     }))
 }
-

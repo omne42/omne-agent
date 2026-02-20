@@ -246,7 +246,11 @@
         fn handle_notification(&mut self, note: pm_jsonrpc::Notification) -> anyhow::Result<()> {
             match note.method.as_str() {
                 "item/delta" => {
-                    let params = note.params.as_object().context("delta params is not object")?;
+                    let params = note
+                        .params
+                        .as_ref()
+                        .and_then(Value::as_object)
+                        .context("delta params is not object")?;
                     let Some(delta) = params.get("delta").and_then(|v| v.as_str()) else {
                         return Ok(());
                     };
@@ -290,7 +294,9 @@
                 | "turn/completed"
                 | "item/started"
                 | "item/completed" => {
-                    let event = serde_json::from_value::<ThreadEvent>(note.params)
+                    let event = serde_json::from_value::<ThreadEvent>(
+                        note.params.context("ThreadEvent params missing")?,
+                    )
                         .context("parse ThreadEvent notification")?;
                     if self.active_thread == Some(event.thread_id) && event.seq.0 > self.last_seq {
                         self.last_seq = event.seq.0;

@@ -209,6 +209,12 @@ async fn run_openai_responses_codex_parity_loop(
                             );
                         }
                     }
+                    ditto_llm::providers::openai::OpenAIResponsesRawEvent::ReasoningTextDelta(
+                        _,
+                    )
+                    | ditto_llm::providers::openai::OpenAIResponsesRawEvent::ReasoningSummaryTextDelta(
+                        _,
+                    ) => {}
                     ditto_llm::providers::openai::OpenAIResponsesRawEvent::OutputItemDone(item) => {
                         emitted_output = true;
                         output_items.push(item);
@@ -529,6 +535,7 @@ async fn run_openai_responses_codex_parity_loop(
                 store: false,
                 stream: true,
                 reasoning_effort,
+                reasoning_summary: None,
                 response_format: cfg.response_format.as_ref(),
                 include: vec!["reasoning.encrypted_content".to_string()],
                 prompt_cache_key: Some(thread_id.to_string()),

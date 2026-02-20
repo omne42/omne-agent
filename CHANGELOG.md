@@ -189,6 +189,7 @@
 ### Fixed
 - docs：`docs/v0.2.0_parity.md` 更新 Transformers 状态，标记 ditto-llm 接入已落地。
 - docs(research)：修正 `docs/research/claude-code-router.md` 中对 CCR 文档的引用路径，指向 `example/claude-code-router/...` 快照目录。
+- `omne-agent`：修复与本地 path 依赖（`mcp-kit`/`ditto-llm`/`safe-fs-tools`）的 API 兼容问题（包名映射、MCP config accessor、OpenAI raw request 字段、`Notification.params` 可选值处理），恢复 `cargo check/clippy/test` 全绿。
 - `pm` TUI：启动阶段先渲染 “connecting...” 并将 `thread/start`/`thread/resume` 启动上限固定为 5s（`CODE_PM_TUI_STARTUP_TIMEOUT_MS` 仅允许缩短），避免卡死黑屏。
 - `pm` TUI：状态栏信息移至底部并移除全局/主视图边框，呈现终端式布局。
 - `pm` TUI：状态栏仅在错误时使用红色，避免 `loading models...` 等正常状态出现红字。

@@ -215,6 +215,8 @@ async fn handle_file_glob(server: &Server, params: FileGlobParams) -> anyhow::Re
                 ..Default::default()
             },
             secrets,
+            traversal: Default::default(),
+            paths: Default::default(),
         };
         let ctx = safe_fs_tools::ops::Context::new(policy)
             .map_err(|err| anyhow::anyhow!(err.to_string()))?;
@@ -270,4 +272,3 @@ async fn handle_file_glob(server: &Server, params: FileGlobParams) -> anyhow::Re
         }
     }
 }
-

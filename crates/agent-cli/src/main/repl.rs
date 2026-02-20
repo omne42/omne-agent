@@ -137,7 +137,7 @@ async fn repl_run_turn(
                 if note.method != "item/delta" {
                     continue;
                 }
-                let Some(params) = note.params.as_object() else {
+                let Some(params) = note.params.as_ref().and_then(Value::as_object) else {
                     continue;
                 };
                 let Some(thread_id) = params.get("thread_id").and_then(|v| v.as_str()) else {

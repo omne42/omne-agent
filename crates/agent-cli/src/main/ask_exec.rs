@@ -67,7 +67,7 @@ async fn run_ask(app: &mut App, args: AskArgs) -> anyhow::Result<()> {
                 if note.method != "item/delta" {
                     continue;
                 }
-                let params = match note.params.as_object() {
+                let params = match note.params.as_ref().and_then(Value::as_object) {
                     Some(params) => params,
                     None => continue,
                 };
@@ -223,7 +223,7 @@ where
                 if note.method != "item/delta" {
                     continue;
                 }
-                let params = match note.params.as_object() {
+                let params = match note.params.as_ref().and_then(Value::as_object) {
                     Some(params) => params,
                     None => continue,
                 };
