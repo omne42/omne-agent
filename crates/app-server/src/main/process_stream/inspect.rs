@@ -12,7 +12,7 @@ async fn handle_process_inspect(server: &Server, params: ProcessInspectParams) -
             state.allowed_tools.clone(),
         )
     };
-    let tool_id = pm_protocol::ToolId::new();
+    let tool_id = omne_protocol::ToolId::new();
 
     let approval_params = serde_json::json!({
         "process_id": params.process_id,
@@ -31,15 +31,15 @@ async fn handle_process_inspect(server: &Server, params: ProcessInspectParams) -
         return Ok(result);
     }
 
-    let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
+    let catalog = omne_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {
         Some(mode) => mode,
         None => {
             let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
-            let decision = pm_core::modes::Decision::Deny;
+            let decision = omne_core::modes::Decision::Deny;
 
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                .append_event(omne_protocol::ThreadEventKind::ToolStarted {
                     tool_id,
                     turn_id: params.turn_id,
                     tool: "process/inspect".to_string(),
@@ -47,9 +47,9 @@ async fn handle_process_inspect(server: &Server, params: ProcessInspectParams) -
                 })
                 .await?;
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
-                    status: pm_protocol::ToolStatus::Denied,
+                    status: omne_protocol::ToolStatus::Denied,
                     error: Some("unknown mode".to_string()),
                     result: Some(serde_json::json!({
                         "mode": mode_name,
@@ -76,9 +76,9 @@ async fn handle_process_inspect(server: &Server, params: ProcessInspectParams) -
         Some(override_decision) => base_decision.combine(override_decision),
         None => base_decision,
     };
-    if effective_decision == pm_core::modes::Decision::Deny {
+    if effective_decision == omne_core::modes::Decision::Deny {
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+            .append_event(omne_protocol::ThreadEventKind::ToolStarted {
                 tool_id,
                 turn_id: params.turn_id,
                 tool: "process/inspect".to_string(),
@@ -86,9 +86,9 @@ async fn handle_process_inspect(server: &Server, params: ProcessInspectParams) -
             })
             .await?;
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+            .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                 tool_id,
-                status: pm_protocol::ToolStatus::Denied,
+                status: omne_protocol::ToolStatus::Denied,
                 error: Some("mode denies process/inspect".to_string()),
                 result: Some(serde_json::json!({
                     "mode": mode_name,
@@ -105,7 +105,7 @@ async fn handle_process_inspect(server: &Server, params: ProcessInspectParams) -
         }));
     }
 
-    if effective_decision == pm_core::modes::Decision::Prompt {
+    if effective_decision == omne_core::modes::Decision::Prompt {
         match gate_approval(
             server,
             &thread_rt,
@@ -123,7 +123,7 @@ async fn handle_process_inspect(server: &Server, params: ProcessInspectParams) -
             ApprovalGate::Approved => {}
             ApprovalGate::Denied { remembered } => {
                 thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                    .append_event(omne_protocol::ThreadEventKind::ToolStarted {
                         tool_id,
                         turn_id: params.turn_id,
                         tool: "process/inspect".to_string(),
@@ -131,9 +131,9 @@ async fn handle_process_inspect(server: &Server, params: ProcessInspectParams) -
                     })
                     .await?;
                     thread_rt
-                        .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                        .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                             tool_id,
-                            status: pm_protocol::ToolStatus::Denied,
+                            status: omne_protocol::ToolStatus::Denied,
                             error: Some(approval_denied_error(remembered).to_string()),
                             result: Some(serde_json::json!({
                                 "approval_policy": approval_policy,
@@ -158,7 +158,7 @@ async fn handle_process_inspect(server: &Server, params: ProcessInspectParams) -
     }
 
     thread_rt
-        .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+        .append_event(omne_protocol::ThreadEventKind::ToolStarted {
             tool_id,
             turn_id: params.turn_id,
             tool: "process/inspect".to_string(),
@@ -167,14 +167,14 @@ async fn handle_process_inspect(server: &Server, params: ProcessInspectParams) -
         .await?;
 
     let stdout_tail =
-        pm_core::redact_text(&tail_file_lines(PathBuf::from(&info.stdout_path), max_lines).await?);
+        omne_core::redact_text(&tail_file_lines(PathBuf::from(&info.stdout_path), max_lines).await?);
     let stderr_tail =
-        pm_core::redact_text(&tail_file_lines(PathBuf::from(&info.stderr_path), max_lines).await?);
+        omne_core::redact_text(&tail_file_lines(PathBuf::from(&info.stderr_path), max_lines).await?);
 
     thread_rt
-        .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+        .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
             tool_id,
-            status: pm_protocol::ToolStatus::Completed,
+            status: omne_protocol::ToolStatus::Completed,
             error: None,
             result: Some(serde_json::json!({
                 "process_id": params.process_id,

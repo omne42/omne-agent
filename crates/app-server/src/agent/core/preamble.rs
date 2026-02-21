@@ -9,7 +9,7 @@ use crate::model_limits::resolve_model_limits;
 use base64::Engine;
 use futures_util::stream::{self, StreamExt};
 use ditto_llm::ThinkingIntensity;
-use pm_protocol::{
+use omne_protocol::{
     ApprovalDecision, ApprovalId, ArtifactId, ArtifactMetadata, EventSeq, ThreadEventKind, ThreadId,
     TurnId, TurnPriority,
 };
@@ -148,7 +148,7 @@ impl LlmWorkerPool {
 
     fn from_env() -> Self {
         let max_concurrent = parse_env_usize(
-            "CODE_PM_MAX_CONCURRENT_LLM_REQUESTS",
+            "OMNE_MAX_CONCURRENT_LLM_REQUESTS",
             DEFAULT_MAX_CONCURRENT_LLM_REQUESTS,
             0,
             MAX_MAX_CONCURRENT_LLM_REQUESTS,
@@ -161,7 +161,7 @@ impl LlmWorkerPool {
         }
 
         let reserve = parse_env_usize(
-            "CODE_PM_LLM_FOREGROUND_RESERVE",
+            "OMNE_LLM_FOREGROUND_RESERVE",
             DEFAULT_LLM_FOREGROUND_RESERVE,
             0,
             max_concurrent,
@@ -272,7 +272,7 @@ fn tool_call_signature(tool_name: &str, args: &Value) -> u64 {
 }
 
 fn tool_call_signature_from_raw(tool_name: &str, arguments: &str) -> u64 {
-    let redacted = pm_core::redact_text(arguments);
+    let redacted = omne_core::redact_text(arguments);
     match serde_json::from_str::<Value>(&redacted) {
         Ok(args) => tool_call_signature(tool_name, &args),
         Err(_) => {
@@ -445,7 +445,7 @@ fn render_items_for_summary(items: &[OpenAiItem], max_chars: usize) -> String {
                 let name = item.get("name").and_then(Value::as_str).unwrap_or("");
                 let call_id = item.get("call_id").and_then(Value::as_str).unwrap_or("");
                 let arguments_raw = item.get("arguments").and_then(Value::as_str).unwrap_or("");
-                let arguments = pm_core::redact_text(arguments_raw);
+                let arguments = omne_core::redact_text(arguments_raw);
                 let args_preview = truncate_chars(&arguments, 200);
                 out.push_str("[tool_call] ");
                 out.push_str(name.trim());
@@ -460,7 +460,7 @@ fn render_items_for_summary(items: &[OpenAiItem], max_chars: usize) -> String {
             "function_call_output" => {
                 let call_id = item.get("call_id").and_then(Value::as_str).unwrap_or("");
                 let output_raw = item.get("output").and_then(Value::as_str).unwrap_or("");
-                let output = pm_core::redact_text(output_raw);
+                let output = omne_core::redact_text(output_raw);
                 let output_preview = truncate_chars(&output, 500);
                 out.push_str("[tool_output] call_id=");
                 out.push_str(call_id.trim());
@@ -786,7 +786,7 @@ fn llm_error_prefers_model_fallback(err: &LlmAttemptError) -> bool {
 }
 
 fn llm_error_summary(err: &LlmAttemptError) -> String {
-    let text = pm_core::redact_text(&err.to_string());
+    let text = omne_core::redact_text(&err.to_string());
     truncate_chars(&text, 300)
 }
 
@@ -824,7 +824,7 @@ async fn build_provider_runtime(
         .unwrap_or_else(ditto_llm::ProviderCapabilities::openai_responses);
     if !provider_capabilities.tools {
         anyhow::bail!(
-            "provider does not support tools: provider={provider} (CodePM requires tool calling; set [openai.providers.{provider}.capabilities.tools]=true)"
+            "provider does not support tools: provider={provider} (omne requires tool calling; set [openai.providers.{provider}.capabilities.tools]=true)"
         );
     }
     if !provider_capabilities.streaming {

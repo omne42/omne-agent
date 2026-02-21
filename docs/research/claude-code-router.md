@@ -2,7 +2,7 @@
 
 > Snapshot: `example/claude-code-router` @ `c73fe0d`
 >
-> 结论先行：CCR 的核心价值是把“一个强绑定单 Provider 的客户端（Claude Code）”变成“**可路由、可变换、可插拔**”的多 Provider 网关，并且把“模型选择/配置管理/日志观测”产品化。对 `CodePM` 来说，它提供了两类可借鉴点：**(1) 路由与多模型角色分工**，**(2) 请求/响应变换管线（Transformers）**。
+> 结论先行：CCR 的核心价值是把“一个强绑定单 Provider 的客户端（Claude Code）”变成“**可路由、可变换、可插拔**”的多 Provider 网关，并且把“模型选择/配置管理/日志观测”产品化。对 `OmneAgent` 来说，它提供了两类可借鉴点：**(1) 路由与多模型角色分工**，**(2) 请求/响应变换管线（Transformers）**。
 
 ---
 
@@ -113,11 +113,11 @@ README 提到 server-level logs 与 app-level logs 分离：
 
 ---
 
-## 4. 对 `CodePM` 的直接启示（可落地的借鉴点）
+## 4. 对 `OmneAgent` 的直接启示（可落地的借鉴点）
 
 ### 4.1 多角色多模型：Architect/Coder/Reviewer/Merger 的模型路由
 
-我们在 `CodePM` 有明确的角色体系。CCR 的“场景路由”可直接映射：
+我们在 `OmneAgent` 有明确的角色体系。CCR 的“场景路由”可直接映射：
 
 - `think` → Architect / Merger（强推理）
 - `background` → 辅助检索/整理/格式化建议（便宜模型）
@@ -131,7 +131,7 @@ README 提到 server-level logs 与 app-level logs 分离：
 
 - 不要把 provider 差异散落到业务逻辑里；
 - 要么像 CCR 一样在网关层做变换；
-- 要么在 `CodePM` 内做 trait + adapter（Rust 版 transformer 管线）。
+- 要么在 `OmneAgent` 内做 trait + adapter（Rust 版 transformer 管线）。
 
 ### 4.3 管理面（Observability & Operability）
 

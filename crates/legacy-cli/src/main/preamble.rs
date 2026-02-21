@@ -5,22 +5,22 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use clap::{Parser, Subcommand};
-use pm_core::{
+use omne_core::{
     Architect, CommandHookRunner, EventBus, FsStorage, HookRunner, HookSpec, Orchestrator, PmPaths,
     PrName, RuleBasedArchitect, SessionId,
 };
-use pm_git::{RepoManager, RepoRoot, find_repo_root};
-use pm_http::serve as serve_http;
+use omne_git::{RepoManager, RepoRoot, find_repo_root};
+use omne_http::serve as serve_http;
 use time::format_description::well_known::Rfc3339;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
-#[command(name = "code-pm")]
+#[command(name = "omne")]
 #[command(about = "Local Git service + concurrent AI task pipeline (Phase 1 skeleton)", long_about = None)]
 struct Cli {
-    /// Override `.code_pm` root directory. Relative paths are resolved against repo root.
+    /// Override `.omne` root directory. Relative paths are resolved against repo root.
     #[arg(long, global = true)]
-    pm_root: Option<PathBuf>,
+    omne_root: Option<PathBuf>,
     #[command(subcommand)]
     command: Command,
 }

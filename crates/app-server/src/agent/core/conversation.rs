@@ -12,13 +12,13 @@ async fn build_conversation(
 
     if let Some((meta, summary_text)) = load_latest_summary_artifact(server, thread_id).await? {
         let event_limit = parse_env_usize(
-            "CODE_PM_AGENT_SUMMARY_CONTEXT_EVENT_LIMIT",
+            "OMNE_AGENT_SUMMARY_CONTEXT_EVENT_LIMIT",
             DEFAULT_SUMMARY_CONTEXT_EVENT_LIMIT,
             0,
             MAX_SUMMARY_CONTEXT_EVENT_LIMIT,
         );
 
-        let summary_text = pm_core::redact_text(&summary_text);
+        let summary_text = omne_core::redact_text(&summary_text);
         if !summary_text.trim().is_empty() {
             input.push(serde_json::json!({
                 "type": "message",
@@ -116,7 +116,7 @@ async fn load_turn_context_refs(
     server: &super::Server,
     thread_id: ThreadId,
     turn_id: TurnId,
-) -> anyhow::Result<Vec<pm_protocol::ContextRef>> {
+) -> anyhow::Result<Vec<omne_protocol::ContextRef>> {
     let events = server
         .thread_store
         .read_events_since(thread_id, EventSeq::ZERO)
@@ -145,7 +145,7 @@ async fn load_turn_attachments(
     server: &super::Server,
     thread_id: ThreadId,
     turn_id: TurnId,
-) -> anyhow::Result<Vec<pm_protocol::TurnAttachment>> {
+) -> anyhow::Result<Vec<omne_protocol::TurnAttachment>> {
     let events = server
         .thread_store
         .read_events_since(thread_id, EventSeq::ZERO)
@@ -209,7 +209,7 @@ async fn resolve_attachment_path_and_size(
         anyhow::bail!("refusing to attach secrets file (.env)");
     }
 
-    let resolved = pm_core::resolve_file(thread_root, rel, pm_core::PathAccess::Read, false)
+    let resolved = omne_core::resolve_file(thread_root, rel, omne_core::PathAccess::Read, false)
         .await
         .with_context(|| format!("resolve attachment path: {}", rel.display()))?;
 
@@ -255,7 +255,7 @@ async fn resolve_turn_attachments(
     thread_root: Option<&Path>,
     mode_name: &str,
     allowed_tools: Option<&[String]>,
-    attachments: &[pm_protocol::TurnAttachment],
+    attachments: &[omne_protocol::TurnAttachment],
     max_bytes: u64,
 ) -> anyhow::Result<Vec<ResolvedAttachment>> {
     if max_bytes == 0 {
@@ -263,11 +263,11 @@ async fn resolve_turn_attachments(
     }
 
     let has_local_paths = attachments.iter().any(|attachment| match attachment {
-        pm_protocol::TurnAttachment::Image(image) => {
-            matches!(image.source, pm_protocol::AttachmentSource::Path { .. })
+        omne_protocol::TurnAttachment::Image(image) => {
+            matches!(image.source, omne_protocol::AttachmentSource::Path { .. })
         }
-        pm_protocol::TurnAttachment::File(file) => {
-            matches!(file.source, pm_protocol::AttachmentSource::Path { .. })
+        omne_protocol::TurnAttachment::File(file) => {
+            matches!(file.source, omne_protocol::AttachmentSource::Path { .. })
         }
     });
 
@@ -286,7 +286,7 @@ async fn resolve_turn_attachments(
             anyhow::bail!("cannot attach local files without thread cwd/root");
         };
 
-        let catalog = pm_core::modes::ModeCatalog::load(thread_root).await;
+        let catalog = omne_core::modes::ModeCatalog::load(thread_root).await;
         let mode = match catalog.mode(mode_name) {
             Some(mode) => mode,
             None => {
@@ -300,12 +300,12 @@ async fn resolve_turn_attachments(
 
         for attachment in attachments {
             let path = match attachment {
-                pm_protocol::TurnAttachment::Image(image) => match &image.source {
-                    pm_protocol::AttachmentSource::Path { path } => Some(path.as_str()),
+                omne_protocol::TurnAttachment::Image(image) => match &image.source {
+                    omne_protocol::AttachmentSource::Path { path } => Some(path.as_str()),
                     _ => None,
                 },
-                pm_protocol::TurnAttachment::File(file) => match &file.source {
-                    pm_protocol::AttachmentSource::Path { path } => Some(path.as_str()),
+                omne_protocol::TurnAttachment::File(file) => match &file.source {
+                    omne_protocol::AttachmentSource::Path { path } => Some(path.as_str()),
                     _ => None,
                 },
             };
@@ -313,17 +313,17 @@ async fn resolve_turn_attachments(
                 continue;
             };
 
-            let rel = pm_core::modes::relative_path_under_root(thread_root, Path::new(path));
+            let rel = omne_core::modes::relative_path_under_root(thread_root, Path::new(path));
             let base_decision = match rel.as_ref() {
-                Ok(rel) if mode.permissions.edit.is_denied(rel) => pm_core::modes::Decision::Deny,
+                Ok(rel) if mode.permissions.edit.is_denied(rel) => omne_core::modes::Decision::Deny,
                 Ok(_) => mode.permissions.read,
-                Err(_) => pm_core::modes::Decision::Deny,
+                Err(_) => omne_core::modes::Decision::Deny,
             };
             let effective_decision = match mode.tool_overrides.get("file/read").copied() {
                 Some(override_decision) => base_decision.combine(override_decision),
                 None => base_decision,
             };
-            if effective_decision != pm_core::modes::Decision::Allow {
+            if effective_decision != omne_core::modes::Decision::Allow {
                 anyhow::bail!(
                     "mode denies file attachment read: mode={mode_name} decision={effective_decision:?} path={path}"
                 );
@@ -334,11 +334,11 @@ async fn resolve_turn_attachments(
     let mut out = Vec::new();
     for attachment in attachments {
         match attachment {
-            pm_protocol::TurnAttachment::Image(image) => match &image.source {
-                pm_protocol::AttachmentSource::Url { url } => {
+            omne_protocol::TurnAttachment::Image(image) => match &image.source {
+                omne_protocol::AttachmentSource::Url { url } => {
                     out.push(ResolvedAttachment::ImageUrl { url: url.clone() });
                 }
-                pm_protocol::AttachmentSource::Path { path } => {
+                omne_protocol::AttachmentSource::Path { path } => {
                     let Some(thread_root) = thread_root else {
                         anyhow::bail!("cannot attach local files without thread cwd/root");
                     };
@@ -363,8 +363,8 @@ async fn resolve_turn_attachments(
                     });
                 }
             },
-            pm_protocol::TurnAttachment::File(file) => match &file.source {
-                pm_protocol::AttachmentSource::Url { url } => {
+            omne_protocol::TurnAttachment::File(file) => match &file.source {
+                omne_protocol::AttachmentSource::Url { url } => {
                     let filename = file
                         .filename
                         .clone()
@@ -375,7 +375,7 @@ async fn resolve_turn_attachments(
                         media_type: file.media_type.clone(),
                     });
                 }
-                pm_protocol::AttachmentSource::Path { path } => {
+                omne_protocol::AttachmentSource::Path { path } => {
                     let Some(thread_root) = thread_root else {
                         anyhow::bail!("cannot attach local files without thread cwd/root");
                     };
@@ -506,7 +506,7 @@ async fn context_refs_to_messages(
     server: &super::Server,
     thread_id: ThreadId,
     turn_id: TurnId,
-    refs: &[pm_protocol::ContextRef],
+    refs: &[omne_protocol::ContextRef],
     cancel: CancellationToken,
 ) -> anyhow::Result<Vec<OpenAiItem>> {
     const DEFAULT_CONTEXT_FILE_MAX_BYTES: u64 = 64 * 1024;
@@ -518,7 +518,7 @@ async fn context_refs_to_messages(
 
     for ctx in refs {
         match ctx {
-            pm_protocol::ContextRef::File(file) => {
+            omne_protocol::ContextRef::File(file) => {
                 let max_bytes = file
                     .max_bytes
                     .unwrap_or(DEFAULT_CONTEXT_FILE_MAX_BYTES)
@@ -614,7 +614,7 @@ async fn context_refs_to_messages(
                     "content": [{ "type": "input_text", "text": msg }],
                 }));
             }
-            pm_protocol::ContextRef::Diff(diff) => {
+            omne_protocol::ContextRef::Diff(diff) => {
                 let max_bytes = diff
                     .max_bytes
                     .unwrap_or(DEFAULT_CONTEXT_DIFF_MAX_BYTES)
@@ -721,7 +721,7 @@ fn format_event_for_context(kind: &ThreadEventKind) -> Option<String> {
             turn_id,
             status,
             reason,
-        } if !matches!(status, pm_protocol::TurnStatus::Completed) || reason.is_some() => {
+        } if !matches!(status, omne_protocol::TurnStatus::Completed) || reason.is_some() => {
             Some(format!(
                 "[turn/completed] turn_id={turn_id} status={status:?} reason={}",
                 reason.as_deref().unwrap_or("")

@@ -97,8 +97,8 @@ prefix_rule(
 
 ExecPolicy 可以由 app-server 启动参数全局注入：
 
-- app-server：`pm-app-server --execpolicy-rules <PATH> [--execpolicy-rules <PATH> ...]`
-- `pm` CLI：同名参数透传给 app-server：`pm --execpolicy-rules <PATH> ...`
+- app-server：`omne-app-server --execpolicy-rules <PATH> [--execpolicy-rules <PATH> ...]`
+- `omne` CLI：同名参数透传给 app-server：`omne --execpolicy-rules <PATH> ...`
 
 fail-closed（写死）：
 
@@ -109,7 +109,7 @@ fail-closed（写死）：
 
 v0.2.0 支持为某个 mode 单独配置额外的规则文件列表：
 
-- 配置位置：`./.codepm_data/spec/modes.yaml` → `modes.<name>.permissions.command.execpolicy_rules: [<path>...]`
+- 配置位置：`./.omne_data/spec/modes.yaml` → `modes.<name>.permissions.command.execpolicy_rules: [<path>...]`
 - 路径解析：绝对路径按原样使用；相对路径按 **thread cwd（workspace root）** 解析（并通过 path boundary 校验，避免 `..`/symlink 逃逸）
 - 合并顺序（写死）：`global rules（启动参数） → mode rules`
 - fail-closed（写死）：mode 指定的 rules 文件缺失/不可读/解析失败时，该次 `process/start` 必须直接拒绝并返回可诊断错误（不要静默忽略该层）
@@ -121,13 +121,13 @@ v0.2.0 支持为某个 mode 单独配置额外的规则文件列表：
 检查某条命令会匹配哪些规则：
 
 ```bash
-cargo run -p pm-execpolicy -- check -r /path/to/policy.rules -- git status
+cargo run -p omne-execpolicy -- check -r /path/to/policy.rules -- git status
 ```
 
-让 `pm` 在启动 app-server 时加载规则：
+让 `omne` 在启动 app-server 时加载规则：
 
 ```bash
-cargo run -p pm -- --execpolicy-rules /path/to/policy.rules thread start --json
+cargo run -p omne -- --execpolicy-rules /path/to/policy.rules thread start --json
 ```
 
 ---
@@ -159,5 +159,5 @@ cargo run -p pm -- --execpolicy-rules /path/to/policy.rules thread start --json
 
 验收（未来实现时）：
 
-- `pm thread config-explain <thread_id>` 能解释：当前有效的 rules 来源顺序（global/mode/thread）与每次 `process/start` 的 matched rules。
+- `omne thread config-explain <thread_id>` 能解释：当前有效的 rules 来源顺序（global/mode/thread）与每次 `process/start` 的 matched rules。
 - `ApprovalPolicy=unless_trusted` 仍以 **最终 execpolicy decision** 为准（allow 才可能自动批准）。

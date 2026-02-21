@@ -1,13 +1,13 @@
-const CODE_PM_ENABLE_MCP_ENV: &str = "CODE_PM_ENABLE_MCP";
-const CODE_PM_MCP_FILE_ENV: &str = "CODE_PM_MCP_FILE";
+const OMNE_ENABLE_MCP_ENV: &str = "OMNE_ENABLE_MCP";
+const OMNE_MCP_FILE_ENV: &str = "OMNE_MCP_FILE";
 
 const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
 
 const MCP_RESULT_ARTIFACT_THRESHOLD_BYTES: usize = 256 * 1024;
 
-type McpConfig = pm_mcp_kit::Config;
-type McpServerConfig = pm_mcp_kit::ServerConfig;
-type McpTransport = pm_mcp_kit::Transport;
+type McpConfig = omne_mcp_kit::Config;
+type McpServerConfig = omne_mcp_kit::ServerConfig;
+type McpTransport = omne_mcp_kit::Transport;
 
 fn parse_bool_env_value(raw: &str) -> Option<bool> {
     match raw.trim().to_ascii_lowercase().as_str() {
@@ -18,7 +18,7 @@ fn parse_bool_env_value(raw: &str) -> Option<bool> {
 }
 
 fn mcp_enabled() -> bool {
-    std::env::var(CODE_PM_ENABLE_MCP_ENV)
+    std::env::var(OMNE_ENABLE_MCP_ENV)
         .ok()
         .and_then(|value| parse_bool_env_value(&value))
         .unwrap_or(false)
@@ -34,7 +34,7 @@ fn is_valid_mcp_server_name(name: &str) -> bool {
 }
 
 async fn load_mcp_config(thread_root: &Path) -> anyhow::Result<McpConfig> {
-    let env_path = std::env::var(CODE_PM_MCP_FILE_ENV)
+    let env_path = std::env::var(OMNE_MCP_FILE_ENV)
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
@@ -46,7 +46,7 @@ async fn load_mcp_config_inner(
     thread_root: &Path,
     override_path: Option<PathBuf>,
 ) -> anyhow::Result<McpConfig> {
-    pm_mcp_kit::Config::load(thread_root, override_path).await
+    omne_mcp_kit::Config::load(thread_root, override_path).await
 }
 
 #[derive(Debug, Deserialize)]
@@ -55,7 +55,7 @@ struct McpListServersParams {
     #[serde(default)]
     turn_id: Option<TurnId>,
     #[serde(default)]
-    approval_id: Option<pm_protocol::ApprovalId>,
+    approval_id: Option<omne_protocol::ApprovalId>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -64,7 +64,7 @@ struct McpListToolsParams {
     #[serde(default)]
     turn_id: Option<TurnId>,
     #[serde(default)]
-    approval_id: Option<pm_protocol::ApprovalId>,
+    approval_id: Option<omne_protocol::ApprovalId>,
     server: String,
 }
 
@@ -74,7 +74,7 @@ struct McpListResourcesParams {
     #[serde(default)]
     turn_id: Option<TurnId>,
     #[serde(default)]
-    approval_id: Option<pm_protocol::ApprovalId>,
+    approval_id: Option<omne_protocol::ApprovalId>,
     server: String,
 }
 
@@ -84,7 +84,7 @@ struct McpCallParams {
     #[serde(default)]
     turn_id: Option<TurnId>,
     #[serde(default)]
-    approval_id: Option<pm_protocol::ApprovalId>,
+    approval_id: Option<omne_protocol::ApprovalId>,
     server: String,
     tool: String,
     #[serde(default)]
@@ -107,13 +107,13 @@ struct McpManager {
 
 struct McpConnection {
     process_id: ProcessId,
-    client: tokio::sync::Mutex<pm_jsonrpc::Client>,
+    client: tokio::sync::Mutex<omne_jsonrpc::Client>,
 }
 
 const MCP_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 async fn mcp_request(
-    client: &mut pm_jsonrpc::Client,
+    client: &mut omne_jsonrpc::Client,
     method: &str,
     params: Option<Value>,
 ) -> anyhow::Result<Value> {
@@ -125,7 +125,7 @@ async fn mcp_request(
 }
 
 async fn mcp_notify(
-    client: &mut pm_jsonrpc::Client,
+    client: &mut omne_jsonrpc::Client,
     method: &str,
     params: Option<Value>,
 ) -> anyhow::Result<()> {
@@ -174,14 +174,14 @@ async fn spawn_mcp_connection(
     let max_bytes_per_part = process_log_max_bytes_per_part();
     cmd.kill_on_drop(true);
 
-    let stdout_log = pm_jsonrpc::StdoutLog {
+    let stdout_log = omne_jsonrpc::StdoutLog {
         path: stdout_path.clone(),
         max_bytes_per_part,
         max_parts: None,
     };
-    let mut client = pm_jsonrpc::Client::spawn_command_with_options(
+    let mut client = omne_jsonrpc::Client::spawn_command_with_options(
         cmd,
-        pm_jsonrpc::SpawnOptions {
+        omne_jsonrpc::SpawnOptions {
             stdout_log: Some(stdout_log),
             limits: Default::default(),
             ..Default::default()
@@ -202,7 +202,7 @@ async fn spawn_mcp_connection(
         tokio::spawn(async move { capture_rotating_log(stderr, stderr_path_for_task, max_bytes_per_part).await });
 
     let started = thread_rt
-        .append_event(pm_protocol::ThreadEventKind::ProcessStarted {
+        .append_event(omne_protocol::ThreadEventKind::ProcessStarted {
             process_id,
             turn_id,
             argv: server_cfg.argv().to_vec(),
@@ -252,7 +252,7 @@ async fn spawn_mcp_connection(
     let initialize_params = serde_json::json!({
         "protocolVersion": MCP_PROTOCOL_VERSION,
         "clientInfo": {
-            "name": "codepm",
+            "name": "omne-agent",
             "version": env!("CARGO_PKG_VERSION"),
         },
         "capabilities": {},
@@ -326,7 +326,7 @@ fn json_value_size_bytes(value: &Value) -> usize {
 
 async fn maybe_write_mcp_result_artifact(
     server: &Server,
-    tool_id: pm_protocol::ToolId,
+    tool_id: omne_protocol::ToolId,
     thread_id: ThreadId,
     turn_id: Option<TurnId>,
     summary: String,
@@ -361,13 +361,13 @@ async fn maybe_write_mcp_result_artifact(
 
 async fn deny_mcp_disabled(
     thread_rt: &Arc<ThreadRuntime>,
-    tool_id: pm_protocol::ToolId,
+    tool_id: omne_protocol::ToolId,
     turn_id: Option<TurnId>,
     tool: &str,
     params: Value,
 ) -> anyhow::Result<Value> {
     thread_rt
-        .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+        .append_event(omne_protocol::ThreadEventKind::ToolStarted {
             tool_id,
             turn_id,
             tool: tool.to_string(),
@@ -375,13 +375,13 @@ async fn deny_mcp_disabled(
         })
         .await?;
     thread_rt
-        .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+        .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
             tool_id,
-            status: pm_protocol::ToolStatus::Denied,
-            error: Some(format!("{CODE_PM_ENABLE_MCP_ENV}=true is required")),
+            status: omne_protocol::ToolStatus::Denied,
+            error: Some(format!("{OMNE_ENABLE_MCP_ENV}=true is required")),
             result: Some(serde_json::json!({
                 "reason": "mcp is disabled",
-                "env": CODE_PM_ENABLE_MCP_ENV,
+                "env": OMNE_ENABLE_MCP_ENV,
             })),
         })
         .await?;
@@ -389,6 +389,6 @@ async fn deny_mcp_disabled(
         "tool_id": tool_id,
         "denied": true,
         "reason": "mcp is disabled",
-        "env": CODE_PM_ENABLE_MCP_ENV,
+        "env": OMNE_ENABLE_MCP_ENV,
     }))
 }

@@ -8,33 +8,33 @@ async fn main() -> anyhow::Result<()> {
     let cwd = std::env::current_dir()?;
     let repo_root = find_repo_root(&cwd)?;
 
-    let env_pm_root = std::env::var_os("CODE_PM_ROOT");
-    let (pm_root, pm_root_source) = resolve_pm_root(
+    let env_pm_root = std::env::var_os("OMNE_ROOT");
+    let (omne_root, omne_root_source) = resolve_pm_root(
         &repo_root.root,
-        cli.pm_root.as_deref(),
+        cli.omne_root.as_deref(),
         env_pm_root.as_deref(),
     );
-    if let Some(note) = legacy_pm_root_warning(&repo_root.root, &pm_root, pm_root_source) {
+    if let Some(note) = legacy_pm_root_warning(&repo_root.root, &omne_root, omne_root_source) {
         eprintln!("{note}");
     }
-    let pm_paths = PmPaths::new(pm_root.clone());
-    let storage = FsStorage::new(pm_paths.data_dir());
+    let omne_paths = PmPaths::new(omne_root.clone());
+    let storage = FsStorage::new(omne_paths.data_dir());
 
-    let repo_manager = RepoManager::new(pm_paths.clone());
+    let repo_manager = RepoManager::new(omne_paths.clone());
 
     match cli.command {
         Command::Init(args) => {
             repo_manager.ensure_layout().await?;
             if args.json {
                 let output = serde_json::json!({
-                    "pm_root": pm_paths.root().display().to_string(),
-                    "repos_dir": pm_paths.repos_dir().display().to_string(),
-                    "data_dir": pm_paths.data_dir().display().to_string(),
-                    "locks_dir": pm_paths.locks_dir().display().to_string(),
+                    "omne_root": omne_paths.root().display().to_string(),
+                    "repos_dir": omne_paths.repos_dir().display().to_string(),
+                    "data_dir": omne_paths.data_dir().display().to_string(),
+                    "locks_dir": omne_paths.locks_dir().display().to_string(),
                 });
                 println!("{}", serde_json::to_string_pretty(&output)?);
             } else {
-                println!("{}", pm_paths.root().display());
+                println!("{}", omne_paths.root().display());
             }
         }
         Command::Repo { command } => match command {
@@ -156,7 +156,7 @@ async fn main() -> anyhow::Result<()> {
                 anyhow::bail!("serve is loopback-only; use --addr 127.0.0.1:<port>");
             }
             repo_manager.ensure_layout().await?;
-            serve_http(pm_paths.clone(), args.addr).await?;
+            serve_http(omne_paths.clone(), args.addr).await?;
         }
         Command::Run(args) => {
             run_session(&repo_root, repo_manager, storage, *args).await?;

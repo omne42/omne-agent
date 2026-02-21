@@ -27,8 +27,8 @@
 ### 1.1 `file/glob`（列文件）
 
 - 扫描范围：thread 的 workspace root（`thread cwd`）。
-- 默认忽略目录：`.git`、`.code_pm`、`.codepm`、`target`、`node_modules`、`example`（实现对照：`crates/app-server/src/main/file_read_glob_grep.rs`）。
-- 并额外跳过 `.codepm_data/{tmp,threads,data,repos,locks,logs}/`（避免扫描运行时目录）。
+- 默认忽略目录：`.git`、`.omne`、`.omne`、`target`、`node_modules`、`example`（实现对照：`crates/app-server/src/main/file_read_glob_grep.rs`）。
+- 并额外跳过 `.omne_data/{tmp,threads,data,repos,locks,logs}/`（避免扫描运行时目录）。
 - 参数边界：
   - `max_results` 默认 `2000`，上限 `20000`；超限 `truncated=true`。
 - 事件落盘（摘要）：`ToolCompleted.result` 只记录 `{matches,truncated}`，不记录全部 paths（避免事件爆炸）。
@@ -109,7 +109,7 @@ Markdown 内容建议固定结构（方便人看/脚本解析）：
   - `max_files` 默认 `20000`（上限 `200000`）
   - `max_bytes_per_file` 默认 `1MiB`（上限 `16MiB`）
   - `max_symbols` 默认 `5000`（上限 `50000`）
-- 忽略规则与 `repo/index`/`repo/search` 对齐（跳过 `.env`、`.codepm_data/*` 等）。
+- 忽略规则与 `repo/index`/`repo/search` 对齐（跳过 `.env`、`.omne_data/*` 等）。
 
 ---
 
@@ -119,21 +119,21 @@ Markdown 内容建议固定结构（方便人看/脚本解析）：
 
 通过 `file/grep` + `artifact/write` 组合：
 
-- `pm artifact list/read/delete` 能对 `repo_search` 产物进行管理（见 `docs/artifacts.md`）。
-- 产物 metadata 的 provenance 能定位到 thread/turn/tool（见 `pm_protocol::ArtifactProvenance`）。
+- `omne artifact list/read/delete` 能对 `repo_search` 产物进行管理（见 `docs/artifacts.md`）。
+- 产物 metadata 的 provenance 能定位到 thread/turn/tool（见 `omne_protocol::ArtifactProvenance`）。
 
 ### 4.2 薄封装落地后（工具/CLI）
 
 （占位 CLI）：
 
 ```bash
-pm repo search <thread_id> "TODO" --include-glob "crates/**" --max-matches 50 --json
-pm repo index <thread_id> --include-glob "**/*" --max-files 20000 --json
-pm repo symbols <thread_id> --include-glob "crates/**" --max-files 20000 --max-symbols 5000 --json
+omne repo search <thread_id> "TODO" --include-glob "crates/**" --max-matches 50 --json
+omne repo index <thread_id> --include-glob "**/*" --max-files 20000 --json
+omne repo symbols <thread_id> --include-glob "crates/**" --max-files 20000 --max-symbols 5000 --json
 ```
 
 验收点：
 
-- `repo/search` 必须返回 `artifact_id`，并且 `pm artifact read` 能读到固定模板的 Markdown。
+- `repo/search` 必须返回 `artifact_id`，并且 `omne artifact read` 能读到固定模板的 Markdown。
 - `repo/index` 生成的 artifact 必须标记是否截断（避免“看起来像全量，其实不是”）。
-- `repo/symbols` 必须返回 `artifact_id`，并且 `pm artifact read` 能看到 `# Repo Symbols (Rust)` 与符号列表；若超限，必须显式标记 `truncated=true`。
+- `repo/symbols` 必须返回 `artifact_id`，并且 `omne artifact read` 能看到 `# Repo Symbols (Rust)` 与符号列表；若超限，必须显式标记 `truncated=true`。

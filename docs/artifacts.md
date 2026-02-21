@@ -32,7 +32,7 @@ v0.2.0 user artifact 采用：
 
 ### 1.2 元数据字段（已实现）
 
-数据模型：`pm_protocol::ArtifactMetadata`（详见 `crates/agent-protocol/src/lib.rs`）。
+数据模型：`omne_protocol::ArtifactMetadata`（详见 `crates/agent-protocol/src/lib.rs`）。
 
 关键字段（口径）：
 
@@ -51,7 +51,7 @@ v0.2.0 user artifact 采用：
 - `artifact/write`：
   - 若未指定 `artifact_id`：生成新 ID，`created=true`，`version=1`。
   - 若指定 `artifact_id` 且已存在：覆盖 `*.md` 内容，`version += 1`，保留 `created_at`，更新 `updated_at`。
-- bounded history 默认关闭：不会保留旧版本内容（只有 version 号递增）；可用 `CODE_PM_ARTIFACT_HISTORY_MAX_VERSIONS` 启用（见 §4）。
+- bounded history 默认关闭：不会保留旧版本内容（只有 version 号递增）；可用 `OMNE_ARTIFACT_HISTORY_MAX_VERSIONS` 启用（见 §4）。
 
 补充：
 
@@ -61,21 +61,21 @@ v0.2.0 user artifact 采用：
 ### 1.4 CLI（可复制）
 
 ```bash
-pm artifact list <thread_id>
-pm artifact read <thread_id> <artifact_id>
-pm artifact delete <thread_id> <artifact_id>
+omne artifact list <thread_id>
+omne artifact read <thread_id> <artifact_id>
+omne artifact delete <thread_id> <artifact_id>
 ```
 
 生成 diff artifact（`git diff`，写入 user artifact `artifact_type="diff"`）：
 
 ```bash
-pm thread diff <thread_id> --max-bytes 4194304 --wait-seconds 30
+omne thread diff <thread_id> --max-bytes 4194304 --wait-seconds 30
 ```
 
 生成 patch artifact（`git diff --binary`，写入 user artifact `artifact_type="patch"`）：
 
 ```bash
-pm thread patch <thread_id> --max-bytes 4194304 --wait-seconds 30
+omne thread patch <thread_id> --max-bytes 4194304 --wait-seconds 30
 ```
 
 ---
@@ -84,7 +84,7 @@ pm thread patch <thread_id> --max-bytes 4194304 --wait-seconds 30
 
 `process/start` 会把 stdout/stderr 实时追加写入 artifacts，并支持 rotate：
 
-- rotate 默认阈值 `8MiB`，可用 `CODE_PM_PROCESS_LOG_MAX_BYTES_PER_PART` 覆盖
+- rotate 默认阈值 `8MiB`，可用 `OMNE_PROCESS_LOG_MAX_BYTES_PER_PART` 覆盖
 - attach（只读）：`process/tail`、`process/follow`
 
 详见：
@@ -106,11 +106,11 @@ pm thread patch <thread_id> --max-bytes 4194304 --wait-seconds 30
 
 协议类型：
 
-- `pm_protocol::ArtifactPreviewKind`：
+- `omne_protocol::ArtifactPreviewKind`：
   - `markdown` / `diff_unified` / `patch_unified` / `code` / `html` / `log`
-- `pm_protocol::ArtifactPreview`：
+- `omne_protocol::ArtifactPreview`：
   - `preview: { kind, language?: string, title?: string }`
-- `pm_protocol::ArtifactMetadata.preview: Option<ArtifactPreview>`（旧的 `*.metadata.json` 可能缺失该字段）
+- `omne_protocol::ArtifactMetadata.preview: Option<ArtifactPreview>`（旧的 `*.metadata.json` 可能缺失该字段）
 
 app-server 默认推断规则（写入/覆盖 artifact 时填充 `preview`）：
 
@@ -178,7 +178,7 @@ app-server 默认推断规则（写入/覆盖 artifact 时填充 `preview`）：
 
 配置项：
 
-- `CODE_PM_ARTIFACT_HISTORY_MAX_VERSIONS`：
+- `OMNE_ARTIFACT_HISTORY_MAX_VERSIONS`：
   - `0` = 关闭（默认）
   - `N>0` = 保留最近 N 个旧版本
 
@@ -222,14 +222,14 @@ app-server 默认推断规则（写入/覆盖 artifact 时填充 `preview`）：
 ### 4.4 CLI/API（未来实现占位）
 
 ```bash
-pm artifact versions <thread_id> <artifact_id>
-pm artifact read <thread_id> <artifact_id> --version 2
+omne artifact versions <thread_id> <artifact_id>
+omne artifact read <thread_id> <artifact_id> --version 2
 ```
 
 ---
 
 ## 5) 验收（已实现）
 
-- 开启 `CODE_PM_ARTIFACT_HISTORY_MAX_VERSIONS=2`：
+- 开启 `OMNE_ARTIFACT_HISTORY_MAX_VERSIONS=2`：
   - 连续写入同一 `artifact_id` 3 次后，`history/<artifact_id>/` 下最多只保留 2 个旧版本文件。
-- 执行 `pm artifact delete <thread_id> <artifact_id>` 后，`history/<artifact_id>/` 会被级联删除。
+- 执行 `omne artifact delete <thread_id> <artifact_id>` 后，`history/<artifact_id>/` 会被级联删除。

@@ -36,8 +36,8 @@ export class JsonRpcStdioClient extends EventEmitter {
       this.#closed = true;
       const err =
         signal != null
-          ? new Error(`pm-app-server exited via signal: ${signal}`)
-          : new Error(`pm-app-server exited with code: ${code ?? "unknown"}`);
+          ? new Error(`omne-app-server exited via signal: ${signal}`)
+          : new Error(`omne-app-server exited with code: ${code ?? "unknown"}`);
       for (const { reject } of this.#pending.values()) reject(err);
       this.#pending.clear();
       this.emit("exit", { code, signal });
@@ -49,7 +49,7 @@ export class JsonRpcStdioClient extends EventEmitter {
   }
 
   static spawnPmAppServer({
-    bin = process.env.CODE_PM_APP_SERVER_BIN || "pm-app-server",
+    bin = process.env.OMNE_APP_SERVER_BIN || "omne-app-server",
     args = [],
     env = {},
   } = {}) {

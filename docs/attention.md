@@ -11,7 +11,7 @@
 范围（v0.2.0）：
 
 - 定义 `thread/list_meta` 与 `thread/attention` 的输出里 `attention_state` 的语义与取值。
-- 定义哪些状态会触发 `pm watch --bell` / `pm inbox --bell`（见 `docs/notifications.md`）。
+- 定义哪些状态会触发 `omne watch --bell` / `omne inbox --bell`（见 `docs/notifications.md`）。
 
 非目标（v0.2.0）：
 
@@ -61,8 +61,8 @@
 ### 2.1 `thread/list_meta`（inbox 的轻量快照）
 
 ```bash
-pm thread list-meta
-pm thread list-meta --json
+omne thread list-meta
+omne thread list-meta --json
 ```
 
 用途：
@@ -72,8 +72,8 @@ pm thread list-meta --json
 ### 2.2 `thread/attention`（单 thread 详情）
 
 ```bash
-pm thread attention <thread_id>
-pm thread attention <thread_id> --json
+omne thread attention <thread_id>
+omne thread attention <thread_id> --json
 ```
 
 详情里至少包含（当前实现）：
@@ -124,7 +124,7 @@ pm thread attention <thread_id> --json
 
 验收（未来实现时）：
 
-- `pm inbox --watch --json` 能直接看到 `has_plan_ready/has_diff_ready/has_test_failed`（或等价字段），不依赖解析 stdout。
+- `omne inbox --watch --json` 能直接看到 `has_plan_ready/has_diff_ready/has_test_failed`（或等价字段），不依赖解析 stdout。
 
 ---
 
@@ -138,9 +138,9 @@ pm thread attention <thread_id> --json
   - `stale_processes=[{process_id, idle_seconds, last_update_at, stdout_path, stderr_path}]`
 - `idle_seconds` 由 stdout/stderr 文件 mtime 近似计算（非交互进程场景足够）。
   - 注意 stdout/stderr 可能 rotate 分片：`last_update_at` 应取所有 `*.segment-*.log` 的最大 mtime（细节见 `docs/notifications.md`）。
-- 默认阈值建议 `idle_window=300s`；`0` 禁用（建议 env：`CODE_PM_PROCESS_IDLE_WINDOW_SECONDS`）。
+- 默认阈值建议 `idle_window=300s`；`0` 禁用（建议 env：`OMNE_PROCESS_IDLE_WINDOW_SECONDS`）。
 
 注意：
 
 - 即使 `attention_state=running`，也可能存在 `stale_processes`（这是独立信号）。
-- `pm inbox --bell` / `pm watch --bell` 的提醒触发应以 `stale_processes` 从空→非空为准，并做 debounce（见 `docs/notifications.md`）。
+- `omne inbox --bell` / `omne watch --bell` 的提醒触发应以 `stale_processes` 从空→非空为准，并做 debounce（见 `docs/notifications.md`）。

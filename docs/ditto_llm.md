@@ -4,14 +4,14 @@
 
 **Ditto-LLM** 是一个轻量级、嵌入式的 Rust 库，用于统一调用各家 LLM 供应商的 API。就像宝可梦中的百变怪 (Ditto) 可以变身成任何宝可梦一样，Ditto-LLM 可以"变身"成任何 LLM 供应商的接口。设计理念借鉴 Vercel AI SDK 的接口抽象模式，专注于接口逻辑转换，不包含日志审计等企业功能。
 
-## 在 CodePM 仓库中的定位（v0.2.x 现状）
+## 在 OmneAgent 仓库中的定位（v0.2.x 现状）
 
 > 本仓库依赖的 `ditto-llm`（本地 checkout：`../ditto-llm`）目前包含两层能力：
 >
-> 1. CodePM v0.2.x 当前用到的“路由/配置层”：provider profile 配置 + OpenAI-compatible `/models` 发现 + `thinking`(reasoning.effort) 配置。
+> 1. OmneAgent v0.2.x 当前用到的“路由/配置层”：provider profile 配置 + OpenAI-compatible `/models` 发现 + `thinking`(reasoning.effort) 配置。
 > 2. “统一 LLM SDK 层”：`LanguageModel` / `EmbeddingModel` traits + 多 provider 适配（OpenAI/Anthropic/Google，含 streaming/tools/embeddings）+ examples/tests。
 >
-> CodePM 主程序已在 `pm-app-server` agent loop 中接入 `ditto-llm::LanguageModel`（默认 OpenAI Responses；可通过 provider capabilities 切换到 OpenAI-compatible Chat Completions）。`crates/openai` 目前仍保留用于 legacy types / SSE 解析等。
+> OmneAgent 主程序已在 `omne-app-server` agent loop 中接入 `ditto-llm::LanguageModel`（默认 OpenAI Responses；可通过 provider capabilities 切换到 OpenAI-compatible Chat Completions）。`crates/openai` 目前仍保留用于 legacy types / SSE 解析等。
 
 已实现（`ditto-llm` crate）：
 
@@ -429,7 +429,7 @@ async fn main() -> Result<(), ditto_llm::Error> {
 > [!NOTE]
 > ✅ 项目名称已确定：**ditto-llm**
 >
-> CodePM v0.2.x 口径：
+> OmneAgent v0.2.x 口径：
 >
 > - 仅要求 OpenAI Responses API（其它 provider 先不做）
 > - ✅ 支持图片/文件上传：images + PDFs（url/base64；provider 不支持的能力会以 `Warning` 显式暴露）

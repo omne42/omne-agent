@@ -10,10 +10,10 @@
 
 在 thread cwd（workspace root）下的项目配置目录：
 
-- `./.codepm_data/spec/workspace.yaml`
-- `./.codepm_data/spec/workspace.yml`
+- `./.omne_data/spec/workspace.yaml`
+- `./.omne_data/spec/workspace.yml`
 
-> 注意：这是项目配置（可提交）。运行时数据根目录也是 `./.codepm_data/`；不要把 hooks 配置写进 `threads/`、`tmp/` 等运行时目录。
+> 注意：这是项目配置（可提交）。运行时数据根目录也是 `./.omne_data/`；不要把 hooks 配置写进 `threads/`、`tmp/` 等运行时目录。
 
 ---
 
@@ -39,9 +39,9 @@ hooks:
 ## 2) 执行方式（CLI）
 
 ```bash
-pm thread hook-run <thread_id> setup
-pm thread hook-run <thread_id> run
-pm thread hook-run <thread_id> archive
+omne thread hook-run <thread_id> setup
+omne thread hook-run <thread_id> run
+omne thread hook-run <thread_id> archive
 ```
 
 返回值（概要）：
@@ -50,7 +50,7 @@ pm thread hook-run <thread_id> archive
 - hook 未配置：`{ ok: true, skipped: true, reason: "...", config_path: "..." }`
 - 成功启动：`{ ok: true, process_id, stdout_path, stderr_path, ... }`
 - 需要审批：返回 `{ needs_approval: true, approval_id, thread_id, hook }`
-  - CLI 会报错并提示：先 `pm approval decide ... --approve`，然后带 `--approval-id <id>` 重跑。
+  - CLI 会报错并提示：先 `omne approval decide ... --approve`，然后带 `--approval-id <id>` 重跑。
 
 ---
 
@@ -67,8 +67,8 @@ workspace hook 最终会走 `process/start`：
 
 ```bash
 # 在当前 repo 启动一个 thread（cwd=repo root），从输出里复制 thread_id
-pm thread start --cwd . --json
+omne thread start --cwd . --json
 
-# 运行 setup hook（需要你已经创建 `.codepm_data/spec/workspace.yaml`）
-pm thread hook-run <thread_id> setup --json
+# 运行 setup hook（需要你已经创建 `.omne_data/spec/workspace.yaml`）
+omne thread hook-run <thread_id> setup --json
 ```

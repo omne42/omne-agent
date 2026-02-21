@@ -207,11 +207,11 @@ fn spawn_subagent_scheduler(server: super::Server, mut schedule: SubagentSpawnSc
                     let Some(params) = val.get("params") else {
                         continue;
                     };
-                    let Ok(event) = serde_json::from_value::<pm_protocol::ThreadEvent>(params.clone())
+                    let Ok(event) = serde_json::from_value::<omne_protocol::ThreadEvent>(params.clone())
                     else {
                         continue;
                     };
-                    let pm_protocol::ThreadEventKind::TurnCompleted { turn_id, .. } = event.kind else {
+                    let omne_protocol::ThreadEventKind::TurnCompleted { turn_id, .. } = event.kind else {
                         continue;
                     };
                     schedule.handle_turn_completed(event.thread_id, turn_id);
@@ -258,7 +258,7 @@ async fn start_subagent_turn(
             task.input.clone(),
             None,
             None,
-            pm_protocol::TurnPriority::Background,
+            omne_protocol::TurnPriority::Background,
         )
         .await?;
 
@@ -300,7 +300,7 @@ async fn create_new_thread(
 fn spawn_fan_out_result_writer(
     server: super::Server,
     mut notify_rx: tokio::sync::broadcast::Receiver<String>,
-    thread_id: pm_protocol::ThreadId,
+    thread_id: omne_protocol::ThreadId,
     turn_id: TurnId,
     task_id: String,
     expected_artifact_type: String,
@@ -318,14 +318,14 @@ fn spawn_fan_out_result_writer(
                     let Some(params) = val.get("params") else {
                         continue;
                     };
-                    let Ok(event) = serde_json::from_value::<pm_protocol::ThreadEvent>(params.clone())
+                    let Ok(event) = serde_json::from_value::<omne_protocol::ThreadEvent>(params.clone())
                     else {
                         continue;
                     };
                     if event.thread_id != thread_id {
                         continue;
                     }
-                    let pm_protocol::ThreadEventKind::TurnCompleted {
+                    let omne_protocol::ThreadEventKind::TurnCompleted {
                         turn_id: completed_turn_id,
                         status,
                         reason,
@@ -379,17 +379,17 @@ mod agent_spawn_guard_tests {
     use std::sync::Arc;
     use tokio::sync::broadcast;
 
-    fn build_test_server(pm_root: PathBuf) -> super::super::Server {
+    fn build_test_server(omne_root: PathBuf) -> super::super::Server {
         let (notify_tx, _notify_rx) = broadcast::channel::<String>(16);
         super::super::Server {
-            cwd: pm_root.clone(),
+            cwd: omne_root.clone(),
             notify_tx,
-            thread_store: super::super::ThreadStore::new(super::super::PmPaths::new(pm_root)),
+            thread_store: super::super::ThreadStore::new(super::super::PmPaths::new(omne_root)),
             threads: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             processes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             mcp: Arc::new(tokio::sync::Mutex::new(super::super::McpManager::default())),
             disk_warning: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-            exec_policy: pm_execpolicy::Policy::empty(),
+            exec_policy: omne_execpolicy::Policy::empty(),
         }
     }
 
@@ -399,7 +399,7 @@ mod agent_spawn_guard_tests {
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = build_test_server(tmp.path().join(".codepm_data"));
+        let server = build_test_server(tmp.path().join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -431,7 +431,7 @@ mod agent_spawn_guard_tests {
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = build_test_server(tmp.path().join(".codepm_data"));
+        let server = build_test_server(tmp.path().join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -463,7 +463,7 @@ mod agent_spawn_guard_tests {
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = build_test_server(tmp.path().join(".codepm_data"));
+        let server = build_test_server(tmp.path().join(".omne_data"));
         let mut parent = server.thread_store.create_thread(repo_dir.clone()).await?;
         let thread_id = parent.thread_id();
 
@@ -471,19 +471,19 @@ mod agent_spawn_guard_tests {
             let mut child = server.thread_store.create_thread(repo_dir.clone()).await?;
             let child_id = child.thread_id();
             child
-                .append(pm_protocol::ThreadEventKind::TurnStarted {
-                    turn_id: pm_protocol::TurnId::new(),
+                .append(omne_protocol::ThreadEventKind::TurnStarted {
+                    turn_id: omne_protocol::TurnId::new(),
                     input: "child".to_string(),
                     context_refs: None,
                     attachments: None,
-                    priority: pm_protocol::TurnPriority::Foreground,
+                    priority: omne_protocol::TurnPriority::Foreground,
                 })
                 .await?;
             drop(child);
 
-            let tool_id = pm_protocol::ToolId::new();
+            let tool_id = omne_protocol::ToolId::new();
             parent
-                .append(pm_protocol::ThreadEventKind::ToolStarted {
+                .append(omne_protocol::ThreadEventKind::ToolStarted {
                     tool_id,
                     turn_id: None,
                     tool: "subagent/spawn".to_string(),
@@ -491,9 +491,9 @@ mod agent_spawn_guard_tests {
                 })
                 .await?;
             parent
-                .append(pm_protocol::ThreadEventKind::ToolCompleted {
+                .append(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
-                    status: pm_protocol::ToolStatus::Completed,
+                    status: omne_protocol::ToolStatus::Completed,
                     error: None,
                     result: Some(serde_json::json!({
                         "thread_id": child_id,
@@ -533,35 +533,35 @@ mod reference_repo_file_tools_tests {
     use std::sync::Arc;
     use tokio::sync::broadcast;
 
-    fn build_test_server(pm_root: PathBuf) -> super::super::Server {
+    fn build_test_server(omne_root: PathBuf) -> super::super::Server {
         let (notify_tx, _notify_rx) = broadcast::channel::<String>(16);
         super::super::Server {
-            cwd: pm_root.clone(),
+            cwd: omne_root.clone(),
             notify_tx,
-            thread_store: super::super::ThreadStore::new(super::super::PmPaths::new(pm_root)),
+            thread_store: super::super::ThreadStore::new(super::super::PmPaths::new(omne_root)),
             threads: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             processes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             mcp: Arc::new(tokio::sync::Mutex::new(super::super::McpManager::default())),
             disk_warning: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-            exec_policy: pm_execpolicy::Policy::empty(),
+            exec_policy: omne_execpolicy::Policy::empty(),
         }
     }
 
     #[tokio::test]
-    async fn file_glob_excludes_codepm_reference_dir_for_workspace_root() -> anyhow::Result<()> {
+    async fn file_glob_excludes_omne_reference_dir_for_workspace_root() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let project_dir = tmp.path().join("project");
         tokio::fs::create_dir_all(&project_dir).await?;
 
         tokio::fs::write(project_dir.join("hello.txt"), "hello\n").await?;
-        tokio::fs::create_dir_all(project_dir.join(".codepm_data/reference/repo")).await?;
+        tokio::fs::create_dir_all(project_dir.join(".omne_data/reference/repo")).await?;
         tokio::fs::write(
-            project_dir.join(".codepm_data/reference/repo/ref.txt"),
+            project_dir.join(".omne_data/reference/repo/ref.txt"),
             "ref\n",
         )
         .await?;
 
-        let server = build_test_server(tmp.path().join("pm_root"));
+        let server = build_test_server(tmp.path().join("omne_root"));
         let handle = server.thread_store.create_thread(project_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -581,7 +581,7 @@ mod reference_repo_file_tools_tests {
         assert!(
             !paths
                 .iter()
-                .any(|p| p.as_str().unwrap_or("").contains(".codepm_data/reference/"))
+                .any(|p| p.as_str().unwrap_or("").contains(".omne_data/reference/"))
         );
         Ok(())
     }
@@ -593,14 +593,14 @@ mod reference_repo_file_tools_tests {
         tokio::fs::create_dir_all(&project_dir).await?;
 
         tokio::fs::write(project_dir.join("hello.txt"), "hello\n").await?;
-        tokio::fs::create_dir_all(project_dir.join(".codepm_data/reference/repo")).await?;
+        tokio::fs::create_dir_all(project_dir.join(".omne_data/reference/repo")).await?;
         tokio::fs::write(
-            project_dir.join(".codepm_data/reference/repo/ref.txt"),
+            project_dir.join(".omne_data/reference/repo/ref.txt"),
             "ref\n",
         )
         .await?;
 
-        let server = build_test_server(tmp.path().join("pm_root"));
+        let server = build_test_server(tmp.path().join("omne_root"));
         let handle = server.thread_store.create_thread(project_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -639,7 +639,7 @@ mod reference_repo_file_tools_tests {
         tokio::fs::create_dir_all(&project_dir).await?;
         tokio::fs::write(project_dir.join("hello.txt"), "hello\n").await?;
 
-        let server = build_test_server(tmp.path().join("pm_root"));
+        let server = build_test_server(tmp.path().join("omne_root"));
         let handle = server.thread_store.create_thread(project_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -656,7 +656,7 @@ mod reference_repo_file_tools_tests {
         .expect_err("expected root=reference to fail when not configured");
         assert!(
             err.to_string().contains("reference repo root")
-                || err.to_string().contains(".codepm_data/reference/repo")
+                || err.to_string().contains(".omne_data/reference/repo")
         );
         Ok(())
     }

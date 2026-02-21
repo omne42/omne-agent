@@ -9,8 +9,8 @@ use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, Request, Response, StatusCode};
 use axum::routing::{any, get};
 use http_body_util::BodyExt;
-use pm_core::{FsStorage, PmPaths, RepositoryName, SessionId, Storage};
-use pm_git::{RepoManager, lock_exclusive, lock_shared, repo::is_valid_bare_repo_dir};
+use omne_core::{FsStorage, PmPaths, RepositoryName, SessionId, Storage};
+use omne_git::{RepoManager, lock_exclusive, lock_shared, repo::is_valid_bare_repo_dir};
 use serde::Deserialize;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 use tokio_util::io::ReaderStream;
@@ -26,17 +26,17 @@ struct AppState {
     git_http_max_body_bytes: usize,
 }
 
-pub fn router(pm_paths: PmPaths) -> anyhow::Result<Router> {
-    router_with_max_body_bytes(pm_paths, git_http_max_body_bytes())
+pub fn router(omne_paths: PmPaths) -> anyhow::Result<Router> {
+    router_with_max_body_bytes(omne_paths, git_http_max_body_bytes())
 }
 
 fn router_with_max_body_bytes(
-    pm_paths: PmPaths,
+    omne_paths: PmPaths,
     git_http_max_body_bytes: usize,
 ) -> anyhow::Result<Router> {
-    let repos_root = pm_paths.repos_dir();
-    let storage = FsStorage::new(pm_paths.data_dir());
-    let repo_manager = RepoManager::new(pm_paths);
+    let repos_root = omne_paths.repos_dir();
+    let storage = FsStorage::new(omne_paths.data_dir());
+    let repo_manager = RepoManager::new(omne_paths);
 
     let state = Arc::new(AppState {
         repos_root,
@@ -59,14 +59,14 @@ fn router_with_max_body_bytes(
         .with_state(state))
 }
 
-pub async fn serve(pm_paths: PmPaths, addr: SocketAddr) -> anyhow::Result<()> {
+pub async fn serve(omne_paths: PmPaths, addr: SocketAddr) -> anyhow::Result<()> {
     if !addr.ip().is_loopback() {
-        anyhow::bail!("pm-http is loopback-only; bind to 127.0.0.1:<port>");
+        anyhow::bail!("omne-http is loopback-only; bind to 127.0.0.1:<port>");
     }
-    let app = router(pm_paths)?;
+    let app = router(omne_paths)?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
     let local_addr = listener.local_addr()?;
-    info!(addr = %local_addr, "pm-http listening");
+    info!(addr = %local_addr, "omne-http listening");
     axum::serve(listener, app).await?;
     Ok(())
 }
@@ -369,7 +369,7 @@ async fn git_http_backend(
         .env("REQUEST_METHOD", &method)
         .env("SCRIPT_NAME", "/git")
         .env("SERVER_PROTOCOL", "HTTP/1.1")
-        .env("SERVER_SOFTWARE", "code-pm")
+        .env("SERVER_SOFTWARE", "omne")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -467,14 +467,14 @@ enum RequestBody {
 }
 
 fn git_http_max_body_bytes() -> usize {
-    match std::env::var("CODE_PM_HTTP_MAX_BODY_BYTES") {
+    match std::env::var("OMNE_HTTP_MAX_BODY_BYTES") {
         Ok(value) => {
             let trimmed = value.trim();
             match trimmed.parse::<usize>() {
                 Ok(0) | Err(_) => {
                     warn!(
                         value = %trimmed,
-                        "invalid CODE_PM_HTTP_MAX_BODY_BYTES; using default"
+                        "invalid OMNE_HTTP_MAX_BODY_BYTES; using default"
                     );
                     DEFAULT_GIT_HTTP_MAX_BODY_BYTES
                 }
@@ -490,7 +490,7 @@ async fn spool_body_to_tempfile(
     max_bytes: usize,
 ) -> Result<(tempfile::TempPath, usize), ApiError> {
     let temp = tempfile::Builder::new()
-        .prefix("code-pm-http-body-")
+        .prefix("omne-http-body-")
         .tempfile()?;
     let path = temp.into_temp_path();
     let mut file = tokio::fs::OpenOptions::new()
@@ -644,21 +644,21 @@ impl ApiError {
 
 impl From<anyhow::Error> for ApiError {
     fn from(err: anyhow::Error) -> Self {
-        warn!(error = %err, "pm-http internal error");
+        warn!(error = %err, "omne-http internal error");
         Self::internal("internal error")
     }
 }
 
 impl From<std::io::Error> for ApiError {
     fn from(err: std::io::Error) -> Self {
-        warn!(error = %err, "pm-http io error");
+        warn!(error = %err, "omne-http io error");
         Self::internal("io error")
     }
 }
 
 impl From<serde_json::Error> for ApiError {
     fn from(err: serde_json::Error) -> Self {
-        warn!(error = %err, "pm-http json error");
+        warn!(error = %err, "omne-http json error");
         Self::internal("json error")
     }
 }
@@ -726,8 +726,8 @@ mod tests {
     #[tokio::test]
     async fn serve_rejects_non_loopback_addr() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
-        let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
-        let err = serve(pm_paths, "0.0.0.0:0".parse()?).await.unwrap_err();
+        let omne_paths = PmPaths::new(tmp.path().join(".omne"));
+        let err = serve(omne_paths, "0.0.0.0:0".parse()?).await.unwrap_err();
         assert!(err.to_string().contains("loopback-only"));
         Ok(())
     }
@@ -740,8 +740,8 @@ mod tests {
         use tower::ServiceExt;
 
         let tmp = tempfile::tempdir()?;
-        let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
-        let app = router(pm_paths)?;
+        let omne_paths = PmPaths::new(tmp.path().join(".omne"));
+        let app = router(omne_paths)?;
 
         let request = Request::builder()
             .method("PUT")
@@ -770,9 +770,9 @@ mod tests {
         use tower::ServiceExt;
 
         let tmp = tempfile::tempdir()?;
-        let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
-        let repo_path = pm_paths.repos_dir().join("repo.git");
-        tokio::fs::create_dir_all(pm_paths.repos_dir()).await?;
+        let omne_paths = PmPaths::new(tmp.path().join(".omne"));
+        let repo_path = omne_paths.repos_dir().join("repo.git");
+        tokio::fs::create_dir_all(omne_paths.repos_dir()).await?;
         let output = Command::new("git")
             .current_dir(tmp.path())
             .arg("init")
@@ -788,7 +788,7 @@ mod tests {
             );
         }
 
-        let app = router_with_max_body_bytes(pm_paths, 5)?;
+        let app = router_with_max_body_bytes(omne_paths, 5)?;
 
         let request = Request::builder()
             .method("POST")

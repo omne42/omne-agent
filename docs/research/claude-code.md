@@ -2,7 +2,7 @@
 
 > Snapshot: `example/claude-code` @ `74cc597`
 >
-> 结论先行：这个仓库在本 snapshot 中**不是 Claude Code CLI 的完整源码**，更像是“发行物 + 文档 + 官方插件合集”。但它仍然极具学习价值：它把一个成熟 coding agent 的**插件/工作流/Hook/权限**体系以可读的方式摊开了，尤其适合我们为 `CodePM` 设计“角色化流水线 + guardrails + 并行子任务”。
+> 结论先行：这个仓库在本 snapshot 中**不是 Claude Code CLI 的完整源码**，更像是“发行物 + 文档 + 官方插件合集”。但它仍然极具学习价值：它把一个成熟 coding agent 的**插件/工作流/Hook/权限**体系以可读的方式摊开了，尤其适合我们为 `OmneAgent` 设计“角色化流水线 + guardrails + 并行子任务”。
 
 ---
 
@@ -112,7 +112,7 @@ plugin-name/
 - **最小权限**：每个 workflow 只开必要工具。
 - **稳定可复用**：在不同 repo 下复用同一套 git 流程。
 
-> 对 `CodePM` 的启示：我们完全可以把“fmt/check/commit/push/pr”的流水线写成可版本化的 workflow spec（甚至直接复刻这个 markdown-frontmatter 约定）。
+> 对 `OmneAgent` 的启示：我们完全可以把“fmt/check/commit/push/pr”的流水线写成可版本化的 workflow spec（甚至直接复刻这个 markdown-frontmatter 约定）。
 
 ### 3.2 并行审阅：多 agent 专项分工
 
@@ -121,7 +121,7 @@ plugin-name/
 - comment、tests、silent failures、type design、general code review、simplify 等 6 个 agent。
 - 典型收益：把 review 的“高 recall/低 precision”问题，通过分工 + 汇总过滤，减少误报。
 
-> 对 `CodePM` 的启示：我们的 `Reviewer`/`Merger` 可以复用这种“多视角并行→汇总→阻断/建议”的结构，而不是单模型做全量 review。
+> 对 `OmneAgent` 的启示：我们的 `Reviewer`/`Merger` 可以复用这种“多视角并行→汇总→阻断/建议”的结构，而不是单模型做全量 review。
 
 ### 3.3 Hook 驱动的安全提醒：PreToolUse 守门
 
@@ -131,13 +131,13 @@ plugin-name/
 - 用 session_id 做状态文件（`~/.claude/security_warnings_state_<session>.json`），避免重复弹窗。
 - debug log 写到 `/tmp/security-warnings-log.txt`，不影响主流程。
 
-> 对 `CodePM` 的启示：我们未来要“自动化全生命周期”，不可避免地会执行 git/CI/脚本；建议从第一天就预留类似的 hook/guardrail API。
+> 对 `OmneAgent` 的启示：我们未来要“自动化全生命周期”，不可避免地会执行 git/CI/脚本；建议从第一天就预留类似的 hook/guardrail API。
 
 ### 3.4 “自我迭代循环”：Stop hook 拦截退出
 
 `plugins/ralph-wiggum` 提供一个非常产品化的机制：当 agent 想退出时，Stop hook 拦截，强制继续迭代直到完成（或用户 cancel）。
 
-> 对 `CodePM` 的启示：我们的并发 worker 经常会出现“半成品 PR”。引入“迭代循环 + 完成判定”会显著提高任务完成率（但必须有资源/超时上限）。
+> 对 `OmneAgent` 的启示：我们的并发 worker 经常会出现“半成品 PR”。引入“迭代循环 + 完成判定”会显著提高任务完成率（但必须有资源/超时上限）。
 
 ---
 
@@ -150,7 +150,7 @@ MCP 工具描述过长会消耗上下文，Claude Code 用“自动 deferred + M
 - 默认不把全部工具塞进 system prompt。
 - 在需要时用搜索工具“找出相关工具并启用”。
 
-> 这对于 `CodePM` 的“多 agent 并发”尤其关键：并发意味着上下文/成本成倍上升，我们也要从一开始就做上下文预算管理。
+> 这对于 `OmneAgent` 的“多 agent 并发”尤其关键：并发意味着上下文/成本成倍上升，我们也要从一开始就做上下文预算管理。
 
 ### 4.2 Session-level 可追溯性（commit/PR attribution）
 
@@ -160,7 +160,7 @@ MCP 工具描述过长会消耗上下文，Claude Code 用“自动 deferred + M
 
 ---
 
-## 5. 对 `CodePM` 的直接可复用点（建议优先级）
+## 5. 对 `OmneAgent` 的直接可复用点（建议优先级）
 
 ### P0：立刻可复用（几乎不依赖底层实现）
 
@@ -185,7 +185,7 @@ MCP 工具描述过长会消耗上下文，Claude Code 用“自动 deferred + M
 
 ## 7. 建议我们重点抄作业的“细节型能力”（从 changelog 摘要）
 
-以下能力在 changelog 中出现频率高、且与大型系统稳定性高度相关，值得我们在 `CodePM` 里提前预留：
+以下能力在 changelog 中出现频率高、且与大型系统稳定性高度相关，值得我们在 `OmneAgent` 里提前预留：
 
 - **技能热重载**：skills 文件改动无需重启即可生效（对团队协作很重要）。
 - **skills 支持 fork context**：允许在 forked sub-agent context 运行（对并发/隔离有启发）。

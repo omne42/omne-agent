@@ -2,7 +2,7 @@
 
 > 目标：当 agent 走偏（坏改动/误操作/循环）时，用户能把 workspace 回到一个“稳定点”，并继续推进，而不是只能重开线程。
 >
-> 状态：v0.2.0 已实现 **P0（目录快照）**：`thread/checkpoint/{create,list,restore}` + CLI `pm checkpoint {create,list,restore}`。
+> 状态：v0.2.0 已实现 **P0（目录快照）**：`thread/checkpoint/{create,list,restore}` + CLI `omne checkpoint {create,list,restore}`。
 
 ---
 
@@ -69,7 +69,7 @@
 建议存储在 thread artifacts 下（见 `docs/runtime_layout.md`）：
 
 ```
-<pm_root>/threads/<thread_id>/artifacts/checkpoints/<checkpoint_id>/
+<omne_root>/threads/<thread_id>/artifacts/checkpoints/<checkpoint_id>/
   manifest.json
   workspace/            # 目录快照（推荐 P0）
   snapshot.tar.zst      # 可选：压缩快照（P1+）
@@ -95,9 +95,9 @@
 快照只覆盖 thread `cwd` 下的工作区文件树，并遵守以下硬约束：
 
 - 必须排除运行时目录：
-  - `.codepm_data/tmp/**`、`.codepm_data/threads/**`
-  - `.codepm_data/data/**`、`.codepm_data/repos/**`
-  - `.codepm_data/locks/**`、`.codepm_data/logs/**`
+  - `.omne_data/tmp/**`、`.omne_data/threads/**`
+  - `.omne_data/data/**`、`.omne_data/repos/**`
+  - `.omne_data/locks/**`、`.omne_data/logs/**`
 - 必须排除 `.git/**`（避免体积与凭据/配置问题；不把 git 当正确性前提）。
 - 必须避免“把大目录打进快照”：
   - `target/**`、`node_modules/**`、`example/**`（与仓库约定一致：`example/` 不作为依赖）
@@ -167,9 +167,9 @@ restore 是破坏性操作，最小约束建议写死：
 
 ## Next steps
 
-- pm process list --thread <thread_id>
-- pm process kill <process_id>
-- pm checkpoint restore <thread_id> <checkpoint_id>
+- omne process list --thread <thread_id>
+- omne process kill <process_id>
+- omne checkpoint restore <thread_id> <checkpoint_id>
 ```
 
 ---
@@ -184,7 +184,7 @@ restore 是破坏性操作，最小约束建议写死：
 
 无论哪种实现，都必须：
 
-- 受 sandbox/mode 控制（不能把 `.codepm_data/{tmp,threads,data,repos,locks,logs}/**` 当可回滚对象）。
+- 受 sandbox/mode 控制（不能把 `.omne_data/{tmp,threads,data,repos,locks,logs}/**` 当可回滚对象）。
 - 有磁盘占用可观测（应复用 `docs/runtime_layout.md` 的 disk warning/report 思路）。
 
 ---
@@ -192,22 +192,22 @@ restore 是破坏性操作，最小约束建议写死：
 ## 7) CLI/API（v0.2.0）
 
 ```bash
-pm checkpoint create <thread_id> --label "before refactor"
-pm checkpoint list <thread_id>
-pm checkpoint restore <thread_id> <checkpoint_id>
+omne checkpoint create <thread_id> --label "before refactor"
+omne checkpoint list <thread_id>
+omne checkpoint restore <thread_id> <checkpoint_id>
 ```
 
 restore 的审批流程（示例）：
 
 ```bash
 # 1) 第一次 restore 会返回 needs_approval + approval_id
-pm checkpoint restore <thread_id> <checkpoint_id>
+omne checkpoint restore <thread_id> <checkpoint_id>
 
 # 2) 人工决定
-pm approval decide --thread-id <thread_id> --approval-id <approval_id> --approve
+omne approval decide --thread-id <thread_id> --approval-id <approval_id> --approve
 
 # 3) 带 approval_id 重试，执行实际 restore
-pm checkpoint restore <thread_id> <checkpoint_id> --approval-id <approval_id>
+omne checkpoint restore <thread_id> <checkpoint_id> --approval-id <approval_id>
 ```
 
 ---

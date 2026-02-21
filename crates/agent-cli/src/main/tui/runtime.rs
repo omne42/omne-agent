@@ -7,8 +7,8 @@
     use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyModifiers};
     use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
     use futures_util::StreamExt;
-    use pm_jsonrpc::ClientHandle;
-    use pm_protocol::{
+    use omne_jsonrpc::ClientHandle;
+    use omne_protocol::{
         ApprovalDecision, ApprovalId, ArtifactId, ArtifactMetadata, ModelRoutingRuleSource,
         ProcessId, ThreadEvent, ThreadEventKind, ThreadId, ToolId, ToolStatus, TurnId, TurnStatus,
     };
@@ -120,7 +120,7 @@
         handle: ClientHandle,
         thread_id: ThreadId,
         input: String,
-        priority: Option<pm_protocol::TurnPriority>,
+        priority: Option<omne_protocol::TurnPriority>,
     ) -> anyhow::Result<TurnStartInFlight> {
         let (input, context_refs, attachments) = super::split_special_directives(&input)?;
         let input_for_request = input.clone();
@@ -200,7 +200,7 @@
         state.status = Some("connecting...".to_string());
         terminal.draw(|f| draw_ui(f, &mut state))?;
 
-        let startup_timeout = std::env::var("CODE_PM_TUI_STARTUP_TIMEOUT_MS")
+        let startup_timeout = std::env::var("OMNE_TUI_STARTUP_TIMEOUT_MS")
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
             .filter(|value| *value > 0)

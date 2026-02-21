@@ -2,17 +2,17 @@
 mod repo_index_search_tests {
     use super::*;
 
-    fn build_test_server(pm_root: PathBuf) -> Server {
+    fn build_test_server(omne_root: PathBuf) -> Server {
         let (notify_tx, _notify_rx) = broadcast::channel::<String>(16);
         Server {
-            cwd: pm_root.clone(),
+            cwd: omne_root.clone(),
             notify_tx,
-            thread_store: ThreadStore::new(PmPaths::new(pm_root)),
+            thread_store: ThreadStore::new(PmPaths::new(omne_root)),
             threads: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             processes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             mcp: Arc::new(tokio::sync::Mutex::new(McpManager::default())),
             disk_warning: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-            exec_policy: pm_execpolicy::Policy::empty(),
+            exec_policy: omne_execpolicy::Policy::empty(),
         }
     }
 
@@ -49,10 +49,10 @@ mod repo_index_search_tests {
 
         tokio::fs::write(repo_dir.join(".env"), "needle\n").await?;
 
-        tokio::fs::create_dir_all(repo_dir.join(".codepm_data/tmp")).await?;
-        tokio::fs::write(repo_dir.join(".codepm_data/tmp/leak.txt"), "needle\n").await?;
+        tokio::fs::create_dir_all(repo_dir.join(".omne_data/tmp")).await?;
+        tokio::fs::write(repo_dir.join(".omne_data/tmp/leak.txt"), "needle\n").await?;
 
-        let server = build_test_server(repo_dir.join(".codepm_data"));
+        let server = build_test_server(repo_dir.join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -81,13 +81,13 @@ mod repo_index_search_tests {
         assert!(text.contains("# Repo Search"));
         assert!(text.contains("src/lib.rs"));
         assert!(!text.contains(".env"));
-        assert!(!text.contains(".codepm_data/tmp"));
+        assert!(!text.contains(".omne_data/tmp"));
 
         Ok(())
     }
 
     #[tokio::test]
-    async fn repo_index_writes_artifact_and_ignores_codepm_data() -> anyhow::Result<()> {
+    async fn repo_index_writes_artifact_and_ignores_omne_data() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");
 
@@ -99,14 +99,14 @@ mod repo_index_search_tests {
         .await?;
 
         tokio::fs::write(repo_dir.join(".env"), "should_not_be_indexed\n").await?;
-        tokio::fs::create_dir_all(repo_dir.join(".codepm_data/tmp")).await?;
+        tokio::fs::create_dir_all(repo_dir.join(".omne_data/tmp")).await?;
         tokio::fs::write(
-            repo_dir.join(".codepm_data/tmp/leak.txt"),
+            repo_dir.join(".omne_data/tmp/leak.txt"),
             "should_not_be_indexed\n",
         )
         .await?;
 
-        let server = build_test_server(repo_dir.join(".codepm_data"));
+        let server = build_test_server(repo_dir.join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -131,7 +131,7 @@ mod repo_index_search_tests {
         assert!(text.contains("# Repo Index"));
         assert!(text.contains("src/lib.rs"));
         assert!(!text.contains(".env"));
-        assert!(!text.contains(".codepm_data/tmp"));
+        assert!(!text.contains(".omne_data/tmp"));
 
         Ok(())
     }
@@ -144,9 +144,9 @@ mod repo_index_search_tests {
         tokio::fs::create_dir_all(repo_dir.join("src")).await?;
         tokio::fs::write(repo_dir.join("src/lib.rs"), "needle\n").await?;
 
-        tokio::fs::create_dir_all(repo_dir.join(".codepm_data/spec")).await?;
+        tokio::fs::create_dir_all(repo_dir.join(".omne_data/spec")).await?;
         tokio::fs::write(
-            repo_dir.join(".codepm_data/spec/modes.yaml"),
+            repo_dir.join(".omne_data/spec/modes.yaml"),
             r#"
 version: 1
 modes:
@@ -164,7 +164,7 @@ modes:
         )
         .await?;
 
-        let server = build_test_server(repo_dir.join(".codepm_data"));
+        let server = build_test_server(repo_dir.join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -173,7 +173,7 @@ modes:
             &server,
             ThreadConfigureParams {
                 thread_id,
-                approval_policy: Some(pm_protocol::ApprovalPolicy::Manual),
+                approval_policy: Some(omne_protocol::ApprovalPolicy::Manual),
                 sandbox_policy: None,
                 sandbox_writable_roots: None,
                 sandbox_network_access: None,
@@ -230,14 +230,14 @@ fn top_level() {}
         .await?;
 
         tokio::fs::write(repo_dir.join(".env"), "should_not_be_indexed\n").await?;
-        tokio::fs::create_dir_all(repo_dir.join(".codepm_data/tmp")).await?;
+        tokio::fs::create_dir_all(repo_dir.join(".omne_data/tmp")).await?;
         tokio::fs::write(
-            repo_dir.join(".codepm_data/tmp/leak.txt"),
+            repo_dir.join(".omne_data/tmp/leak.txt"),
             "should_not_be_indexed\n",
         )
         .await?;
 
-        let server = build_test_server(repo_dir.join(".codepm_data"));
+        let server = build_test_server(repo_dir.join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -267,7 +267,7 @@ fn top_level() {}
         assert!(text.contains("foo::baz"));
         assert!(text.contains("top_level"));
         assert!(!text.contains(".env"));
-        assert!(!text.contains(".codepm_data/tmp"));
+        assert!(!text.contains(".omne_data/tmp"));
 
         Ok(())
     }

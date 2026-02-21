@@ -1,4 +1,4 @@
-# CodePM vNext 重新开发流程（Agent-First）
+# OmneAgent vNext 重新开发流程（Agent-First）
 
 > 现状：当前实现已存档为 `v0.1.1`（见 git tag）。接下来要做的是 **重新设计并重写**：以“能写代码且能与环境交互的 Agent CLI”为核心基建，Git 只是可插拔交付适配层。
 

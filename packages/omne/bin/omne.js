@@ -6,7 +6,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 function detectTargetTriple() {
-  const override = process.env.CODE_PM_TARGET_TRIPLE;
+  const override = process.env.OMNE_TARGET_TRIPLE;
   if (override && override.trim() !== "") return override.trim();
 
   const { platform, arch } = process;
@@ -26,7 +26,7 @@ function resolveVendoredBinary(binName) {
 
   const pkgRoot = path.resolve(__dirname, "..");
   const ext = process.platform === "win32" ? ".exe" : "";
-  const candidate = path.join(pkgRoot, "vendor", targetTriple, "pm", `${binName}${ext}`);
+  const candidate = path.join(pkgRoot, "vendor", targetTriple, "omne", `${binName}${ext}`);
 
   try {
     fs.accessSync(candidate, fs.constants.F_OK);
@@ -72,12 +72,12 @@ function spawnAndExit(bin, args) {
       usageError("");
       usageError("Fix options:");
       usageError(`  - Install '${bin}' on PATH`);
-      if (bin === "pm-app-server") {
+      if (bin === "omne-app-server") {
         usageError(
-          "  - Or set CODE_PM_APP_SERVER_BIN to an absolute path (e.g. target/debug/pm-app-server)"
+          "  - Or set OMNE_APP_SERVER_BIN to an absolute path (e.g. target/debug/omne-app-server)"
         );
-      } else if (bin === "pm") {
-        usageError("  - Or set CODE_PM_PM_BIN to an absolute path (e.g. target/debug/pm)");
+      } else if (bin === "omne") {
+        usageError("  - Or set OMNE_PM_BIN to an absolute path (e.g. target/debug/omne)");
       }
       process.exit(1);
     }
@@ -99,12 +99,12 @@ function main() {
 
   const isAppServer = argv[0] === "app-server";
   if (isAppServer) {
-    const bin = resolveBinary("pm-app-server", "CODE_PM_APP_SERVER_BIN");
+    const bin = resolveBinary("omne-app-server", "OMNE_APP_SERVER_BIN");
     spawnAndExit(bin, argv.slice(1));
     return;
   }
 
-  const bin = resolveBinary("pm", "CODE_PM_PM_BIN");
+  const bin = resolveBinary("omne", "OMNE_PM_BIN");
   spawnAndExit(bin, argv);
 }
 

@@ -1,4 +1,4 @@
-use pm_eventlog::ThreadState;
+use omne_eventlog::ThreadState;
 
 async fn handle_thread_attention(
     server: &Server,
@@ -56,13 +56,13 @@ async fn handle_thread_attention(
         .await?
         .ok_or_else(|| anyhow::anyhow!("thread not found: {}", params.thread_id))?;
 
-    let mut requested = BTreeMap::<pm_protocol::ApprovalId, serde_json::Value>::new();
-    let mut decided = HashSet::<pm_protocol::ApprovalId>::new();
+    let mut requested = BTreeMap::<omne_protocol::ApprovalId, serde_json::Value>::new();
+    let mut decided = HashSet::<omne_protocol::ApprovalId>::new();
 
     for event in &events {
         let ts = event.timestamp.format(&Rfc3339)?;
         match &event.kind {
-            pm_protocol::ThreadEventKind::ApprovalRequested {
+            omne_protocol::ThreadEventKind::ApprovalRequested {
                 approval_id,
                 turn_id,
                 action,
@@ -79,7 +79,7 @@ async fn handle_thread_attention(
                     }),
                 );
             }
-            pm_protocol::ThreadEventKind::ApprovalDecided { approval_id, .. } => {
+            omne_protocol::ThreadEventKind::ApprovalDecided { approval_id, .. } => {
                 decided.insert(*approval_id);
             }
             _ => {}
@@ -122,11 +122,11 @@ async fn handle_thread_attention(
         "archived"
     } else {
         match last_turn_status {
-            Some(pm_protocol::TurnStatus::Completed) => "done",
-            Some(pm_protocol::TurnStatus::Interrupted) => "interrupted",
-            Some(pm_protocol::TurnStatus::Failed) => "failed",
-            Some(pm_protocol::TurnStatus::Cancelled) => "cancelled",
-            Some(pm_protocol::TurnStatus::Stuck) => "stuck",
+            Some(omne_protocol::TurnStatus::Completed) => "done",
+            Some(omne_protocol::TurnStatus::Interrupted) => "interrupted",
+            Some(omne_protocol::TurnStatus::Failed) => "failed",
+            Some(omne_protocol::TurnStatus::Cancelled) => "cancelled",
+            Some(omne_protocol::TurnStatus::Stuck) => "stuck",
             None => "idle",
         }
     };
@@ -276,19 +276,19 @@ fn build_stuck_report_summary(reason: Option<&str>) -> String {
 
 fn stuck_budget_env_hint(reason: &str) -> Option<&'static str> {
     if reason.contains("budget exceeded: steps") {
-        return Some("CODE_PM_AGENT_MAX_STEPS");
+        return Some("OMNE_AGENT_MAX_STEPS");
     }
     if reason.contains("budget exceeded: tool_calls") {
-        return Some("CODE_PM_AGENT_MAX_TOOL_CALLS");
+        return Some("OMNE_AGENT_MAX_TOOL_CALLS");
     }
     if reason.contains("budget exceeded: turn_seconds") {
-        return Some("CODE_PM_AGENT_MAX_TURN_SECONDS");
+        return Some("OMNE_AGENT_MAX_TURN_SECONDS");
     }
     if reason.contains("openai request timed out") {
-        return Some("CODE_PM_AGENT_MAX_OPENAI_REQUEST_SECONDS");
+        return Some("OMNE_AGENT_MAX_OPENAI_REQUEST_SECONDS");
     }
     if reason.contains("token budget exceeded:") {
-        return Some("CODE_PM_AGENT_MAX_TOTAL_TOKENS");
+        return Some("OMNE_AGENT_MAX_TOTAL_TOKENS");
     }
     None
 }
@@ -329,16 +329,16 @@ async fn build_stuck_report_markdown(
         .await?
         .ok_or_else(|| anyhow::anyhow!("thread not found: {thread_id}"))?;
 
-    let mut last_approval_in_turn: Option<(pm_protocol::ApprovalId, String)> = None;
-    let mut last_approval_any: Option<(pm_protocol::ApprovalId, String)> = None;
-    let mut last_tool_in_turn: Option<(pm_protocol::ToolId, String)> = None;
-    let mut last_tool_any: Option<(pm_protocol::ToolId, String)> = None;
+    let mut last_approval_in_turn: Option<(omne_protocol::ApprovalId, String)> = None;
+    let mut last_approval_any: Option<(omne_protocol::ApprovalId, String)> = None;
+    let mut last_tool_in_turn: Option<(omne_protocol::ToolId, String)> = None;
+    let mut last_tool_any: Option<(omne_protocol::ToolId, String)> = None;
     let mut started_processes = Vec::<ProcessStartInfo>::new();
     let mut exited = HashSet::<ProcessId>::new();
 
     for event in &events {
         match &event.kind {
-            pm_protocol::ThreadEventKind::ApprovalRequested {
+            omne_protocol::ThreadEventKind::ApprovalRequested {
                 approval_id,
                 turn_id: ev_turn_id,
                 action,
@@ -349,7 +349,7 @@ async fn build_stuck_report_markdown(
                     last_approval_in_turn = Some((*approval_id, action.clone()));
                 }
             }
-            pm_protocol::ThreadEventKind::ToolStarted {
+            omne_protocol::ThreadEventKind::ToolStarted {
                 tool_id,
                 turn_id: ev_turn_id,
                 tool,
@@ -360,7 +360,7 @@ async fn build_stuck_report_markdown(
                     last_tool_in_turn = Some((*tool_id, tool.clone()));
                 }
             }
-            pm_protocol::ThreadEventKind::ProcessStarted {
+            omne_protocol::ThreadEventKind::ProcessStarted {
                 process_id,
                 turn_id: ev_turn_id,
                 stdout_path,
@@ -374,7 +374,7 @@ async fn build_stuck_report_markdown(
                     stderr_path: stderr_path.clone(),
                 });
             }
-            pm_protocol::ThreadEventKind::ProcessExited { process_id, .. } => {
+            omne_protocol::ThreadEventKind::ProcessExited { process_id, .. } => {
                 exited.insert(*process_id);
             }
             _ => {}
@@ -431,11 +431,11 @@ async fn build_stuck_report_markdown(
     }
 
     md.push_str("\n## Next actions\n");
-    md.push_str(&format!("- pm thread attention {thread_id}\n"));
-    md.push_str(&format!("- pm approval list {thread_id}\n"));
-    md.push_str(&format!("- pm process list --thread-id {thread_id}\n"));
+    md.push_str(&format!("- omne thread attention {thread_id}\n"));
+    md.push_str(&format!("- omne approval list {thread_id}\n"));
+    md.push_str(&format!("- omne process list --thread-id {thread_id}\n"));
     if let Some(process) = &process {
-        md.push_str(&format!("- pm process tail {}\n", process.process_id));
+        md.push_str(&format!("- omne process tail {}\n", process.process_id));
     }
     if let Some(hint) = reason.and_then(stuck_budget_env_hint) {
         md.push_str(&format!("- consider increasing `{hint}`\n"));
@@ -474,11 +474,11 @@ async fn handle_thread_list_meta(
         let updated_at_rfc3339 = updated_at.and_then(|ts| ts.format(&Rfc3339).ok());
 
         let first_message = events.iter().find_map(|event| match &event.kind {
-            pm_protocol::ThreadEventKind::TurnStarted { input, .. } => Some(input.clone()),
+            omne_protocol::ThreadEventKind::TurnStarted { input, .. } => Some(input.clone()),
             _ => None,
         });
         let first_message = first_message
-            .map(|text| truncate_chars(&pm_core::redact_text(text.trim()), 500))
+            .map(|text| truncate_chars(&omne_core::redact_text(text.trim()), 500))
             .filter(|text| !text.trim().is_empty());
         let title = first_message.as_deref().and_then(|text| {
             let line = text.lines().find(|line| !line.trim().is_empty())?;
@@ -504,11 +504,11 @@ async fn handle_thread_list_meta(
             "paused"
         } else {
             match state.last_turn_status {
-                Some(pm_protocol::TurnStatus::Completed) => "done",
-                Some(pm_protocol::TurnStatus::Interrupted) => "interrupted",
-                Some(pm_protocol::TurnStatus::Failed) => "failed",
-                Some(pm_protocol::TurnStatus::Cancelled) => "cancelled",
-                Some(pm_protocol::TurnStatus::Stuck) => "stuck",
+                Some(omne_protocol::TurnStatus::Completed) => "done",
+                Some(omne_protocol::TurnStatus::Interrupted) => "interrupted",
+                Some(omne_protocol::TurnStatus::Failed) => "failed",
+                Some(omne_protocol::TurnStatus::Cancelled) => "cancelled",
+                Some(omne_protocol::TurnStatus::Stuck) => "stuck",
                 None => "idle",
             }
         };

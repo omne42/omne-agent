@@ -1,5 +1,5 @@
 [package]
-name = "code-pm"
+name = "omne-legacy"
 edition.workspace = true
 rust-version.workspace = true
 version.workspace = true
@@ -8,9 +8,9 @@ version.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 clap.workspace = true
-pm-core = { path = "../core" }
-pm-http = { path = "../legacy-git-http-server" }
-pm-git = { path = "../legacy-git-adapter" }
+omne-core = { package = "omne-legacy-core", path = "../legacy-core" }
+omne-http = { path = "../legacy-git-http-server" }
+omne-git = { path = "../legacy-git-adapter" }
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true

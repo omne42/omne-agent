@@ -2,13 +2,13 @@
 #[serde(tag = "method")]
 pub enum ServerNotification {
     #[serde(rename = "thread/event")]
-    ThreadEvent { params: pm_protocol::ThreadEvent },
+    ThreadEvent { params: omne_protocol::ThreadEvent },
     #[serde(rename = "turn/started")]
-    TurnStarted { params: pm_protocol::ThreadEvent },
+    TurnStarted { params: omne_protocol::ThreadEvent },
     #[serde(rename = "turn/completed")]
-    TurnCompleted { params: pm_protocol::ThreadEvent },
+    TurnCompleted { params: omne_protocol::ThreadEvent },
     #[serde(rename = "item/started")]
-    ItemStarted { params: pm_protocol::ThreadEvent },
+    ItemStarted { params: omne_protocol::ThreadEvent },
     #[serde(rename = "item/completed")]
-    ItemCompleted { params: pm_protocol::ThreadEvent },
+    ItemCompleted { params: omne_protocol::ThreadEvent },
 }

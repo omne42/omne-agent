@@ -1,15 +1,15 @@
 [package]
-name = "pm-execpolicy"
+name = "omne-execpolicy"
 edition.workspace = true
 rust-version.workspace = true
 version.workspace = true
 
 [lib]
-name = "pm_execpolicy"
+name = "omne_execpolicy"
 path = "src/lib.rs"
 
 [[bin]]
-name = "pm-execpolicy"
+name = "omne-execpolicy"
 path = "src/main.rs"
 
 [dependencies]

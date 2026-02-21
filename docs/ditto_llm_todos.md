@@ -79,14 +79,14 @@
   - DoD:
     - `--features integration` 下可用真实 API keys 跑最小回归（默认不在 CI 强制）
 
-### P5（CodePM 接入）
+### P5（OmneAgent 接入）
 
-- [x] **CodePM 主流程接入 ditto-llm（替代部分 `crates/openai` 直连）**
+- [x] **OmneAgent 主流程接入 ditto-llm（替代部分 `crates/openai` 直连）**
   - DoD:
     - 不改变现有事件/审计语义（tool events / approvals / JSONL 落盘）
     - 迁移路径明确：先 provider/model 选择 → 再调用层替换
 
-- [x] **CodePM：`@pdf` 本地附件可选上传为 `file_id`（避免巨量 base64）**
+- [x] **OmneAgent：`@pdf` 本地附件可选上传为 `file_id`（避免巨量 base64）**
   - DoD:
-    - 环境变量门控：`CODE_PM_AGENT_PDF_FILE_ID_UPLOAD_MIN_BYTES>0` 且达到阈值才上传
+    - 环境变量门控：`OMNE_AGENT_PDF_FILE_ID_UPLOAD_MIN_BYTES>0` 且达到阈值才上传
     - 上传失败不致命：回退到 base64（并记录 warning）

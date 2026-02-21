@@ -1,6 +1,6 @@
 async fn run_tool_call(
     server: &super::Server,
-    thread_id: pm_protocol::ThreadId,
+    thread_id: omne_protocol::ThreadId,
     turn_id: Option<TurnId>,
     tool_name: &str,
     args: Value,
@@ -158,26 +158,26 @@ fn hook_contexts_to_message(
 
 async fn active_subagent_threads(
     server: &super::Server,
-    parent_thread_id: pm_protocol::ThreadId,
-) -> anyhow::Result<Vec<pm_protocol::ThreadId>> {
+    parent_thread_id: omne_protocol::ThreadId,
+) -> anyhow::Result<Vec<omne_protocol::ThreadId>> {
     let events = server
         .thread_store
         .read_events_since(parent_thread_id, EventSeq::ZERO)
         .await?
         .ok_or_else(|| anyhow::anyhow!("thread not found: {}", parent_thread_id))?;
 
-    let mut spawned_tool_ids = std::collections::HashSet::<pm_protocol::ToolId>::new();
+    let mut spawned_tool_ids = std::collections::HashSet::<omne_protocol::ToolId>::new();
     for event in &events {
-        if let pm_protocol::ThreadEventKind::ToolStarted { tool_id, tool, .. } = &event.kind
+        if let omne_protocol::ThreadEventKind::ToolStarted { tool_id, tool, .. } = &event.kind
             && tool == "subagent/spawn"
         {
             spawned_tool_ids.insert(*tool_id);
         }
     }
 
-    let mut spawned_threads = std::collections::BTreeSet::<pm_protocol::ThreadId>::new();
+    let mut spawned_threads = std::collections::BTreeSet::<omne_protocol::ThreadId>::new();
     for event in &events {
-        let pm_protocol::ThreadEventKind::ToolCompleted {
+        let omne_protocol::ThreadEventKind::ToolCompleted {
             tool_id,
             status,
             result,
@@ -189,7 +189,7 @@ async fn active_subagent_threads(
         if !spawned_tool_ids.contains(tool_id) {
             continue;
         }
-        if !matches!(status, pm_protocol::ToolStatus::Completed) {
+        if !matches!(status, omne_protocol::ToolStatus::Completed) {
             continue;
         }
         let Some(result) = result.as_ref() else {
@@ -197,7 +197,7 @@ async fn active_subagent_threads(
         };
 
         let mut record_thread_id = |thread_id: &str| {
-            if let Ok(thread_id) = thread_id.parse::<pm_protocol::ThreadId>() {
+            if let Ok(thread_id) = thread_id.parse::<omne_protocol::ThreadId>() {
                 spawned_threads.insert(thread_id);
             }
         };

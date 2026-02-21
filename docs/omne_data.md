@@ -1,4 +1,4 @@
-# `./.codepm_data/`：项目级数据根（目录约定）
+# `./.omne_data/`：项目级数据根（目录约定）
 
 > 目标：把“项目配置 + 运行时数据”收敛到一个明确位置，便于：
 >
@@ -6,7 +6,7 @@
 > - 快速清理（tmp/threads/artifacts 一键删）
 > - 防止 secrets 误入模型上下文/误提交 git
 
-`pm init` 会在当前目录创建该结构（并生成对应 gitignore）。
+`omne init` 会在当前目录创建该结构（并生成对应 gitignore）。
 
 ---
 
@@ -14,7 +14,7 @@
 
 ```
 <project_root>/
-  .codepm_data/
+  .omne_data/
     config.toml
     config_local.toml
     .env
@@ -43,7 +43,7 @@
 - `config_local.toml`：本机/本用户的项目级配置（gitignore）。当它存在时，会优先于 `config.toml` 被加载。
 - `.env`：项目级 secrets（例如 `OPENAI_API_KEY`）。**永远不提交**，且必须在 file tools 层默认拒绝读取。
 - `.gitignore`：只忽略运行时/secret；不忽略 `config.toml` 与 `spec/`（便于提交/review）。
-- `daemon.sock`：本机 daemon 的 unix socket（`pm-app-server --listen`）。运行时文件，**永远不提交**。
+- `daemon.sock`：本机 daemon 的 unix socket（`omne-app-server --listen`）。运行时文件，**永远不提交**。
 - `spec/`：项目可提交 spec（modes/workflow/hooks/router…）。具体文件名按后续 spec 定稿。
 - `tmp/`：本项目的临时目录（可随时删；不作为正确性前提）。
 - `data/`：运行时数据（预留；例如 session/索引/派生视图缓存；不提交）。
@@ -66,8 +66,8 @@ enabled = false
 
 约定：
 
-- 加载顺序：优先读取 `.codepm_data/config_local.toml`；不存在时读取 `.codepm_data/config.toml`。
-- `enabled=false`：忽略所选 config 文件中除开关本身以外的字段；同时忽略 `.codepm_data/.env`。
+- 加载顺序：优先读取 `.omne_data/config_local.toml`；不存在时读取 `.omne_data/config.toml`。
+- `enabled=false`：忽略所选 config 文件中除开关本身以外的字段；同时忽略 `.omne_data/.env`。
 - `enabled=true`：允许用 config 文件 + `.env` 覆盖 base_url/model 等配置（secrets 只来自 `.env`）。
 
 OpenAI 配置示例（provider/profile + model-level thinking）：
@@ -85,7 +85,7 @@ base_url = "https://api.openai.com/v1"
 model_whitelist = ["gpt-4.1", "gpt-4o-mini"]
 
 [openai.providers.openai-codex-apikey.auth]
-type = "api_key_env" # 默认读取 OPENAI_API_KEY / CODE_PM_OPENAI_API_KEY
+type = "api_key_env" # 默认读取 OPENAI_API_KEY / OMNE_OPENAI_API_KEY
 
 # 模型级思考强度（默认 medium）：
 # unsupported/small/medium/high/xhigh
@@ -104,11 +104,11 @@ thinking = "xhigh"
 ```dotenv
 OPENAI_API_KEY=...
 # 可选：
-CODE_PM_OPENAI_PROVIDER=openai-codex-apikey
-CODE_PM_OPENAI_BASE_URL=https://api.openai.com/v1
-CODE_PM_OPENAI_MODEL=gpt-4.1
+OMNE_OPENAI_PROVIDER=openai-codex-apikey
+OMNE_OPENAI_BASE_URL=https://api.openai.com/v1
+OMNE_OPENAI_MODEL=gpt-4.1
 # 可选：逗号分隔的 fallback provider 列表（优先级高于 config.toml 的 `openai.fallback_providers`）
-CODE_PM_OPENAI_FALLBACK_PROVIDERS=openai-auth-command,openai-codex-apikey
+OMNE_OPENAI_FALLBACK_PROVIDERS=openai-auth-command,openai-codex-apikey
 ```
 
 注意：
@@ -118,9 +118,9 @@ CODE_PM_OPENAI_FALLBACK_PROVIDERS=openai-auth-command,openai-codex-apikey
 
 ---
 
-## 4) `pm init` 生成的 gitignore（原则）
+## 4) `omne init` 生成的 gitignore（原则）
 
 只忽略运行时/secret：
 
-- 忽略：`.codepm_data/tmp/`、`.codepm_data/data/`、`.codepm_data/repos/`、`.codepm_data/reference/`、`.codepm_data/threads/`、`.codepm_data/locks/`、`.codepm_data/logs/`、`.codepm_data/daemon.sock`、`.codepm_data/config_local.toml`、`.codepm_data/.env`
-- 不忽略：`.codepm_data/config.toml`、`.codepm_data/spec/`
+- 忽略：`.omne_data/tmp/`、`.omne_data/data/`、`.omne_data/repos/`、`.omne_data/reference/`、`.omne_data/threads/`、`.omne_data/locks/`、`.omne_data/logs/`、`.omne_data/daemon.sock`、`.omne_data/config_local.toml`、`.omne_data/.env`
+- 不忽略：`.omne_data/config.toml`、`.omne_data/spec/`

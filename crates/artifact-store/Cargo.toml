@@ -1,17 +1,12 @@
 [package]
-name = "pm-openai"
+name = "omne-artifact-store"
 edition.workspace = true
 rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-futures-util.workspace = true
-reqwest.workspace = true
-serde.workspace = true
+omne-protocol = { path = "../agent-protocol" }
 serde_json.workspace = true
+time.workspace = true
 tokio.workspace = true
-tokio-util.workspace = true
-
-[dev-dependencies]
-bytes.workspace = true

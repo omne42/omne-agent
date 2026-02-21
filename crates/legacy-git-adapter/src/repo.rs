@@ -2,7 +2,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
-use pm_core::{PmPaths, Repository, RepositoryName};
+use omne_core::{PmPaths, Repository, RepositoryName};
 use tracing::info;
 
 use crate::checks::os_arg;
@@ -346,11 +346,11 @@ mod tests {
     #[tokio::test]
     async fn list_repos_ignores_invalid_entries() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
-        let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
-        let repo_manager = RepoManager::new(pm_paths.clone());
+        let omne_paths = PmPaths::new(tmp.path().join(".omne"));
+        let repo_manager = RepoManager::new(omne_paths.clone());
         repo_manager.ensure_layout().await?;
 
-        let good_repo = pm_paths.repos_dir().join("good.git");
+        let good_repo = omne_paths.repos_dir().join("good.git");
         let output = Command::new("git")
             .current_dir(tmp.path())
             .arg("init")
@@ -366,8 +366,8 @@ mod tests {
             );
         }
 
-        tokio::fs::create_dir_all(pm_paths.repos_dir().join("empty.git")).await?;
-        tokio::fs::write(pm_paths.repos_dir().join("bad.git"), b"not a repo").await?;
+        tokio::fs::create_dir_all(omne_paths.repos_dir().join("empty.git")).await?;
+        tokio::fs::write(omne_paths.repos_dir().join("bad.git"), b"not a repo").await?;
 
         let repos = repo_manager.list_repos().await?;
         assert_eq!(

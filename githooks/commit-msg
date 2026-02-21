@@ -31,7 +31,7 @@ Allowed types:
   feat, fix, docs, refactor, perf, test, chore, build, ci, revert
 
 Examples:
-  feat(pm): concurrent task workspaces
+  feat(omne): concurrent task workspaces
   fix(git): prevent push race with repo lock
   docs(research): add responses notes
   refactor(core)!: split orchestrator state

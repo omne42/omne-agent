@@ -11,11 +11,11 @@ enum McpInitState {
 
 struct McpServeState {
     init: McpInitState,
-    audit_thread_id: Option<pm_protocol::ThreadId>,
+    audit_thread_id: Option<omne_protocol::ThreadId>,
 }
 
 impl McpServeState {
-    fn new(audit_thread_id: Option<pm_protocol::ThreadId>) -> Self {
+    fn new(audit_thread_id: Option<omne_protocol::ThreadId>) -> Self {
         Self {
             init: McpInitState::NotInitialized,
             audit_thread_id,
@@ -26,7 +26,7 @@ impl McpServeState {
 async fn run_mcp_serve(app: &mut App, args: McpServeArgs) -> anyhow::Result<()> {
     #[derive(Debug, Deserialize)]
     struct ThreadStartResult {
-        thread_id: pm_protocol::ThreadId,
+        thread_id: omne_protocol::ThreadId,
     }
 
     let (audit_thread_id, configure_audit_thread) = match (args.no_audit, args.audit_thread_id) {
@@ -51,7 +51,7 @@ async fn run_mcp_serve(app: &mut App, args: McpServeArgs) -> anyhow::Result<()> 
                     serde_json::json!({
                         "thread_id": thread_id,
                         "approval_policy": null,
-                        "sandbox_policy": pm_protocol::SandboxPolicy::ReadOnly,
+                        "sandbox_policy": omne_protocol::SandboxPolicy::ReadOnly,
                         "sandbox_writable_roots": null,
                         "sandbox_network_access": null,
                         "mode": "reviewer",
@@ -173,7 +173,7 @@ async fn handle_mcp_initialize(state: &mut McpServeState, id: Value) -> Value {
         serde_json::json!({
             "protocolVersion": MCP_PROTOCOL_VERSION,
             "serverInfo": {
-                "name": "codepm",
+                "name": "omne-agent",
                 "version": env!("CARGO_PKG_VERSION"),
             },
             "capabilities": {
@@ -279,7 +279,7 @@ fn mcp_tool_err(message: String) -> Value {
 
 async fn write_mcp_audit_artifact(
     app: &mut App,
-    thread_id: pm_protocol::ThreadId,
+    thread_id: omne_protocol::ThreadId,
     tool_name: &str,
     arguments: &Value,
     outcome: &anyhow::Result<Value>,
@@ -319,23 +319,23 @@ async fn write_mcp_audit_artifact(
 
 async fn dispatch_pm_mcp_tool(app: &mut App, name: &str, args: &Value) -> anyhow::Result<Value> {
     match name {
-        "pm.thread.list_meta" => {
+        "omne.thread.list_meta" => {
             let include_archived = args
                 .get("include_archived")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
             app.thread_list_meta(include_archived).await
         }
-        "pm.thread.attention" => {
-            let thread_id = parse_required::<pm_protocol::ThreadId>(args, "thread_id")?;
+        "omne.thread.attention" => {
+            let thread_id = parse_required::<omne_protocol::ThreadId>(args, "thread_id")?;
             app.thread_attention(thread_id).await
         }
-        "pm.thread.state" => {
-            let thread_id = parse_required::<pm_protocol::ThreadId>(args, "thread_id")?;
+        "omne.thread.state" => {
+            let thread_id = parse_required::<omne_protocol::ThreadId>(args, "thread_id")?;
             app.thread_state(thread_id).await
         }
-        "pm.thread.events" => {
-            let thread_id = parse_required::<pm_protocol::ThreadId>(args, "thread_id")?;
+        "omne.thread.events" => {
+            let thread_id = parse_required::<omne_protocol::ThreadId>(args, "thread_id")?;
             let since_seq = args.get("since_seq").and_then(|v| v.as_u64()).unwrap_or(0);
             let max_events = args
                 .get("max_events")
@@ -343,31 +343,31 @@ async fn dispatch_pm_mcp_tool(app: &mut App, name: &str, args: &Value) -> anyhow
                 .and_then(|v| usize::try_from(v).ok());
             app.thread_events(thread_id, since_seq, max_events).await
         }
-        "pm.artifact.list" => {
-            let thread_id = parse_required::<pm_protocol::ThreadId>(args, "thread_id")?;
+        "omne.artifact.list" => {
+            let thread_id = parse_required::<omne_protocol::ThreadId>(args, "thread_id")?;
             app.artifact_list(thread_id, None).await
         }
-        "pm.artifact.read" => {
-            let thread_id = parse_required::<pm_protocol::ThreadId>(args, "thread_id")?;
-            let artifact_id = parse_required::<pm_protocol::ArtifactId>(args, "artifact_id")?;
+        "omne.artifact.read" => {
+            let thread_id = parse_required::<omne_protocol::ThreadId>(args, "thread_id")?;
+            let artifact_id = parse_required::<omne_protocol::ArtifactId>(args, "artifact_id")?;
             let max_bytes = args.get("max_bytes").and_then(|v| v.as_u64());
             app.artifact_read(thread_id, artifact_id, max_bytes, None)
                 .await
         }
-        "pm.process.list" => {
-            let thread_id = parse_optional::<pm_protocol::ThreadId>(args, "thread_id")?;
+        "omne.process.list" => {
+            let thread_id = parse_optional::<omne_protocol::ThreadId>(args, "thread_id")?;
             app.process_list(thread_id).await
         }
-        "pm.process.inspect" => {
-            let process_id = parse_required::<pm_protocol::ProcessId>(args, "process_id")?;
+        "omne.process.inspect" => {
+            let process_id = parse_required::<omne_protocol::ProcessId>(args, "process_id")?;
             let max_lines = args
                 .get("max_lines")
                 .and_then(|v| v.as_u64())
                 .and_then(|v| usize::try_from(v).ok());
             app.process_inspect(process_id, max_lines, None).await
         }
-        "pm.process.tail" => {
-            let process_id = parse_required::<pm_protocol::ProcessId>(args, "process_id")?;
+        "omne.process.tail" => {
+            let process_id = parse_required::<omne_protocol::ProcessId>(args, "process_id")?;
             let stderr = args.get("stderr").and_then(|v| v.as_bool()).unwrap_or(false);
             let max_lines = args
                 .get("max_lines")
@@ -376,8 +376,8 @@ async fn dispatch_pm_mcp_tool(app: &mut App, name: &str, args: &Value) -> anyhow
             let text = app.process_tail(process_id, stderr, max_lines, None).await?;
             Ok(serde_json::json!({ "text": text }))
         }
-        "pm.process.follow" => {
-            let process_id = parse_required::<pm_protocol::ProcessId>(args, "process_id")?;
+        "omne.process.follow" => {
+            let process_id = parse_required::<omne_protocol::ProcessId>(args, "process_id")?;
             let stderr = args.get("stderr").and_then(|v| v.as_bool()).unwrap_or(false);
             let since_offset = args.get("since_offset").and_then(|v| v.as_u64()).unwrap_or(0);
             let max_bytes = args.get("max_bytes").and_then(|v| v.as_u64());
@@ -415,8 +415,8 @@ where
 fn mcp_tools() -> Vec<Value> {
     vec![
         serde_json::json!({
-            "name": "pm.thread.list_meta",
-            "description": "List CodePM threads (metadata).",
+            "name": "omne.thread.list_meta",
+            "description": "List OmneAgent threads (metadata).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -426,7 +426,7 @@ fn mcp_tools() -> Vec<Value> {
             }
         }),
         serde_json::json!({
-            "name": "pm.thread.attention",
+            "name": "omne.thread.attention",
             "description": "Get a thread's attention state.",
             "inputSchema": {
                 "type": "object",
@@ -438,7 +438,7 @@ fn mcp_tools() -> Vec<Value> {
             }
         }),
         serde_json::json!({
-            "name": "pm.thread.state",
+            "name": "omne.thread.state",
             "description": "Get a thread's current state (includes approvals/processes summary).",
             "inputSchema": {
                 "type": "object",
@@ -450,7 +450,7 @@ fn mcp_tools() -> Vec<Value> {
             }
         }),
         serde_json::json!({
-            "name": "pm.thread.events",
+            "name": "omne.thread.events",
             "description": "Poll thread events since a sequence number (read-only, for clients that don't use subscribe).",
             "inputSchema": {
                 "type": "object",
@@ -464,7 +464,7 @@ fn mcp_tools() -> Vec<Value> {
             }
         }),
         serde_json::json!({
-            "name": "pm.artifact.list",
+            "name": "omne.artifact.list",
             "description": "List artifacts in a thread.",
             "inputSchema": {
                 "type": "object",
@@ -476,7 +476,7 @@ fn mcp_tools() -> Vec<Value> {
             }
         }),
         serde_json::json!({
-            "name": "pm.artifact.read",
+            "name": "omne.artifact.read",
             "description": "Read an artifact (content is redacted on the server side).",
             "inputSchema": {
                 "type": "object",
@@ -490,7 +490,7 @@ fn mcp_tools() -> Vec<Value> {
             }
         }),
         serde_json::json!({
-            "name": "pm.process.list",
+            "name": "omne.process.list",
             "description": "List processes (optionally filtered by thread).",
             "inputSchema": {
                 "type": "object",
@@ -501,7 +501,7 @@ fn mcp_tools() -> Vec<Value> {
             }
         }),
         serde_json::json!({
-            "name": "pm.process.inspect",
+            "name": "omne.process.inspect",
             "description": "Inspect a process (includes redacted stdout/stderr tail).",
             "inputSchema": {
                 "type": "object",
@@ -514,7 +514,7 @@ fn mcp_tools() -> Vec<Value> {
             }
         }),
         serde_json::json!({
-            "name": "pm.process.tail",
+            "name": "omne.process.tail",
             "description": "Tail a process log (redacted on the server side).",
             "inputSchema": {
                 "type": "object",
@@ -528,7 +528,7 @@ fn mcp_tools() -> Vec<Value> {
             }
         }),
         serde_json::json!({
-            "name": "pm.process.follow",
+            "name": "omne.process.follow",
             "description": "Follow a process log from an offset (redacted on the server side).",
             "inputSchema": {
                 "type": "object",
@@ -556,10 +556,10 @@ mod mcp_server_tests {
             .iter()
             .filter_map(|tool| tool.get("name").and_then(|v| v.as_str()))
             .collect::<Vec<_>>();
-        assert!(names.contains(&"pm.thread.list_meta"));
-        assert!(names.contains(&"pm.thread.events"));
-        assert!(names.contains(&"pm.artifact.read"));
-        assert!(names.contains(&"pm.process.follow"));
+        assert!(names.contains(&"omne.thread.list_meta"));
+        assert!(names.contains(&"omne.thread.events"));
+        assert!(names.contains(&"omne.artifact.read"));
+        assert!(names.contains(&"omne.process.follow"));
     }
 
     #[test]

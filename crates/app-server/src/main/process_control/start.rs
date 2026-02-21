@@ -1,33 +1,3 @@
-fn command_uses_network(argv: &[String]) -> bool {
-    let Some(program) = argv.first() else {
-        return false;
-    };
-
-    let mut name = Path::new(program)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or(program.as_str())
-        .to_ascii_lowercase();
-    if let Some(stripped) = name.strip_suffix(".exe") {
-        name = stripped.to_string();
-    }
-
-    match name.as_str() {
-        "curl" | "wget" | "ssh" | "scp" | "sftp" | "ftp" | "telnet" | "nc" | "ncat" | "netcat"
-        | "gh" => true,
-        "git" => argv
-            .get(1)
-            .map(|subcommand| {
-                matches!(
-                    subcommand.as_str(),
-                    "clone" | "fetch" | "pull" | "push" | "ls-remote" | "submodule"
-                )
-            })
-            .unwrap_or(false),
-        _ => false,
-    }
-}
-
 async fn handle_process_start(
     server: &Server,
     params: ProcessStartParams,
@@ -64,7 +34,7 @@ async fn handle_process_start_inner(
             state.allowed_tools.clone(),
         )
     };
-    let tool_id = pm_protocol::ToolId::new();
+    let tool_id = omne_protocol::ToolId::new();
     let approval_params = serde_json::json!({
         "argv": params.argv.clone(),
         "cwd": params
@@ -92,10 +62,10 @@ async fn handle_process_start_inner(
     };
     let cwd_str = cwd_path.display().to_string();
 
-    if sandbox_policy == pm_protocol::SandboxPolicy::ReadOnly {
-        let tool_id = pm_protocol::ToolId::new();
+    if sandbox_policy == omne_protocol::SandboxPolicy::ReadOnly {
+        let tool_id = omne_protocol::ToolId::new();
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+            .append_event(omne_protocol::ThreadEventKind::ToolStarted {
                 tool_id,
                 turn_id: params.turn_id,
                 tool: "process/start".to_string(),
@@ -106,9 +76,9 @@ async fn handle_process_start_inner(
             })
             .await?;
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+            .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                 tool_id,
-                status: pm_protocol::ToolStatus::Denied,
+                status: omne_protocol::ToolStatus::Denied,
                 error: Some("sandbox_policy=read_only forbids process/start".to_string()),
                 result: Some(serde_json::json!({
                     "sandbox_policy": sandbox_policy,
@@ -121,12 +91,12 @@ async fn handle_process_start_inner(
         }));
     }
 
-    if sandbox_network_access == pm_protocol::SandboxNetworkAccess::Deny
-        && command_uses_network(&params.argv)
+    if sandbox_network_access == omne_protocol::SandboxNetworkAccess::Deny
+        && omne_process_runtime::command_uses_network(&params.argv)
     {
-        let tool_id = pm_protocol::ToolId::new();
+        let tool_id = omne_protocol::ToolId::new();
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+            .append_event(omne_protocol::ThreadEventKind::ToolStarted {
                 tool_id,
                 turn_id: params.turn_id,
                 tool: "process/start".to_string(),
@@ -137,9 +107,9 @@ async fn handle_process_start_inner(
             })
             .await?;
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+            .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                 tool_id,
-                status: pm_protocol::ToolStatus::Denied,
+                status: omne_protocol::ToolStatus::Denied,
                 error: Some("sandbox_network_access=deny forbids this command".to_string()),
                 result: Some(serde_json::json!({
                     "sandbox_network_access": sandbox_network_access,
@@ -153,16 +123,16 @@ async fn handle_process_start_inner(
         }));
     }
 
-    let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
+    let catalog = omne_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {
         Some(mode) => mode,
         None => {
             let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
-            let decision = pm_core::modes::Decision::Deny;
-            let tool_id = pm_protocol::ToolId::new();
+            let decision = omne_core::modes::Decision::Deny;
+            let tool_id = omne_protocol::ToolId::new();
 
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                .append_event(omne_protocol::ThreadEventKind::ToolStarted {
                     tool_id,
                     turn_id: params.turn_id,
                     tool: "process/start".to_string(),
@@ -173,9 +143,9 @@ async fn handle_process_start_inner(
                 })
                 .await?;
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
-                    status: pm_protocol::ToolStatus::Denied,
+                    status: omne_protocol::ToolStatus::Denied,
                     error: Some("unknown mode".to_string()),
                     result: Some(serde_json::json!({
                         "mode": mode_name,
@@ -197,14 +167,14 @@ async fn handle_process_start_inner(
     };
 
     let base_decision = mode.permissions.command;
-    let effective_mode_decision = match mode.tool_overrides.get("process/start").copied() {
-        Some(override_decision) => base_decision.combine(override_decision),
-        None => base_decision,
-    };
-    if effective_mode_decision == pm_core::modes::Decision::Deny {
-        let tool_id = pm_protocol::ToolId::new();
+    let effective_mode_decision = omne_tool_gate::effective_decision(
+        base_decision,
+        mode.tool_overrides.get("process/start").copied(),
+    );
+    if omne_tool_gate::is_denied(effective_mode_decision) {
+        let tool_id = omne_protocol::ToolId::new();
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+            .append_event(omne_protocol::ThreadEventKind::ToolStarted {
                 tool_id,
                 turn_id: params.turn_id,
                 tool: "process/start".to_string(),
@@ -215,9 +185,9 @@ async fn handle_process_start_inner(
             })
             .await?;
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+            .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                 tool_id,
-                status: pm_protocol::ToolStatus::Denied,
+                status: omne_protocol::ToolStatus::Denied,
                 error: Some("mode denies process/start".to_string()),
                 result: Some(serde_json::json!({
                     "mode": mode_name,
@@ -240,9 +210,9 @@ async fn handle_process_start_inner(
             match load_mode_exec_policy(&thread_root, &mode.command_execpolicy_rules).await {
                 Ok(policy) => policy,
                 Err(err) => {
-                    let tool_id = pm_protocol::ToolId::new();
+                    let tool_id = omne_protocol::ToolId::new();
                     thread_rt
-                        .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                        .append_event(omne_protocol::ThreadEventKind::ToolStarted {
                             tool_id,
                             turn_id: params.turn_id,
                             tool: "process/start".to_string(),
@@ -253,9 +223,9 @@ async fn handle_process_start_inner(
                         })
                         .await?;
                     thread_rt
-                        .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                        .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                             tool_id,
-                            status: pm_protocol::ToolStatus::Denied,
+                            status: omne_protocol::ToolStatus::Denied,
                             error: Some("failed to load mode execpolicy rules".to_string()),
                             result: Some(serde_json::json!({
                                 "mode": mode_name,
@@ -287,7 +257,7 @@ async fn handle_process_start_inner(
     };
 
     if effective_exec_decision == ExecDecision::Forbidden {
-        let tool_id = pm_protocol::ToolId::new();
+        let tool_id = omne_protocol::ToolId::new();
         let exec_matches_json = serde_json::to_value(&exec_matches)?;
 
         let justification = exec_matches.iter().find_map(|m| match m {
@@ -300,7 +270,7 @@ async fn handle_process_start_inner(
         });
 
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+            .append_event(omne_protocol::ThreadEventKind::ToolStarted {
                 tool_id,
                 turn_id: params.turn_id,
                 tool: "process/start".to_string(),
@@ -311,9 +281,9 @@ async fn handle_process_start_inner(
             })
             .await?;
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+            .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                 tool_id,
-                status: pm_protocol::ToolStatus::Denied,
+                status: omne_protocol::ToolStatus::Denied,
                 error: Some("execpolicy forbids this command".to_string()),
                 result: Some(serde_json::json!({
                     "decision": ExecDecision::Forbidden,
@@ -341,7 +311,7 @@ async fn handle_process_start_inner(
             "source": "execpolicy",
         });
     }
-    let needs_approval = effective_mode_decision == pm_core::modes::Decision::Prompt
+    let needs_approval = omne_tool_gate::is_prompt(effective_mode_decision)
         || matches!(
             effective_exec_decision,
             ExecDecision::Prompt | ExecDecision::PromptStrict
@@ -363,9 +333,9 @@ async fn handle_process_start_inner(
         {
             ApprovalGate::Approved => {}
             ApprovalGate::Denied { remembered } => {
-                let tool_id = pm_protocol::ToolId::new();
+                let tool_id = omne_protocol::ToolId::new();
                 thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                    .append_event(omne_protocol::ThreadEventKind::ToolStarted {
                         tool_id,
                         turn_id: params.turn_id,
                         tool: "process/start".to_string(),
@@ -373,9 +343,9 @@ async fn handle_process_start_inner(
                     })
                     .await?;
                 thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                         tool_id,
-                        status: pm_protocol::ToolStatus::Denied,
+                        status: omne_protocol::ToolStatus::Denied,
                         error: Some(approval_denied_error(remembered).to_string()),
                         result: Some(serde_json::json!({
                             "approval_policy": approval_policy,
@@ -431,17 +401,17 @@ async fn handle_process_start_inner(
         }
 
         if is_bash(&params.argv[0])
-            && let Ok(wrapper_path) = std::env::var("CODE_PM_EXECVE_WRAPPER")
+            && let Ok(wrapper_path) = std::env::var("OMNE_EXECVE_WRAPPER")
         {
             let wrapper_path = wrapper_path.trim().to_string();
             if wrapper_path.is_empty() {
-                anyhow::bail!("CODE_PM_EXECVE_WRAPPER must not be empty");
+                anyhow::bail!("OMNE_EXECVE_WRAPPER must not be empty");
             }
             if wrapper_path.chars().any(|c| c.is_whitespace()) {
-                anyhow::bail!("CODE_PM_EXECVE_WRAPPER must not contain whitespace");
+                anyhow::bail!("OMNE_EXECVE_WRAPPER must not contain whitespace");
             }
 
-            let token = pm_protocol::ApprovalId::new().to_string();
+            let token = omne_protocol::ApprovalId::new().to_string();
             let socket_path = process_dir.join("execve-gate.sock");
 
             execve_gate = Some(
@@ -462,13 +432,13 @@ async fn handle_process_start_inner(
 
             combined_env.insert("BASH_EXEC_WRAPPER".to_string(), wrapper_path);
             combined_env.insert(
-                "CODE_PM_EXECVE_SOCKET".to_string(),
+                "OMNE_EXECVE_SOCKET".to_string(),
                 socket_path.display().to_string(),
             );
-            combined_env.insert("CODE_PM_EXECVE_TOKEN".to_string(), token);
-            combined_env.insert("CODE_PM_THREAD_ID".to_string(), params.thread_id.to_string());
+            combined_env.insert("OMNE_EXECVE_TOKEN".to_string(), token);
+            combined_env.insert("OMNE_THREAD_ID".to_string(), params.thread_id.to_string());
             if let Some(turn_id) = params.turn_id {
-                combined_env.insert("CODE_PM_TURN_ID".to_string(), turn_id.to_string());
+                combined_env.insert("OMNE_TURN_ID".to_string(), turn_id.to_string());
             }
         }
     }
@@ -519,7 +489,7 @@ async fn handle_process_start_inner(
     };
 
     let started = thread_rt
-        .append_event(pm_protocol::ThreadEventKind::ProcessStarted {
+        .append_event(omne_protocol::ThreadEventKind::ProcessStarted {
             process_id,
             turn_id: params.turn_id,
             argv: params.argv.clone(),
@@ -589,7 +559,7 @@ async fn resolve_execpolicy_rule_paths(
             out.push(path.to_path_buf());
         } else {
             let resolved =
-                pm_core::resolve_file(thread_root, path, pm_core::PathAccess::Read, false).await?;
+                omne_core::resolve_file(thread_root, path, omne_core::PathAccess::Read, false).await?;
             out.push(resolved);
         }
     }
@@ -599,10 +569,10 @@ async fn resolve_execpolicy_rule_paths(
 async fn load_mode_exec_policy(
     thread_root: &Path,
     rules: &[String],
-) -> anyhow::Result<pm_execpolicy::Policy> {
+) -> anyhow::Result<omne_execpolicy::Policy> {
     let rule_paths = resolve_execpolicy_rule_paths(thread_root, rules).await?;
     let policy = tokio::task::spawn_blocking(move || {
-        pm_execpolicy::execpolicycheck::load_policies(&rule_paths)
+        omne_execpolicy::execpolicycheck::load_policies(&rule_paths)
     })
     .await
     .context("join mode execpolicy load task")??;
@@ -610,9 +580,9 @@ async fn load_mode_exec_policy(
 }
 
 fn merge_exec_policies(
-    global: &pm_execpolicy::Policy,
-    mode: &pm_execpolicy::Policy,
-) -> pm_execpolicy::Policy {
+    global: &omne_execpolicy::Policy,
+    mode: &omne_execpolicy::Policy,
+) -> omne_execpolicy::Policy {
     let mut combined = global.clone();
     for rules in mode.rules().values() {
         for rule in rules {
@@ -626,17 +596,17 @@ fn merge_exec_policies(
 mod process_start_tests {
     use super::*;
 
-    fn build_test_server(pm_root: PathBuf) -> Server {
+    fn build_test_server(omne_root: PathBuf) -> Server {
         let (notify_tx, _notify_rx) = broadcast::channel::<String>(16);
         Server {
-            cwd: pm_root.clone(),
+            cwd: omne_root.clone(),
             notify_tx,
-            thread_store: ThreadStore::new(PmPaths::new(pm_root)),
+            thread_store: ThreadStore::new(PmPaths::new(omne_root)),
             threads: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             processes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             mcp: Arc::new(tokio::sync::Mutex::new(McpManager::default())),
             disk_warning: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-            exec_policy: pm_execpolicy::Policy::empty(),
+            exec_policy: omne_execpolicy::Policy::empty(),
         }
     }
 
@@ -659,7 +629,7 @@ mod process_start_tests {
         tokio::fs::create_dir_all(&repo_dir).await?;
         write_executable_sh(repo_dir.join("curl").as_path(), "#!/bin/sh\nexit 0\n").await?;
 
-        let server = build_test_server(tmp.path().join(".codepm_data"));
+        let server = build_test_server(tmp.path().join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -691,7 +661,7 @@ mod process_start_tests {
         tokio::fs::create_dir_all(&repo_dir).await?;
         write_executable_sh(repo_dir.join("curl").as_path(), "#!/bin/sh\nexit 0\n").await?;
 
-        let server = build_test_server(tmp.path().join(".codepm_data"));
+        let server = build_test_server(tmp.path().join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -703,7 +673,7 @@ mod process_start_tests {
                 approval_policy: None,
                 sandbox_policy: None,
                 sandbox_writable_roots: None,
-                sandbox_network_access: Some(pm_protocol::SandboxNetworkAccess::Allow),
+                sandbox_network_access: Some(omne_protocol::SandboxNetworkAccess::Allow),
                 mode: None,
                 model: None,
                 thinking: None,
@@ -760,10 +730,10 @@ mod process_start_tests {
     async fn process_start_applies_mode_execpolicy_rules() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");
-        tokio::fs::create_dir_all(repo_dir.join(".codepm_data/spec")).await?;
+        tokio::fs::create_dir_all(repo_dir.join(".omne_data/spec")).await?;
         tokio::fs::create_dir_all(repo_dir.join("rules")).await?;
         tokio::fs::write(
-            repo_dir.join(".codepm_data/spec/modes.yaml"),
+            repo_dir.join(".omne_data/spec/modes.yaml"),
             r#"
 version: 1
 modes:
@@ -787,7 +757,7 @@ prefix_rule(
         )
         .await?;
 
-        let server = build_test_server(tmp.path().join(".codepm_data"));
+        let server = build_test_server(tmp.path().join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -832,9 +802,9 @@ prefix_rule(
     async fn process_start_denies_when_mode_execpolicy_rules_missing() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");
-        tokio::fs::create_dir_all(repo_dir.join(".codepm_data/spec")).await?;
+        tokio::fs::create_dir_all(repo_dir.join(".omne_data/spec")).await?;
         tokio::fs::write(
-            repo_dir.join(".codepm_data/spec/modes.yaml"),
+            repo_dir.join(".omne_data/spec/modes.yaml"),
             r#"
 version: 1
 modes:
@@ -848,7 +818,7 @@ modes:
         )
         .await?;
 
-        let server = build_test_server(tmp.path().join(".codepm_data"));
+        let server = build_test_server(tmp.path().join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);

@@ -2,17 +2,17 @@
 mod thread_manage_tests {
     use super::*;
 
-    fn build_test_server(pm_root: PathBuf) -> Server {
+    fn build_test_server(omne_root: PathBuf) -> Server {
         let (notify_tx, _notify_rx) = broadcast::channel::<String>(16);
         Server {
-            cwd: pm_root.clone(),
+            cwd: omne_root.clone(),
             notify_tx,
-            thread_store: ThreadStore::new(PmPaths::new(pm_root)),
+            thread_store: ThreadStore::new(PmPaths::new(omne_root)),
             threads: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             processes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             mcp: Arc::new(tokio::sync::Mutex::new(McpManager::default())),
             disk_warning: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-            exec_policy: pm_execpolicy::Policy::empty(),
+            exec_policy: omne_execpolicy::Policy::empty(),
         }
     }
 
@@ -22,7 +22,7 @@ mod thread_manage_tests {
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = build_test_server(tmp.path().join(".codepm_data"));
+        let server = build_test_server(tmp.path().join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -46,7 +46,7 @@ mod thread_manage_tests {
     async fn thread_hook_run_starts_process_from_config() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");
-        let config_dir = repo_dir.join(".codepm_data").join("spec");
+        let config_dir = repo_dir.join(".omne_data").join("spec");
         tokio::fs::create_dir_all(&config_dir).await?;
 
         tokio::fs::write(
@@ -58,7 +58,7 @@ hooks:
         )
         .await?;
 
-        let server = build_test_server(tmp.path().join(".codepm_data"));
+        let server = build_test_server(tmp.path().join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -116,7 +116,7 @@ hooks:
         tokio::fs::write(repo_dir.join("foo.txt"), "v1\n").await?;
         tokio::fs::write(repo_dir.join(".env"), "SECRET=sk-should-not-be-snapshotted\n").await?;
 
-        let server = build_test_server(tmp.path().join(".codepm_data"));
+        let server = build_test_server(tmp.path().join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -130,7 +130,7 @@ hooks:
         )
         .await?;
 
-        let checkpoint_id: pm_protocol::CheckpointId = created["checkpoint_id"]
+        let checkpoint_id: omne_protocol::CheckpointId = created["checkpoint_id"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("missing checkpoint_id"))?
             .parse()?;
@@ -160,7 +160,7 @@ hooks:
         .await?;
 
         assert!(first_restore["needs_approval"].as_bool().unwrap_or(false));
-        let approval_id: pm_protocol::ApprovalId = first_restore["approval_id"]
+        let approval_id: omne_protocol::ApprovalId = first_restore["approval_id"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("missing approval_id"))?
             .parse()?;
@@ -170,7 +170,7 @@ hooks:
             ApprovalDecideParams {
                 thread_id,
                 approval_id,
-                decision: pm_protocol::ApprovalDecision::Approved,
+                decision: omne_protocol::ApprovalDecision::Approved,
                 remember: false,
                 reason: None,
             },
@@ -201,8 +201,8 @@ hooks:
             .read_events_since(thread_id, EventSeq::ZERO)
             .await?
             .ok_or_else(|| anyhow::anyhow!("thread not found"))?;
-        assert!(events.iter().any(|e| matches!(e.kind, pm_protocol::ThreadEventKind::CheckpointCreated { checkpoint_id: got, .. } if got == checkpoint_id)));
-        assert!(events.iter().any(|e| matches!(e.kind, pm_protocol::ThreadEventKind::CheckpointRestored { checkpoint_id: got, status: pm_protocol::CheckpointRestoreStatus::Ok, .. } if got == checkpoint_id)));
+        assert!(events.iter().any(|e| matches!(e.kind, omne_protocol::ThreadEventKind::CheckpointCreated { checkpoint_id: got, .. } if got == checkpoint_id)));
+        assert!(events.iter().any(|e| matches!(e.kind, omne_protocol::ThreadEventKind::CheckpointRestored { checkpoint_id: got, status: omne_protocol::CheckpointRestoreStatus::Ok, .. } if got == checkpoint_id)));
 
         Ok(())
     }
@@ -214,7 +214,7 @@ hooks:
         tokio::fs::create_dir_all(&repo_dir).await?;
         tokio::fs::write(repo_dir.join("foo.txt"), "hello\n").await?;
 
-        let server = build_test_server(tmp.path().join(".codepm_data"));
+        let server = build_test_server(tmp.path().join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);

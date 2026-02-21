@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use pm_core::StepSummary;
+use omne_core::StepSummary;
 
 use crate::checks::{os_arg, write_command_error_log};
 use crate::git::{CommandOutput, GitCli};
@@ -37,8 +37,8 @@ pub async fn ensure_git_identity(
     repo_dir: &Path,
     artifacts_dir: &Path,
 ) -> anyhow::Result<Vec<StepSummary>> {
-    const DEFAULT_NAME: &str = "code-pm";
-    const DEFAULT_EMAIL: &str = "code-pm@example.invalid";
+    const DEFAULT_NAME: &str = "omne";
+    const DEFAULT_EMAIL: &str = "omne@example.invalid";
 
     tokio::fs::create_dir_all(artifacts_dir).await?;
 

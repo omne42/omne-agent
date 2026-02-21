@@ -1,13 +1,13 @@
 #[derive(Parser)]
-#[command(name = "pm-app-server")]
-#[command(about = "CodePM v0.2.0 app-server (JSON-RPC over stdio)", long_about = None)]
+#[command(name = "omne-app-server")]
+#[command(about = "OmneAgent v0.2.0 app-server (JSON-RPC over stdio)", long_about = None)]
 struct Args {
     #[command(subcommand)]
     command: Option<CliCommand>,
 
-    /// Override project data root directory (default: `./.codepm_data/`).
+    /// Override project data root directory (default: `./.omne_data/`).
     #[arg(long)]
-    pm_root: Option<PathBuf>,
+    omne_root: Option<PathBuf>,
 
     /// Listen on a Unix socket instead of stdio (daemon mode).
     #[arg(long, value_name = "PATH")]
@@ -120,8 +120,189 @@ impl JsonRpcResponse {
 const JSONRPC_METHOD_NOT_FOUND: i64 = -32601;
 const JSONRPC_INVALID_PARAMS: i64 = -32602;
 const JSONRPC_INTERNAL_ERROR: i64 = -32603;
-const CODE_PM_NOT_INITIALIZED: i64 = -32_000;
-const CODE_PM_ALREADY_INITIALIZED: i64 = -32_001;
+const OMNE_NOT_INITIALIZED: i64 = -32_000;
+const OMNE_ALREADY_INITIALIZED: i64 = -32_001;
+
+static APP_NOTIFY_HUB: OnceLock<Option<Arc<notify_kit::Hub>>> = OnceLock::new();
+
+fn init_notify_hub_from_env() -> anyhow::Result<()> {
+    let hub = build_notify_hub_from_env()?;
+    let _ = APP_NOTIFY_HUB.set(hub);
+    Ok(())
+}
+
+fn app_notify_hub() -> Option<&'static Arc<notify_kit::Hub>> {
+    APP_NOTIFY_HUB.get().and_then(|hub| hub.as_ref())
+}
+
+fn parse_notify_bool_env_value(raw: &str) -> Option<bool> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+fn env_notify_bool(key: &str) -> Option<bool> {
+    std::env::var(key)
+        .ok()
+        .and_then(|value| parse_notify_bool_env_value(&value))
+}
+
+fn env_notify_nonempty(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn parse_notify_timeout_ms_env(key: &str) -> anyhow::Result<Duration> {
+    let timeout = std::env::var(key)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .map(|value| value.parse::<u64>())
+        .transpose()?
+        .unwrap_or(5000);
+    Ok(Duration::from_millis(timeout.max(1)))
+}
+
+fn build_notify_hub_from_env() -> anyhow::Result<Option<Arc<notify_kit::Hub>>> {
+    const OMNE_NOTIFY_SOUND_ENV: &str = "OMNE_NOTIFY_SOUND";
+    const OMNE_NOTIFY_WEBHOOK_URL_ENV: &str = "OMNE_NOTIFY_WEBHOOK_URL";
+    const OMNE_NOTIFY_WEBHOOK_FIELD_ENV: &str = "OMNE_NOTIFY_WEBHOOK_FIELD";
+    const OMNE_NOTIFY_FEISHU_WEBHOOK_URL_ENV: &str = "OMNE_NOTIFY_FEISHU_WEBHOOK_URL";
+    const OMNE_NOTIFY_SLACK_WEBHOOK_URL_ENV: &str = "OMNE_NOTIFY_SLACK_WEBHOOK_URL";
+    const OMNE_NOTIFY_TIMEOUT_MS_ENV: &str = "OMNE_NOTIFY_TIMEOUT_MS";
+    const OMNE_NOTIFY_EVENTS_ENV: &str = "OMNE_NOTIFY_EVENTS";
+
+    // Service-side notifications are opt-in to avoid changing default app-server behavior.
+    let sound_enabled = env_notify_bool(OMNE_NOTIFY_SOUND_ENV).unwrap_or(false);
+    let timeout = parse_notify_timeout_ms_env(OMNE_NOTIFY_TIMEOUT_MS_ENV)
+        .with_context(|| format!("invalid {OMNE_NOTIFY_TIMEOUT_MS_ENV}"))?;
+
+    let mut sinks: Vec<Arc<dyn notify_kit::Sink>> = Vec::new();
+    if sound_enabled {
+        sinks.push(Arc::new(notify_kit::SoundSink::new(
+            notify_kit::SoundConfig { command_argv: None },
+        )));
+    }
+
+    if let Some(url) = env_notify_nonempty(OMNE_NOTIFY_WEBHOOK_URL_ENV) {
+        let mut cfg = notify_kit::GenericWebhookConfig::new(url).with_timeout(timeout);
+        if let Some(field) = env_notify_nonempty(OMNE_NOTIFY_WEBHOOK_FIELD_ENV) {
+            cfg = cfg.with_payload_field(field);
+        }
+        sinks.push(Arc::new(
+            notify_kit::GenericWebhookSink::new(cfg).context("build generic webhook sink")?,
+        ));
+    }
+
+    if let Some(url) = env_notify_nonempty(OMNE_NOTIFY_FEISHU_WEBHOOK_URL_ENV) {
+        let cfg = notify_kit::FeishuWebhookConfig::new(url).with_timeout(timeout);
+        sinks.push(Arc::new(
+            notify_kit::FeishuWebhookSink::new(cfg).context("build feishu sink")?,
+        ));
+    }
+
+    if let Some(url) = env_notify_nonempty(OMNE_NOTIFY_SLACK_WEBHOOK_URL_ENV) {
+        let cfg = notify_kit::SlackWebhookConfig::new(url).with_timeout(timeout);
+        sinks.push(Arc::new(
+            notify_kit::SlackWebhookSink::new(cfg).context("build slack sink")?,
+        ));
+    }
+
+    if sinks.is_empty() {
+        return Ok(None);
+    }
+
+    let enabled_kinds = std::env::var(OMNE_NOTIFY_EVENTS_ENV).ok().and_then(|raw| {
+        let set = raw
+            .split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string)
+            .collect::<BTreeSet<_>>();
+        if set.is_empty() { None } else { Some(set) }
+    });
+
+    Ok(Some(Arc::new(notify_kit::Hub::new(
+        notify_kit::HubConfig {
+            enabled_kinds,
+            per_sink_timeout: timeout,
+        },
+        sinks,
+    ))))
+}
+
+fn notify_attention_state(
+    hub: &notify_kit::Hub,
+    thread_id: &ThreadId,
+    state: &'static str,
+    severity: notify_kit::Severity,
+    body: Option<String>,
+) {
+    let mut event = notify_kit::Event::new(
+        "attention_state",
+        severity,
+        format!("attention: {thread_id} -> {state}"),
+    )
+    .with_tag("thread_id", thread_id.to_string())
+    .with_tag("state", state.to_string());
+    if let Some(body) = body.map(|text| text.trim().to_string()).filter(|text| !text.is_empty()) {
+        event = event.with_body(body);
+    }
+    hub.notify(event);
+}
+
+fn emit_external_notification_for_event(event: &ThreadEvent) {
+    let Some(hub) = app_notify_hub() else {
+        return;
+    };
+
+    match &event.kind {
+        omne_protocol::ThreadEventKind::ApprovalRequested { .. } => {
+            notify_attention_state(
+                hub,
+                &event.thread_id,
+                "need_approval",
+                notify_kit::Severity::Warning,
+                None,
+            );
+        }
+        omne_protocol::ThreadEventKind::TurnCompleted { status, reason, .. } => {
+            let (state, severity) = match status {
+                TurnStatus::Failed => ("failed", notify_kit::Severity::Error),
+                TurnStatus::Stuck => ("stuck", notify_kit::Severity::Warning),
+                _ => return,
+            };
+            notify_attention_state(hub, &event.thread_id, state, severity, reason.clone());
+        }
+        omne_protocol::ThreadEventKind::ProcessExited {
+            process_id,
+            exit_code,
+            reason,
+        } => {
+            if !matches!(exit_code, Some(code) if *code != 0) {
+                return;
+            }
+            let mut body = reason.clone().unwrap_or_default();
+            if body.trim().is_empty() {
+                body = format!("process_id={process_id}, exit_code={exit_code:?}");
+            } else {
+                body = format!("{body}\nprocess_id={process_id}, exit_code={exit_code:?}");
+            }
+            notify_attention_state(
+                hub,
+                &event.thread_id,
+                "failed",
+                notify_kit::Severity::Error,
+                Some(body),
+            );
+        }
+        _ => {}
+    }
+}
 
 struct DiskWarningState {
     last_checked_at: Option<tokio::time::Instant>,
@@ -137,7 +318,7 @@ struct Server {
     processes: Arc<tokio::sync::Mutex<HashMap<ProcessId, ProcessEntry>>>,
     mcp: Arc<tokio::sync::Mutex<McpManager>>,
     disk_warning: Arc<tokio::sync::Mutex<HashMap<ThreadId, DiskWarningState>>>,
-    exec_policy: pm_execpolicy::Policy,
+    exec_policy: omne_execpolicy::Policy,
 }
 
 impl Server {
@@ -194,15 +375,15 @@ enum ProcessCommand {
 }
 
 struct ThreadRuntime {
-    handle: tokio::sync::Mutex<pm_core::ThreadHandle>,
+    handle: tokio::sync::Mutex<omne_core::ThreadHandle>,
     active_turn: tokio::sync::Mutex<Option<ActiveTurn>>,
     notify_tx: broadcast::Sender<String>,
 }
 
-fn validate_context_refs(refs: &[pm_protocol::ContextRef]) -> anyhow::Result<()> {
+fn validate_context_refs(refs: &[omne_protocol::ContextRef]) -> anyhow::Result<()> {
     for ctx in refs {
         match ctx {
-            pm_protocol::ContextRef::File(file) => {
+            omne_protocol::ContextRef::File(file) => {
                 if file.path.trim().is_empty() {
                     anyhow::bail!("context_refs.file.path must be non-empty");
                 }
@@ -228,7 +409,7 @@ fn validate_context_refs(refs: &[pm_protocol::ContextRef]) -> anyhow::Result<()>
                     }
                 }
             }
-            pm_protocol::ContextRef::Diff(diff) => {
+            omne_protocol::ContextRef::Diff(diff) => {
                 if let Some(max_bytes) = diff.max_bytes {
                     if max_bytes == 0 {
                         anyhow::bail!("context_refs.diff.max_bytes must be >= 1");
@@ -240,17 +421,17 @@ fn validate_context_refs(refs: &[pm_protocol::ContextRef]) -> anyhow::Result<()>
     Ok(())
 }
 
-fn validate_turn_attachments(attachments: &[pm_protocol::TurnAttachment]) -> anyhow::Result<()> {
+fn validate_turn_attachments(attachments: &[omne_protocol::TurnAttachment]) -> anyhow::Result<()> {
     for attachment in attachments {
         match attachment {
-            pm_protocol::TurnAttachment::Image(image) => {
+            omne_protocol::TurnAttachment::Image(image) => {
                 match &image.source {
-                    pm_protocol::AttachmentSource::Path { path } => {
+                    omne_protocol::AttachmentSource::Path { path } => {
                         if path.trim().is_empty() {
                             anyhow::bail!("attachments.image.source.path must be non-empty");
                         }
                     }
-                    pm_protocol::AttachmentSource::Url { url } => {
+                    omne_protocol::AttachmentSource::Url { url } => {
                         if url.trim().is_empty() {
                             anyhow::bail!("attachments.image.source.url must be non-empty");
                         }
@@ -262,14 +443,14 @@ fn validate_turn_attachments(attachments: &[pm_protocol::TurnAttachment]) -> any
                     }
                 }
             }
-            pm_protocol::TurnAttachment::File(file) => {
+            omne_protocol::TurnAttachment::File(file) => {
                 match &file.source {
-                    pm_protocol::AttachmentSource::Path { path } => {
+                    omne_protocol::AttachmentSource::Path { path } => {
                         if path.trim().is_empty() {
                             anyhow::bail!("attachments.file.source.path must be non-empty");
                         }
                     }
-                    pm_protocol::AttachmentSource::Url { url } => {
+                    omne_protocol::AttachmentSource::Url { url } => {
                         if url.trim().is_empty() {
                             anyhow::bail!("attachments.file.source.url must be non-empty");
                         }
@@ -290,7 +471,7 @@ fn validate_turn_attachments(attachments: &[pm_protocol::TurnAttachment]) -> any
 }
 
 impl ThreadRuntime {
-    fn new(handle: pm_core::ThreadHandle, notify_tx: broadcast::Sender<String>) -> Self {
+    fn new(handle: omne_core::ThreadHandle, notify_tx: broadcast::Sender<String>) -> Self {
         Self {
             handle: tokio::sync::Mutex::new(handle),
             active_turn: tokio::sync::Mutex::new(None),
@@ -316,38 +497,40 @@ impl ThreadRuntime {
         self.emit_notification("thread/event", event);
 
         match &event.kind {
-            pm_protocol::ThreadEventKind::TurnStarted { .. } => {
+            omne_protocol::ThreadEventKind::TurnStarted { .. } => {
                 self.emit_notification("turn/started", event);
             }
-            pm_protocol::ThreadEventKind::TurnCompleted { .. } => {
+            omne_protocol::ThreadEventKind::TurnCompleted { .. } => {
                 self.emit_notification("turn/completed", event);
             }
-            pm_protocol::ThreadEventKind::ToolStarted { .. }
-            | pm_protocol::ThreadEventKind::ProcessStarted { .. }
-            | pm_protocol::ThreadEventKind::ApprovalRequested { .. } => {
+            omne_protocol::ThreadEventKind::ToolStarted { .. }
+            | omne_protocol::ThreadEventKind::ProcessStarted { .. }
+            | omne_protocol::ThreadEventKind::ApprovalRequested { .. } => {
                 self.emit_notification("item/started", event);
             }
-            pm_protocol::ThreadEventKind::ToolCompleted { .. }
-            | pm_protocol::ThreadEventKind::ProcessExited { .. }
-            | pm_protocol::ThreadEventKind::ApprovalDecided { .. }
-            | pm_protocol::ThreadEventKind::AssistantMessage { .. } => {
+            omne_protocol::ThreadEventKind::ToolCompleted { .. }
+            | omne_protocol::ThreadEventKind::ProcessExited { .. }
+            | omne_protocol::ThreadEventKind::ApprovalDecided { .. }
+            | omne_protocol::ThreadEventKind::AssistantMessage { .. } => {
                 self.emit_notification("item/completed", event);
             }
-            pm_protocol::ThreadEventKind::AgentStep { .. } => {
+            omne_protocol::ThreadEventKind::AgentStep { .. } => {
                 self.emit_notification("item/completed", event);
                 self.emit_notification("agent/step", event);
             }
             _ => {}
         }
+
+        emit_external_notification_for_event(event);
     }
 
     async fn start_turn(
         self: Arc<Self>,
         server: Arc<Server>,
         input: String,
-        context_refs: Option<Vec<pm_protocol::ContextRef>>,
-        attachments: Option<Vec<pm_protocol::TurnAttachment>>,
-        priority: pm_protocol::TurnPriority,
+        context_refs: Option<Vec<omne_protocol::ContextRef>>,
+        attachments: Option<Vec<omne_protocol::TurnAttachment>>,
+        priority: omne_protocol::TurnPriority,
     ) -> anyhow::Result<TurnId> {
         let mut handle = self.handle.lock().await;
         let state = handle.state();
@@ -380,7 +563,7 @@ impl ThreadRuntime {
         let turn_id = TurnId::new();
         let input_for_event = input.clone();
         let event = handle
-            .append(pm_protocol::ThreadEventKind::TurnStarted {
+            .append(omne_protocol::ThreadEventKind::TurnStarted {
                 turn_id,
                 input: input_for_event,
                 context_refs,
@@ -410,7 +593,7 @@ impl ThreadRuntime {
 
     async fn append_event(
         &self,
-        kind: pm_protocol::ThreadEventKind,
+        kind: omne_protocol::ThreadEventKind,
     ) -> anyhow::Result<ThreadEvent> {
         let mut handle = self.handle.lock().await;
         let event = handle.append(kind).await?;
@@ -440,7 +623,7 @@ impl ThreadRuntime {
             return Ok(());
         }
         let event = handle
-            .append(pm_protocol::ThreadEventKind::TurnInterruptRequested { turn_id, reason })
+            .append(omne_protocol::ThreadEventKind::TurnInterruptRequested { turn_id, reason })
             .await?;
         drop(handle);
         self.emit_event_notifications(&event);
@@ -455,7 +638,7 @@ impl ThreadRuntime {
         turn_id: TurnId,
         cancel: CancellationToken,
         input: String,
-        priority: pm_protocol::TurnPriority,
+        priority: omne_protocol::TurnPriority,
     ) {
         let agent_fut =
             agent::run_agent_turn(server.clone(), self.clone(), turn_id, input, cancel.clone(), priority);
@@ -483,7 +666,7 @@ impl ThreadRuntime {
         let mut handle = self.handle.lock().await;
         let thread_id = handle.thread_id();
         if let Ok(event) = handle
-            .append(pm_protocol::ThreadEventKind::TurnCompleted {
+            .append(omne_protocol::ThreadEventKind::TurnCompleted {
                 turn_id,
                 status,
                 reason,
@@ -548,4 +731,3 @@ struct ActiveTurn {
     cancel: CancellationToken,
     interrupt_reason: Option<String>,
 }
-

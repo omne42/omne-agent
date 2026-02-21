@@ -1,10 +1,10 @@
-# CodePM vNext 使用流程（RTS 风格 / 目标态）
+# OmneAgent vNext 使用流程（RTS 风格 / 目标态）
 
 > 这不是“又一个聊天框”。RTS 的关键是：你同时指挥多个 agent，但系统必须把一切变更收敛成 **可观测、可暂停、可回放、可收口** 的状态机。
 >
 > 注：本文是“目标态”。v0.2.0 MVP 的 `attention_state` 枚举以 `docs/v0.2.0_parity.md` 为准；`plan_ready/diff_ready/test_failed` 属于语义标记（markers，TODO），不应把 `attention_state` 扩成万能枚举（见 `docs/attention.md`）。
 >
-> v0.2.0 现状补充：workspace hooks 已支持最小执行入口（`.codepm_data/spec/workspace.yaml` + `pm thread hook-run setup|run|archive`），但还没有“自动在创建/归档时触发”的编排逻辑（见 `docs/workspace_hooks.md`）。
+> v0.2.0 现状补充：workspace hooks 已支持最小执行入口（`.omne_data/spec/workspace.yaml` + `omne thread hook-run setup|run|archive`），但还没有“自动在创建/归档时触发”的编排逻辑（见 `docs/workspace_hooks.md`）。
 
 ---
 

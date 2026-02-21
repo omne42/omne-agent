@@ -6,66 +6,20 @@ struct CommandSummary {
     file: String,
 }
 
-fn workflow_spec_dir(pm_root: &std::path::Path) -> PathBuf {
-    pm_root.join("spec").join("commands")
+fn workflow_spec_dir(omne_root: &std::path::Path) -> PathBuf {
+    omne_workflow_spec::workflow_spec_dir(omne_root)
 }
 
 fn validate_workflow_name(name: &str) -> anyhow::Result<()> {
-    if name.is_empty() {
-        anyhow::bail!("command name must not be empty");
-    }
-    if !name
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-    {
-        anyhow::bail!(
-            "invalid command name: {name} (allowed: [a-zA-Z0-9_-], no slashes)"
-        );
-    }
-    Ok(())
-}
-
-fn is_valid_var_name(name: &str) -> bool {
-    !name.is_empty()
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    omne_workflow_spec::validate_workflow_name(name)
 }
 
 fn ensure_valid_var_name(name: &str, label: &str) -> anyhow::Result<()> {
-    if is_valid_var_name(name) {
-        return Ok(());
-    }
-    anyhow::bail!(
-        "{label} must match [a-zA-Z0-9_-] with no whitespace: {name}"
-    )
+    omne_workflow_spec::ensure_valid_var_name(name, label)
 }
 
 fn split_frontmatter(contents: &str) -> anyhow::Result<(&str, &str)> {
-    let mut lines = contents.split_inclusive('\n');
-    let first = lines.next().unwrap_or("");
-    if first.trim_end() != "---" {
-        anyhow::bail!("command file must start with YAML frontmatter (---)");
-    }
-
-    let mut yaml_end_offset = None::<usize>;
-    let mut offset = first.len();
-    for line in lines {
-        let trimmed = line.trim_end_matches(&['\r', '\n'][..]).trim_end();
-        if trimmed == "---" {
-            yaml_end_offset = Some(offset);
-            offset += line.len();
-            break;
-        }
-        offset += line.len();
-    }
-    let Some(yaml_end_offset) = yaml_end_offset else {
-        anyhow::bail!("command file frontmatter is missing closing ---");
-    };
-
-    let yaml = &contents[first.len()..yaml_end_offset];
-    let body = &contents[offset..];
-    Ok((yaml, body))
+    omne_workflow_spec::split_frontmatter(contents)
 }
 
 fn normalize_string(value: String, label: &str) -> anyhow::Result<String> {
@@ -83,18 +37,7 @@ fn normalize_optional_string(value: Option<String>) -> Option<String> {
 }
 
 fn normalize_unique_list(values: Vec<String>) -> Vec<String> {
-    let mut out = Vec::<String>::new();
-    let mut seen = BTreeSet::<String>::new();
-    for value in values {
-        let value = value.trim().to_string();
-        if value.is_empty() {
-            continue;
-        }
-        if seen.insert(value.clone()) {
-            out.push(value);
-        }
-    }
-    out
+    omne_workflow_spec::normalize_unique_list(values)
 }
 
 fn sanitize_frontmatter(
@@ -144,11 +87,11 @@ fn sanitize_frontmatter(
 
 async fn load_workflow_file(cli: &Cli, name: &str) -> anyhow::Result<WorkflowFile> {
     validate_workflow_name(name)?;
-    let pm_root = resolve_pm_root(cli)?;
-    let dir = workflow_spec_dir(&pm_root);
+    let omne_root = resolve_pm_root(cli)?;
+    let dir = workflow_spec_dir(&omne_root);
     if !tokio::fs::try_exists(&dir).await? {
         anyhow::bail!(
-            "commands dir is missing: {} (run `pm init`?)",
+            "commands dir is missing: {} (run `omne init`?)",
             dir.display()
         );
     }
@@ -199,35 +142,7 @@ fn render_template(
     declared: &BTreeSet<String>,
     vars: &BTreeMap<String, String>,
 ) -> anyhow::Result<String> {
-    let mut out = String::new();
-    let mut rest = template;
-    while let Some(start) = rest.find("{{") {
-        let (prefix, after_start) = rest.split_at(start);
-        out.push_str(prefix);
-        let Some(end) = after_start.find("}}") else {
-            anyhow::bail!("unclosed template expression: missing '}}'");
-        };
-        let key = &after_start[2..end];
-        if key.is_empty() {
-            anyhow::bail!("empty template expression: {{}}");
-        }
-        if key.trim() != key {
-            anyhow::bail!("template vars must not include whitespace: {key}");
-        }
-        if !is_valid_var_name(key) {
-            anyhow::bail!("invalid template var name: {key}");
-        }
-        if !declared.contains(key) {
-            anyhow::bail!("template references undeclared var: {key}");
-        }
-        let value = vars
-            .get(key)
-            .ok_or_else(|| anyhow::anyhow!("template var missing value: {key}"))?;
-        out.push_str(value);
-        rest = &after_start[end + 2..];
-    }
-    out.push_str(rest);
-    Ok(out)
+    omne_workflow_spec::render_template(template, declared, vars)
 }
 
 async fn wait_for_process_exit(
@@ -267,11 +182,11 @@ async fn wait_for_process_exit(
 }
 
 async fn run_command_list(cli: &Cli, json: bool) -> anyhow::Result<()> {
-    let pm_root = resolve_pm_root(cli)?;
-    let dir = workflow_spec_dir(&pm_root);
+    let omne_root = resolve_pm_root(cli)?;
+    let dir = workflow_spec_dir(&omne_root);
     if !tokio::fs::try_exists(&dir).await? {
         anyhow::bail!(
-            "commands dir is missing: {} (run `pm init`?)",
+            "commands dir is missing: {} (run `omne init`?)",
             dir.display()
         );
     }
@@ -352,7 +267,7 @@ async fn run_command_run(
     command: &CommandCommand,
 ) -> anyhow::Result<()> {
     let CommandCommand::Run(args) = command else {
-        anyhow::bail!("command execution is only supported via `pm command run`");
+        anyhow::bail!("command execution is only supported via `omne command run`");
     };
     if args.fan_out_early_return && !args.fan_out {
         anyhow::bail!("--fan-out-early-return requires --fan-out");
@@ -454,13 +369,13 @@ async fn run_command_run(
         process_ids.push(process_id);
     }
 
-    let mut fan_in_artifact_id: Option<pm_protocol::ArtifactId> = None;
+    let mut fan_in_artifact_id: Option<omne_protocol::ArtifactId> = None;
     let mut fan_out_results = Vec::<WorkflowTaskResult>::new();
     let mut fan_out_scheduler: Option<FanOutScheduler> = None;
     if args.fan_out {
         let tasks = parse_workflow_tasks(&rendered_body)?;
         if !tasks.is_empty() {
-            let artifact_id = pm_protocol::ArtifactId::new();
+            let artifact_id = omne_protocol::ArtifactId::new();
             if args.fan_out_early_return {
                 let mut scheduler = FanOutScheduler::start(
                     app,
@@ -497,7 +412,7 @@ async fn run_command_run(
             .collect::<Vec<_>>()
             .join(", ");
         input.push_str(&format!(
-            "Context steps executed. process_id(s)={ids}. Use `pm process inspect/tail/follow` for details.\n\n"
+            "Context steps executed. process_id(s)={ids}. Use `omne process inspect/tail/follow` for details.\n\n"
         ));
     }
     if let Some(artifact_id) = fan_in_artifact_id {
@@ -523,7 +438,7 @@ async fn run_command_run(
         }
         input.push('\n');
         input.push_str(&format!(
-            "Use `pm artifact read {thread_id} {artifact_id}` for the full fan-in summary.\n\n"
+            "Use `omne artifact read {thread_id} {artifact_id}` for the full fan-in summary.\n\n"
         ));
     }
     input.push_str(&rendered_body);
@@ -593,4 +508,3 @@ async fn run_command_run(
 
     Ok(())
 }
-

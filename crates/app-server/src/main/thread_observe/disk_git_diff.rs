@@ -220,7 +220,7 @@ const THREAD_DIFF_MAX_STDERR_BYTES: u64 = 32 * 1024;
 struct ThreadGitSnapshotSpec {
     thread_id: ThreadId,
     turn_id: Option<TurnId>,
-    approval_id: Option<pm_protocol::ApprovalId>,
+    approval_id: Option<omne_protocol::ApprovalId>,
     max_bytes: Option<u64>,
     wait_seconds: Option<u64>,
     argv: Vec<String>,
@@ -625,17 +625,17 @@ mod stale_process_tests {
 mod stuck_report_tests {
     use super::*;
 
-    fn build_test_server(pm_root: PathBuf) -> Server {
+    fn build_test_server(omne_root: PathBuf) -> Server {
         let (notify_tx, _notify_rx) = broadcast::channel::<String>(16);
         Server {
-            cwd: pm_root.clone(),
+            cwd: omne_root.clone(),
             notify_tx,
-            thread_store: ThreadStore::new(PmPaths::new(pm_root)),
+            thread_store: ThreadStore::new(PmPaths::new(omne_root)),
             threads: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             processes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             mcp: Arc::new(tokio::sync::Mutex::new(McpManager::default())),
             disk_warning: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-            exec_policy: pm_execpolicy::Policy::empty(),
+            exec_policy: omne_execpolicy::Policy::empty(),
         }
     }
 
@@ -645,7 +645,7 @@ mod stuck_report_tests {
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = build_test_server(tmp.path().join(".codepm_data"));
+        let server = build_test_server(tmp.path().join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -653,18 +653,18 @@ mod stuck_report_tests {
         let thread_rt = server.get_or_load_thread(thread_id).await?;
         let turn_id = TurnId::new();
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::TurnStarted {
+            .append_event(omne_protocol::ThreadEventKind::TurnStarted {
                 turn_id,
                 input: "test".to_string(),
                 context_refs: None,
                 attachments: None,
-                priority: pm_protocol::TurnPriority::Foreground,
+                priority: omne_protocol::TurnPriority::Foreground,
             })
             .await?;
 
-        let approval_id = pm_protocol::ApprovalId::new();
+        let approval_id = omne_protocol::ApprovalId::new();
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ApprovalRequested {
+            .append_event(omne_protocol::ThreadEventKind::ApprovalRequested {
                 approval_id,
                 turn_id: Some(turn_id),
                 action: "process/start".to_string(),
@@ -672,9 +672,9 @@ mod stuck_report_tests {
             })
             .await?;
 
-        let tool_id = pm_protocol::ToolId::new();
+        let tool_id = omne_protocol::ToolId::new();
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+            .append_event(omne_protocol::ThreadEventKind::ToolStarted {
                 tool_id,
                 turn_id: Some(turn_id),
                 tool: "process/start".to_string(),
@@ -684,7 +684,7 @@ mod stuck_report_tests {
 
         let process_id = ProcessId::new();
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ProcessStarted {
+            .append_event(omne_protocol::ThreadEventKind::ProcessStarted {
                 process_id,
                 turn_id: Some(turn_id),
                 argv: vec!["sleep".to_string(), "999".to_string()],
@@ -695,7 +695,7 @@ mod stuck_report_tests {
             .await?;
 
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::TurnCompleted {
+            .append_event(omne_protocol::ThreadEventKind::TurnCompleted {
                 turn_id,
                 status: TurnStatus::Stuck,
                 reason: Some("budget exceeded: steps".to_string()),

@@ -23,7 +23,7 @@ async fn handle_process_list(
         for event in events {
             let ts = event.timestamp.format(&Rfc3339)?;
             match event.kind {
-                pm_protocol::ThreadEventKind::ProcessStarted {
+                omne_protocol::ThreadEventKind::ProcessStarted {
                     process_id,
                     turn_id,
                     argv,
@@ -48,17 +48,17 @@ async fn handle_process_list(
                         },
                     );
                 }
-                pm_protocol::ThreadEventKind::ProcessInterruptRequested { process_id, .. } => {
+                omne_protocol::ThreadEventKind::ProcessInterruptRequested { process_id, .. } => {
                     if let Some(info) = derived.get_mut(&process_id) {
                         info.last_update_at = ts;
                     }
                 }
-                pm_protocol::ThreadEventKind::ProcessKillRequested { process_id, .. } => {
+                omne_protocol::ThreadEventKind::ProcessKillRequested { process_id, .. } => {
                     if let Some(info) = derived.get_mut(&process_id) {
                         info.last_update_at = ts;
                     }
                 }
-                pm_protocol::ThreadEventKind::ProcessExited {
+                omne_protocol::ThreadEventKind::ProcessExited {
                     process_id,
                     exit_code,
                     ..

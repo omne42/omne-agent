@@ -11,7 +11,7 @@ async fn handle_thread_models(server: &Server, params: ThreadModelsParams) -> an
     let provider = project
         .provider
         .or_else(|| {
-            std::env::var("CODE_PM_OPENAI_PROVIDER")
+            std::env::var("OMNE_OPENAI_PROVIDER")
                 .ok()
                 .filter(|s| !s.trim().is_empty())
         })
@@ -33,7 +33,7 @@ async fn handle_thread_models(server: &Server, params: ThreadModelsParams) -> an
     let base_url = thread_openai_base_url
         .or(project.base_url)
         .or_else(|| {
-            std::env::var("CODE_PM_OPENAI_BASE_URL")
+            std::env::var("OMNE_OPENAI_BASE_URL")
                 .ok()
                 .filter(|s| !s.trim().is_empty())
         })
@@ -44,7 +44,7 @@ async fn handle_thread_models(server: &Server, params: ThreadModelsParams) -> an
     let current_model = thread_model
         .or(project.model)
         .or_else(|| {
-            std::env::var("CODE_PM_OPENAI_MODEL")
+            std::env::var("OMNE_OPENAI_MODEL")
                 .ok()
                 .filter(|s| !s.trim().is_empty())
         })

@@ -15,46 +15,46 @@ async fn run_init(args: InitArgs) -> anyhow::Result<()> {
     let mut create_spec_dir = true;
 
     if interactive {
-        eprintln!("pm init");
+        eprintln!("omne init");
         eprintln!("dir: {}", target_dir.display());
         enable_project_config = prompt_yes_no(
             "Enable project config now? (recommended: no by default)",
             enable_project_config,
         )?;
         create_config_local = prompt_yes_no(
-            "Create .codepm_data/config_local.toml template? (recommended: only when needed)",
+            "Create .omne_data/config_local.toml template? (recommended: only when needed)",
             create_config_local,
         )?;
-        create_env = prompt_yes_no("Create .codepm_data/.env template?", create_env)?;
-        create_spec_dir = prompt_yes_no("Create .codepm_data/spec/ directory?", create_spec_dir)?;
+        create_env = prompt_yes_no("Create .omne_data/.env template?", create_env)?;
+        create_spec_dir = prompt_yes_no("Create .omne_data/spec/ directory?", create_spec_dir)?;
     }
 
-    let codepm_data_dir = target_dir.join(".codepm_data");
-    tokio::fs::create_dir_all(&codepm_data_dir).await?;
+    let omne_data_dir = target_dir.join(".omne_data");
+    tokio::fs::create_dir_all(&omne_data_dir).await?;
 
     if create_spec_dir {
-        let spec_dir = codepm_data_dir.join("spec");
+        let spec_dir = omne_data_dir.join("spec");
         tokio::fs::create_dir_all(&spec_dir).await?;
         tokio::fs::create_dir_all(spec_dir.join("commands")).await?;
     }
-    tokio::fs::create_dir_all(codepm_data_dir.join("tmp")).await?;
-    tokio::fs::create_dir_all(codepm_data_dir.join("data")).await?;
-    tokio::fs::create_dir_all(codepm_data_dir.join("repos")).await?;
-    tokio::fs::create_dir_all(codepm_data_dir.join("reference")).await?;
-    tokio::fs::create_dir_all(codepm_data_dir.join("locks")).await?;
-    tokio::fs::create_dir_all(codepm_data_dir.join("logs")).await?;
-    tokio::fs::create_dir_all(codepm_data_dir.join("threads")).await?;
+    tokio::fs::create_dir_all(omne_data_dir.join("tmp")).await?;
+    tokio::fs::create_dir_all(omne_data_dir.join("data")).await?;
+    tokio::fs::create_dir_all(omne_data_dir.join("repos")).await?;
+    tokio::fs::create_dir_all(omne_data_dir.join("reference")).await?;
+    tokio::fs::create_dir_all(omne_data_dir.join("locks")).await?;
+    tokio::fs::create_dir_all(omne_data_dir.join("logs")).await?;
+    tokio::fs::create_dir_all(omne_data_dir.join("threads")).await?;
 
-    write_codepm_gitignore(&codepm_data_dir).await?;
-    write_codepm_config_toml(&codepm_data_dir, enable_project_config, args.force).await?;
+    write_omne_gitignore(&omne_data_dir).await?;
+    write_omne_config_toml(&omne_data_dir, enable_project_config, args.force).await?;
     if create_config_local {
-        write_codepm_config_local_toml(&codepm_data_dir, enable_project_config, args.force).await?;
+        write_omne_config_local_toml(&omne_data_dir, enable_project_config, args.force).await?;
     }
     if create_env {
-        write_codepm_env_template(&codepm_data_dir, args.force).await?;
+        write_omne_env_template(&omne_data_dir, args.force).await?;
     }
 
-    eprintln!("created: {}", codepm_data_dir.display());
+    eprintln!("created: {}", omne_data_dir.display());
     Ok(())
 }
 
@@ -76,11 +76,11 @@ fn prompt_yes_no(prompt: &str, default_yes: bool) -> anyhow::Result<bool> {
     }
 }
 
-async fn write_codepm_gitignore(codepm_data_dir: &Path) -> anyhow::Result<()> {
-    let path = codepm_data_dir.join(".gitignore");
+async fn write_omne_gitignore(omne_data_dir: &Path) -> anyhow::Result<()> {
+    let path = omne_data_dir.join(".gitignore");
 
     let desired = [
-        "# CodePM runtime (do not commit)",
+        "# OmneAgent runtime (do not commit)",
         "tmp/",
         "data/",
         "repos/",
@@ -125,12 +125,12 @@ async fn write_codepm_gitignore(codepm_data_dir: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn write_codepm_config_toml(
-    codepm_data_dir: &Path,
+async fn write_omne_config_toml(
+    omne_data_dir: &Path,
     enable_project_config: bool,
     force: bool,
 ) -> anyhow::Result<()> {
-    let path = codepm_data_dir.join("config.toml");
+    let path = omne_data_dir.join("config.toml");
     if !force && tokio::fs::try_exists(&path).await? {
         return Ok(());
     }
@@ -141,12 +141,12 @@ async fn write_codepm_config_toml(
         "false"
     };
     let contents = format!(
-        r#"# CodePM project config (v0.2.x)
+        r#"# OmneAgent project config (v0.2.x)
 #
-# This file is safe to commit. Secrets belong in `.codepm_data/.env` (gitignored).
-# For per-machine overrides, use `.codepm_data/config_local.toml` (gitignored).
+# This file is safe to commit. Secrets belong in `.omne_data/.env` (gitignored).
+# For per-machine overrides, use `.omne_data/config_local.toml` (gitignored).
 #
-# When disabled, CodePM ignores project-level overrides from `config.toml` and `.env`.
+# When disabled, OmneAgent ignores project-level overrides from `config.toml` and `.env`.
 
 [project_config]
 enabled = {enabled}
@@ -156,7 +156,7 @@ enabled = {enabled}
 # model = "gpt-4.1"                # default model for this project
 #
 # # Provider profiles: auth/base_url/model whitelist live here.
-# # (Secrets belong in `.codepm_data/.env`.)
+# # (Secrets belong in `.omne_data/.env`.)
 # #
 # # [openai.providers.openai-codex-apikey]
 # # base_url = "https://api.openai.com/v1"
@@ -173,7 +173,7 @@ enabled = {enabled}
 # # # streaming = true
 # # [openai.providers.openai-codex-apikey.auth]
 # # type = "api_key_env"
-# # # optional: override env keys (default: ["OPENAI_API_KEY","CODE_PM_OPENAI_API_KEY"])
+# # # optional: override env keys (default: ["OPENAI_API_KEY","OMNE_OPENAI_API_KEY"])
 # # # keys = ["OPENAI_API_KEY"]
 # #
 # # Auth plugin (Node-friendly): command must print JSON: {{"api_key":"..."}} or {{"token":"..."}}
@@ -182,7 +182,7 @@ enabled = {enabled}
 # # base_url = "https://api.openai.com/v1"
 # # [openai.providers.openai-auth-command.auth]
 # # type = "command"
-# # command = ["node", "./.codepm_data/openai-auth.mjs"]
+# # command = ["node", "./.omne_data/openai-auth.mjs"]
 #
 # # Per-model thinking intensity (defaults to medium):
 # # supported: unsupported/small/medium/high/xhigh
@@ -197,12 +197,12 @@ enabled = {enabled}
     Ok(())
 }
 
-async fn write_codepm_config_local_toml(
-    codepm_data_dir: &Path,
+async fn write_omne_config_local_toml(
+    omne_data_dir: &Path,
     enable_project_config: bool,
     force: bool,
 ) -> anyhow::Result<()> {
-    let path = codepm_data_dir.join("config_local.toml");
+    let path = omne_data_dir.join("config_local.toml");
     if !force && tokio::fs::try_exists(&path).await? {
         return Ok(());
     }
@@ -213,12 +213,12 @@ async fn write_codepm_config_local_toml(
         "false"
     };
     let contents = format!(
-        r#"# CodePM local project config (v0.2.x)
+        r#"# OmneAgent local project config (v0.2.x)
 #
 # This file is gitignored and should not be committed.
-# When present, CodePM uses it instead of `.codepm_data/config.toml`.
+# When present, OmneAgent uses it instead of `.omne_data/config.toml`.
 #
-# When disabled, CodePM ignores project-level overrides from `config_local.toml` and `.env`.
+# When disabled, OmneAgent ignores project-level overrides from `config_local.toml` and `.env`.
 
 [project_config]
 enabled = {enabled}
@@ -228,7 +228,7 @@ enabled = {enabled}
 # model = "gpt-4.1"                # default model for this project
 #
 # # Provider profiles: auth/base_url/model whitelist live here.
-# # (Secrets belong in `.codepm_data/.env`.)
+# # (Secrets belong in `.omne_data/.env`.)
 # #
 # # [openai.providers.openai-codex-apikey]
 # # base_url = "https://api.openai.com/v1"
@@ -245,7 +245,7 @@ enabled = {enabled}
 # # # streaming = true
 # # [openai.providers.openai-codex-apikey.auth]
 # # type = "api_key_env"
-# # # optional: override env keys (default: ["OPENAI_API_KEY","CODE_PM_OPENAI_API_KEY"])
+# # # optional: override env keys (default: ["OPENAI_API_KEY","OMNE_OPENAI_API_KEY"])
 # # # keys = ["OPENAI_API_KEY"]
 # #
 # # Auth plugin (Node-friendly): command must print JSON: {{"api_key":"..."}} or {{"token":"..."}}
@@ -254,7 +254,7 @@ enabled = {enabled}
 # # base_url = "https://api.openai.com/v1"
 # # [openai.providers.openai-auth-command.auth]
 # # type = "command"
-# # command = ["node", "./.codepm_data/openai-auth.mjs"]
+# # command = ["node", "./.omne_data/openai-auth.mjs"]
 #
 # # Per-model thinking intensity (defaults to medium):
 # # supported: unsupported/small/medium/high/xhigh
@@ -269,8 +269,8 @@ enabled = {enabled}
     Ok(())
 }
 
-async fn write_codepm_env_template(codepm_data_dir: &Path, force: bool) -> anyhow::Result<()> {
-    let path = codepm_data_dir.join(".env");
+async fn write_omne_env_template(omne_data_dir: &Path, force: bool) -> anyhow::Result<()> {
+    let path = omne_data_dir.join(".env");
     if !force && tokio::fs::try_exists(&path).await? {
         return Ok(());
     }
@@ -279,9 +279,9 @@ async fn write_codepm_env_template(codepm_data_dir: &Path, force: bool) -> anyho
 OPENAI_API_KEY=
 #
 # Optional overrides:
-# CODE_PM_OPENAI_PROVIDER=openai-codex-apikey
-# CODE_PM_OPENAI_BASE_URL=https://api.openai.com/v1
-# CODE_PM_OPENAI_MODEL=gpt-4.1
+# OMNE_OPENAI_PROVIDER=openai-codex-apikey
+# OMNE_OPENAI_BASE_URL=https://api.openai.com/v1
+# OMNE_OPENAI_MODEL=gpt-4.1
 "#;
 
     tokio::fs::write(&path, contents).await?;

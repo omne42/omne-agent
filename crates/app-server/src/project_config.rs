@@ -18,9 +18,9 @@ pub struct ProjectOpenAiOverrides {
 
 #[derive(Clone, Copy, Debug)]
 pub enum ProjectConfigSource {
-    /// `.codepm_data/config_local.toml` (gitignored)
+    /// `.omne_data/config_local.toml` (gitignored)
     Local,
-    /// `.codepm_data/config.toml` (commit-safe)
+    /// `.omne_data/config.toml` (commit-safe)
     Shared,
 }
 
@@ -132,12 +132,12 @@ fn parse_dotenv_openai(contents: &str) -> DotenvOpenAiOverrides {
     let mut out = DotenvOpenAiOverrides::default();
     out.dotenv = ditto_llm::parse_dotenv(contents);
 
-    out.provider = out.dotenv.get("CODE_PM_OPENAI_PROVIDER").cloned();
-    out.base_url = out.dotenv.get("CODE_PM_OPENAI_BASE_URL").cloned();
-    out.model = out.dotenv.get("CODE_PM_OPENAI_MODEL").cloned();
+    out.provider = out.dotenv.get("OMNE_OPENAI_PROVIDER").cloned();
+    out.base_url = out.dotenv.get("OMNE_OPENAI_BASE_URL").cloned();
+    out.model = out.dotenv.get("OMNE_OPENAI_MODEL").cloned();
     out.fallback_providers = out
         .dotenv
-        .get("CODE_PM_OPENAI_FALLBACK_PROVIDERS")
+        .get("OMNE_OPENAI_FALLBACK_PROVIDERS")
         .map(|value| parse_csv_list(value))
         .unwrap_or_default();
 
@@ -145,10 +145,10 @@ fn parse_dotenv_openai(contents: &str) -> DotenvOpenAiOverrides {
 }
 
 pub async fn load_project_config(thread_root: &Path) -> LoadedProjectConfig {
-    let codepm_data_dir = thread_root.join(".codepm_data");
-    let config_local_toml_path = codepm_data_dir.join("config_local.toml");
-    let config_toml_path = codepm_data_dir.join("config.toml");
-    let env_path = codepm_data_dir.join(".env");
+    let omne_data_dir = thread_root.join(".omne_data");
+    let config_local_toml_path = omne_data_dir.join("config_local.toml");
+    let config_toml_path = omne_data_dir.join("config.toml");
+    let env_path = omne_data_dir.join(".env");
 
     let mut load_error: Option<String> = None;
 
@@ -308,11 +308,11 @@ mod tests {
     async fn loads_provider_reasoning_and_auth_command_from_config_toml() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let root = tmp.path();
-        let codepm_data = root.join(".codepm_data");
-        tokio::fs::create_dir_all(&codepm_data).await?;
+        let omne_data = root.join(".omne_data");
+        tokio::fs::create_dir_all(&omne_data).await?;
 
         tokio::fs::write(
-            codepm_data.join("config.toml"),
+            omne_data.join("config.toml"),
             r#"
 [project_config]
 enabled = true
@@ -383,11 +383,11 @@ thinking = "xhigh"
     async fn loads_base_url_from_config_toml() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let root = tmp.path();
-        let codepm_data = root.join(".codepm_data");
-        tokio::fs::create_dir_all(&codepm_data).await?;
+        let omne_data = root.join(".omne_data");
+        tokio::fs::create_dir_all(&omne_data).await?;
 
         tokio::fs::write(
-            codepm_data.join("config.toml"),
+            omne_data.join("config.toml"),
             r#"
 [project_config]
 enabled = true
@@ -411,11 +411,11 @@ base_url = "https://example.org/v1"
     async fn dotenv_provider_overrides_config_provider_when_enabled() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let root = tmp.path();
-        let codepm_data = root.join(".codepm_data");
-        tokio::fs::create_dir_all(&codepm_data).await?;
+        let omne_data = root.join(".omne_data");
+        tokio::fs::create_dir_all(&omne_data).await?;
 
         tokio::fs::write(
-            codepm_data.join("config.toml"),
+            omne_data.join("config.toml"),
             r#"
 [project_config]
 enabled = true
@@ -426,9 +426,9 @@ provider = "openai-codex-apikey"
         )
         .await?;
         tokio::fs::write(
-            codepm_data.join(".env"),
+            omne_data.join(".env"),
             r#"
-CODE_PM_OPENAI_PROVIDER=openai-auth-command
+OMNE_OPENAI_PROVIDER=openai-auth-command
 "#,
         )
         .await?;
@@ -446,11 +446,11 @@ CODE_PM_OPENAI_PROVIDER=openai-auth-command
     async fn dotenv_base_url_overrides_config_when_enabled() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let root = tmp.path();
-        let codepm_data = root.join(".codepm_data");
-        tokio::fs::create_dir_all(&codepm_data).await?;
+        let omne_data = root.join(".omne_data");
+        tokio::fs::create_dir_all(&omne_data).await?;
 
         tokio::fs::write(
-            codepm_data.join("config.toml"),
+            omne_data.join("config.toml"),
             r#"
 [project_config]
 enabled = true
@@ -461,9 +461,9 @@ base_url = "https://config.example/v1"
         )
         .await?;
         tokio::fs::write(
-            codepm_data.join(".env"),
+            omne_data.join(".env"),
             r#"
-CODE_PM_OPENAI_BASE_URL=https://env.example/v1
+OMNE_OPENAI_BASE_URL=https://env.example/v1
 "#,
         )
         .await?;
@@ -481,11 +481,11 @@ CODE_PM_OPENAI_BASE_URL=https://env.example/v1
     async fn loads_fallback_providers_from_config_toml() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let root = tmp.path();
-        let codepm_data = root.join(".codepm_data");
-        tokio::fs::create_dir_all(&codepm_data).await?;
+        let omne_data = root.join(".omne_data");
+        tokio::fs::create_dir_all(&omne_data).await?;
 
         tokio::fs::write(
-            codepm_data.join("config.toml"),
+            omne_data.join("config.toml"),
             r#"
 [project_config]
 enabled = true
@@ -512,11 +512,11 @@ fallback_providers = ["openai-auth-command", "openai-codex-apikey", "openai-auth
     async fn dotenv_fallback_providers_override_config_when_present() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let root = tmp.path();
-        let codepm_data = root.join(".codepm_data");
-        tokio::fs::create_dir_all(&codepm_data).await?;
+        let omne_data = root.join(".omne_data");
+        tokio::fs::create_dir_all(&omne_data).await?;
 
         tokio::fs::write(
-            codepm_data.join("config.toml"),
+            omne_data.join("config.toml"),
             r#"
 [project_config]
 enabled = true
@@ -527,9 +527,9 @@ fallback_providers = ["openai-auth-command"]
         )
         .await?;
         tokio::fs::write(
-            codepm_data.join(".env"),
+            omne_data.join(".env"),
             r#"
-CODE_PM_OPENAI_FALLBACK_PROVIDERS=openai-codex-apikey, openai-auth-command
+OMNE_OPENAI_FALLBACK_PROVIDERS=openai-codex-apikey, openai-auth-command
 "#,
         )
         .await?;

@@ -2,7 +2,7 @@
 
 > 目标：把“本地全权限执行”的风险压到可接受范围：减少 secrets 泄露面、降低被调试/转储/注入的概率、减少非交互场景挂死。
 >
-> 状态：v0.2.x 已实现 **最小子集**（`CODE_PM_HARDENING` 开关 + pre-main best-effort + child process 最小 env scrub/非交互）；其余仍为 TODO（见下文）。
+> 状态：v0.2.x 已实现 **最小子集**（`OMNE_HARDENING` 开关 + pre-main best-effort + child process 最小 env scrub/非交互）；其余仍为 TODO（见下文）。
 
 ---
 
@@ -25,7 +25,7 @@
 
 v0.2.x 已提供 **明确开关**，并把生效结果写进日志（best-effort，但不能黑箱）：
 
-- env：`CODE_PM_HARDENING=off|best_effort`
+- env：`OMNE_HARDENING=off|best_effort`
   - 默认：`best_effort`
   - `off`：不做 pre-main hardening；child process hardening 仅保留最小子集（env scrub + 非交互约束；不注入 env defaults）。
 - 记录位置：
@@ -37,7 +37,7 @@ v0.2.x 已提供 **明确开关**，并把生效结果写进日志（best-effort
 
 - Linux：core dump/umask/ptrace 限制 best-effort；缺失权限则记录为 skipped/failed。
 - macOS：core dump/umask best-effort；ptrace 限制不支持时记录 skipped。
-- Windows：当前未支持（`pm-app-server` 依赖 `nix`）。
+- Windows：当前未支持（`omne-app-server` 依赖 `nix`）。
 
 fail-closed（只对配置解析）：
 
@@ -72,7 +72,7 @@ fail-closed（只对配置解析）：
 
 验收（未来实现时）：
 
-- `pm-app-server` 启动日志中能看到：增强项是否启用、哪些项成功应用、哪些项因平台/权限失败并被记录为 warning。
+- `omne-app-server` 启动日志中能看到：增强项是否启用、哪些项成功应用、哪些项因平台/权限失败并被记录为 warning。
 
 ---
 

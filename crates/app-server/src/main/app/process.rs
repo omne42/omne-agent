@@ -21,7 +21,7 @@ async fn handle_process_request(
                                 let handle = thread_rt.handle.lock().await;
                                 handle.state().allowed_tools.clone()
                             };
-                            let tool_id = pm_protocol::ToolId::new();
+                            let tool_id = omne_protocol::ToolId::new();
                             let approval_params = serde_json::json!({
                                 "thread_id": thread_id,
                             });

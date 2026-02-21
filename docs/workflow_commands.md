@@ -2,7 +2,7 @@
 
 > 目标：把“常用工作流”做成可版本化、可 review、可复用的 spec 文件，而不是散落在 prompt 里。
 >
-> 状态：v0.2.x 已落地 **v1 最小子集**（`pm command {list,show,run}`）；并发拆分/Orchestrator 读取仍是 TODO（见第 4 节）。
+> 状态：v0.2.x 已落地 **v1 最小子集**（`omne command {list,show,run}`）；并发拆分/Orchestrator 读取仍是 TODO（见第 4 节）。
 
 ---
 
@@ -27,14 +27,14 @@
 
 Project config（可提交/可 review）：
 
-- v1 **只支持**：`./.codepm_data/spec/commands/<name>.md`（不做 fallback/模糊搜索；找不到即报错）
+- v1 **只支持**：`./.omne_data/spec/commands/<name>.md`（不做 fallback/模糊搜索；找不到即报错）
 
 CLI 形态（已实现）：
 
 ```bash
-pm command list
-pm command show <name>
-pm command run <name> --var key=value
+omne command list
+omne command show <name>
+omne command run <name> --var key=value
 ```
 
 ---
@@ -110,7 +110,7 @@ inputs:
 
 ---
 
-## 4) Orchestrator 并发拆分（v0.2.x 最小落地：`pm command run --fan-out`）
+## 4) Orchestrator 并发拆分（v0.2.x 最小落地：`omne command run --fan-out`）
 
 当要把一个 workflow 拆成并发子任务时，我们只支持**一个简单约定**（别发明 DSL）：
 
@@ -118,15 +118,15 @@ inputs:
 
 v0.2.x 行为（已实现）：
 
-- CLI：`pm command run <name> --fan-out`
+- CLI：`omne command run <name> --fan-out`
 - 解析：对渲染后的 command body 扫描 `## Task:` 段落，提取 `task_id/title/body`。
 - fan-out：每个 task 会通过 `thread/fork` 创建子 thread，并强制配置为 `sandbox_policy=read_only` + `mode=reviewer`，然后 `turn/start` 并发执行。
-  - 并发上限：复用 `CODE_PM_MAX_CONCURRENT_SUBAGENTS`（默认 `4`；`0` 表示不限制）。
-  - turn priority：fan-out 子任务使用 `priority=background`；全局 LLM worker pool 会为 foreground 预留并发额度（`CODE_PM_MAX_CONCURRENT_LLM_REQUESTS`/`CODE_PM_LLM_FOREGROUND_RESERVE`）。
+  - 并发上限：复用 `OMNE_MAX_CONCURRENT_SUBAGENTS`（默认 `4`；`0` 表示不限制）。
+  - turn priority：fan-out 子任务使用 `priority=background`；全局 LLM worker pool 会为 foreground 预留并发额度（`OMNE_MAX_CONCURRENT_LLM_REQUESTS`/`OMNE_LLM_FOREGROUND_RESERVE`）。
   - 重要限制：由于 v0.2.x 还没有 workspace 隔离，fan-out 子任务只能做并发只读分析（读文件/索引/事件），不能写代码/跑命令。
 - fan-in：父 thread 会先创建一个 `artifact_type="fan_in_summary"`，fan-out 期间持续更新进度（含 rough ETA）；待所有子任务 `TurnCompleted` 后写入最终汇总（包含每个 task 的 `thread_id/turn_id/status` 与最后一条 `AssistantMessage`）。
-- 主 turn：fan-in 完成后，仍会继续执行原 `pm command run` 的主 turn，并在输入中附带 `fan_in_summary` 的定位信息（便于后续 `pm artifact read`）。
-- “提前返回”策略：`pm command run <name> --fan-out --fan-out-early-return` 会在子任务未全部完成时先启动主 turn，并持续更新 `fan_in_summary`。
+- 主 turn：fan-in 完成后，仍会继续执行原 `omne command run` 的主 turn，并在输入中附带 `fan_in_summary` 的定位信息（便于后续 `omne artifact read`）。
+- “提前返回”策略：`omne command run <name> --fan-out --fan-out-early-return` 会在子任务未全部完成时先启动主 turn，并持续更新 `fan_in_summary`。
 
 非目标（仍 TODO）：
 
@@ -137,7 +137,7 @@ v0.2.x 行为（已实现）：
 
 ## 5) 验收（v0.2.x 现状）
 
-- `pm command list` 能发现 `./.codepm_data/spec/commands/*.md`，并显示 `name/mode/version`。
-- `pm command run <name>` 必须把最终生效的 `mode/allowed_tools` 记录到 thread config（可解释性见 `thread/config/explain`）。
+- `omne command list` 能发现 `./.omne_data/spec/commands/*.md`，并显示 `name/mode/version`。
+- `omne command run <name>` 必须把最终生效的 `mode/allowed_tools` 记录到 thread config（可解释性见 `thread/config/explain`）。
 - `context` 步骤必须全部事件化（`ProcessStarted/Exited`），且输出可从 artifacts 定位（不塞进事件）。
 - fail-closed：任一 context step exit code 不在 `ok_exit_codes` 内时必须终止执行，且错误原因可在事件/日志中定位。

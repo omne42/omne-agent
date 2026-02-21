@@ -60,7 +60,7 @@ async fn auto_compact_summary(
     if summary_text.is_empty() {
         return Ok(false);
     }
-    let summary_text = pm_core::redact_text(summary_text);
+    let summary_text = omne_core::redact_text(summary_text);
     let summary_text = truncate_chars(&summary_text, 20_000);
 
     let artifact_value = match crate::handle_artifact_write(
@@ -126,7 +126,7 @@ async fn auto_compact_summary(
 }
 
 fn resolve_user_instructions_path() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("CODE_PM_USER_INSTRUCTIONS_FILE") {
+    if let Ok(path) = std::env::var("OMNE_USER_INSTRUCTIONS_FILE") {
         let path = path.trim();
         if !path.is_empty() {
             return Some(PathBuf::from(path));
@@ -134,7 +134,7 @@ fn resolve_user_instructions_path() -> Option<PathBuf> {
     }
 
     let home = home_dir()?;
-    Some(home.join(".codepm_data").join("AGENTS.md"))
+    Some(home.join(".omne_data").join("AGENTS.md"))
 }
 
 fn builtin_openai_provider_config(provider: &str) -> Option<ditto_llm::ProviderConfig> {
@@ -275,18 +275,18 @@ fn parse_skill_names(input: &str) -> Vec<String> {
 async fn load_skill(name: &str, thread_root: PathBuf) -> anyhow::Result<Option<(PathBuf, String)>> {
     let mut roots = Vec::<PathBuf>::new();
 
-    if let Ok(dir) = std::env::var("CODE_PM_SKILLS_DIR") {
+    if let Ok(dir) = std::env::var("OMNE_SKILLS_DIR") {
         let dir = dir.trim();
         if !dir.is_empty() {
             roots.push(PathBuf::from(dir));
         }
     }
 
-    roots.push(thread_root.join(".codepm_data").join("spec").join("skills"));
+    roots.push(thread_root.join(".omne_data").join("spec").join("skills"));
     roots.push(thread_root.join(".codex").join("skills"));
 
     if let Some(home) = home_dir() {
-        roots.push(home.join(".codepm_data").join("spec").join("skills"));
+        roots.push(home.join(".omne_data").join("spec").join("skills"));
     }
 
     let candidates = [name.to_string(), name.to_ascii_lowercase()];
@@ -295,7 +295,7 @@ async fn load_skill(name: &str, thread_root: PathBuf) -> anyhow::Result<Option<(
             let path = root.join(candidate).join("SKILL.md");
             match tokio::fs::read_to_string(&path).await {
                 Ok(contents) => {
-                    let contents = pm_core::redact_text(&contents);
+                    let contents = omne_core::redact_text(&contents);
                     return Ok(Some((path, contents)));
                 }
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
@@ -368,7 +368,7 @@ fn usage_total_tokens(usage: &Value) -> Option<u64> {
 }
 
 async fn thread_total_tokens_used(
-    thread_store: &pm_core::ThreadStore,
+    thread_store: &omne_core::ThreadStore,
     thread_id: ThreadId,
 ) -> anyhow::Result<u64> {
     Ok(thread_store

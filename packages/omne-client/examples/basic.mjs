@@ -4,8 +4,8 @@ import path from "node:path";
 import { JsonRpcStdioClient } from "../src/index.js";
 
 async function main() {
-  const pmRoot = await mkdtemp(path.join(os.tmpdir(), "codepm-node-"));
-  const client = JsonRpcStdioClient.spawnPmAppServer({ args: ["--pm-root", pmRoot] });
+  const pmRoot = await mkdtemp(path.join(os.tmpdir(), "omne-node-"));
+  const client = JsonRpcStdioClient.spawnPmAppServer({ args: ["--omne-root", pmRoot] });
 
   await client.call("initialize", {});
   await client.call("initialized", {});

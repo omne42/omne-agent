@@ -6,7 +6,7 @@ mod tests {
     use axum::routing::post;
     use axum::Json;
     use axum::Router;
-    use pm_core::Storage;
+    use omne_core::Storage;
     use serde_json::Value;
     use time::OffsetDateTime;
     use tokio::sync::Mutex;
@@ -14,8 +14,8 @@ mod tests {
     #[tokio::test]
     async fn list_sessions_returns_sorted_unique_ids() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
-        let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
-        let storage = FsStorage::new(pm_paths.data_dir());
+        let omne_paths = PmPaths::new(tmp.path().join(".omne"));
+        let storage = FsStorage::new(omne_paths.data_dir());
 
         let id1: SessionId = "00000000-0000-0000-0000-000000000001".parse()?;
         let id2: SessionId = "00000000-0000-0000-0000-000000000002".parse()?;
@@ -44,17 +44,17 @@ mod tests {
     }
 
     fn make_run_result(
-        prs: Vec<pm_core::PullRequest>,
-        merge: pm_core::MergeResult,
-    ) -> pm_core::RunResult {
+        prs: Vec<omne_core::PullRequest>,
+        merge: omne_core::MergeResult,
+    ) -> omne_core::RunResult {
         let session_id: SessionId = "00000000-0000-0000-0000-000000000123"
             .parse()
             .expect("valid uuid");
-        pm_core::RunResult {
-            session: pm_core::Session {
+        omne_core::RunResult {
+            session: omne_core::Session {
                 id: session_id,
-                repo: pm_core::RepositoryName::sanitize("repo"),
-                pr_name: pm_core::PrName::sanitize("demo"),
+                repo: omne_core::RepositoryName::sanitize("repo"),
+                pr_name: omne_core::PrName::sanitize("demo"),
                 prompt: "x".to_string(),
                 base_branch: "main".to_string(),
                 created_at: OffsetDateTime::from_unix_timestamp(0).unwrap(),
@@ -76,20 +76,20 @@ mod tests {
     #[test]
     fn strict_validation_allows_no_changes_sessions() {
         let result = make_run_result(
-            vec![pm_core::PullRequest {
-                id: pm_core::TaskId::sanitize("t1"),
+            vec![omne_core::PullRequest {
+                id: omne_core::TaskId::sanitize("t1"),
                 head_branch: "ai/demo/123/t1".to_string(),
                 base_branch: "main".to_string(),
-                status: pm_core::PullRequestStatus::NoChanges,
-                checks: pm_core::CheckSummary::default(),
+                status: omne_core::PullRequestStatus::NoChanges,
+                checks: omne_core::CheckSummary::default(),
                 head_commit: None,
             }],
-            pm_core::MergeResult {
+            omne_core::MergeResult {
                 merged: false,
                 base_branch: "main".to_string(),
                 merge_commit: None,
                 merged_prs: Vec::new(),
-                checks: pm_core::CheckSummary::default(),
+                checks: omne_core::CheckSummary::default(),
                 error: None,
                 error_log_path: None,
             },
@@ -100,20 +100,20 @@ mod tests {
     #[test]
     fn strict_validation_fails_on_task_failure() {
         let result = make_run_result(
-            vec![pm_core::PullRequest {
-                id: pm_core::TaskId::sanitize("t1"),
+            vec![omne_core::PullRequest {
+                id: omne_core::TaskId::sanitize("t1"),
                 head_branch: "ai/demo/123/t1".to_string(),
                 base_branch: "main".to_string(),
-                status: pm_core::PullRequestStatus::Failed,
-                checks: pm_core::CheckSummary::default(),
+                status: omne_core::PullRequestStatus::Failed,
+                checks: omne_core::CheckSummary::default(),
                 head_commit: None,
             }],
-            pm_core::MergeResult {
+            omne_core::MergeResult {
                 merged: false,
                 base_branch: "main".to_string(),
                 merge_commit: None,
                 merged_prs: Vec::new(),
-                checks: pm_core::CheckSummary::default(),
+                checks: omne_core::CheckSummary::default(),
                 error: None,
                 error_log_path: None,
             },
@@ -124,20 +124,20 @@ mod tests {
     #[test]
     fn strict_validation_fails_on_merge_error() {
         let result = make_run_result(
-            vec![pm_core::PullRequest {
-                id: pm_core::TaskId::sanitize("t1"),
+            vec![omne_core::PullRequest {
+                id: omne_core::TaskId::sanitize("t1"),
                 head_branch: "ai/demo/123/t1".to_string(),
                 base_branch: "main".to_string(),
-                status: pm_core::PullRequestStatus::Ready,
-                checks: pm_core::CheckSummary::default(),
+                status: omne_core::PullRequestStatus::Ready,
+                checks: omne_core::CheckSummary::default(),
                 head_commit: None,
             }],
-            pm_core::MergeResult {
+            omne_core::MergeResult {
                 merged: false,
                 base_branch: "main".to_string(),
                 merge_commit: None,
                 merged_prs: Vec::new(),
-                checks: pm_core::CheckSummary::default(),
+                checks: omne_core::CheckSummary::default(),
                 error: Some("boom".to_string()),
                 error_log_path: None,
             },
@@ -153,7 +153,7 @@ mod tests {
     #[test]
     fn cli_rejects_zero_max_concurrency() {
         let err = Cli::try_parse_from([
-            "code-pm",
+            "omne",
             "run",
             "--repo",
             "repo",
@@ -172,7 +172,7 @@ mod tests {
     #[test]
     fn cli_run_parses_cargo_test_flag() {
         let cli = Cli::try_parse_from([
-            "code-pm",
+            "omne",
             "run",
             "--repo",
             "repo",
@@ -315,7 +315,7 @@ mod tests {
     #[test]
     fn cli_rejects_auto_tasks_with_task_override() {
         let err = Cli::try_parse_from([
-            "code-pm",
+            "omne",
             "run",
             "--repo",
             "repo",
@@ -335,7 +335,7 @@ mod tests {
     #[test]
     fn cli_rejects_auto_tasks_with_tasks_file_override() {
         let err = Cli::try_parse_from([
-            "code-pm",
+            "omne",
             "run",
             "--repo",
             "repo",
@@ -355,7 +355,7 @@ mod tests {
     #[test]
     fn cli_rejects_empty_pr_name() {
         let err = Cli::try_parse_from([
-            "code-pm",
+            "omne",
             "run",
             "--repo",
             "repo",
@@ -372,7 +372,7 @@ mod tests {
     #[test]
     fn cli_rejects_empty_base_branch() {
         let err = Cli::try_parse_from([
-            "code-pm",
+            "omne",
             "run",
             "--repo",
             "repo",
@@ -391,7 +391,7 @@ mod tests {
     #[test]
     fn cli_rejects_empty_repo_name() {
         let err = Cli::try_parse_from([
-            "code-pm",
+            "omne",
             "run",
             "--repo",
             " ",
@@ -408,7 +408,7 @@ mod tests {
     #[test]
     fn cli_rejects_empty_repo_source() {
         let err = Cli::try_parse_from([
-            "code-pm",
+            "omne",
             "run",
             "--repo-src",
             " ",
@@ -424,7 +424,7 @@ mod tests {
 
     #[test]
     fn cli_rejects_empty_inject_source() {
-        let err = Cli::try_parse_from(["code-pm", "repo", "inject", " "])
+        let err = Cli::try_parse_from(["omne", "repo", "inject", " "])
             .err()
             .expect("cli parse must fail");
         assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
@@ -432,7 +432,7 @@ mod tests {
 
     #[test]
     fn cli_rejects_empty_inject_name() {
-        let err = Cli::try_parse_from(["code-pm", "repo", "inject", "src", "--name", " "])
+        let err = Cli::try_parse_from(["omne", "repo", "inject", "src", "--name", " "])
             .err()
             .expect("cli parse must fail");
         assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
@@ -440,7 +440,7 @@ mod tests {
 
     #[test]
     fn cli_repo_list_parses_json_and_verbose_flags() {
-        let cli = Cli::try_parse_from(["code-pm", "repo", "list", "--json", "--verbose"]).unwrap();
+        let cli = Cli::try_parse_from(["omne", "repo", "list", "--json", "--verbose"]).unwrap();
 
         let Command::Repo { command } = cli.command else {
             panic!("expected repo subcommand");
@@ -454,7 +454,7 @@ mod tests {
 
     #[test]
     fn cli_init_parses_json_flag() {
-        let cli = Cli::try_parse_from(["code-pm", "init", "--json"]).unwrap();
+        let cli = Cli::try_parse_from(["omne", "init", "--json"]).unwrap();
 
         let Command::Init(args) = cli.command else {
             panic!("expected init subcommand");
@@ -464,7 +464,7 @@ mod tests {
 
     #[test]
     fn cli_repo_inject_parses_json_flag() {
-        let cli = Cli::try_parse_from(["code-pm", "repo", "inject", "src", "--json"]).unwrap();
+        let cli = Cli::try_parse_from(["omne", "repo", "inject", "src", "--json"]).unwrap();
 
         let Command::Repo { command } = cli.command else {
             panic!("expected repo subcommand");
@@ -581,36 +581,36 @@ mod tests {
         });
 
         let tmp = tempfile::tempdir()?;
-        let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
+        let omne_paths = PmPaths::new(tmp.path().join(".omne"));
 
         let result = make_run_result(
-            vec![pm_core::PullRequest {
-                id: pm_core::TaskId::sanitize("t1"),
+            vec![omne_core::PullRequest {
+                id: omne_core::TaskId::sanitize("t1"),
                 head_branch: "ai/demo/123/t1".to_string(),
                 base_branch: "main".to_string(),
-                status: pm_core::PullRequestStatus::Ready,
-                checks: pm_core::CheckSummary::default(),
+                status: omne_core::PullRequestStatus::Ready,
+                checks: omne_core::CheckSummary::default(),
                 head_commit: None,
             }],
-            pm_core::MergeResult {
+            omne_core::MergeResult {
                 merged: true,
                 base_branch: "main".to_string(),
                 merge_commit: Some("deadbeef".to_string()),
-                merged_prs: vec![pm_core::TaskId::sanitize("t1")],
-                checks: pm_core::CheckSummary::default(),
+                merged_prs: vec![omne_core::TaskId::sanitize("t1")],
+                checks: omne_core::CheckSummary::default(),
                 error: None,
                 error_log_path: None,
             },
         );
-        let repo = pm_core::RepositoryName::sanitize("repo");
+        let repo = omne_core::RepositoryName::sanitize("repo");
         let session_paths =
-            pm_core::SessionPaths::new_in(tmp.path().join("tmp"), &repo, result.session.id);
+            omne_core::SessionPaths::new_in(tmp.path().join("tmp"), &repo, result.session.id);
 
         let hook = HookSpec::Webhook {
             url: format!("http://{addr}/hook"),
         };
         let runner = WebhookHookRunner::new()?;
-        if let Err(err) = runner.run(&hook, &pm_paths, &session_paths, &result).await {
+        if let Err(err) = runner.run(&hook, &omne_paths, &session_paths, &result).await {
             if is_permission_denied(&err) {
                 eprintln!("skipping webhook hook test: network not permitted");
                 server.abort();
@@ -632,10 +632,10 @@ mod tests {
         assert_eq!(payload["merged"], result.merge.merged);
         assert_eq!(payload["merge_error"], Value::Null);
 
-        assert_eq!(payload["pm_root"], pm_paths.root().display().to_string());
+        assert_eq!(payload["omne_root"], omne_paths.root().display().to_string());
         assert_eq!(
             payload["session_dir"],
-            pm_paths.session_dir(result.session.id).display().to_string()
+            omne_paths.session_dir(result.session.id).display().to_string()
         );
         assert_eq!(payload["tmp_dir"], session_paths.root().display().to_string());
         assert_eq!(
@@ -654,8 +654,8 @@ mod tests {
     #[tokio::test]
     async fn show_session_prefers_result_by_default() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
-        let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
-        let storage = FsStorage::new(pm_paths.data_dir());
+        let omne_paths = PmPaths::new(tmp.path().join(".omne"));
+        let storage = FsStorage::new(omne_paths.data_dir());
 
         let id: SessionId = "00000000-0000-0000-0000-000000000123".parse()?;
         storage
@@ -681,8 +681,8 @@ mod tests {
     #[tokio::test]
     async fn show_session_falls_back_when_result_missing() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
-        let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
-        let storage = FsStorage::new(pm_paths.data_dir());
+        let omne_paths = PmPaths::new(tmp.path().join(".omne"));
+        let storage = FsStorage::new(omne_paths.data_dir());
 
         let id: SessionId = "00000000-0000-0000-0000-000000000456".parse()?;
         storage
@@ -709,8 +709,8 @@ mod tests {
     #[tokio::test]
     async fn show_session_all_includes_all_keys() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
-        let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
-        let storage = FsStorage::new(pm_paths.data_dir());
+        let omne_paths = PmPaths::new(tmp.path().join(".omne"));
+        let storage = FsStorage::new(omne_paths.data_dir());
 
         let id: SessionId = "00000000-0000-0000-0000-000000000789".parse()?;
         storage
@@ -750,11 +750,11 @@ mod tests {
     }
 
     #[test]
-    fn resolve_pm_root_defaults_to_repo_root_dot_code_pm() {
+    fn resolve_pm_root_defaults_to_repo_root_dot_omne() {
         let repo_root = PathBuf::from("/repo");
         assert_eq!(
             resolve_pm_root(&repo_root, None, None),
-            (repo_root.join(".code_pm"), PmRootSource::Default)
+            (repo_root.join(".omne"), PmRootSource::Default)
         );
     }
 
@@ -847,34 +847,34 @@ mod tests {
     fn legacy_pm_root_warning_emits_notice_for_default_root_when_legacy_dir_exists() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let repo_root = tmp.path();
-        std::fs::create_dir_all(repo_root.join(".codex_pm")).expect("create legacy dir");
+        std::fs::create_dir_all(repo_root.join(".codex_omne")).expect("create legacy dir");
 
-        let (pm_root, source) = resolve_pm_root(repo_root, None, None);
+        let (omne_root, source) = resolve_pm_root(repo_root, None, None);
         assert_eq!(source, PmRootSource::Default);
-        assert!(legacy_pm_root_warning(repo_root, &pm_root, source).is_some());
+        assert!(legacy_pm_root_warning(repo_root, &omne_root, source).is_some());
     }
 
     #[test]
     fn legacy_pm_root_warning_skips_when_new_dir_exists() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let repo_root = tmp.path();
-        std::fs::create_dir_all(repo_root.join(".codex_pm")).expect("create legacy dir");
-        std::fs::create_dir_all(repo_root.join(".code_pm")).expect("create new dir");
+        std::fs::create_dir_all(repo_root.join(".codex_omne")).expect("create legacy dir");
+        std::fs::create_dir_all(repo_root.join(".omne")).expect("create new dir");
 
-        let (pm_root, source) = resolve_pm_root(repo_root, None, None);
+        let (omne_root, source) = resolve_pm_root(repo_root, None, None);
         assert_eq!(source, PmRootSource::Default);
-        assert!(legacy_pm_root_warning(repo_root, &pm_root, source).is_none());
+        assert!(legacy_pm_root_warning(repo_root, &omne_root, source).is_none());
     }
 
     #[test]
     fn legacy_pm_root_warning_skips_when_override_root_used() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let repo_root = tmp.path();
-        std::fs::create_dir_all(repo_root.join(".codex_pm")).expect("create legacy dir");
+        std::fs::create_dir_all(repo_root.join(".codex_omne")).expect("create legacy dir");
 
         let override_root = repo_root.join("custom-root");
-        let (pm_root, source) = resolve_pm_root(repo_root, Some(&override_root), None);
+        let (omne_root, source) = resolve_pm_root(repo_root, Some(&override_root), None);
         assert_eq!(source, PmRootSource::Override);
-        assert!(legacy_pm_root_warning(repo_root, &pm_root, source).is_none());
+        assert!(legacy_pm_root_warning(repo_root, &omne_root, source).is_none());
     }
 }

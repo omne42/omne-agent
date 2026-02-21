@@ -1,5 +1,5 @@
 [package]
-name = "pm"
+name = "omne"
 edition.workspace = true
 rust-version.workspace = true
 version.workspace = true
@@ -9,8 +9,10 @@ anyhow.workspace = true
 clap.workspace = true
 crossterm = { version = "0.28", features = ["event-stream"] }
 futures-util.workspace = true
-pm-jsonrpc = { package = "mcp-jsonrpc", path = "../../../mcp-kit/crates/jsonrpc" }
-pm-protocol = { path = "../agent-protocol" }
+notify-kit = { path = "../../../notify-kit/crates/notify-kit" }
+omne-jsonrpc = { package = "mcp-jsonrpc", path = "../../../mcp-kit/crates/jsonrpc" }
+omne-protocol = { path = "../agent-protocol" }
+omne-workflow-spec = { path = "../workflow-spec" }
 ratatui = { version = "0.28", default-features = false, features = ["crossterm", "unstable-rendered-line-info"] }
 serde.workspace = true
 serde_json.workspace = true

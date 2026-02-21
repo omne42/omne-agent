@@ -1,4 +1,4 @@
-# CodePM runtime (do not commit)
+# omne runtime (do not commit)
 tmp/
 data/
 repos/
@@ -12,3 +12,5 @@ config_local.toml
 
 # Secrets (do not commit)
 .env
+reference/
+

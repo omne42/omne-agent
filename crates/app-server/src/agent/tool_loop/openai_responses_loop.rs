@@ -22,7 +22,7 @@ async fn run_openai_responses_codex_parity_loop(
     model_fallbacks: Vec<String>,
     resolved_attachments: Vec<ResolvedAttachment>,
     pdf_file_id_upload_min_bytes: u64,
-    rule_source: pm_protocol::ModelRoutingRuleSource,
+    rule_source: omne_protocol::ModelRoutingRuleSource,
     rule_id: Option<String>,
     cfg: ToolLoopConfig,
 ) -> anyhow::Result<ToolLoopOutcome> {
@@ -766,16 +766,16 @@ async fn run_openai_responses_codex_parity_loop(
         let tool_calls_for_event = function_calls
             .iter()
             .map(|(tool_name, arguments, call_id)| {
-                let arguments = pm_core::redact_text(arguments);
+                let arguments = omne_core::redact_text(arguments);
                 let arguments = truncate_chars(&arguments, 10_000);
-                pm_protocol::AgentStepToolCall {
+                omne_protocol::AgentStepToolCall {
                     name: tool_name.clone(),
                     call_id: call_id.clone(),
                     arguments,
                 }
             })
             .collect::<Vec<_>>();
-        let mut tool_results_for_event = Vec::<pm_protocol::AgentStepToolResult>::new();
+        let mut tool_results_for_event = Vec::<omne_protocol::AgentStepToolResult>::new();
 
         let signature = step_signature(&function_calls);
         if let Some(kind) = loop_detector.observe(signature) {
@@ -851,9 +851,9 @@ async fn run_openai_responses_codex_parity_loop(
 
             for (call_id, output_value, hook_messages) in outputs.into_iter().flatten() {
                 let output_json = serde_json::to_string(&output_value)?;
-                let output_preview = pm_core::redact_text(&output_json);
+                let output_preview = omne_core::redact_text(&output_json);
                 let output_preview = truncate_chars(&output_preview, 10_000);
-                tool_results_for_event.push(pm_protocol::AgentStepToolResult {
+                tool_results_for_event.push(omne_protocol::AgentStepToolResult {
                     call_id: call_id.clone(),
                     output: output_preview,
                 });
@@ -907,9 +907,9 @@ async fn run_openai_responses_codex_parity_loop(
                     Err(err) => (serde_json::json!({ "error": err.to_string() }), Vec::new()),
                 };
                 let output_json = serde_json::to_string(&output_value)?;
-                let output_preview = pm_core::redact_text(&output_json);
+                let output_preview = omne_core::redact_text(&output_json);
                 let output_preview = truncate_chars(&output_preview, 10_000);
-                tool_results_for_event.push(pm_protocol::AgentStepToolResult {
+                tool_results_for_event.push(omne_protocol::AgentStepToolResult {
                     call_id: call_id.clone(),
                     output: output_preview,
                 });

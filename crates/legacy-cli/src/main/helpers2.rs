@@ -1,8 +1,8 @@
-fn validate_strict_run_result(result: &pm_core::RunResult) -> anyhow::Result<()> {
+fn validate_strict_run_result(result: &omne_core::RunResult) -> anyhow::Result<()> {
     let failed: Vec<String> = result
         .prs
         .iter()
-        .filter(|pr| matches!(pr.status, pm_core::PullRequestStatus::Failed))
+        .filter(|pr| matches!(pr.status, omne_core::PullRequestStatus::Failed))
         .map(|pr| pr.id.as_str().to_string())
         .collect();
     if !failed.is_empty() {

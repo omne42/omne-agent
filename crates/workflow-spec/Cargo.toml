@@ -1,0 +1,8 @@
+[package]
+name = "omne-workflow-spec"
+edition.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow.workspace = true

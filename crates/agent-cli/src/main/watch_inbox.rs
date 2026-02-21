@@ -1,3 +1,126 @@
+struct BellNotifier {
+    hub: notify_kit::Hub,
+}
+
+impl BellNotifier {
+    fn from_env() -> anyhow::Result<Self> {
+        const OMNE_NOTIFY_SOUND_ENV: &str = "OMNE_NOTIFY_SOUND";
+        const OMNE_NOTIFY_WEBHOOK_URL_ENV: &str = "OMNE_NOTIFY_WEBHOOK_URL";
+        const OMNE_NOTIFY_WEBHOOK_FIELD_ENV: &str = "OMNE_NOTIFY_WEBHOOK_FIELD";
+        const OMNE_NOTIFY_FEISHU_WEBHOOK_URL_ENV: &str = "OMNE_NOTIFY_FEISHU_WEBHOOK_URL";
+        const OMNE_NOTIFY_SLACK_WEBHOOK_URL_ENV: &str = "OMNE_NOTIFY_SLACK_WEBHOOK_URL";
+        const OMNE_NOTIFY_TIMEOUT_MS_ENV: &str = "OMNE_NOTIFY_TIMEOUT_MS";
+        const OMNE_NOTIFY_EVENTS_ENV: &str = "OMNE_NOTIFY_EVENTS";
+
+        let timeout = parse_notify_timeout_ms_env(OMNE_NOTIFY_TIMEOUT_MS_ENV)
+            .with_context(|| format!("invalid {OMNE_NOTIFY_TIMEOUT_MS_ENV}"))?;
+        let mut sinks: Vec<Arc<dyn notify_kit::Sink>> = Vec::new();
+
+        let sound_enabled = env_bool(OMNE_NOTIFY_SOUND_ENV).unwrap_or(true);
+        if sound_enabled {
+            sinks.push(Arc::new(notify_kit::SoundSink::new(
+                notify_kit::SoundConfig { command_argv: None },
+            )));
+        }
+
+        if let Some(url) = env_nonempty(OMNE_NOTIFY_WEBHOOK_URL_ENV) {
+            let mut cfg = notify_kit::GenericWebhookConfig::new(url).with_timeout(timeout);
+            if let Some(field) = env_nonempty(OMNE_NOTIFY_WEBHOOK_FIELD_ENV) {
+                cfg = cfg.with_payload_field(field);
+            }
+            sinks.push(Arc::new(
+                notify_kit::GenericWebhookSink::new(cfg)
+                    .context("build generic webhook sink")?,
+            ));
+        }
+
+        if let Some(url) = env_nonempty(OMNE_NOTIFY_FEISHU_WEBHOOK_URL_ENV) {
+            let cfg = notify_kit::FeishuWebhookConfig::new(url).with_timeout(timeout);
+            sinks.push(Arc::new(
+                notify_kit::FeishuWebhookSink::new(cfg).context("build feishu sink")?,
+            ));
+        }
+
+        if let Some(url) = env_nonempty(OMNE_NOTIFY_SLACK_WEBHOOK_URL_ENV) {
+            let cfg = notify_kit::SlackWebhookConfig::new(url).with_timeout(timeout);
+            sinks.push(Arc::new(
+                notify_kit::SlackWebhookSink::new(cfg).context("build slack sink")?,
+            ));
+        }
+
+        if sinks.is_empty() {
+            anyhow::bail!(
+                "no notification sinks configured (enable {OMNE_NOTIFY_SOUND_ENV}=1 or provide webhook envs)"
+            );
+        }
+
+        let enabled_kinds = std::env::var(OMNE_NOTIFY_EVENTS_ENV).ok().and_then(|raw| {
+            let set = raw
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(ToString::to_string)
+                .collect::<std::collections::BTreeSet<_>>();
+            if set.is_empty() { None } else { Some(set) }
+        });
+
+        Ok(Self {
+            hub: notify_kit::Hub::new(
+                notify_kit::HubConfig {
+                    enabled_kinds,
+                    per_sink_timeout: timeout,
+                },
+                sinks,
+            ),
+        })
+    }
+
+    fn notify_attention_state(&self, title: String, state: &str) {
+        let severity = match state {
+            "failed" => notify_kit::Severity::Error,
+            "need_approval" | "stuck" => notify_kit::Severity::Warning,
+            _ => notify_kit::Severity::Info,
+        };
+        self.hub.notify(
+            notify_kit::Event::new("attention_state", severity, title).with_tag("state", state),
+        );
+    }
+
+    fn notify_stale_process(&self, title: String) {
+        self.hub.notify(
+            notify_kit::Event::new("stale_process", notify_kit::Severity::Warning, title)
+                .with_tag("state", "stale_process"),
+        );
+    }
+}
+
+fn env_nonempty(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn env_bool(key: &str) -> Option<bool> {
+    let raw = std::env::var(key).ok()?;
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+fn parse_notify_timeout_ms_env(key: &str) -> anyhow::Result<Duration> {
+    let timeout = std::env::var(key)
+        .ok()
+        .map(|raw| raw.trim().to_string())
+        .filter(|raw| !raw.is_empty())
+        .map(|raw| raw.parse::<u64>())
+        .transpose()?
+        .unwrap_or(5000);
+    Ok(Duration::from_millis(timeout.max(1)))
+}
+
 async fn run_watch(app: &mut App, args: WatchArgs) -> anyhow::Result<()> {
     let mut since_seq = args.since_seq;
     let mut last_state: Option<&'static str> = None;
@@ -5,6 +128,7 @@ async fn run_watch(app: &mut App, args: WatchArgs) -> anyhow::Result<()> {
     let mut last_stale_present: Option<bool> = None;
     let mut last_stale_bell_at: Option<Instant> = None;
     let mut suppress_initial_bell = true;
+    let bell_notifier = BellNotifier::from_env()?;
 
     loop {
         let resp = app
@@ -31,7 +155,13 @@ async fn run_watch(app: &mut App, args: WatchArgs) -> anyhow::Result<()> {
 
         if args.bell && !suppress_initial_bell {
             if let Some(state) = state_update {
-                maybe_bell(state, args.debounce_ms, &mut last_state, &mut last_bell_at)?;
+                maybe_bell(
+                    &bell_notifier,
+                    state,
+                    args.debounce_ms,
+                    &mut last_state,
+                    &mut last_bell_at,
+                )?;
             }
         }
 
@@ -43,6 +173,7 @@ async fn run_watch(app: &mut App, args: WatchArgs) -> anyhow::Result<()> {
                 last_stale_present = Some(stale_present);
             } else {
                 maybe_bell_stale(
+                    &bell_notifier,
                     stale_present,
                     args.debounce_ms,
                     &mut last_stale_present,
@@ -147,6 +278,7 @@ async fn run_inbox(app: &mut App, args: InboxArgs) -> anyhow::Result<()> {
         std::collections::HashMap::new();
     let mut stale_bell_state: std::collections::HashMap<ThreadId, (Option<bool>, Option<Instant>)> =
         std::collections::HashMap::new();
+    let bell_notifier = BellNotifier::from_env()?;
 
     loop {
         let raw = app.thread_list_meta(args.include_archived).await?;
@@ -177,6 +309,7 @@ async fn run_inbox(app: &mut App, args: InboxArgs) -> anyhow::Result<()> {
                 } else {
                     let entry = bell_state.entry(*thread_id).or_insert((None, None));
                     maybe_bell_per_thread(
+                        &bell_notifier,
                         thread_id,
                         &thread.attention_state,
                         args.debounce_ms,
@@ -191,6 +324,7 @@ async fn run_inbox(app: &mut App, args: InboxArgs) -> anyhow::Result<()> {
                     let stale_present = !att.stale_processes.is_empty();
                     let entry = stale_bell_state.entry(*thread_id).or_insert((None, None));
                     maybe_bell_stale_per_thread(
+                        &bell_notifier,
                         thread_id,
                         stale_present,
                         args.debounce_ms,
@@ -377,6 +511,7 @@ fn shorten_path(path: &str, max_len: usize) -> String {
 }
 
 fn maybe_bell_per_thread(
+    bell_notifier: &BellNotifier,
     thread_id: &ThreadId,
     state: &str,
     debounce_ms: u64,
@@ -389,8 +524,7 @@ fn maybe_bell_per_thread(
 
     if !debounced {
         eprintln!("attention: {thread_id} -> {state}");
-        print!("\x07");
-        std::io::stdout().flush().ok();
+        bell_notifier.notify_attention_state(format!("attention: {thread_id} -> {state}"), state);
         *last_bell_at = Some(now);
     }
 
@@ -400,17 +534,17 @@ fn maybe_bell_per_thread(
 
 fn attention_state_update(event: &ThreadEvent) -> Option<&'static str> {
     match &event.kind {
-        pm_protocol::ThreadEventKind::ApprovalRequested { .. } => Some("need_approval"),
-        pm_protocol::ThreadEventKind::TurnStarted { .. } => Some("running"),
-        pm_protocol::ThreadEventKind::TurnCompleted { status, .. } => match status {
+        omne_protocol::ThreadEventKind::ApprovalRequested { .. } => Some("need_approval"),
+        omne_protocol::ThreadEventKind::TurnStarted { .. } => Some("running"),
+        omne_protocol::ThreadEventKind::TurnCompleted { status, .. } => match status {
             TurnStatus::Completed => Some("done"),
             TurnStatus::Interrupted => Some("interrupted"),
             TurnStatus::Failed => Some("failed"),
             TurnStatus::Cancelled => Some("cancelled"),
             TurnStatus::Stuck => Some("stuck"),
         },
-        pm_protocol::ThreadEventKind::ProcessStarted { .. } => Some("running"),
-        pm_protocol::ThreadEventKind::ProcessExited { exit_code, .. } => match exit_code {
+        omne_protocol::ThreadEventKind::ProcessStarted { .. } => Some("running"),
+        omne_protocol::ThreadEventKind::ProcessExited { exit_code, .. } => match exit_code {
             Some(code) if *code != 0 => Some("failed"),
             _ => None,
         },
@@ -419,6 +553,7 @@ fn attention_state_update(event: &ThreadEvent) -> Option<&'static str> {
 }
 
 fn maybe_bell(
+    bell_notifier: &BellNotifier,
     state: &'static str,
     debounce_ms: u64,
     last_state: &mut Option<&'static str>,
@@ -435,8 +570,7 @@ fn maybe_bell(
         && last_bell_at.is_some_and(|t| now.duration_since(t) < Duration::from_millis(debounce_ms));
 
     if !debounced {
-        print!("\x07");
-        std::io::stdout().flush().ok();
+        bell_notifier.notify_attention_state(format!("attention -> {state}"), state);
         *last_bell_at = Some(now);
     }
 
@@ -445,6 +579,7 @@ fn maybe_bell(
 }
 
 fn maybe_bell_stale(
+    bell_notifier: &BellNotifier,
     stale_present: bool,
     debounce_ms: u64,
     last_stale_present: &mut Option<bool>,
@@ -460,8 +595,7 @@ fn maybe_bell_stale(
         let debounced = last_bell_at
             .is_some_and(|t| now.duration_since(t) < Duration::from_millis(debounce_ms));
         if !debounced {
-            print!("\x07");
-            std::io::stdout().flush().ok();
+            bell_notifier.notify_stale_process("attention -> stale_process".to_string());
             *last_bell_at = Some(now);
         }
     }
@@ -471,6 +605,7 @@ fn maybe_bell_stale(
 }
 
 fn maybe_bell_stale_per_thread(
+    bell_notifier: &BellNotifier,
     thread_id: &ThreadId,
     stale_present: bool,
     debounce_ms: u64,
@@ -488,8 +623,8 @@ fn maybe_bell_stale_per_thread(
             .is_some_and(|t| now.duration_since(t) < Duration::from_millis(debounce_ms));
         if !debounced {
             eprintln!("attention: {thread_id} -> stale_process");
-            print!("\x07");
-            std::io::stdout().flush().ok();
+            bell_notifier
+                .notify_stale_process(format!("attention: {thread_id} -> stale_process"));
             *last_bell_at = Some(now);
         }
     }

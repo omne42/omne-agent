@@ -14,7 +14,7 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
 
     let file_root = params.root.unwrap_or(FileRoot::Workspace);
     let max_bytes = params.max_bytes.unwrap_or(256 * 1024).min(4 * 1024 * 1024);
-    let tool_id = pm_protocol::ToolId::new();
+    let tool_id = omne_protocol::ToolId::new();
     let approval_params = serde_json::json!({
         "root": file_root.as_str(),
         "path": params.path.clone(),
@@ -39,7 +39,7 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
             Ok(root) => root,
             Err(err) => {
                 thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                    .append_event(omne_protocol::ThreadEventKind::ToolStarted {
                         tool_id,
                         turn_id: params.turn_id,
                         tool: "file/read".to_string(),
@@ -47,9 +47,9 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
                     })
                     .await?;
                 thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                         tool_id,
-                        status: pm_protocol::ToolStatus::Failed,
+                        status: omne_protocol::ToolStatus::Failed,
                         error: Some(err.to_string()),
                         result: Some(serde_json::json!({
                             "root": file_root.as_str(),
@@ -62,12 +62,12 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
         },
     };
 
-    let rel_path = pm_core::modes::relative_path_under_root(&root, Path::new(&params.path));
+    let rel_path = omne_core::modes::relative_path_under_root(&root, Path::new(&params.path));
     if let Ok(rel) = rel_path.as_ref()
         && rel_path_is_secret(rel)
     {
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+            .append_event(omne_protocol::ThreadEventKind::ToolStarted {
                 tool_id,
                 turn_id: params.turn_id,
                 tool: "file/read".to_string(),
@@ -75,9 +75,9 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
             })
             .await?;
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+            .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                 tool_id,
-                status: pm_protocol::ToolStatus::Denied,
+                status: omne_protocol::ToolStatus::Denied,
                 error: Some("refusing to read secrets file (.env)".to_string()),
                 result: Some(serde_json::json!({
                     "reason": "secrets file is always denied",
@@ -89,14 +89,14 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
             "denied": true,
         }));
     }
-    let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
+    let catalog = omne_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {
         Some(mode) => mode,
         None => {
             let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
 
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                .append_event(omne_protocol::ThreadEventKind::ToolStarted {
                     tool_id,
                     turn_id: params.turn_id,
                     tool: "file/read".to_string(),
@@ -104,13 +104,13 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
                 })
                 .await?;
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
-                    status: pm_protocol::ToolStatus::Denied,
+                    status: omne_protocol::ToolStatus::Denied,
                     error: Some("unknown mode".to_string()),
                     result: Some(serde_json::json!({
                         "mode": mode_name,
-                        "decision": pm_core::modes::Decision::Deny,
+                        "decision": omne_core::modes::Decision::Deny,
                         "available": available,
                         "load_error": catalog.load_error.clone(),
                     })),
@@ -120,7 +120,7 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
                 "tool_id": tool_id,
                 "denied": true,
                 "mode": mode_name,
-                "decision": pm_core::modes::Decision::Deny,
+                "decision": omne_core::modes::Decision::Deny,
                 "available": available,
                 "load_error": catalog.load_error.clone(),
             }));
@@ -128,17 +128,17 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
     };
 
     let base_decision = match rel_path.as_ref() {
-        Ok(rel) if mode.permissions.edit.is_denied(rel) => pm_core::modes::Decision::Deny,
+        Ok(rel) if mode.permissions.edit.is_denied(rel) => omne_core::modes::Decision::Deny,
         Ok(_) => mode.permissions.read,
-        Err(_) => pm_core::modes::Decision::Deny,
+        Err(_) => omne_core::modes::Decision::Deny,
     };
     let effective_decision = match mode.tool_overrides.get("file/read").copied() {
         Some(override_decision) => base_decision.combine(override_decision),
         None => base_decision,
     };
-    if effective_decision == pm_core::modes::Decision::Deny {
+    if effective_decision == omne_core::modes::Decision::Deny {
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+            .append_event(omne_protocol::ThreadEventKind::ToolStarted {
                 tool_id,
                 turn_id: params.turn_id,
                 tool: "file/read".to_string(),
@@ -146,9 +146,9 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
             })
             .await?;
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+            .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                 tool_id,
-                status: pm_protocol::ToolStatus::Denied,
+                status: omne_protocol::ToolStatus::Denied,
                 error: Some("mode denies file/read".to_string()),
                 result: Some(serde_json::json!({
                     "mode": mode_name,
@@ -164,7 +164,7 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
         }));
     }
 
-    if effective_decision == pm_core::modes::Decision::Prompt {
+    if effective_decision == omne_core::modes::Decision::Prompt {
         match gate_approval(
             server,
             &thread_rt,
@@ -182,7 +182,7 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
             ApprovalGate::Approved => {}
             ApprovalGate::Denied { remembered } => {
                 thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                    .append_event(omne_protocol::ThreadEventKind::ToolStarted {
                         tool_id,
                         turn_id: params.turn_id,
                         tool: "file/read".to_string(),
@@ -190,9 +190,9 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
                     })
                     .await?;
                     thread_rt
-                        .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                        .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                             tool_id,
-                            status: pm_protocol::ToolStatus::Denied,
+                            status: omne_protocol::ToolStatus::Denied,
                             error: Some(approval_denied_error(remembered).to_string()),
                             result: Some(serde_json::json!({
                                 "approval_policy": approval_policy,
@@ -215,7 +215,7 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
     }
 
     thread_rt
-        .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+        .append_event(omne_protocol::ThreadEventKind::ToolStarted {
             tool_id,
             turn_id: params.turn_id,
             tool: "file/read".to_string(),
@@ -231,18 +231,18 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
                     sandbox_policy,
                     &sandbox_writable_roots,
                     Path::new(&params.path),
-                    pm_core::PathAccess::Read,
+                    omne_core::PathAccess::Read,
                     false,
                 )
                 .await?
             }
             FileRoot::Reference => {
-                pm_core::resolve_file(&root, Path::new(&params.path), pm_core::PathAccess::Read, false)
+                omne_core::resolve_file(&root, Path::new(&params.path), omne_core::PathAccess::Read, false)
                     .await?
             }
         };
 
-        let resolved_rel = pm_core::modes::relative_path_under_root(&root, &path)?;
+        let resolved_rel = omne_core::modes::relative_path_under_root(&root, &path)?;
         if rel_path_is_secret(&resolved_rel) {
             return Err(tool_denied(
                 "refusing to read secrets file (.env)".to_string(),
@@ -252,7 +252,7 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
             ));
         }
         let base_decision = if mode.permissions.edit.is_denied(&resolved_rel) {
-            pm_core::modes::Decision::Deny
+            omne_core::modes::Decision::Deny
         } else {
             mode.permissions.read
         };
@@ -260,7 +260,7 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
             Some(override_decision) => base_decision.combine(override_decision),
             None => base_decision,
         };
-        if effective_decision == pm_core::modes::Decision::Deny {
+        if effective_decision == omne_core::modes::Decision::Deny {
             return Err(tool_denied(
                 "mode denies file/read".to_string(),
                 serde_json::json!({
@@ -290,9 +290,9 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
     match outcome {
         Ok((path, text, truncated, bytes)) => {
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
-                    status: pm_protocol::ToolStatus::Completed,
+                    status: omne_protocol::ToolStatus::Completed,
                     error: None,
                     result: Some(serde_json::json!({
                         "bytes": bytes,
@@ -312,9 +312,9 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
         Err(err) => {
             if let Some(denied) = err.downcast_ref::<ToolDenied>() {
                 thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                         tool_id,
-                        status: pm_protocol::ToolStatus::Denied,
+                        status: omne_protocol::ToolStatus::Denied,
                         error: Some(denied.error.clone()),
                         result: Some(denied.result.clone()),
                     })
@@ -328,9 +328,9 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
                 ))
             } else {
                 thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                    .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                         tool_id,
-                        status: pm_protocol::ToolStatus::Failed,
+                        status: omne_protocol::ToolStatus::Failed,
                         error: Some(err.to_string()),
                         result: None,
                     })
@@ -343,8 +343,8 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
 
 const DEFAULT_IGNORED_DIRS: &[&str] = &[
     ".git",
-    ".code_pm",
-    ".codepm",
+    ".omne",
+    ".omne",
     "target",
     "node_modules",
     "example",

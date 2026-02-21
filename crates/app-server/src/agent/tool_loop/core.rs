@@ -50,7 +50,7 @@ struct ToolLoop {
     model_client: Arc<dyn ditto_llm::LanguageModel>,
     resolved_attachments: Vec<ResolvedAttachment>,
     pdf_file_id_upload_min_bytes: u64,
-    rule_source: pm_protocol::ModelRoutingRuleSource,
+    rule_source: omne_protocol::ModelRoutingRuleSource,
     rule_id: Option<String>,
     cfg: ToolLoopConfig,
 }
@@ -87,7 +87,7 @@ impl ToolLoop {
         } = self;
 
         let openai_responses_codex_parity =
-            parse_env_bool("CODE_PM_OPENAI_RESPONSES_CODEX_PARITY", true)
+            parse_env_bool("OMNE_OPENAI_RESPONSES_CODEX_PARITY", true)
                 && provider_cache
                     .get(&provider)
                     .is_some_and(|runtime| runtime.capabilities.reasoning);
@@ -604,16 +604,16 @@ impl ToolLoop {
             let tool_calls_for_event = function_calls
                 .iter()
                 .map(|(tool_name, arguments, call_id)| {
-                    let arguments = pm_core::redact_text(arguments);
+                    let arguments = omne_core::redact_text(arguments);
                     let arguments = truncate_chars(&arguments, 10_000);
-                    pm_protocol::AgentStepToolCall {
+                    omne_protocol::AgentStepToolCall {
                         name: tool_name.clone(),
                         call_id: call_id.clone(),
                         arguments,
                     }
                 })
                 .collect::<Vec<_>>();
-            let mut tool_results_for_event = Vec::<pm_protocol::AgentStepToolResult>::new();
+            let mut tool_results_for_event = Vec::<omne_protocol::AgentStepToolResult>::new();
 
             let signature = step_signature(&function_calls);
             if let Some(kind) = loop_detector.observe(signature) {
@@ -690,9 +690,9 @@ impl ToolLoop {
 
                 for (call_id, output_value, hook_messages) in outputs.into_iter().flatten() {
                     let output_json = serde_json::to_string(&output_value)?;
-                    let output_preview = pm_core::redact_text(&output_json);
+                    let output_preview = omne_core::redact_text(&output_json);
                     let output_preview = truncate_chars(&output_preview, 10_000);
-                    tool_results_for_event.push(pm_protocol::AgentStepToolResult {
+                    tool_results_for_event.push(omne_protocol::AgentStepToolResult {
                         call_id: call_id.clone(),
                         output: output_preview,
                     });
@@ -748,9 +748,9 @@ impl ToolLoop {
                     };
 
                     let output_json = serde_json::to_string(&output_value)?;
-                    let output_preview = pm_core::redact_text(&output_json);
+                    let output_preview = omne_core::redact_text(&output_json);
                     let output_preview = truncate_chars(&output_preview, 10_000);
-                    tool_results_for_event.push(pm_protocol::AgentStepToolResult {
+                    tool_results_for_event.push(omne_protocol::AgentStepToolResult {
                         call_id: call_id.clone(),
                         output: output_preview,
                     });

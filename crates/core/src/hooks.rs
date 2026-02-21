@@ -10,7 +10,7 @@ pub trait HookRunner: Send + Sync {
     async fn run(
         &self,
         hook: &HookSpec,
-        pm_paths: &PmPaths,
+        omne_paths: &PmPaths,
         session_paths: &SessionPaths,
         result: &RunResult,
     ) -> anyhow::Result<()>;
@@ -40,7 +40,7 @@ impl HookRunner for CommandHookRunner {
     async fn run(
         &self,
         hook: &HookSpec,
-        pm_paths: &PmPaths,
+        omne_paths: &PmPaths,
         session_paths: &SessionPaths,
         result: &RunResult,
     ) -> anyhow::Result<()> {
@@ -52,7 +52,7 @@ impl HookRunner for CommandHookRunner {
         };
 
         let session = &result.session;
-        let pm_session_dir = pm_paths.session_dir(session.id);
+        let omne_session_dir = omne_paths.session_dir(session.id);
         let tmp_session_dir = session_paths.root();
         let result_json = tmp_session_dir.join("result.json");
 
@@ -63,17 +63,14 @@ impl HookRunner for CommandHookRunner {
 
         let mut child = tokio::process::Command::new(program)
             .args(args)
-            .env("CODE_PM_SESSION_ID", session.id.to_string())
-            .env("CODE_PM_REPO", session.repo.as_str())
-            .env("CODE_PM_PR_NAME", session.pr_name.as_str())
-            .env("CODE_PM_PM_ROOT", pm_paths.root().as_os_str())
-            .env("CODE_PM_SESSION_DIR", pm_session_dir.as_os_str())
-            .env("CODE_PM_TMP_DIR", tmp_session_dir.as_os_str())
-            .env("CODE_PM_RESULT_JSON", result_json.as_os_str())
-            .env(
-                "CODE_PM_MERGED",
-                if result.merge.merged { "1" } else { "0" },
-            )
+            .env("OMNE_SESSION_ID", session.id.to_string())
+            .env("OMNE_REPO", session.repo.as_str())
+            .env("OMNE_PR_NAME", session.pr_name.as_str())
+            .env("OMNE_PM_ROOT", omne_paths.root().as_os_str())
+            .env("OMNE_SESSION_DIR", omne_session_dir.as_os_str())
+            .env("OMNE_TMP_DIR", tmp_session_dir.as_os_str())
+            .env("OMNE_RESULT_JSON", result_json.as_os_str())
+            .env("OMNE_MERGED", if result.merge.merged { "1" } else { "0" })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()?;
@@ -134,14 +131,14 @@ mod tests {
 
     struct TestContext {
         _tmp: tempfile::TempDir,
-        pm_paths: PmPaths,
+        omne_paths: PmPaths,
         session_paths: SessionPaths,
         result: RunResult,
     }
 
     async fn setup() -> anyhow::Result<TestContext> {
         let tmp = tempfile::tempdir()?;
-        let pm_paths = PmPaths::new(tmp.path().join(".codepm_data"));
+        let omne_paths = PmPaths::new(tmp.path().join(".omne_data"));
 
         let repo = RepositoryName::sanitize("repo");
         let session_id = SessionId::new();
@@ -175,7 +172,7 @@ mod tests {
 
         Ok(TestContext {
             _tmp: tmp,
-            pm_paths,
+            omne_paths,
             session_paths,
             result,
         })
@@ -188,7 +185,7 @@ mod tests {
 
         let out_path = ctx.session_paths.root().join("hook-env.txt");
         let script = format!(
-            "printf '%s\\n' \\\n  \"$CODE_PM_SESSION_ID\" \\\n  \"$CODE_PM_REPO\" \\\n  \"$CODE_PM_PR_NAME\" \\\n  \"$CODE_PM_PM_ROOT\" \\\n  \"$CODE_PM_SESSION_DIR\" \\\n  \"$CODE_PM_TMP_DIR\" \\\n  \"$CODE_PM_RESULT_JSON\" \\\n  \"$CODE_PM_MERGED\" \\\n  > '{}'",
+            "printf '%s\\n' \\\n  \"$OMNE_SESSION_ID\" \\\n  \"$OMNE_REPO\" \\\n  \"$OMNE_PR_NAME\" \\\n  \"$OMNE_PM_ROOT\" \\\n  \"$OMNE_SESSION_DIR\" \\\n  \"$OMNE_TMP_DIR\" \\\n  \"$OMNE_RESULT_JSON\" \\\n  \"$OMNE_MERGED\" \\\n  > '{}'",
             out_path.display()
         );
 
@@ -199,7 +196,7 @@ mod tests {
 
         let runner = CommandHookRunner;
         runner
-            .run(&hook, &ctx.pm_paths, &ctx.session_paths, &ctx.result)
+            .run(&hook, &ctx.omne_paths, &ctx.session_paths, &ctx.result)
             .await?;
 
         let hook_stdout_log = ctx.session_paths.logs_dir().join("hook.stdout.log");
@@ -214,10 +211,10 @@ mod tests {
         assert_eq!(lines[0], ctx.result.session.id.to_string());
         assert_eq!(lines[1], ctx.result.session.repo.as_str());
         assert_eq!(lines[2], ctx.result.session.pr_name.as_str());
-        assert_eq!(lines[3], ctx.pm_paths.root().display().to_string());
+        assert_eq!(lines[3], ctx.omne_paths.root().display().to_string());
         assert_eq!(
             lines[4],
-            ctx.pm_paths
+            ctx.omne_paths
                 .session_dir(ctx.result.session.id)
                 .display()
                 .to_string()
@@ -243,7 +240,7 @@ mod tests {
 
         let runner = CommandHookRunner;
         runner
-            .run(&hook, &ctx.pm_paths, &ctx.session_paths, &ctx.result)
+            .run(&hook, &ctx.omne_paths, &ctx.session_paths, &ctx.result)
             .await?;
 
         let stdout_log = ctx.session_paths.logs_dir().join("hook.stdout.log");
@@ -274,7 +271,7 @@ mod tests {
 
         let runner = CommandHookRunner;
         let err = runner
-            .run(&hook, &ctx.pm_paths, &ctx.session_paths, &ctx.result)
+            .run(&hook, &ctx.omne_paths, &ctx.session_paths, &ctx.result)
             .await
             .unwrap_err();
 

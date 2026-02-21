@@ -1,5 +1,5 @@
 [package]
-name = "pm-app-server"
+name = "omne-app-server"
 edition.workspace = true
 rust-version.workspace = true
 version.workspace = true
@@ -14,14 +14,18 @@ globset.workspace = true
 futures-util.workspace = true
 nix.workspace = true
 ditto-llm = { path = "../../../ditto-llm" }
-pm-mcp-kit = { package = "mcp-kit", path = "../../../mcp-kit/crates/mcp-kit" }
-pm-jsonrpc = { package = "mcp-jsonrpc", path = "../../../mcp-kit/crates/jsonrpc" }
+notify-kit = { path = "../../../notify-kit/crates/notify-kit" }
+omne-mcp-kit = { package = "mcp-kit", path = "../../../mcp-kit/crates/mcp-kit" }
+omne-jsonrpc = { package = "mcp-jsonrpc", path = "../../../mcp-kit/crates/jsonrpc" }
 safe-fs-tools = { path = "../../../safe-fs-tools" }
-pm-core = { path = "../core" }
-pm-eventlog = { path = "../eventlog" }
-pm-execpolicy = { path = "../execpolicy" }
-pm-app-server-protocol = { path = "../app-server-protocol" }
-pm-protocol = { path = "../agent-protocol" }
+omne-artifact-store = { path = "../artifact-store" }
+omne-core = { path = "../core" }
+omne-eventlog = { path = "../eventlog" }
+omne-execpolicy = { path = "../execpolicy" }
+omne-process-runtime = { path = "../process-runtime" }
+omne-app-server-protocol = { path = "../app-server-protocol" }
+omne-protocol = { path = "../agent-protocol" }
+omne-tool-gate = { path = "../tool-gate" }
 regex.workspace = true
 serde.workspace = true
 serde_json.workspace = true

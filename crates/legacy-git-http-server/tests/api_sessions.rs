@@ -1,15 +1,15 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
-use pm_core::domain::SessionMeta;
-use pm_core::{FsStorage, PmPaths, SessionId, Storage};
+use omne_core::domain::SessionMeta;
+use omne_core::{FsStorage, PmPaths, SessionId, Storage};
 use tower::ServiceExt;
 
 #[tokio::test]
 async fn get_session_rejects_invalid_session_id() -> anyhow::Result<()> {
     let tmp = tempfile::tempdir()?;
-    let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
-    let app = pm_http::router(pm_paths)?;
+    let omne_paths = PmPaths::new(tmp.path().join(".omne"));
+    let app = omne_http::router(omne_paths)?;
 
     let request = Request::builder()
         .uri("/api/v0/sessions/not-a-uuid/session")
@@ -23,8 +23,8 @@ async fn get_session_rejects_invalid_session_id() -> anyhow::Result<()> {
 #[tokio::test]
 async fn get_session_returns_404_when_missing() -> anyhow::Result<()> {
     let tmp = tempfile::tempdir()?;
-    let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
-    let app = pm_http::router(pm_paths)?;
+    let omne_paths = PmPaths::new(tmp.path().join(".omne"));
+    let app = omne_http::router(omne_paths)?;
 
     let id = SessionId::new();
     let request = Request::builder()
@@ -41,10 +41,10 @@ async fn get_session_returns_404_when_missing() -> anyhow::Result<()> {
 #[tokio::test]
 async fn get_session_returns_json_when_present() -> anyhow::Result<()> {
     let tmp = tempfile::tempdir()?;
-    let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
+    let omne_paths = PmPaths::new(tmp.path().join(".omne"));
 
     let id = SessionId::new();
-    let storage = FsStorage::new(pm_paths.data_dir());
+    let storage = FsStorage::new(omne_paths.data_dir());
     storage
         .put_json(
             &format!("sessions/{id}/session"),
@@ -52,7 +52,7 @@ async fn get_session_returns_json_when_present() -> anyhow::Result<()> {
         )
         .await?;
 
-    let app = pm_http::router(pm_paths)?;
+    let app = omne_http::router(omne_paths)?;
     let request = Request::builder()
         .uri(format!("/api/v0/sessions/{id}/session"))
         .body(Body::empty())?;
@@ -69,10 +69,10 @@ async fn get_session_returns_json_when_present() -> anyhow::Result<()> {
 #[tokio::test]
 async fn get_session_bundle_prefers_result_by_default() -> anyhow::Result<()> {
     let tmp = tempfile::tempdir()?;
-    let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
+    let omne_paths = PmPaths::new(tmp.path().join(".omne"));
 
     let id = SessionId::new();
-    let storage = FsStorage::new(pm_paths.data_dir());
+    let storage = FsStorage::new(omne_paths.data_dir());
     storage
         .put_json(
             &format!("sessions/{id}/session"),
@@ -86,7 +86,7 @@ async fn get_session_bundle_prefers_result_by_default() -> anyhow::Result<()> {
         )
         .await?;
 
-    let app = pm_http::router(pm_paths)?;
+    let app = omne_http::router(omne_paths)?;
     let request = Request::builder()
         .uri(format!("/api/v0/sessions/{id}"))
         .body(Body::empty())?;
@@ -103,10 +103,10 @@ async fn get_session_bundle_prefers_result_by_default() -> anyhow::Result<()> {
 #[tokio::test]
 async fn get_session_bundle_all_includes_all_present_keys() -> anyhow::Result<()> {
     let tmp = tempfile::tempdir()?;
-    let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
+    let omne_paths = PmPaths::new(tmp.path().join(".omne"));
 
     let id = SessionId::new();
-    let storage = FsStorage::new(pm_paths.data_dir());
+    let storage = FsStorage::new(omne_paths.data_dir());
     storage
         .put_json(
             &format!("sessions/{id}/session"),
@@ -132,7 +132,7 @@ async fn get_session_bundle_all_includes_all_present_keys() -> anyhow::Result<()
         )
         .await?;
 
-    let app = pm_http::router(pm_paths)?;
+    let app = omne_http::router(omne_paths)?;
     let request = Request::builder()
         .uri(format!("/api/v0/sessions/{id}?all=true"))
         .body(Body::empty())?;
@@ -150,8 +150,8 @@ async fn get_session_bundle_all_includes_all_present_keys() -> anyhow::Result<()
 #[tokio::test]
 async fn get_session_meta_returns_404_when_missing() -> anyhow::Result<()> {
     let tmp = tempfile::tempdir()?;
-    let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
-    let app = pm_http::router(pm_paths)?;
+    let omne_paths = PmPaths::new(tmp.path().join(".omne"));
+    let app = omne_http::router(omne_paths)?;
 
     let id = SessionId::new();
     let request = Request::builder()
@@ -166,10 +166,10 @@ async fn get_session_meta_returns_404_when_missing() -> anyhow::Result<()> {
 #[tokio::test]
 async fn get_session_meta_returns_json_when_present() -> anyhow::Result<()> {
     let tmp = tempfile::tempdir()?;
-    let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
+    let omne_paths = PmPaths::new(tmp.path().join(".omne"));
 
     let id = SessionId::new();
-    let storage = FsStorage::new(pm_paths.data_dir());
+    let storage = FsStorage::new(omne_paths.data_dir());
     storage
         .put_json(
             &format!("sessions/{id}/session"),
@@ -184,7 +184,7 @@ async fn get_session_meta_returns_json_when_present() -> anyhow::Result<()> {
         )
         .await?;
 
-    let app = pm_http::router(pm_paths)?;
+    let app = omne_http::router(omne_paths)?;
     let request = Request::builder()
         .uri(format!("/api/v0/sessions/{id}/meta"))
         .body(Body::empty())?;
@@ -202,10 +202,10 @@ async fn get_session_meta_returns_json_when_present() -> anyhow::Result<()> {
 async fn get_session_bundle_all_flag_without_value_includes_all_present_keys() -> anyhow::Result<()>
 {
     let tmp = tempfile::tempdir()?;
-    let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
+    let omne_paths = PmPaths::new(tmp.path().join(".omne"));
 
     let id = SessionId::new();
-    let storage = FsStorage::new(pm_paths.data_dir());
+    let storage = FsStorage::new(omne_paths.data_dir());
     storage
         .put_json(
             &format!("sessions/{id}/session"),
@@ -231,7 +231,7 @@ async fn get_session_bundle_all_flag_without_value_includes_all_present_keys() -
         )
         .await?;
 
-    let app = pm_http::router(pm_paths)?;
+    let app = omne_http::router(omne_paths)?;
     let request = Request::builder()
         .uri(format!("/api/v0/sessions/{id}?all"))
         .body(Body::empty())?;
@@ -249,12 +249,12 @@ async fn get_session_bundle_all_flag_without_value_includes_all_present_keys() -
 #[tokio::test]
 async fn list_sessions_returns_session_ids() -> anyhow::Result<()> {
     let tmp = tempfile::tempdir()?;
-    let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
+    let omne_paths = PmPaths::new(tmp.path().join(".omne"));
 
     let id1: SessionId = "00000000-0000-0000-0000-000000000001".parse()?;
     let id2: SessionId = "00000000-0000-0000-0000-000000000002".parse()?;
 
-    let storage = FsStorage::new(pm_paths.data_dir());
+    let storage = FsStorage::new(omne_paths.data_dir());
     storage
         .put_json(&format!("sessions/{id2}/tasks"), &serde_json::json!([]))
         .await?;
@@ -265,7 +265,7 @@ async fn list_sessions_returns_session_ids() -> anyhow::Result<()> {
         )
         .await?;
 
-    let app = pm_http::router(pm_paths)?;
+    let app = omne_http::router(omne_paths)?;
     let request = Request::builder()
         .uri("/api/v0/sessions")
         .body(Body::empty())?;
@@ -281,12 +281,12 @@ async fn list_sessions_returns_session_ids() -> anyhow::Result<()> {
 #[tokio::test]
 async fn list_sessions_limit_truncates() -> anyhow::Result<()> {
     let tmp = tempfile::tempdir()?;
-    let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
+    let omne_paths = PmPaths::new(tmp.path().join(".omne"));
 
     let id1: SessionId = "00000000-0000-0000-0000-000000000001".parse()?;
     let id2: SessionId = "00000000-0000-0000-0000-000000000002".parse()?;
 
-    let storage = FsStorage::new(pm_paths.data_dir());
+    let storage = FsStorage::new(omne_paths.data_dir());
     storage
         .put_json(&format!("sessions/{id2}/tasks"), &serde_json::json!([]))
         .await?;
@@ -297,7 +297,7 @@ async fn list_sessions_limit_truncates() -> anyhow::Result<()> {
         )
         .await?;
 
-    let app = pm_http::router(pm_paths)?;
+    let app = omne_http::router(omne_paths)?;
     let request = Request::builder()
         .uri("/api/v0/sessions?limit=1")
         .body(Body::empty())?;
@@ -313,12 +313,12 @@ async fn list_sessions_limit_truncates() -> anyhow::Result<()> {
 #[tokio::test]
 async fn list_sessions_verbose_returns_session_meta_sorted() -> anyhow::Result<()> {
     let tmp = tempfile::tempdir()?;
-    let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
+    let omne_paths = PmPaths::new(tmp.path().join(".omne"));
 
     let id1: SessionId = "00000000-0000-0000-0000-000000000001".parse()?;
     let id2: SessionId = "00000000-0000-0000-0000-000000000002".parse()?;
 
-    let storage = FsStorage::new(pm_paths.data_dir());
+    let storage = FsStorage::new(omne_paths.data_dir());
     storage
         .put_json(
             &format!("sessions/{id1}/session"),
@@ -346,7 +346,7 @@ async fn list_sessions_verbose_returns_session_meta_sorted() -> anyhow::Result<(
         )
         .await?;
 
-    let app = pm_http::router(pm_paths)?;
+    let app = omne_http::router(omne_paths)?;
     let request = Request::builder()
         .uri("/api/v0/sessions?verbose=true")
         .body(Body::empty())?;
@@ -365,12 +365,12 @@ async fn list_sessions_verbose_returns_session_meta_sorted() -> anyhow::Result<(
 #[tokio::test]
 async fn list_sessions_verbose_flag_without_value_is_true() -> anyhow::Result<()> {
     let tmp = tempfile::tempdir()?;
-    let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
+    let omne_paths = PmPaths::new(tmp.path().join(".omne"));
 
     let id1: SessionId = "00000000-0000-0000-0000-000000000001".parse()?;
     let id2: SessionId = "00000000-0000-0000-0000-000000000002".parse()?;
 
-    let storage = FsStorage::new(pm_paths.data_dir());
+    let storage = FsStorage::new(omne_paths.data_dir());
     storage
         .put_json(
             &format!("sessions/{id1}/session"),
@@ -398,7 +398,7 @@ async fn list_sessions_verbose_flag_without_value_is_true() -> anyhow::Result<()
         )
         .await?;
 
-    let app = pm_http::router(pm_paths)?;
+    let app = omne_http::router(omne_paths)?;
     let request = Request::builder()
         .uri("/api/v0/sessions?verbose")
         .body(Body::empty())?;
@@ -418,12 +418,12 @@ async fn list_sessions_verbose_flag_without_value_is_true() -> anyhow::Result<()
 #[tokio::test]
 async fn list_sessions_verbose_limit_truncates() -> anyhow::Result<()> {
     let tmp = tempfile::tempdir()?;
-    let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
+    let omne_paths = PmPaths::new(tmp.path().join(".omne"));
 
     let id1: SessionId = "00000000-0000-0000-0000-000000000001".parse()?;
     let id2: SessionId = "00000000-0000-0000-0000-000000000002".parse()?;
 
-    let storage = FsStorage::new(pm_paths.data_dir());
+    let storage = FsStorage::new(omne_paths.data_dir());
     storage
         .put_json(
             &format!("sessions/{id1}/session"),
@@ -451,7 +451,7 @@ async fn list_sessions_verbose_limit_truncates() -> anyhow::Result<()> {
         )
         .await?;
 
-    let app = pm_http::router(pm_paths)?;
+    let app = omne_http::router(omne_paths)?;
     let request = Request::builder()
         .uri("/api/v0/sessions?verbose=true&limit=1")
         .body(Body::empty())?;

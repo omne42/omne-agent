@@ -1,6 +1,6 @@
-# CodePM v0.1.1 端到端流程（Runbook / Legacy）
+# OmneAgent v0.1.1 端到端流程（Runbook / Legacy）
 
-> 本文描述 **已存档版本 `v0.1.1`** 的 CodePM（Rust）端到端使用流程：repo 注入 → session/task 并发执行 → 本地 PR 分支生成 → 顺序合并 → hook 回调 → 查询与回溯。
+> 本文描述 **已存档版本 `v0.1.1`** 的 OmneAgent（Rust）端到端使用流程：repo 注入 → session/task 并发执行 → 本地 PR 分支生成 → 顺序合并 → hook 回调 → 查询与回溯。
 >
 > 现状提醒：`Coder/Merger` 目前是 **脚本化 Git 流水线**（可选 `git apply` + Rust `cargo fmt/check` + commit/push/merge），并非“真正的 AI 写码/审阅/合并”。`vNext` 重新设计方向见 `docs/development_process.md` 与 `docs/implementation_plan.md`。
 
@@ -17,12 +17,12 @@
 
 ## 1. 目录与数据（你得知道东西落哪儿）
 
-### 1.1 `.code_pm/`（持久化）
+### 1.1 `.omne/`（持久化）
 
 默认在“repo root”下（`git rev-parse --show-toplevel`；不在 git repo 内则为当前目录）：
 
 ```
-.code_pm/
+.omne/
   repos/          # bare repos：{repo}.git
   data/           # sessions JSON：sessions/<id>/*.json
   locks/          # repo locks：{repo}.lock
@@ -30,14 +30,14 @@
 
 覆盖方式：
 
-- CLI：`code-pm --pm-root /path/to/.code_pm ...`（相对路径按 repo root 解析）
-- 环境变量：`CODE_PM_ROOT=/path/to/.code_pm`
+- CLI：`omne --omne-root /path/to/.omne ...`（相对路径按 repo root 解析）
+- 环境变量：`OMNE_ROOT=/path/to/.omne`
 
-兼容提示：如果检测到旧目录 `.codex_pm` 且 `.code_pm` 还不存在，CLI 会输出 warning（你可以 `mv .codex_pm .code_pm` 或 `--pm-root .codex_pm`）。
+兼容提示：如果检测到旧目录 `.codex_omne` 且 `.omne` 还不存在，CLI 会输出 warning（你可以 `mv .codex_omne .omne` 或 `--omne-root .codex_omne`）。
 
 ### 1.2 `/tmp/<repo>_<session_id>/`（一次运行的 artifacts）
 
-默认在 `/tmp`（或 `CODE_PM_TMP_ROOT` 覆盖）：
+默认在 `/tmp`（或 `OMNE_TMP_ROOT` 覆盖）：
 
 ```
 /tmp/<repo>_<session_id>/
@@ -60,13 +60,13 @@
 初始化本地数据目录布局：
 
 ```bash
-cargo run -p code-pm -- init
+cargo run -p omne -- init
 ```
 
-注入一个仓库（本地路径或远端 URL）到 `.code_pm/repos/<name>.git`：
+注入一个仓库（本地路径或远端 URL）到 `.omne/repos/<name>.git`：
 
 ```bash
-cargo run -p code-pm -- repo inject <repo_path_or_url> --name <repo_name>
+cargo run -p omne -- repo inject <repo_path_or_url> --name <repo_name>
 ```
 
 说明：
@@ -78,10 +78,10 @@ cargo run -p code-pm -- repo inject <repo_path_or_url> --name <repo_name>
 列出已注入仓库：
 
 ```bash
-cargo run -p code-pm -- repo list
-cargo run -p code-pm -- repo list --verbose
-cargo run -p code-pm -- repo list --json
-cargo run -p code-pm -- repo list --verbose --json
+cargo run -p omne -- repo list
+cargo run -p omne -- repo list --verbose
+cargo run -p omne -- repo list --json
+cargo run -p omne -- repo list --verbose --json
 ```
 
 ---
@@ -91,7 +91,7 @@ cargo run -p code-pm -- repo list --verbose --json
 启动服务（仅允许 loopback）：
 
 ```bash
-cargo run -p code-pm -- serve --addr 127.0.0.1:9417
+cargo run -p omne -- serve --addr 127.0.0.1:9417
 ```
 
 通过 HTTP clone/push bare repo：
@@ -115,7 +115,7 @@ curl -s http://127.0.0.1:9417/api/v0/sessions/<uuid>/meta
 
 可调项：
 
-- `CODE_PM_HTTP_MAX_BODY_BYTES`：限制 git smart-http 请求体大小（默认 `1GiB`）。
+- `OMNE_HTTP_MAX_BODY_BYTES`：限制 git smart-http 请求体大小（默认 `1GiB`）。
 
 ---
 
@@ -133,7 +133,7 @@ curl -s http://127.0.0.1:9417/api/v0/sessions/<uuid>/meta
 最小示例（单 task，模板拆分）：
 
 ```bash
-cargo run -p code-pm -- run \
+cargo run -p omne -- run \
   --repo <repo_name> \
   --pr-name <pr_name> \
   --prompt "your spec + requirements + goals"
@@ -142,7 +142,7 @@ cargo run -p code-pm -- run \
 如果你就在目标 git repo 内运行，也可以省略 `--repo/--repo-src`：
 
 ```bash
-cargo run -p code-pm -- run \
+cargo run -p omne -- run \
   --pr-name <pr_name> \
   --prompt "your spec + requirements + goals"
 ```
@@ -151,7 +151,7 @@ cargo run -p code-pm -- run \
 
 ```bash
 git diff > /tmp/change.patch
-cargo run -p code-pm -- run \
+cargo run -p omne -- run \
   --repo <repo_name> \
   --pr-name <pr_name> \
   --prompt "..." \
@@ -161,7 +161,7 @@ cargo run -p code-pm -- run \
 对 Rust repo 可选增加 `--cargo-test`（在提交前额外执行 `cargo test --workspace --all-targets`）：
 
 ```bash
-cargo run -p code-pm -- run \
+cargo run -p omne -- run \
   --repo <repo_name> \
   --pr-name <pr_name> \
   --prompt "..." \
@@ -171,7 +171,7 @@ cargo run -p code-pm -- run \
 如果你希望先生成 PR 分支、但不希望修改 base（跳过合并），使用 `--no-merge`：
 
 ```bash
-cargo run -p code-pm -- run \
+cargo run -p omne -- run \
   --repo <repo_name> \
   --pr-name <pr_name> \
   --prompt "..." \
@@ -185,7 +185,7 @@ cargo run -p code-pm -- run \
 2. `--auto-tasks`：`RuleBasedArchitect` 从 prompt 的 checklist/列表/编号列表里提取 task（上限 8）。
 
 ```bash
-cargo run -p code-pm -- run \
+cargo run -p omne -- run \
   --repo <repo_name> \
   --pr-name <pr_name> \
   --prompt $'...\n- [ ] task A\n- [ ] task B\n' \
@@ -196,7 +196,7 @@ cargo run -p code-pm -- run \
 3. 覆盖：显式指定 tasks（绕过 `Architect`）
 
 ```bash
-cargo run -p code-pm -- run \
+cargo run -p omne -- run \
   --repo <repo_name> \
   --pr-name <pr_name> \
   --prompt "..." \
@@ -217,7 +217,7 @@ cargo run -p code-pm -- run \
 ```
 
 ```bash
-cargo run -p code-pm -- run \
+cargo run -p omne -- run \
   --repo <repo_name> \
   --pr-name <pr_name> \
   --prompt "..." \
@@ -246,38 +246,38 @@ cargo run -p code-pm -- run \
 ### 5.1 Command hook（本地命令）
 
 ```bash
-cargo run -p code-pm -- run \
+cargo run -p omne -- run \
   --repo <repo_name> \
   --pr-name <pr_name> \
   --prompt "..." \
   --hook-cmd /usr/bin/env \
-  --hook-arg bash --hook-arg -lc --hook-arg 'echo "$CODE_PM_SESSION_ID $CODE_PM_RESULT_JSON"'
+  --hook-arg bash --hook-arg -lc --hook-arg 'echo "$OMNE_SESSION_ID $OMNE_RESULT_JSON"'
 ```
 
 环境变量（关键）：
 
-- `CODE_PM_SESSION_ID`
-- `CODE_PM_REPO`
-- `CODE_PM_PR_NAME`
-- `CODE_PM_PM_ROOT`
-- `CODE_PM_SESSION_DIR`（`.code_pm/data/sessions/<id>`）
-- `CODE_PM_TMP_DIR`（`/tmp/<repo>_<id>`）
-- `CODE_PM_RESULT_JSON`（`/tmp/.../result.json`）
-- `CODE_PM_MERGED`（`1`/`0`）
+- `OMNE_SESSION_ID`
+- `OMNE_REPO`
+- `OMNE_PR_NAME`
+- `OMNE_PM_ROOT`
+- `OMNE_SESSION_DIR`（`.omne/data/sessions/<id>`）
+- `OMNE_TMP_DIR`（`/tmp/<repo>_<id>`）
+- `OMNE_RESULT_JSON`（`/tmp/.../result.json`）
+- `OMNE_MERGED`（`1`/`0`）
 
 hook stdout/stderr 会写入：`/tmp/<repo>_<id>/logs/hook.{stdout,stderr}.log`。
 
 ### 5.2 Webhook hook（HTTP POST JSON）
 
 ```bash
-cargo run -p code-pm -- run \
+cargo run -p omne -- run \
   --repo <repo_name> \
   --pr-name <pr_name> \
   --prompt "..." \
   --hook-url http://127.0.0.1:3000/webhook
 ```
 
-payload 字段包含：`session_id/repo/pr_name/base_branch/pm_root/session_dir/tmp_dir/result_json/merged/merge_error`。
+payload 字段包含：`session_id/repo/pr_name/base_branch/omne_root/session_dir/tmp_dir/result_json/merged/merge_error`。
 
 ---
 
@@ -286,17 +286,17 @@ payload 字段包含：`session_id/repo/pr_name/base_branch/pm_root/session_dir/
 列出 sessions：
 
 ```bash
-cargo run -p code-pm -- session list
-cargo run -p code-pm -- session list --limit 20
-cargo run -p code-pm -- session list --json
-cargo run -p code-pm -- session list --verbose
+cargo run -p omne -- session list
+cargo run -p omne -- session list --limit 20
+cargo run -p omne -- session list --json
+cargo run -p omne -- session list --verbose
 ```
 
 查看某个 session（默认优先输出 `result`；`--all` 输出 bundle）：
 
 ```bash
-cargo run -p code-pm -- session show <uuid>
-cargo run -p code-pm -- session show <uuid> --all
+cargo run -p omne -- session show <uuid>
+cargo run -p omne -- session show <uuid> --all
 ```
 
 日志位置（排查失败优先看这里）：
@@ -307,7 +307,7 @@ cargo run -p code-pm -- session show <uuid> --all
 
 ---
 
-## 7. 贡献流程（改 CodePM 自己）
+## 7. 贡献流程（改 OmneAgent 自己）
 
 启用 git hooks（强制 Conventional Commits + Rust fmt/check gate）：
 

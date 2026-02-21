@@ -1,4 +1,4 @@
-use pm_protocol::{ThreadEventKind, ToolId, ToolStatus};
+use omne_protocol::{ThreadEventKind, ToolId, ToolStatus};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum HookPoint {
@@ -68,7 +68,7 @@ const MAX_HOOK_PROCESS_TIMEOUT_SECS: u64 = 60;
 const MAX_HOOK_CONTEXT_CHARS: usize = 16 * 1024;
 
 fn hooks_process_timeout() -> Duration {
-    let value = std::env::var("CODE_PM_HOOK_PROCESS_TIMEOUT_SECS")
+    let value = std::env::var("OMNE_HOOK_PROCESS_TIMEOUT_SECS")
         .ok()
         .and_then(|s| s.trim().parse::<u64>().ok())
         .unwrap_or(DEFAULT_HOOK_PROCESS_TIMEOUT_SECS);
@@ -87,7 +87,7 @@ async fn load_hooks_config(
     thread_root: &Path,
 ) -> anyhow::Result<Option<(PathBuf, HooksConfigFile)>> {
     let path = thread_root
-        .join(".codepm_data")
+        .join(".omne_data")
         .join("spec")
         .join("hooks.yaml");
 
@@ -157,7 +157,7 @@ fn truncate_owned_chars(mut s: String, max_chars: usize) -> String {
 }
 
 fn redact_and_truncate_string(s: &str, max_chars: usize) -> String {
-    truncate_owned_chars(pm_core::redact_text(s), max_chars)
+    truncate_owned_chars(omne_core::redact_text(s), max_chars)
 }
 
 fn redact_and_truncate_value(value: &Value, max_string_chars: usize) -> Value {
@@ -350,7 +350,7 @@ async fn run_hook_commands(
         Ok(None) => return Vec::new(),
         Err(err) => {
             let expected_path = thread_root
-                .join(".codepm_data")
+                .join(".omne_data")
                 .join("spec")
                 .join("hooks.yaml");
             record_hooks_config_error(server, thread_id, &expected_path, &err).await;
@@ -453,19 +453,19 @@ async fn run_hook_commands(
 
         let mut env = BTreeMap::<String, String>::new();
         env.insert(
-            "CODE_PM_HOOK_INPUT_PATH".to_string(),
+            "OMNE_HOOK_INPUT_PATH".to_string(),
             input_path.display().to_string(),
         );
         env.insert(
-            "CODE_PM_HOOK_OUTPUT_PATH".to_string(),
+            "OMNE_HOOK_OUTPUT_PATH".to_string(),
             output_path.display().to_string(),
         );
         env.insert(
-            "CODE_PM_HOOK_POINT".to_string(),
+            "OMNE_HOOK_POINT".to_string(),
             hook_point.as_str().to_string(),
         );
         if let Some(tool) = ctx.tool {
-            env.insert("CODE_PM_HOOK_TOOL".to_string(), tool.to_string());
+            env.insert("OMNE_HOOK_TOOL".to_string(), tool.to_string());
         }
 
         let started = handle_process_start_with_env(

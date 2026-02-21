@@ -2,7 +2,7 @@ use std::path::Path;
 
 use anyhow::Context;
 use async_trait::async_trait;
-use pm_core::{
+use omne_core::{
     CheckSummary, MergeResult, PullRequest, PullRequestStatus, Repository, Session, SessionPaths,
     StepSummary,
 };
@@ -68,7 +68,7 @@ impl Default for GitMerger {
 }
 
 #[async_trait]
-impl pm_core::Merger for GitMerger {
+impl omne_core::Merger for GitMerger {
     async fn merge(
         &self,
         repo: &Repository,

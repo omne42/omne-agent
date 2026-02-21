@@ -38,7 +38,7 @@ v0.2.0 口径（写死）：
 按 project 共享（不是按 thread）：
 
 ```
-<pm_root>/
+<omne_root>/
   reference/
     repo/          # 清理后的工作树（无 .git）
     manifest.json  # 清理结果（跳过了哪些文件、总大小等）
@@ -85,11 +85,11 @@ v0.2.0 口径（写死）：
 导入一个本地目录为 reference repo：
 
 ```bash
-pm reference import /path/to/repo --force
+omne reference import /path/to/repo --force
 ```
 
 查看当前 reference repo 状态：
 
 ```bash
-pm reference status
+omne reference status
 ```

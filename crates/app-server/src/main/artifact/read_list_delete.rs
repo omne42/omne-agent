@@ -12,7 +12,7 @@ async fn handle_artifact_list(
             state.allowed_tools.clone(),
         )
     };
-    let tool_id = pm_protocol::ToolId::new();
+    let tool_id = omne_protocol::ToolId::new();
     let approval_params = serde_json::json!({});
     if let Some(result) = enforce_thread_allowed_tools(
         &thread_rt,
@@ -27,15 +27,15 @@ async fn handle_artifact_list(
         return Ok(result);
     }
 
-    let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
+    let catalog = omne_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {
         Some(mode) => mode,
         None => {
             let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
-            let decision = pm_core::modes::Decision::Deny;
+            let decision = omne_core::modes::Decision::Deny;
 
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                .append_event(omne_protocol::ThreadEventKind::ToolStarted {
                     tool_id,
                     turn_id: params.turn_id,
                     tool: "artifact/list".to_string(),
@@ -43,9 +43,9 @@ async fn handle_artifact_list(
                 })
                 .await?;
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
-                    status: pm_protocol::ToolStatus::Denied,
+                    status: omne_protocol::ToolStatus::Denied,
                     error: Some("unknown mode".to_string()),
                     result: Some(serde_json::json!({
                         "mode": mode_name,
@@ -71,9 +71,9 @@ async fn handle_artifact_list(
         Some(override_decision) => base_decision.combine(override_decision),
         None => base_decision,
     };
-    if effective_decision == pm_core::modes::Decision::Deny {
+    if effective_decision == omne_core::modes::Decision::Deny {
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+            .append_event(omne_protocol::ThreadEventKind::ToolStarted {
                 tool_id,
                 turn_id: params.turn_id,
                 tool: "artifact/list".to_string(),
@@ -81,9 +81,9 @@ async fn handle_artifact_list(
             })
             .await?;
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+            .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                 tool_id,
-                status: pm_protocol::ToolStatus::Denied,
+                status: omne_protocol::ToolStatus::Denied,
                 error: Some("mode denies artifact/list".to_string()),
                 result: Some(serde_json::json!({
                     "mode": mode_name,
@@ -99,7 +99,7 @@ async fn handle_artifact_list(
         }));
     }
 
-    if effective_decision == pm_core::modes::Decision::Prompt {
+    if effective_decision == omne_core::modes::Decision::Prompt {
         match gate_approval(
             server,
             &thread_rt,
@@ -117,7 +117,7 @@ async fn handle_artifact_list(
             ApprovalGate::Approved => {}
             ApprovalGate::Denied { remembered } => {
                 thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                    .append_event(omne_protocol::ThreadEventKind::ToolStarted {
                         tool_id,
                         turn_id: params.turn_id,
                         tool: "artifact/list".to_string(),
@@ -125,9 +125,9 @@ async fn handle_artifact_list(
                     })
                     .await?;
                     thread_rt
-                        .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                        .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                             tool_id,
-                            status: pm_protocol::ToolStatus::Denied,
+                            status: omne_protocol::ToolStatus::Denied,
                             error: Some(approval_denied_error(remembered).to_string()),
                             result: Some(serde_json::json!({
                                 "approval_policy": approval_policy,
@@ -151,7 +151,7 @@ async fn handle_artifact_list(
     }
 
     thread_rt
-        .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+        .append_event(omne_protocol::ThreadEventKind::ToolStarted {
             tool_id,
             turn_id: params.turn_id,
             tool: "artifact/list".to_string(),
@@ -218,9 +218,9 @@ async fn handle_artifact_list(
     match outcome {
         Ok((artifacts, errors)) => {
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
-                    status: pm_protocol::ToolStatus::Completed,
+                    status: omne_protocol::ToolStatus::Completed,
                     error: None,
                     result: Some(serde_json::json!({
                         "artifacts": artifacts.len(),
@@ -237,9 +237,9 @@ async fn handle_artifact_list(
         }
         Err(err) => {
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
-                    status: pm_protocol::ToolStatus::Failed,
+                    status: omne_protocol::ToolStatus::Failed,
                     error: Some(err.to_string()),
                     result: None,
                 })
@@ -265,7 +265,7 @@ async fn handle_artifact_read(
             state.allowed_tools.clone(),
         )
     };
-    let tool_id = pm_protocol::ToolId::new();
+    let tool_id = omne_protocol::ToolId::new();
     let approval_params = serde_json::json!({
         "artifact_id": params.artifact_id,
         "max_bytes": max_bytes,
@@ -283,15 +283,15 @@ async fn handle_artifact_read(
         return Ok(result);
     }
 
-    let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
+    let catalog = omne_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {
         Some(mode) => mode,
         None => {
             let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
-            let decision = pm_core::modes::Decision::Deny;
+            let decision = omne_core::modes::Decision::Deny;
 
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                .append_event(omne_protocol::ThreadEventKind::ToolStarted {
                     tool_id,
                     turn_id: params.turn_id,
                     tool: "artifact/read".to_string(),
@@ -299,9 +299,9 @@ async fn handle_artifact_read(
                 })
                 .await?;
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
-                    status: pm_protocol::ToolStatus::Denied,
+                    status: omne_protocol::ToolStatus::Denied,
                     error: Some("unknown mode".to_string()),
                     result: Some(serde_json::json!({
                         "mode": mode_name,
@@ -327,9 +327,9 @@ async fn handle_artifact_read(
         Some(override_decision) => base_decision.combine(override_decision),
         None => base_decision,
     };
-    if effective_decision == pm_core::modes::Decision::Deny {
+    if effective_decision == omne_core::modes::Decision::Deny {
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+            .append_event(omne_protocol::ThreadEventKind::ToolStarted {
                 tool_id,
                 turn_id: params.turn_id,
                 tool: "artifact/read".to_string(),
@@ -337,9 +337,9 @@ async fn handle_artifact_read(
             })
             .await?;
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+            .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                 tool_id,
-                status: pm_protocol::ToolStatus::Denied,
+                status: omne_protocol::ToolStatus::Denied,
                 error: Some("mode denies artifact/read".to_string()),
                 result: Some(serde_json::json!({
                     "mode": mode_name,
@@ -355,7 +355,7 @@ async fn handle_artifact_read(
         }));
     }
 
-    if effective_decision == pm_core::modes::Decision::Prompt {
+    if effective_decision == omne_core::modes::Decision::Prompt {
         match gate_approval(
             server,
             &thread_rt,
@@ -373,7 +373,7 @@ async fn handle_artifact_read(
             ApprovalGate::Approved => {}
             ApprovalGate::Denied { remembered } => {
                 thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                    .append_event(omne_protocol::ThreadEventKind::ToolStarted {
                         tool_id,
                         turn_id: params.turn_id,
                         tool: "artifact/read".to_string(),
@@ -381,9 +381,9 @@ async fn handle_artifact_read(
                     })
                     .await?;
                     thread_rt
-                        .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                        .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                             tool_id,
-                            status: pm_protocol::ToolStatus::Denied,
+                            status: omne_protocol::ToolStatus::Denied,
                             error: Some(approval_denied_error(remembered).to_string()),
                             result: Some(serde_json::json!({
                                 "approval_policy": approval_policy,
@@ -407,7 +407,7 @@ async fn handle_artifact_read(
     }
 
     thread_rt
-        .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+        .append_event(omne_protocol::ThreadEventKind::ToolStarted {
             tool_id,
             turn_id: params.turn_id,
             tool: "artifact/read".to_string(),
@@ -422,9 +422,9 @@ async fn handle_artifact_read(
         Ok(meta) => meta,
         Err(err) => {
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
-                    status: pm_protocol::ToolStatus::Failed,
+                    status: omne_protocol::ToolStatus::Failed,
                     error: Some(err.to_string()),
                     result: None,
                 })
@@ -440,9 +440,9 @@ async fn handle_artifact_read(
         Ok(bytes) => bytes,
         Err(err) => {
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
-                    status: pm_protocol::ToolStatus::Failed,
+                    status: omne_protocol::ToolStatus::Failed,
                     error: Some(err.to_string()),
                     result: None,
                 })
@@ -457,12 +457,12 @@ async fn handle_artifact_read(
         bytes
     };
     let text = String::from_utf8_lossy(&bytes).to_string();
-    let text = pm_core::redact_text(&text);
+    let text = omne_core::redact_text(&text);
 
     thread_rt
-        .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+        .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
             tool_id,
-            status: pm_protocol::ToolStatus::Completed,
+            status: omne_protocol::ToolStatus::Completed,
             error: None,
             result: Some(serde_json::json!({
                 "artifact_id": params.artifact_id,
@@ -495,7 +495,7 @@ async fn handle_artifact_delete(
             state.allowed_tools.clone(),
         )
     };
-    let tool_id = pm_protocol::ToolId::new();
+    let tool_id = omne_protocol::ToolId::new();
     let approval_params = serde_json::json!({
         "artifact_id": params.artifact_id,
     });
@@ -512,15 +512,15 @@ async fn handle_artifact_delete(
         return Ok(result);
     }
 
-    let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
+    let catalog = omne_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {
         Some(mode) => mode,
         None => {
             let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
-            let decision = pm_core::modes::Decision::Deny;
+            let decision = omne_core::modes::Decision::Deny;
 
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                .append_event(omne_protocol::ThreadEventKind::ToolStarted {
                     tool_id,
                     turn_id: params.turn_id,
                     tool: "artifact/delete".to_string(),
@@ -528,9 +528,9 @@ async fn handle_artifact_delete(
                 })
                 .await?;
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
-                    status: pm_protocol::ToolStatus::Denied,
+                    status: omne_protocol::ToolStatus::Denied,
                     error: Some("unknown mode".to_string()),
                     result: Some(serde_json::json!({
                         "mode": mode_name,
@@ -556,9 +556,9 @@ async fn handle_artifact_delete(
         Some(override_decision) => base_decision.combine(override_decision),
         None => base_decision,
     };
-    if effective_decision == pm_core::modes::Decision::Deny {
+    if effective_decision == omne_core::modes::Decision::Deny {
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+            .append_event(omne_protocol::ThreadEventKind::ToolStarted {
                 tool_id,
                 turn_id: params.turn_id,
                 tool: "artifact/delete".to_string(),
@@ -566,9 +566,9 @@ async fn handle_artifact_delete(
             })
             .await?;
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+            .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                 tool_id,
-                status: pm_protocol::ToolStatus::Denied,
+                status: omne_protocol::ToolStatus::Denied,
                 error: Some("mode denies artifact/delete".to_string()),
                 result: Some(serde_json::json!({
                     "mode": mode_name,
@@ -584,7 +584,7 @@ async fn handle_artifact_delete(
         }));
     }
 
-    if effective_decision == pm_core::modes::Decision::Prompt {
+    if effective_decision == omne_core::modes::Decision::Prompt {
         match gate_approval(
             server,
             &thread_rt,
@@ -602,7 +602,7 @@ async fn handle_artifact_delete(
             ApprovalGate::Approved => {}
             ApprovalGate::Denied { remembered } => {
                 thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                    .append_event(omne_protocol::ThreadEventKind::ToolStarted {
                         tool_id,
                         turn_id: params.turn_id,
                         tool: "artifact/delete".to_string(),
@@ -610,9 +610,9 @@ async fn handle_artifact_delete(
                     })
                     .await?;
                     thread_rt
-                        .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                        .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                             tool_id,
-                            status: pm_protocol::ToolStatus::Denied,
+                            status: omne_protocol::ToolStatus::Denied,
                             error: Some(approval_denied_error(remembered).to_string()),
                             result: Some(serde_json::json!({
                                 "approval_policy": approval_policy,
@@ -636,7 +636,7 @@ async fn handle_artifact_delete(
     }
 
     thread_rt
-        .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+        .append_event(omne_protocol::ThreadEventKind::ToolStarted {
             tool_id,
             turn_id: params.turn_id,
             tool: "artifact/delete".to_string(),
@@ -670,9 +670,9 @@ async fn handle_artifact_delete(
     match outcome {
         Ok(removed) => {
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
-                    status: pm_protocol::ToolStatus::Completed,
+                    status: omne_protocol::ToolStatus::Completed,
                     error: None,
                     result: Some(serde_json::json!({
                         "artifact_id": params.artifact_id,
@@ -688,9 +688,9 @@ async fn handle_artifact_delete(
         }
         Err(err) => {
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
-                    status: pm_protocol::ToolStatus::Failed,
+                    status: omne_protocol::ToolStatus::Failed,
                     error: Some(err.to_string()),
                     result: None,
                 })

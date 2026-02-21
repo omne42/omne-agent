@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use async_trait::async_trait;
-use pm_core::{
+use omne_core::{
     CheckSummary, PullRequest, PullRequestStatus, Repository, RunRequest, Session, SessionPaths,
     StepSummary, TaskPaths, TaskSpec,
 };
@@ -92,7 +92,7 @@ impl GitCoder {
 }
 
 #[async_trait]
-impl pm_core::Coder for GitCoder {
+impl omne_core::Coder for GitCoder {
     async fn execute(
         &self,
         repo: &Repository,

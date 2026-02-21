@@ -14,7 +14,7 @@ fn resolve_pm_root(
             };
             (root, PmRootSource::Override)
         }
-        _ => (repo_root.join(".code_pm"), PmRootSource::Default),
+        _ => (repo_root.join(".omne"), PmRootSource::Default),
     }
 }
 
@@ -26,19 +26,19 @@ enum PmRootSource {
 
 fn legacy_pm_root_warning(
     repo_root: &std::path::Path,
-    pm_root: &std::path::Path,
+    omne_root: &std::path::Path,
     source: PmRootSource,
 ) -> Option<String> {
     if source != PmRootSource::Default {
         return None;
     }
 
-    let legacy = repo_root.join(".codex_pm");
-    if legacy.is_dir() && !pm_root.is_dir() {
+    let legacy = repo_root.join(".codex_omne");
+    if legacy.is_dir() && !omne_root.is_dir() {
         Some(format!(
-            "warning: found legacy pm root `{}` but current default is `{}`; to reuse old data: `code-pm --pm-root .codex_pm ...` or `mv .codex_pm .code_pm`",
+            "warning: found legacy omne root `{}` but current default is `{}`; to reuse old data: `omne --omne-root .codex_omne ...` or `mv .codex_omne .omne`",
             legacy.display(),
-            pm_root.display()
+            omne_root.display()
         ))
     } else {
         None
@@ -135,8 +135,8 @@ async fn run_session(
     } else {
         Arc::new(TemplateArchitect)
     };
-    let coder: Arc<dyn pm_core::Coder> = Arc::new(pm_git::GitCoder::default());
-    let merger: Arc<dyn pm_core::Merger> = Arc::new(pm_git::GitMerger::default());
+    let coder: Arc<dyn omne_core::Coder> = Arc::new(omne_git::GitCoder::default());
+    let merger: Arc<dyn omne_core::Merger> = Arc::new(omne_git::GitMerger::default());
 
     let events = EventBus::default();
     let stream_events_mode =
@@ -195,7 +195,7 @@ async fn run_session(
             merger,
         };
 
-        let request = pm_core::RunRequest {
+        let request = omne_core::RunRequest {
             pr_name,
             prompt,
             base_branch: args.base,
@@ -247,18 +247,18 @@ fn parse_non_empty_trimmed(value: &str) -> Result<String, String> {
     }
 }
 
-fn sanitize_repo_name_input(value: &str) -> pm_core::RepositoryName {
+fn sanitize_repo_name_input(value: &str) -> omne_core::RepositoryName {
     let value = value.trim();
     let value = value.trim_end_matches(['/', '\\']);
     let value = value.strip_suffix(".git").unwrap_or(value);
-    pm_core::RepositoryName::sanitize(value)
+    omne_core::RepositoryName::sanitize(value)
 }
 
 #[derive(Debug)]
 enum ResolvedRunRepo {
-    Load(pm_core::RepositoryName),
+    Load(omne_core::RepositoryName),
     Inject {
-        repo_name: pm_core::RepositoryName,
+        repo_name: omne_core::RepositoryName,
         source: String,
     },
 }
@@ -285,7 +285,7 @@ fn resolve_run_repo(repo_root: &RepoRoot, args: &RunArgs) -> anyhow::Result<Reso
                 .file_name()
                 .and_then(|name| name.to_str())
                 .map(sanitize_repo_name_input)
-                .unwrap_or_else(|| pm_core::RepositoryName::sanitize("repo"));
+                .unwrap_or_else(|| omne_core::RepositoryName::sanitize("repo"));
             let source = repo_root.root.to_string_lossy().to_string();
             Ok(ResolvedRunRepo::Inject { repo_name, source })
         }
@@ -324,19 +324,19 @@ impl HookRunner for CliHookRunner {
     async fn run(
         &self,
         hook: &HookSpec,
-        pm_paths: &PmPaths,
-        session_paths: &pm_core::SessionPaths,
-        result: &pm_core::RunResult,
+        omne_paths: &PmPaths,
+        session_paths: &omne_core::SessionPaths,
+        result: &omne_core::RunResult,
     ) -> anyhow::Result<()> {
         match hook {
             HookSpec::Command { .. } => {
                 self.command
-                    .run(hook, pm_paths, session_paths, result)
+                    .run(hook, omne_paths, session_paths, result)
                     .await
             }
             HookSpec::Webhook { .. } => {
                 self.webhook
-                    .run(hook, pm_paths, session_paths, result)
+                    .run(hook, omne_paths, session_paths, result)
                     .await
             }
         }
@@ -362,9 +362,9 @@ impl HookRunner for WebhookHookRunner {
     async fn run(
         &self,
         hook: &HookSpec,
-        pm_paths: &PmPaths,
-        session_paths: &pm_core::SessionPaths,
-        result: &pm_core::RunResult,
+        omne_paths: &PmPaths,
+        session_paths: &omne_core::SessionPaths,
+        result: &omne_core::RunResult,
     ) -> anyhow::Result<()> {
         let url = match hook {
             HookSpec::Webhook { url } => url.as_str(),
@@ -374,7 +374,7 @@ impl HookRunner for WebhookHookRunner {
         };
 
         let session = &result.session;
-        let pm_session_dir = pm_paths.session_dir(session.id);
+        let omne_session_dir = omne_paths.session_dir(session.id);
         let tmp_session_dir = session_paths.root();
         let result_json = tmp_session_dir.join("result.json");
 
@@ -383,8 +383,8 @@ impl HookRunner for WebhookHookRunner {
             "repo": session.repo.as_str(),
             "pr_name": session.pr_name.as_str(),
             "base_branch": session.base_branch.as_str(),
-            "pm_root": pm_paths.root().display().to_string(),
-            "session_dir": pm_session_dir.display().to_string(),
+            "omne_root": omne_paths.root().display().to_string(),
+            "session_dir": omne_session_dir.display().to_string(),
             "tmp_dir": tmp_session_dir.display().to_string(),
             "result_json": result_json.display().to_string(),
             "merged": result.merge.merged,

@@ -4,11 +4,11 @@ use std::sync::Arc;
 
 use time::OffsetDateTime;
 
-use pm_core::{
+use omne_core::{
     CheckSummary, EventBus, FsStorage, Merger, NoopHookRunner, Orchestrator, PmPaths, PrName,
     PullRequest, PullRequestStatus, RepositoryName, Session, SessionId, SessionPaths, TaskId,
 };
-use pm_git::{GitCoder, GitMerger, RepoManager};
+use omne_git::{GitCoder, GitMerger, RepoManager};
 
 fn run_git(repo: &Path, args: &[&str]) -> anyhow::Result<String> {
     let output = Command::new("git").current_dir(repo).args(args).output()?;
@@ -150,10 +150,13 @@ fn make_patch(dir: &Path) -> anyhow::Result<PathBuf> {
 struct SingleTaskArchitect;
 
 #[async_trait::async_trait]
-impl pm_core::Architect for SingleTaskArchitect {
-    async fn split(&self, session: &pm_core::Session) -> anyhow::Result<Vec<pm_core::TaskSpec>> {
-        Ok(vec![pm_core::TaskSpec {
-            id: pm_core::TaskId::sanitize("main"),
+impl omne_core::Architect for SingleTaskArchitect {
+    async fn split(
+        &self,
+        session: &omne_core::Session,
+    ) -> anyhow::Result<Vec<omne_core::TaskSpec>> {
+        Ok(vec![omne_core::TaskSpec {
+            id: omne_core::TaskId::sanitize("main"),
             title: format!("Implement {}", session.pr_name.as_str()),
             description: None,
         }])
@@ -167,8 +170,8 @@ async fn repo_inject_accepts_relative_source_paths() -> anyhow::Result<()> {
     let source_repo = tmp.path().join("source");
     init_source_repo(&source_repo)?;
 
-    let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
-    let repo_manager = RepoManager::new(pm_paths.clone());
+    let omne_paths = PmPaths::new(tmp.path().join(".omne"));
+    let repo_manager = RepoManager::new(omne_paths.clone());
     let repo_name = RepositoryName::sanitize("source");
 
     let source_repo_rel = source_repo
@@ -193,8 +196,8 @@ async fn repo_inject_updates_origin_when_repo_exists() -> anyhow::Result<()> {
     run_git(&source_repo_2, &["add", "hello.txt"])?;
     run_git(&source_repo_2, &["commit", "-m", "chore(test): update"])?;
 
-    let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
-    let repo_manager = RepoManager::new(pm_paths.clone());
+    let omne_paths = PmPaths::new(tmp.path().join(".omne"));
+    let repo_manager = RepoManager::new(omne_paths.clone());
     let repo_name = RepositoryName::sanitize("source");
 
     let repo = repo_manager
@@ -217,12 +220,12 @@ async fn repo_inject_populates_heads_for_preexisting_bare_repo() -> anyhow::Resu
     let source_repo = tmp.path().join("source");
     init_source_repo(&source_repo)?;
 
-    let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
-    let repo_manager = RepoManager::new(pm_paths.clone());
+    let omne_paths = PmPaths::new(tmp.path().join(".omne"));
+    let repo_manager = RepoManager::new(omne_paths.clone());
     repo_manager.ensure_layout().await?;
 
     let repo_name = RepositoryName::sanitize("source");
-    let bare_repo = pm_paths.repo_bare_path(&repo_name);
+    let bare_repo = omne_paths.repo_bare_path(&repo_name);
     run_git(
         tmp.path(),
         &["init", "--bare", bare_repo.to_string_lossy().as_ref()],
@@ -244,15 +247,15 @@ async fn inject_run_merge_updates_base_branch() -> anyhow::Result<()> {
     init_source_repo(&source_repo)?;
     let patch_path = make_patch(&source_repo)?;
 
-    let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
-    let repo_manager = RepoManager::new(pm_paths.clone());
+    let omne_paths = PmPaths::new(tmp.path().join(".omne"));
+    let repo_manager = RepoManager::new(omne_paths.clone());
     let repo_name = RepositoryName::sanitize("source");
     let source_repo_arg = source_repo.to_string_lossy();
     let repo = repo_manager
         .inject(&repo_name, source_repo_arg.as_ref())
         .await?;
 
-    let storage = FsStorage::new(pm_paths.data_dir());
+    let storage = FsStorage::new(omne_paths.data_dir());
 
     let orchestrator = Orchestrator {
         storage: Arc::new(storage),
@@ -265,9 +268,9 @@ async fn inject_run_merge_updates_base_branch() -> anyhow::Result<()> {
 
     let result = orchestrator
         .run(
-            &pm_paths,
+            &omne_paths,
             repo.clone(),
-            pm_core::RunRequest {
+            omne_core::RunRequest {
                 pr_name: PrName::sanitize("test"),
                 prompt: "update hello".to_string(),
                 base_branch: "main".to_string(),
@@ -302,15 +305,15 @@ async fn inject_run_merge_uses_concurrent_path() -> anyhow::Result<()> {
     init_source_repo(&source_repo)?;
     let patch_path = make_patch(&source_repo)?;
 
-    let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
-    let repo_manager = RepoManager::new(pm_paths.clone());
+    let omne_paths = PmPaths::new(tmp.path().join(".omne"));
+    let repo_manager = RepoManager::new(omne_paths.clone());
     let repo_name = RepositoryName::sanitize("source");
     let source_repo_arg = source_repo.to_string_lossy();
     let repo = repo_manager
         .inject(&repo_name, source_repo_arg.as_ref())
         .await?;
 
-    let storage = FsStorage::new(pm_paths.data_dir());
+    let storage = FsStorage::new(omne_paths.data_dir());
 
     let orchestrator = Orchestrator {
         storage: Arc::new(storage),
@@ -322,13 +325,13 @@ async fn inject_run_merge_uses_concurrent_path() -> anyhow::Result<()> {
     };
 
     let tasks = vec![
-        pm_core::TaskSpec {
-            id: pm_core::TaskId::sanitize("a"),
+        omne_core::TaskSpec {
+            id: omne_core::TaskId::sanitize("a"),
             title: "Apply patch A".to_string(),
             description: None,
         },
-        pm_core::TaskSpec {
-            id: pm_core::TaskId::sanitize("b"),
+        omne_core::TaskSpec {
+            id: omne_core::TaskId::sanitize("b"),
             title: "Apply patch B".to_string(),
             description: None,
         },
@@ -336,9 +339,9 @@ async fn inject_run_merge_uses_concurrent_path() -> anyhow::Result<()> {
 
     let result = orchestrator
         .run(
-            &pm_paths,
+            &omne_paths,
             repo.clone(),
-            pm_core::RunRequest {
+            omne_core::RunRequest {
                 pr_name: PrName::sanitize("test"),
                 prompt: "update hello".to_string(),
                 base_branch: "main".to_string(),
@@ -385,15 +388,15 @@ index 1111111..2222222 100644
 "#,
     )?;
 
-    let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
-    let repo_manager = RepoManager::new(pm_paths.clone());
+    let omne_paths = PmPaths::new(tmp.path().join(".omne"));
+    let repo_manager = RepoManager::new(omne_paths.clone());
     let repo_name = RepositoryName::sanitize("source");
     let source_repo_arg = source_repo.to_string_lossy();
     let repo = repo_manager
         .inject(&repo_name, source_repo_arg.as_ref())
         .await?;
 
-    let storage = FsStorage::new(pm_paths.data_dir());
+    let storage = FsStorage::new(omne_paths.data_dir());
 
     let orchestrator = Orchestrator {
         storage: Arc::new(storage),
@@ -406,9 +409,9 @@ index 1111111..2222222 100644
 
     let result = orchestrator
         .run(
-            &pm_paths,
+            &omne_paths,
             repo.clone(),
-            pm_core::RunRequest {
+            omne_core::RunRequest {
                 pr_name: PrName::sanitize("test"),
                 prompt: "invalid patch".to_string(),
                 base_branch: "main".to_string(),
@@ -452,8 +455,8 @@ async fn merger_reports_conflict_as_error_result() -> anyhow::Result<()> {
     let source_repo = tmp.path().join("source");
     init_source_repo(&source_repo)?;
 
-    let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
-    let repo_manager = RepoManager::new(pm_paths.clone());
+    let omne_paths = PmPaths::new(tmp.path().join(".omne"));
+    let repo_manager = RepoManager::new(omne_paths.clone());
     let repo_name = RepositoryName::sanitize("source");
     let source_repo_arg = source_repo.to_string_lossy();
     let repo = repo_manager
@@ -554,10 +557,10 @@ async fn merger_reports_conflict_as_error_result() -> anyhow::Result<()> {
 async fn run_with_missing_bare_repo_records_clone_failure() -> anyhow::Result<()> {
     let tmp = tempfile::tempdir()?;
 
-    let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
-    let storage = FsStorage::new(pm_paths.data_dir());
+    let omne_paths = PmPaths::new(tmp.path().join(".omne"));
+    let storage = FsStorage::new(omne_paths.data_dir());
 
-    let repo = pm_core::Repository {
+    let repo = omne_core::Repository {
         name: RepositoryName::sanitize("missing"),
         bare_path: tmp.path().join("does-not-exist.git"),
         lock_path: tmp.path().join("missing.lock"),
@@ -574,9 +577,9 @@ async fn run_with_missing_bare_repo_records_clone_failure() -> anyhow::Result<()
 
     let result = orchestrator
         .run(
-            &pm_paths,
+            &omne_paths,
             repo.clone(),
-            pm_core::RunRequest {
+            omne_core::RunRequest {
                 pr_name: PrName::sanitize("test"),
                 prompt: "clone should fail".to_string(),
                 base_branch: "main".to_string(),
@@ -627,15 +630,15 @@ async fn rust_repo_does_not_pollute_task_repo_with_target_dir() -> anyhow::Resul
     let source_repo = tmp.path().join("source-rust");
     init_rust_source_repo(&source_repo)?;
 
-    let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
-    let repo_manager = RepoManager::new(pm_paths.clone());
+    let omne_paths = PmPaths::new(tmp.path().join(".omne"));
+    let repo_manager = RepoManager::new(omne_paths.clone());
     let repo_name = RepositoryName::sanitize("source-rust");
     let source_repo_arg = source_repo.to_string_lossy();
     let repo = repo_manager
         .inject(&repo_name, source_repo_arg.as_ref())
         .await?;
 
-    let storage = FsStorage::new(pm_paths.data_dir());
+    let storage = FsStorage::new(omne_paths.data_dir());
 
     let orchestrator = Orchestrator {
         storage: Arc::new(storage),
@@ -648,9 +651,9 @@ async fn rust_repo_does_not_pollute_task_repo_with_target_dir() -> anyhow::Resul
 
     let result = orchestrator
         .run(
-            &pm_paths,
+            &omne_paths,
             repo.clone(),
-            pm_core::RunRequest {
+            omne_core::RunRequest {
                 pr_name: PrName::sanitize("test"),
                 prompt: "no changes".to_string(),
                 base_branch: "main".to_string(),
@@ -692,15 +695,15 @@ async fn rust_repo_without_lockfile_does_not_create_noise_pr() -> anyhow::Result
     let source_repo = tmp.path().join("source-rust-nolock");
     init_rust_source_repo_without_lock(&source_repo)?;
 
-    let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
-    let repo_manager = RepoManager::new(pm_paths.clone());
+    let omne_paths = PmPaths::new(tmp.path().join(".omne"));
+    let repo_manager = RepoManager::new(omne_paths.clone());
     let repo_name = RepositoryName::sanitize("source-rust-nolock");
     let source_repo_arg = source_repo.to_string_lossy();
     let repo = repo_manager
         .inject(&repo_name, source_repo_arg.as_ref())
         .await?;
 
-    let storage = FsStorage::new(pm_paths.data_dir());
+    let storage = FsStorage::new(omne_paths.data_dir());
 
     let orchestrator = Orchestrator {
         storage: Arc::new(storage),
@@ -713,9 +716,9 @@ async fn rust_repo_without_lockfile_does_not_create_noise_pr() -> anyhow::Result
 
     let result = orchestrator
         .run(
-            &pm_paths,
+            &omne_paths,
             repo.clone(),
-            pm_core::RunRequest {
+            omne_core::RunRequest {
                 pr_name: PrName::sanitize("test"),
                 prompt: "no changes".to_string(),
                 base_branch: "main".to_string(),
@@ -756,15 +759,15 @@ async fn rust_repo_without_lockfile_does_not_create_noise_pr_with_cargo_test() -
     let source_repo = tmp.path().join("source-rust-nolock");
     init_rust_source_repo_without_lock(&source_repo)?;
 
-    let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
-    let repo_manager = RepoManager::new(pm_paths.clone());
+    let omne_paths = PmPaths::new(tmp.path().join(".omne"));
+    let repo_manager = RepoManager::new(omne_paths.clone());
     let repo_name = RepositoryName::sanitize("source-rust-nolock");
     let source_repo_arg = source_repo.to_string_lossy();
     let repo = repo_manager
         .inject(&repo_name, source_repo_arg.as_ref())
         .await?;
 
-    let storage = FsStorage::new(pm_paths.data_dir());
+    let storage = FsStorage::new(omne_paths.data_dir());
 
     let orchestrator = Orchestrator {
         storage: Arc::new(storage),
@@ -777,9 +780,9 @@ async fn rust_repo_without_lockfile_does_not_create_noise_pr_with_cargo_test() -
 
     let result = orchestrator
         .run(
-            &pm_paths,
+            &omne_paths,
             repo.clone(),
-            pm_core::RunRequest {
+            omne_core::RunRequest {
                 pr_name: PrName::sanitize("test"),
                 prompt: "no changes".to_string(),
                 base_branch: "main".to_string(),

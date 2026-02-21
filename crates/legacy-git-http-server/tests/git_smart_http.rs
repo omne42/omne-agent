@@ -1,7 +1,7 @@
 use std::path::Path;
 
-use pm_core::{PmPaths, RepositoryName};
-use pm_git::RepoManager;
+use omne_core::{PmPaths, RepositoryName};
+use omne_git::RepoManager;
 use tokio::process::Command;
 
 async fn run_git(repo: &Path, args: &[&str]) -> anyhow::Result<String> {
@@ -45,7 +45,7 @@ async fn init_source_repo(dir: &Path) -> anyhow::Result<()> {
 #[tokio::test]
 async fn smart_http_clone_and_push() -> anyhow::Result<()> {
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("pm_http=info")
+        .with_env_filter("omne_http=info")
         .with_test_writer()
         .try_init();
 
@@ -53,15 +53,15 @@ async fn smart_http_clone_and_push() -> anyhow::Result<()> {
     let source_repo = tmp.path().join("source");
     init_source_repo(&source_repo).await?;
 
-    let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
-    let repo_manager = RepoManager::new(pm_paths.clone());
+    let omne_paths = PmPaths::new(tmp.path().join(".omne"));
+    let repo_manager = RepoManager::new(omne_paths.clone());
     let repo_name = RepositoryName::sanitize("source");
     let source_repo_arg = source_repo.to_string_lossy();
     repo_manager
         .inject(&repo_name, source_repo_arg.as_ref())
         .await?;
 
-    let app = pm_http::router(pm_paths.clone())?;
+    let app = omne_http::router(omne_paths.clone())?;
     let listener = match tokio::net::TcpListener::bind("127.0.0.1:0").await {
         Ok(listener) => listener,
         Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
@@ -97,7 +97,7 @@ async fn smart_http_clone_and_push() -> anyhow::Result<()> {
     eprintln!("push feature -> {remote}");
     run_git(&work_dir, &["push", "origin", "feature"]).await?;
 
-    let bare_repo = pm_paths.repo_bare_path(&repo_name);
+    let bare_repo = omne_paths.repo_bare_path(&repo_name);
     run_git(&bare_repo, &["show-ref", "--verify", "refs/heads/feature"]).await?;
 
     let _ = tx.send(());

@@ -1,12 +1,12 @@
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
 pub struct RepoSearchParams {
-    pub thread_id: pm_protocol::ThreadId,
+    pub thread_id: omne_protocol::ThreadId,
     #[serde(default)]
     #[ts(optional)]
-    pub turn_id: Option<pm_protocol::TurnId>,
+    pub turn_id: Option<omne_protocol::TurnId>,
     #[serde(default)]
     #[ts(optional)]
-    pub approval_id: Option<pm_protocol::ApprovalId>,
+    pub approval_id: Option<omne_protocol::ApprovalId>,
     #[serde(default)]
     #[ts(optional)]
     pub root: Option<FileRoot>,
@@ -29,13 +29,13 @@ pub struct RepoSearchParams {
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
 pub struct RepoIndexParams {
-    pub thread_id: pm_protocol::ThreadId,
+    pub thread_id: omne_protocol::ThreadId,
     #[serde(default)]
     #[ts(optional)]
-    pub turn_id: Option<pm_protocol::TurnId>,
+    pub turn_id: Option<omne_protocol::TurnId>,
     #[serde(default)]
     #[ts(optional)]
-    pub approval_id: Option<pm_protocol::ApprovalId>,
+    pub approval_id: Option<omne_protocol::ApprovalId>,
     #[serde(default)]
     #[ts(optional)]
     pub root: Option<FileRoot>,

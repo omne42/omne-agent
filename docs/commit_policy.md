@@ -38,7 +38,7 @@
 
 ### 示例
 
-- `feat(pm): concurrent task workspaces`
+- `feat(omne): concurrent task workspaces`
 - `fix(git): prevent push race with repo lock`
 - `docs(research): add codex responses notes`
 - `refactor(core)!: split orchestrator state`
@@ -60,7 +60,7 @@
 - 每次提交必须包含 `CHANGELOG.md`，并在 `[Unreleased]` 下追加条目
 - 禁止只提交 `CHANGELOG.md`（changelog-only commit）
 - 默认禁止修改已发布版本的 changelog 段落（例如 `## [0.x.y]` 及以下内容）
-  - 发布时如需改动已发布段落，可显式设置：`CODE_PM_ALLOW_CHANGELOG_RELEASE_EDIT=1 git commit ...`
+  - 发布时如需改动已发布段落，可显式设置：`OMNE_ALLOW_CHANGELOG_RELEASE_EDIT=1 git commit ...`
 
 ### Rust 单文件行数上限（强制）
 

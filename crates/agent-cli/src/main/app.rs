@@ -552,7 +552,7 @@ mod app_preconnect_tests {
 
     #[test]
     fn preconnect_command_preserves_tui() -> anyhow::Result<()> {
-        let mut cli = Cli::try_parse_from(["pm", "tui"])?;
+        let mut cli = Cli::try_parse_from(["omne", "tui"])?;
         let preconnect = take_preconnect_command(&mut cli);
         assert!(preconnect.is_none());
         assert!(matches!(cli.command, Some(Command::Tui(_))));
@@ -561,7 +561,7 @@ mod app_preconnect_tests {
 
     #[test]
     fn preconnect_command_extracts_init() -> anyhow::Result<()> {
-        let mut cli = Cli::try_parse_from(["pm", "init"])?;
+        let mut cli = Cli::try_parse_from(["omne", "init"])?;
         let preconnect = take_preconnect_command(&mut cli);
         assert!(matches!(preconnect, Some(PreConnectCommand::Init(_))));
         assert!(cli.command.is_none());
@@ -570,7 +570,7 @@ mod app_preconnect_tests {
 
     #[test]
     fn preconnect_command_extracts_command_list() -> anyhow::Result<()> {
-        let mut cli = Cli::try_parse_from(["pm", "command", "list"])?;
+        let mut cli = Cli::try_parse_from(["omne", "command", "list"])?;
         let preconnect = take_preconnect_command(&mut cli);
         assert!(matches!(
             preconnect,

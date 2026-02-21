@@ -243,7 +243,7 @@
                 || lower.contains("denied")
         }
 
-        fn handle_notification(&mut self, note: pm_jsonrpc::Notification) -> anyhow::Result<()> {
+        fn handle_notification(&mut self, note: omne_jsonrpc::Notification) -> anyhow::Result<()> {
             match note.method.as_str() {
                 "item/delta" => {
                     let params = note

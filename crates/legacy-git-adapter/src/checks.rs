@@ -2,7 +2,7 @@ use std::ffi::{OsStr, OsString};
 use std::path::Path;
 use std::process::Stdio;
 
-use pm_core::StepSummary;
+use omne_core::StepSummary;
 use tokio::process::Command;
 
 use crate::git::{CommandOutput, GitCli};

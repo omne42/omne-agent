@@ -3,7 +3,7 @@ async fn handle_approval_decide(
     params: ApprovalDecideParams,
 ) -> anyhow::Result<Value> {
     let rt = server.get_or_load_thread(params.thread_id).await?;
-    rt.append_event(pm_protocol::ThreadEventKind::ApprovalDecided {
+    rt.append_event(omne_protocol::ThreadEventKind::ApprovalDecided {
         approval_id: params.approval_id,
         decision: params.decision,
         remember: params.remember,
@@ -23,13 +23,13 @@ async fn handle_approval_list(
         .await?
         .ok_or_else(|| anyhow::anyhow!("thread not found: {}", params.thread_id))?;
 
-    let mut requested = BTreeMap::<pm_protocol::ApprovalId, serde_json::Value>::new();
-    let mut decided = BTreeMap::<pm_protocol::ApprovalId, serde_json::Value>::new();
+    let mut requested = BTreeMap::<omne_protocol::ApprovalId, serde_json::Value>::new();
+    let mut decided = BTreeMap::<omne_protocol::ApprovalId, serde_json::Value>::new();
 
     for event in events {
         let ts = event.timestamp.format(&Rfc3339)?;
         match event.kind {
-            pm_protocol::ThreadEventKind::ApprovalRequested {
+            omne_protocol::ThreadEventKind::ApprovalRequested {
                 approval_id,
                 turn_id,
                 action,
@@ -46,7 +46,7 @@ async fn handle_approval_list(
                     }),
                 );
             }
-            pm_protocol::ThreadEventKind::ApprovalDecided {
+            omne_protocol::ThreadEventKind::ApprovalDecided {
                 approval_id,
                 decision,
                 remember,
@@ -90,7 +90,7 @@ async fn handle_approval_list(
 async fn ensure_approval(
     thread_store: &ThreadStore,
     thread_id: ThreadId,
-    approval_id: pm_protocol::ApprovalId,
+    approval_id: omne_protocol::ApprovalId,
     expected_action: &str,
     expected_params: &serde_json::Value,
 ) -> anyhow::Result<()> {
@@ -100,11 +100,11 @@ async fn ensure_approval(
         .ok_or_else(|| anyhow::anyhow!("thread not found: {}", thread_id))?;
 
     let mut found_request: Option<(String, serde_json::Value)> = None;
-    let mut found_decision: Option<pm_protocol::ApprovalDecision> = None;
+    let mut found_decision: Option<omne_protocol::ApprovalDecision> = None;
 
     for event in events {
         match event.kind {
-            pm_protocol::ThreadEventKind::ApprovalRequested {
+            omne_protocol::ThreadEventKind::ApprovalRequested {
                 approval_id: got,
                 action,
                 params,
@@ -112,7 +112,7 @@ async fn ensure_approval(
             } if got == approval_id => {
                 found_request = Some((action, params));
             }
-            pm_protocol::ThreadEventKind::ApprovalDecided {
+            omne_protocol::ThreadEventKind::ApprovalDecided {
                 approval_id: got,
                 decision,
                 ..
@@ -138,8 +138,8 @@ async fn ensure_approval(
     }
 
     match found_decision {
-        Some(pm_protocol::ApprovalDecision::Approved) => Ok(()),
-        Some(pm_protocol::ApprovalDecision::Denied) => {
+        Some(omne_protocol::ApprovalDecision::Approved) => Ok(()),
+        Some(omne_protocol::ApprovalDecision::Denied) => {
             anyhow::bail!("approval denied: {}", approval_id)
         }
         None => anyhow::bail!("approval not decided: {}", approval_id),
@@ -150,7 +150,7 @@ async fn ensure_approval(
 enum ApprovalGate {
     Approved,
     Denied { remembered: bool },
-    NeedsApproval { approval_id: pm_protocol::ApprovalId },
+    NeedsApproval { approval_id: omne_protocol::ApprovalId },
 }
 
 fn approval_denied_error(remembered: bool) -> &'static str {
@@ -163,7 +163,7 @@ fn approval_denied_error(remembered: bool) -> &'static str {
 
 async fn enforce_thread_allowed_tools(
     thread_rt: &Arc<ThreadRuntime>,
-    tool_id: pm_protocol::ToolId,
+    tool_id: omne_protocol::ToolId,
     turn_id: Option<TurnId>,
     tool: &str,
     params: Option<serde_json::Value>,
@@ -181,7 +181,7 @@ async fn enforce_thread_allowed_tools(
     let error = format!("tool {tool} denied by thread allowed_tools={allowed_json}");
 
     thread_rt
-        .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+        .append_event(omne_protocol::ThreadEventKind::ToolStarted {
             tool_id,
             turn_id,
             tool: tool.to_string(),
@@ -189,9 +189,9 @@ async fn enforce_thread_allowed_tools(
         })
         .await?;
     thread_rt
-        .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+        .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
             tool_id,
-            status: pm_protocol::ToolStatus::Denied,
+            status: omne_protocol::ToolStatus::Denied,
             error: Some(error),
             result: Some(serde_json::json!({
                 "tool": tool,
@@ -209,7 +209,7 @@ async fn enforce_thread_allowed_tools(
 }
 
 struct ApprovalRequest<'a> {
-    approval_id: Option<pm_protocol::ApprovalId>,
+    approval_id: Option<omne_protocol::ApprovalId>,
     action: &'a str,
     params: &'a serde_json::Value,
 }
@@ -240,7 +240,7 @@ async fn gate_approval(
     thread_rt: &Arc<ThreadRuntime>,
     thread_id: ThreadId,
     turn_id: Option<TurnId>,
-    approval_policy: pm_protocol::ApprovalPolicy,
+    approval_policy: omne_protocol::ApprovalPolicy,
     request: ApprovalRequest<'_>,
 ) -> anyhow::Result<ApprovalGate> {
     gate_approval_with_deps(
@@ -257,11 +257,11 @@ async fn gate_approval(
 
 async fn gate_approval_with_deps(
     thread_store: &ThreadStore,
-    exec_policy: &pm_execpolicy::Policy,
+    exec_policy: &omne_execpolicy::Policy,
     thread_rt: &Arc<ThreadRuntime>,
     thread_id: ThreadId,
     turn_id: Option<TurnId>,
-    approval_policy: pm_protocol::ApprovalPolicy,
+    approval_policy: omne_protocol::ApprovalPolicy,
     request: ApprovalRequest<'_>,
 ) -> anyhow::Result<ApprovalGate> {
     if let Some(approval_id) = request.approval_id {
@@ -279,10 +279,10 @@ async fn gate_approval_with_deps(
     let requirement = approval_requirement(request.params);
     if requirement == ApprovalRequirement::PromptStrict {
         return match approval_policy {
-            pm_protocol::ApprovalPolicy::AutoDeny => {
-                let approval_id = pm_protocol::ApprovalId::new();
+            omne_protocol::ApprovalPolicy::AutoDeny => {
+                let approval_id = omne_protocol::ApprovalId::new();
                 thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ApprovalRequested {
+                    .append_event(omne_protocol::ThreadEventKind::ApprovalRequested {
                         approval_id,
                         turn_id,
                         action: request.action.to_string(),
@@ -290,9 +290,9 @@ async fn gate_approval_with_deps(
                     })
                     .await?;
                 thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ApprovalDecided {
+                    .append_event(omne_protocol::ThreadEventKind::ApprovalDecided {
                         approval_id,
-                        decision: pm_protocol::ApprovalDecision::Denied,
+                        decision: omne_protocol::ApprovalDecision::Denied,
                         remember: false,
                         reason: Some("auto-denied by policy".to_string()),
                     })
@@ -300,9 +300,9 @@ async fn gate_approval_with_deps(
                 Ok(ApprovalGate::Denied { remembered: false })
             }
             _ => {
-                let approval_id = pm_protocol::ApprovalId::new();
+                let approval_id = omne_protocol::ApprovalId::new();
                 thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ApprovalRequested {
+                    .append_event(omne_protocol::ThreadEventKind::ApprovalRequested {
                         approval_id,
                         turn_id,
                         action: request.action.to_string(),
@@ -317,14 +317,14 @@ async fn gate_approval_with_deps(
     if let Some(decision) =
         remembered_approval_decision(thread_store, thread_id, request.action, request.params).await?
     {
-        let approval_id = pm_protocol::ApprovalId::new();
+        let approval_id = omne_protocol::ApprovalId::new();
         let reason = match decision {
-            pm_protocol::ApprovalDecision::Approved => "auto-approved by remembered decision",
-            pm_protocol::ApprovalDecision::Denied => "auto-denied by remembered decision",
+            omne_protocol::ApprovalDecision::Approved => "auto-approved by remembered decision",
+            omne_protocol::ApprovalDecision::Denied => "auto-denied by remembered decision",
         };
 
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ApprovalRequested {
+            .append_event(omne_protocol::ThreadEventKind::ApprovalRequested {
                 approval_id,
                 turn_id,
                 action: request.action.to_string(),
@@ -332,7 +332,7 @@ async fn gate_approval_with_deps(
             })
             .await?;
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ApprovalDecided {
+            .append_event(omne_protocol::ThreadEventKind::ApprovalDecided {
                 approval_id,
                 decision,
                 remember: false,
@@ -341,16 +341,16 @@ async fn gate_approval_with_deps(
             .await?;
 
         return match decision {
-            pm_protocol::ApprovalDecision::Approved => Ok(ApprovalGate::Approved),
-            pm_protocol::ApprovalDecision::Denied => Ok(ApprovalGate::Denied { remembered: true }),
+            omne_protocol::ApprovalDecision::Approved => Ok(ApprovalGate::Approved),
+            omne_protocol::ApprovalDecision::Denied => Ok(ApprovalGate::Denied { remembered: true }),
         };
     }
 
     match approval_policy {
-        pm_protocol::ApprovalPolicy::AutoApprove | pm_protocol::ApprovalPolicy::OnRequest => {
-            let approval_id = pm_protocol::ApprovalId::new();
+        omne_protocol::ApprovalPolicy::AutoApprove | omne_protocol::ApprovalPolicy::OnRequest => {
+            let approval_id = omne_protocol::ApprovalId::new();
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ApprovalRequested {
+                .append_event(omne_protocol::ThreadEventKind::ApprovalRequested {
                     approval_id,
                     turn_id,
                     action: request.action.to_string(),
@@ -358,19 +358,19 @@ async fn gate_approval_with_deps(
                 })
                 .await?;
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ApprovalDecided {
+                .append_event(omne_protocol::ThreadEventKind::ApprovalDecided {
                     approval_id,
-                    decision: pm_protocol::ApprovalDecision::Approved,
+                    decision: omne_protocol::ApprovalDecision::Approved,
                     remember: false,
                     reason: Some("auto-approved by policy".to_string()),
                 })
                 .await?;
             Ok(ApprovalGate::Approved)
         }
-        pm_protocol::ApprovalPolicy::Manual => {
-            let approval_id = pm_protocol::ApprovalId::new();
+        omne_protocol::ApprovalPolicy::Manual => {
+            let approval_id = omne_protocol::ApprovalId::new();
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ApprovalRequested {
+                .append_event(omne_protocol::ThreadEventKind::ApprovalRequested {
                     approval_id,
                     turn_id,
                     action: request.action.to_string(),
@@ -379,7 +379,7 @@ async fn gate_approval_with_deps(
                 .await?;
             Ok(ApprovalGate::NeedsApproval { approval_id })
         }
-        pm_protocol::ApprovalPolicy::UnlessTrusted => {
+        omne_protocol::ApprovalPolicy::UnlessTrusted => {
             let trusted = match request.action {
                 "process/start" => {
                     let argv = request
@@ -412,9 +412,9 @@ async fn gate_approval_with_deps(
             };
 
             if trusted {
-                let approval_id = pm_protocol::ApprovalId::new();
+                let approval_id = omne_protocol::ApprovalId::new();
                 thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ApprovalRequested {
+                    .append_event(omne_protocol::ThreadEventKind::ApprovalRequested {
                         approval_id,
                         turn_id,
                         action: request.action.to_string(),
@@ -422,18 +422,18 @@ async fn gate_approval_with_deps(
                     })
                     .await?;
                 thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ApprovalDecided {
+                    .append_event(omne_protocol::ThreadEventKind::ApprovalDecided {
                         approval_id,
-                        decision: pm_protocol::ApprovalDecision::Approved,
+                        decision: omne_protocol::ApprovalDecision::Approved,
                         remember: false,
                         reason: Some("auto-approved by policy (unless_trusted)".to_string()),
                     })
                     .await?;
                 Ok(ApprovalGate::Approved)
             } else {
-                let approval_id = pm_protocol::ApprovalId::new();
+                let approval_id = omne_protocol::ApprovalId::new();
                 thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ApprovalRequested {
+                    .append_event(omne_protocol::ThreadEventKind::ApprovalRequested {
                         approval_id,
                         turn_id,
                         action: request.action.to_string(),
@@ -443,10 +443,10 @@ async fn gate_approval_with_deps(
                 Ok(ApprovalGate::NeedsApproval { approval_id })
             }
         }
-        pm_protocol::ApprovalPolicy::AutoDeny => {
-            let approval_id = pm_protocol::ApprovalId::new();
+        omne_protocol::ApprovalPolicy::AutoDeny => {
+            let approval_id = omne_protocol::ApprovalId::new();
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ApprovalRequested {
+                .append_event(omne_protocol::ThreadEventKind::ApprovalRequested {
                     approval_id,
                     turn_id,
                     action: request.action.to_string(),
@@ -454,9 +454,9 @@ async fn gate_approval_with_deps(
                 })
                 .await?;
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ApprovalDecided {
+                .append_event(omne_protocol::ThreadEventKind::ApprovalDecided {
                     approval_id,
-                    decision: pm_protocol::ApprovalDecision::Denied,
+                    decision: omne_protocol::ApprovalDecision::Denied,
                     remember: false,
                     reason: Some("auto-denied by policy".to_string()),
                 })
@@ -534,19 +534,19 @@ async fn remembered_approval_decision(
     thread_id: ThreadId,
     expected_action: &str,
     expected_params: &serde_json::Value,
-) -> anyhow::Result<Option<pm_protocol::ApprovalDecision>> {
+) -> anyhow::Result<Option<omne_protocol::ApprovalDecision>> {
     let expected_key = approval_rule_key(expected_action, expected_params)?;
     let events = thread_store
         .read_events_since(thread_id, EventSeq::ZERO)
         .await?
         .ok_or_else(|| anyhow::anyhow!("thread not found: {}", thread_id))?;
 
-    let mut requested = HashMap::<pm_protocol::ApprovalId, (String, serde_json::Value)>::new();
-    let mut remembered = HashMap::<String, pm_protocol::ApprovalDecision>::new();
+    let mut requested = HashMap::<omne_protocol::ApprovalId, (String, serde_json::Value)>::new();
+    let mut remembered = HashMap::<String, omne_protocol::ApprovalDecision>::new();
 
     for event in events {
         match event.kind {
-            pm_protocol::ThreadEventKind::ApprovalRequested {
+            omne_protocol::ThreadEventKind::ApprovalRequested {
                 approval_id,
                 action,
                 params,
@@ -554,7 +554,7 @@ async fn remembered_approval_decision(
             } => {
                 requested.insert(approval_id, (action, params));
             }
-            pm_protocol::ThreadEventKind::ApprovalDecided {
+            omne_protocol::ThreadEventKind::ApprovalDecided {
                 approval_id,
                 decision,
                 remember,
@@ -583,17 +583,17 @@ async fn remembered_approval_decision(
 mod approval_prompt_strict_tests {
     use super::*;
 
-    fn build_test_server(pm_root: PathBuf) -> Server {
+    fn build_test_server(omne_root: PathBuf) -> Server {
         let (notify_tx, _notify_rx) = broadcast::channel::<String>(16);
         Server {
-            cwd: pm_root.clone(),
+            cwd: omne_root.clone(),
             notify_tx,
-            thread_store: ThreadStore::new(PmPaths::new(pm_root)),
+            thread_store: ThreadStore::new(PmPaths::new(omne_root)),
             threads: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             processes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             mcp: Arc::new(tokio::sync::Mutex::new(McpManager::default())),
             disk_warning: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-            exec_policy: pm_execpolicy::Policy::empty(),
+            exec_policy: omne_execpolicy::Policy::empty(),
         }
     }
 
@@ -602,8 +602,8 @@ mod approval_prompt_strict_tests {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");
 
-        tokio::fs::create_dir_all(repo_dir.join(".codepm_data")).await?;
-        let server = build_test_server(repo_dir.join(".codepm_data"));
+        tokio::fs::create_dir_all(repo_dir.join(".omne_data")).await?;
+        let server = build_test_server(repo_dir.join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -620,7 +620,7 @@ mod approval_prompt_strict_tests {
             &thread_rt,
             thread_id,
             None,
-            pm_protocol::ApprovalPolicy::AutoApprove,
+            omne_protocol::ApprovalPolicy::AutoApprove,
             ApprovalRequest {
                 approval_id: None,
                 action: "file/write",
@@ -642,8 +642,8 @@ mod approval_prompt_strict_tests {
         let mut decided = 0usize;
         for event in events {
             match event.kind {
-                pm_protocol::ThreadEventKind::ApprovalRequested { .. } => requested += 1,
-                pm_protocol::ThreadEventKind::ApprovalDecided { .. } => decided += 1,
+                omne_protocol::ThreadEventKind::ApprovalRequested { .. } => requested += 1,
+                omne_protocol::ThreadEventKind::ApprovalDecided { .. } => decided += 1,
                 _ => {}
             }
         }
@@ -657,22 +657,22 @@ mod approval_prompt_strict_tests {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");
 
-        tokio::fs::create_dir_all(repo_dir.join(".codepm_data")).await?;
-        let server = build_test_server(repo_dir.join(".codepm_data"));
+        tokio::fs::create_dir_all(repo_dir.join(".omne_data")).await?;
+        let server = build_test_server(repo_dir.join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
 
         let thread_rt = server.get_or_load_thread(thread_id).await?;
 
-        let strict_approval_id = pm_protocol::ApprovalId::new();
+        let strict_approval_id = omne_protocol::ApprovalId::new();
         let strict_params = serde_json::json!({
             "path": "foo.txt",
             "create_parent_dirs": true,
             "approval": { "requirement": "prompt_strict" },
         });
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ApprovalRequested {
+            .append_event(omne_protocol::ThreadEventKind::ApprovalRequested {
                 approval_id: strict_approval_id,
                 turn_id: None,
                 action: "file/write".to_string(),
@@ -680,9 +680,9 @@ mod approval_prompt_strict_tests {
             })
             .await?;
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ApprovalDecided {
+            .append_event(omne_protocol::ThreadEventKind::ApprovalDecided {
                 approval_id: strict_approval_id,
-                decision: pm_protocol::ApprovalDecision::Approved,
+                decision: omne_protocol::ApprovalDecision::Approved,
                 remember: true,
                 reason: Some("test".to_string()),
             })
@@ -697,7 +697,7 @@ mod approval_prompt_strict_tests {
             &thread_rt,
             thread_id,
             None,
-            pm_protocol::ApprovalPolicy::Manual,
+            omne_protocol::ApprovalPolicy::Manual,
             ApprovalRequest {
                 approval_id: None,
                 action: "file/write",
@@ -726,42 +726,42 @@ async fn load_thread_root(
             .clone()
             .ok_or_else(|| anyhow::anyhow!("thread cwd is missing: {}", thread_id))?
     };
-    let thread_root = pm_core::resolve_dir(Path::new(&thread_cwd), Path::new(".")).await?;
+    let thread_root = omne_core::resolve_dir(Path::new(&thread_cwd), Path::new(".")).await?;
     Ok((thread_rt, thread_root))
 }
 
 async fn resolve_dir_for_sandbox(
     thread_root: &Path,
-    sandbox_policy: pm_protocol::SandboxPolicy,
+    sandbox_policy: omne_protocol::SandboxPolicy,
     input: &Path,
 ) -> anyhow::Result<PathBuf> {
     match sandbox_policy {
-        pm_protocol::SandboxPolicy::DangerFullAccess => {
-            pm_core::resolve_dir_unrestricted(thread_root, input).await
+        omne_protocol::SandboxPolicy::DangerFullAccess => {
+            omne_core::resolve_dir_unrestricted(thread_root, input).await
         }
-        _ => pm_core::resolve_dir(thread_root, input).await,
+        _ => omne_core::resolve_dir(thread_root, input).await,
     }
 }
 
 async fn resolve_file_for_sandbox(
     thread_root: &Path,
-    sandbox_policy: pm_protocol::SandboxPolicy,
+    sandbox_policy: omne_protocol::SandboxPolicy,
     sandbox_writable_roots: &[String],
     input: &Path,
-    access: pm_core::PathAccess,
+    access: omne_core::PathAccess,
     create_parent_dirs: bool,
 ) -> anyhow::Result<PathBuf> {
     match sandbox_policy {
-        pm_protocol::SandboxPolicy::DangerFullAccess => {
-            pm_core::resolve_file_unrestricted(thread_root, input, access, create_parent_dirs).await
+        omne_protocol::SandboxPolicy::DangerFullAccess => {
+            omne_core::resolve_file_unrestricted(thread_root, input, access, create_parent_dirs).await
         }
         _ => {
-            if matches!(access, pm_core::PathAccess::Write) && !sandbox_writable_roots.is_empty() {
+            if matches!(access, omne_core::PathAccess::Write) && !sandbox_writable_roots.is_empty() {
                 let writable_roots = sandbox_writable_roots
                     .iter()
                     .map(PathBuf::from)
                     .collect::<Vec<_>>();
-                pm_core::resolve_file_with_writable_roots(
+                omne_core::resolve_file_with_writable_roots(
                     thread_root,
                     &writable_roots,
                     input,
@@ -770,7 +770,7 @@ async fn resolve_file_for_sandbox(
                 )
                 .await
             } else {
-                pm_core::resolve_file(thread_root, input, access, create_parent_dirs).await
+                omne_core::resolve_file(thread_root, input, access, create_parent_dirs).await
             }
         }
     }
@@ -826,5 +826,5 @@ async fn canonical_rel_path_for_write(thread_root: &Path, path: &Path) -> anyhow
     let canon_parent = tokio::fs::canonicalize(parent)
         .await
         .with_context(|| format!("canonicalize {}", parent.display()))?;
-    pm_core::modes::relative_path_under_root(thread_root, &canon_parent.join(file_name))
+    omne_core::modes::relative_path_under_root(thread_root, &canon_parent.join(file_name))
 }

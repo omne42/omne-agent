@@ -1,4 +1,4 @@
-# 项目启动（CodePM / Rust）
+# 项目启动（OmneAgent / Rust）
 
 > 想看文档索引看：`docs/README.md`。
 > 想看 v0.2.0 对齐清单（实现状态 + TODO）看：`docs/v0.2.0_parity.md`。
@@ -34,13 +34,13 @@ feature，仅占位即可。
 
 > 注意：以下进度描述的是已存档版本 `v0.1.1`（legacy）。`vNext` 会重新设计并重写（见 `docs/development_process.md`）。
 
-已落地最小 Rust workspace 与 CLI（`code-pm`），用于验证端到端链路：
+已落地最小 Rust workspace 与 CLI（`OmneAgent`），用于验证端到端链路：
 
 - 本地 bare repo 注入（`repo inject`）
 - `/tmp/{repo}_{session_id}/tasks/{task_id}/repo` 隔离工作区
 - task：clone →（可选）`git apply` →（Rust repo）`cargo fmt`/`cargo check` → commit → push 分支
 - merge：顺序合并多个分支回 `base`（默认 `main`）
-- artifacts：`/tmp/.../session.json` + `result.json` + `tasks/<id>/task.json`，并保留每一步的 `checks.steps` 日志（`tasks/<id>/artifacts/*.log`、`merge/artifacts/*.log`、失败时的 `error.log`/`merge-error.log`），以及 `.code_pm/data/sessions/<id>/`
+- artifacts：`/tmp/.../session.json` + `result.json` + `tasks/<id>/task.json`，并保留每一步的 `checks.steps` 日志（`tasks/<id>/artifacts/*.log`、`merge/artifacts/*.log`、失败时的 `error.log`/`merge-error.log`），以及 `.omne/data/sessions/<id>/`
 
 更完整的端到端 Runbook 见 `docs/workflow.md`。
 
@@ -49,19 +49,19 @@ feature，仅占位即可。
 初始化本地数据目录：
 
 ```bash
-cargo run -p code-pm -- init
+cargo run -p omne -- init
 ```
 
 注入一个仓库（本地路径或远端 URL）：
 
 ```bash
-cargo run -p code-pm -- repo inject <repo_path_or_url> --name <repo_name>
+cargo run -p omne -- repo inject <repo_path_or_url> --name <repo_name>
 ```
 
 启动本地 Git Smart HTTP（Phase 2，可选）：
 
 ```bash
-cargo run -p code-pm -- serve --addr 127.0.0.1:9417
+cargo run -p omne -- serve --addr 127.0.0.1:9417
 ```
 
 此时可通过 HTTP 访问 bare repo（例如 clone/push）：
@@ -80,7 +80,7 @@ git diff > /tmp/change.patch
 跑一次 session：
 
 ```bash
-cargo run -p code-pm -- run \
+cargo run -p omne -- run \
   --repo <repo_name> \
   --pr-name <pr_name> \
   --prompt "your spec + requirements + goals" \
@@ -90,7 +90,7 @@ cargo run -p code-pm -- run \
 如果你就在目标 git repo 内运行，也可以省略 `--repo/--repo-src`（会默认以当前 `repo_root` 作为 `--repo-src` 注入并运行）：
 
 ```bash
-cargo run -p code-pm -- run \
+cargo run -p omne -- run \
   --pr-name <pr_name> \
   --prompt "your spec + requirements + goals" \
   --apply-patch /tmp/change.patch
@@ -99,7 +99,7 @@ cargo run -p code-pm -- run \
 可选：实时输出任务/合并进度（stderr）：
 
 ```bash
-cargo run -p code-pm -- run \
+cargo run -p omne -- run \
   --repo <repo_name> \
   --pr-name <pr_name> \
   --prompt "..." \
@@ -110,7 +110,7 @@ cargo run -p code-pm -- run \
 可选：以 JSON Lines（NDJSON）输出事件流（stderr，每行包含 `type` 字段）：
 
 ```bash
-cargo run -p code-pm -- run \
+cargo run -p omne -- run \
   --repo <repo_name> \
   --pr-name <pr_name> \
   --prompt "..." \
@@ -121,7 +121,7 @@ cargo run -p code-pm -- run \
 多任务并发（CLI 显式提供 task 列表，绕过 Phase 1 的模板 Architect）：
 
 ```bash
-cargo run -p code-pm -- run \
+cargo run -p omne -- run \
   --repo <repo_name> \
   --pr-name <pr_name> \
   --prompt "..." \
@@ -141,7 +141,7 @@ cargo run -p code-pm -- run \
 从 prompt 自动拆分 tasks（Phase 1：规则化；识别 checklist/编号/无序列表）：
 
 ```bash
-cargo run -p code-pm -- run \
+cargo run -p omne -- run \
   --repo <repo_name> \
   --pr-name <pr_name> \
   --prompt "...\n- [ ] task A\n- [ ] task B\n" \
@@ -161,7 +161,7 @@ cargo run -p code-pm -- run \
 ```
 
 ```bash
-cargo run -p code-pm -- run \
+cargo run -p omne -- run \
   --repo <repo_name> \
   --pr-name <pr_name> \
   --prompt "..." \
@@ -177,24 +177,24 @@ cargo run -p code-pm -- run \
 临时目录根路径：
 
 - 默认：`/tmp`
-- 覆盖：`CODE_PM_TMP_ROOT=/your/tmp/root`
+- 覆盖：`OMNE_TMP_ROOT=/your/tmp/root`
 
-数据目录根路径（`PmPaths` / `.code_pm`）：
+数据目录根路径（`PmPaths` / `.omne`）：
 
-> 注：本段是 `v0.1.1` legacy（`code-pm`）的口径；`v0.2.0`（`pm`/`pm-app-server`）的 runtime layout 与 `pm_root` 口径见 `docs/runtime_layout.md`。
+> 注：本段是 `v0.1.1` legacy（`OmneAgent`）的口径；`v0.2.0`（`omne`/`omne-app-server`）的 runtime layout 与 `omne_root` 口径见 `docs/runtime_layout.md`。
 
-- 默认：`<repo_root>/.code_pm`（`repo_root` 为当前目录的 git root；若不在 git repo 中则为当前目录）
-- 覆盖：`--pm-root /path/to/.code_pm` 或 `CODE_PM_ROOT=/path/to/.code_pm`（相对路径会按 `repo_root` 解析）
+- 默认：`<repo_root>/.omne`（`repo_root` 为当前目录的 git root；若不在 git repo 中则为当前目录）
+- 覆盖：`--omne-root /path/to/.omne` 或 `OMNE_ROOT=/path/to/.omne`（相对路径会按 `repo_root` 解析）
 
-> 兼容提示：若你之前使用的是旧目录名 `.codex_pm`，当前默认目录已改为 `.code_pm`，不会自动迁移历史数据。你可以手动 `mv .codex_pm .code_pm`，或临时使用 `--pm-root .codex_pm` / `CODE_PM_ROOT=.codex_pm` 继续复用旧数据。
+> 兼容提示：若你之前使用的是旧目录名 `.codex_omne`，当前默认目录已改为 `.omne`，不会自动迁移历史数据。你可以手动 `mv .codex_omne .omne`，或临时使用 `--omne-root .codex_omne` / `OMNE_ROOT=.codex_omne` 继续复用旧数据。
 
 可选：完成后执行 hook 命令（将通过环境变量拿到 session 上下文）：
 
 ```bash
-cargo run -p code-pm -- run \
+cargo run -p omne -- run \
   --repo <repo_name> \
   --pr-name <pr_name> \
   --prompt "..." \
   --hook-cmd /usr/bin/env \
-  --hook-arg bash --hook-arg -lc --hook-arg 'echo "$CODE_PM_SESSION_ID $CODE_PM_RESULT_JSON"'
+  --hook-arg bash --hook-arg -lc --hook-arg 'echo "$OMNE_SESSION_ID $OMNE_RESULT_JSON"'
 ```

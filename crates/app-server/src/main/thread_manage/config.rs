@@ -45,7 +45,7 @@ async fn handle_thread_configure(
             let mut seen = std::collections::BTreeSet::<String>::new();
             for root in roots {
                 let resolved =
-                    pm_core::resolve_dir_unrestricted(&thread_root, Path::new(&root)).await?;
+                    omne_core::resolve_dir_unrestricted(&thread_root, Path::new(&root)).await?;
                 let resolved = resolved.display().to_string();
                 if seen.insert(resolved.clone()) {
                     out.push(resolved);
@@ -61,7 +61,7 @@ async fn handle_thread_configure(
         .map(|m| m.trim().to_string())
         .filter(|m| !m.is_empty());
     if let Some(mode) = mode.as_deref() {
-        let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
+        let catalog = omne_core::modes::ModeCatalog::load(&thread_root).await;
         if catalog.mode(mode).is_none() {
             let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
             anyhow::bail!("unknown mode: {mode} (available: {available})");
@@ -108,7 +108,7 @@ async fn handle_thread_configure(
         || allowed_tools_changed;
 
     if changed {
-        rt.append_event(pm_protocol::ThreadEventKind::ThreadConfigUpdated {
+        rt.append_event(omne_protocol::ThreadEventKind::ThreadConfigUpdated {
             approval_policy,
             sandbox_policy: params.sandbox_policy,
             sandbox_writable_roots,
@@ -137,12 +137,12 @@ async fn handle_thread_config_explain(
     let thread_cwd = events
         .iter()
         .find_map(|event| match &event.kind {
-            pm_protocol::ThreadEventKind::ThreadCreated { cwd, .. } => Some(cwd.clone()),
+            omne_protocol::ThreadEventKind::ThreadCreated { cwd, .. } => Some(cwd.clone()),
             _ => None,
         })
         .ok_or_else(|| anyhow::anyhow!("thread cwd is missing: {}", params.thread_id))?;
-    let thread_root = pm_core::resolve_dir(Path::new(&thread_cwd), Path::new(".")).await?;
-    let mode_catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
+    let thread_root = omne_core::resolve_dir(Path::new(&thread_cwd), Path::new(".")).await?;
+    let mode_catalog = omne_core::modes::ModeCatalog::load(&thread_root).await;
 
     let default_model = "gpt-4.1".to_string();
     let default_openai_provider = "openai-codex-apikey".to_string();
@@ -150,10 +150,10 @@ async fn handle_thread_config_explain(
     let default_mode = "coder".to_string();
     let default_thinking = thinking_label(ditto_llm::ThinkingIntensity::default()).to_string();
 
-    let mut effective_approval_policy = pm_protocol::ApprovalPolicy::AutoApprove;
-    let mut effective_sandbox_policy = pm_protocol::SandboxPolicy::WorkspaceWrite;
+    let mut effective_approval_policy = omne_protocol::ApprovalPolicy::AutoApprove;
+    let mut effective_sandbox_policy = omne_protocol::SandboxPolicy::WorkspaceWrite;
     let mut effective_sandbox_writable_roots = Vec::<String>::new();
-    let mut effective_sandbox_network_access = pm_protocol::SandboxNetworkAccess::Deny;
+    let mut effective_sandbox_network_access = omne_protocol::SandboxNetworkAccess::Deny;
     let mut effective_mode = default_mode.clone();
     let mut effective_openai_provider = default_openai_provider.clone();
     let mut effective_model = default_model.clone();
@@ -174,13 +174,13 @@ async fn handle_thread_config_explain(
         "allowed_tools": effective_allowed_tools,
     })];
 
-    let env_provider = std::env::var("CODE_PM_OPENAI_PROVIDER")
+    let env_provider = std::env::var("OMNE_OPENAI_PROVIDER")
         .ok()
         .filter(|s| !s.trim().is_empty());
-    let env_model = std::env::var("CODE_PM_OPENAI_MODEL")
+    let env_model = std::env::var("OMNE_OPENAI_MODEL")
         .ok()
         .filter(|s| !s.trim().is_empty());
-    let env_openai_base_url = std::env::var("CODE_PM_OPENAI_BASE_URL")
+    let env_openai_base_url = std::env::var("OMNE_OPENAI_BASE_URL")
         .ok()
         .filter(|s| !s.trim().is_empty());
     if env_provider.is_some() || env_model.is_some() || env_openai_base_url.is_some() {
@@ -269,7 +269,7 @@ async fn handle_thread_config_explain(
 
     let mut thinking_override: Option<String> = None;
     for event in events {
-        if let pm_protocol::ThreadEventKind::ThreadConfigUpdated {
+        if let omne_protocol::ThreadEventKind::ThreadConfigUpdated {
             approval_policy,
             sandbox_policy,
             sandbox_writable_roots,
@@ -330,9 +330,9 @@ async fn handle_thread_config_explain(
     }
 
     let (mode_catalog_source, mode_catalog_path) = match &mode_catalog.source {
-        pm_core::modes::ModeCatalogSource::Builtin => ("builtin", None),
-        pm_core::modes::ModeCatalogSource::Env(path) => ("env", Some(path.display().to_string())),
-        pm_core::modes::ModeCatalogSource::Project(path) => ("project", Some(path.display().to_string())),
+        omne_core::modes::ModeCatalogSource::Builtin => ("builtin", None),
+        omne_core::modes::ModeCatalogSource::Env(path) => ("env", Some(path.display().to_string())),
+        omne_core::modes::ModeCatalogSource::Project(path) => ("project", Some(path.display().to_string())),
     };
     let available_modes = mode_catalog
         .mode_names()

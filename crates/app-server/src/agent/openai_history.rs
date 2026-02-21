@@ -12,8 +12,8 @@ enum OpenAiResponsesHistoryRecord {
 }
 
 fn openai_responses_history_path(
-    thread_store: &pm_core::ThreadStore,
-    thread_id: pm_protocol::ThreadId,
+    thread_store: &omne_core::ThreadStore,
+    thread_id: omne_protocol::ThreadId,
 ) -> std::path::PathBuf {
     thread_store
         .thread_dir(thread_id)
@@ -21,8 +21,8 @@ fn openai_responses_history_path(
 }
 
 async fn append_openai_responses_history_records(
-    thread_store: &pm_core::ThreadStore,
-    thread_id: pm_protocol::ThreadId,
+    thread_store: &omne_core::ThreadStore,
+    thread_id: omne_protocol::ThreadId,
     records: &[OpenAiResponsesHistoryRecord],
 ) -> anyhow::Result<()> {
     if records.is_empty() {
@@ -54,8 +54,8 @@ async fn append_openai_responses_history_records(
 }
 
 async fn append_openai_responses_history_items(
-    thread_store: &pm_core::ThreadStore,
-    thread_id: pm_protocol::ThreadId,
+    thread_store: &omne_core::ThreadStore,
+    thread_id: omne_protocol::ThreadId,
     items: &[serde_json::Value],
 ) -> anyhow::Result<()> {
     let records = items
@@ -67,8 +67,8 @@ async fn append_openai_responses_history_items(
 }
 
 async fn append_openai_responses_history_compacted(
-    thread_store: &pm_core::ThreadStore,
-    thread_id: pm_protocol::ThreadId,
+    thread_store: &omne_core::ThreadStore,
+    thread_id: omne_protocol::ThreadId,
     replacement_history: Vec<serde_json::Value>,
 ) -> anyhow::Result<()> {
     append_openai_responses_history_records(
@@ -80,8 +80,8 @@ async fn append_openai_responses_history_compacted(
 }
 
 async fn read_openai_responses_history(
-    thread_store: &pm_core::ThreadStore,
-    thread_id: pm_protocol::ThreadId,
+    thread_store: &omne_core::ThreadStore,
+    thread_id: omne_protocol::ThreadId,
 ) -> anyhow::Result<Vec<serde_json::Value>> {
     let path = openai_responses_history_path(thread_store, thread_id);
     let data = match tokio::fs::read_to_string(&path).await {
@@ -112,8 +112,8 @@ async fn read_openai_responses_history(
 }
 
 async fn compact_openai_responses_history(
-    thread_store: &pm_core::ThreadStore,
-    thread_id: pm_protocol::ThreadId,
+    thread_store: &omne_core::ThreadStore,
+    thread_id: omne_protocol::ThreadId,
     client: &ditto_llm::OpenAI,
     model: &str,
     instructions: &str,
@@ -142,8 +142,8 @@ mod tests {
     #[tokio::test]
     async fn openai_history_replays_compaction_replacement() -> anyhow::Result<()> {
         let dir = tempdir()?;
-        let thread_store = pm_core::ThreadStore::new(pm_core::PmPaths::new(
-            dir.path().join(".codepm_data"),
+        let thread_store = omne_core::ThreadStore::new(omne_core::PmPaths::new(
+            dir.path().join(".omne_data"),
         ));
 
         let handle = thread_store

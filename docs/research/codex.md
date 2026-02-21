@@ -2,7 +2,7 @@
 
 > Snapshot: `example/codex` @ `b66018a`
 >
-> 结论先行：Codex 的 Rust 实现（`example/codex/codex-rs`）已经具备我们要做“并发 AI task + /tmp 临时目录隔离 + 工具执行 + 审批/沙箱 + 可被 UI 驱动”的大部分底座能力。`CodePM` 最合理的路线是：**基于 codex-rs 魔改/复用**，先把我们缺失的“多任务编排 + Git PR 流水线 + PR 合并”补上；并且**第一阶段仅启用 Responses API（wire_api = responses）**。
+> 结论先行：Codex 的 Rust 实现（`example/codex/codex-rs`）已经具备我们要做“并发 AI task + /tmp 临时目录隔离 + 工具执行 + 审批/沙箱 + 可被 UI 驱动”的大部分底座能力。`OmneAgent` 最合理的路线是：**基于 codex-rs 魔改/复用**，先把我们缺失的“多任务编排 + Git PR 流水线 + PR 合并”补上；并且**第一阶段仅启用 Responses API（wire_api = responses）**。
 
 ---
 
@@ -14,7 +14,7 @@
 - `example/codex/codex-cli/`：Node 打包与发布脚本（用于分发 Rust 二进制、安装 native deps）
 - `example/codex/sdk/`：SDK（可作为未来外部集成参考）
 
-对 `CodePM`（Rust-only）而言，优先研究 `codex-rs`。
+对 `OmneAgent`（Rust-only）而言，优先研究 `codex-rs`。
 
 ---
 
@@ -64,7 +64,7 @@ Codex 的安全与执行底座很厚，相关 crate/文档：
 - `codex-exec-server`：**patched Bash + execve wrapper**（把 Bash 内部所有 execve 调用“上报”到 MCP server 决策，支持 Run/Escalate/Deny）——这是 Codex CLI “可审批执行”的关键工程实现（`example/codex/codex-rs/exec-server/README.md`）
 - `codex-process-hardening`：pre-main hardening（禁 core dump、禁 ptrace、清理危险 env vars）（`example/codex/codex-rs/process-hardening/README.md`）
 
-对 `CodePM` 的意义：
+对 `OmneAgent` 的意义：
 
 - 我们要做自动化的 git/format/check/build，风险面比单纯改文件更大。
 - Codex 的安全底座可以直接复用（尤其 approvals + execpolicy），避免我们自研“命令白名单/审批系统”。
@@ -77,7 +77,7 @@ Codex 的安全与执行底座很厚，相关 crate/文档：
 - MCP server（实验）：`codex mcp-server` 让“其它 agent”把 Codex 当工具用（`example/codex/codex-rs/README.md`）
 - 独立的 `mcp-types`：对 MCP schema 做类型化建模（类似 lsp-types）（`example/codex/codex-rs/mcp-types/README.md`）
 
-对 `CodePM` 的意义：
+对 `OmneAgent` 的意义：
 
 - 我们的 builder/reviewer/merger 后续可能需要外部工具（CI、issue tracker、code search、browser automation…）。
 - 用 MCP 做生态扩展是可行路线，但 MVP 不必依赖。
@@ -92,7 +92,7 @@ Codex 的安全与执行底座很厚，相关 crate/文档：
   - `chat`（`/v1/chat/completions`，默认但已明确 deprecated）
 - `CHAT_WIRE_API_DEPRECATION_SUMMARY` 表明未来会移除 chat wire API。
 
-对 `CodePM` 的明确约束：
+对 `OmneAgent` 的明确约束：
 
 - **第一阶段只支持 Responses**：我们应在配置层与代码路径上“默认且优先 Responses”，并尽量不要引入 chat 兼容逻辑到新模块里。
 
@@ -107,7 +107,7 @@ Codex 的安全与执行底座很厚，相关 crate/文档：
 - **notify hook（与我们需求直接对齐）**：
   - `notify: Option<Vec<String>>`：每个 turn 完成后执行外部程序，并附加一个 JSON 参数（文件内注释给了完整示例）。
 
-> 这说明 Codex 已经把 “完成时 hook 回调” 做成了第一等能力。`CodePM` 不应重复造轮子，应该直接复用（或在其上扩展）这一套 hook 机制，补齐我们“session/task/pr 合并完成后回调”的语义即可。
+> 这说明 Codex 已经把 “完成时 hook 回调” 做成了第一等能力。`OmneAgent` 不应重复造轮子，应该直接复用（或在其上扩展）这一套 hook 机制，补齐我们“session/task/pr 合并完成后回调”的语义即可。
 
 ---
 
@@ -131,7 +131,7 @@ Codex 的安全与执行底座很厚，相关 crate/文档：
 - `text`：verbosity + `text.format`（JSON schema 输出约束）
 - `include`、`prompt_cache_key`、`parallel_tool_calls` 等都被显式建模
 
-这对 `CodePM` 的价值：
+这对 `OmneAgent` 的价值：
 
 - 我们未来的 `Architect`/`Merger` 很可能需要结构化输出（DAG、合并计划、风险列表）。
 - Codex 已内置 JSON schema 输出控制接口，可直接复用，而不必自己在 prompt 上“正则约束输出”。
@@ -164,7 +164,7 @@ Codex 的安全与执行底座很厚，相关 crate/文档：
 - 对 Bearer token 做 `mlock(2)` 与 `zeroize` 等硬化，减少泄露风险
 - 支持 `--http-shutdown` 让非特权用户能关停代理
 
-对 `CodePM`：
+对 `OmneAgent`：
 
 - 我们的 worker 如果运行在“低权限用户”上下文（或者未来有远端执行/多租户），这套代理可以作为“安全传递 OpenAI key”的参考实现。
 
@@ -189,7 +189,7 @@ Codex 的安全与执行底座很厚，相关 crate/文档：
 - 支持 skill invocation（把 skill 文件作为 input item 发送）
 - 事件流：`item/*` notifications（agent message delta、tool started/completed、diff items 等）
 
-> 对 `CodePM`：如果我们要做“并发 worker + 状态订阅 + hook 回调”，app-server 协议几乎是现成的“编排协议”。我们可以选择：
+> 对 `OmneAgent`：如果我们要做“并发 worker + 状态订阅 + hook 回调”，app-server 协议几乎是现成的“编排协议”。我们可以选择：
 >
 > - 直接复用 app-server 作为 worker 的控制面（orchestrator 作为 client）
 > - 或在 codex-core 上层嵌入，但保留同样的事件模型（Thread/Turn/Item）
@@ -229,11 +229,11 @@ Codex 的安全与执行底座很厚，相关 crate/文档：
 
 ---
 
-## 6. `CodePM` 应如何“基于 codex 魔改”（推荐路线）
+## 6. `OmneAgent` 应如何“基于 codex 魔改”（推荐路线）
 
 > 这里给出两条路线：A 更像 fork + 新 crate；B 更像外部 orchestrator 驱动 `codex exec/app-server`。
 
-### 路线 A：fork codex-rs，加一个 `code-pm` crate（推荐长期）
+### 路线 A：fork codex-rs，加一个 `OmneAgent` crate（推荐长期）
 
 - 优点：
   - 直接复用 `codex-core`、`codex-api`、`codex-protocol` 的内部接口
@@ -260,7 +260,7 @@ Codex 的安全与执行底座很厚，相关 crate/文档：
 
 ---
 
-## 6.5 `CodePM` 需要优先补齐的“Codex 未覆盖领域”
+## 6.5 `OmneAgent` 需要优先补齐的“Codex 未覆盖领域”
 
 即便 Codex 底座很强，但它不是“PR 工厂”。我们要新增的差异化能力主要是：
 
@@ -272,7 +272,7 @@ Codex 的安全与执行底座很厚，相关 crate/文档：
 
 ---
 
-## 7. 对 `CodePM` 的第一阶段约束（Responses-only 的落地建议）
+## 7. 对 `OmneAgent` 的第一阶段约束（Responses-only 的落地建议）
 
 1. 配置层：默认 `wire_api = "responses"`，并在我们的 orchestrator 配置中不暴露 chat 选项。
 2. Provider 层：只保留/测试 Responses 路径（包括 SSE 事件解析）。
@@ -299,7 +299,7 @@ Codex 的安全与执行底座很厚，相关 crate/文档：
   - 可选：把 `vendor/<triple>/path` prepend 到 `PATH`（让 `rg` 之类的依赖可用）
 - Node **不**做：任何 agent/core/权限/工具逻辑（这些留给 Rust binary）。
 
-对 `CodePM` 的直接启发：
+对 `OmneAgent` 的直接启发：
 
 - 我们的 v0.3.0 Node 方案应该复刻这个边界（见 `docs/TODO.md`）。
 - Node 的职责越薄，Rust 才是唯一可信执行体（安全模型只存在一份）。
@@ -311,7 +311,7 @@ Codex 的安全与执行底座很厚，相关 crate/文档：
 - 显式列出每个 npm 包需要哪些 native components，并把它们复制到固定目录结构（例如把 `rg` 放进 `path/`）。
 - release 工作流把 `vendor/` 树作为产物，后续再被 npm 包/发行版复用。
 
-对 `CodePM`：
+对 `OmneAgent`：
 
 - 如果选择 “npm vendoring 多平台二进制”，必须把 vendor layout 与 release pipeline 当作第一等工程，而不是散落脚本。
 - 反过来，如果不想背负这套复杂度，就选 “npm thin client + 外部安装二进制”。
@@ -328,9 +328,9 @@ Codex 的安全与执行底座很厚，相关 crate/文档：
   - 过滤掉保留前缀变量（Codex 禁止 `.env` 写 `CODEX_*`）
   - 创建 `~/.codex/tmp/path/*` 临时目录，把 helper symlink/bat 放进去并 prepend 到 `PATH`
 
-对 `CodePM`：
+对 `OmneAgent`：
 
-- `.env` 必须“可用但不可提权”：建议对 `CODE_PM_*` 做同类过滤（避免 `.env` 伪造 root/path/sandbox 等关键配置）。
+- `.env` 必须“可用但不可提权”：建议对 `omne_*` 做同类过滤（避免 `.env` 伪造 root/path/sandbox 等关键配置）。
 - “工具别名（apply_patch/…）”可以作为分发优化，但一定要在多线程前完成，避免环境竞态。
 
 ### 8.4 配置分层 + 可解释性 + 冲突检测（把配置当产品能力）
@@ -342,7 +342,7 @@ Codex 的安全与执行底座很厚，相关 crate/文档：
   - per-key origins（每个 key 谁赢了，来自哪一层）
   - per-layer fingerprint（稳定 hash，用于乐观并发写/冲突检测）
 
-对 `CodePM`：
+对 `OmneAgent`：
 
 - 我们已经在 v0.2.0 做了部分 “config explain”，但如果要做 GUI/daemon 的在线配置编辑，这种 layer fingerprint 才是“不会互相踩配置”的正确答案。
 
@@ -362,7 +362,7 @@ Codex 做了两件值得抄但要克制的事：
   - 只包含 `&& || ; |` 这类“不会引入副作用”的 operator
   - 并拒绝重定向、命令替换、控制流、括号等复杂构造
 
-对 `CodePM`：
+对 `OmneAgent`：
 
 - 我们文档已强调 `bash -lc` 默认应 forbidden（见 `docs/execpolicy.md`）。
 - 但如果未来要在 `ApprovalPolicy=unless_trusted` 下减少噪音，可以考虑引入这种“可证明安全的极小子集解析”，把“安全读取类命令”自动通过，其余一律走审批/拒绝。
@@ -374,9 +374,9 @@ Codex 做了两件值得抄但要克制的事：
 - Codex 的 seatbelt policy 在 workspace-write 下仍然把 `.git` 与 `.codex` 设为只读。
 - 测试里直说原因：`.git/hooks/*` 可写会导致用户后续手工 `git commit` 执行恶意代码；修改配置目录可能把下一次运行升级成 full-access。
 
-对 `CodePM`：
+对 `OmneAgent`：
 
-- 我们的等价目录是 `.git` 与 `.codepm_data/`；“允许写 workspace”不能等价于“允许写一切”，否则会把 agent 变成持久化后门的写入器。
+- 我们的等价目录是 `.git` 与 `.omne_data/`；“允许写 workspace”不能等价于“允许写一切”，否则会把 agent 变成持久化后门的写入器。
 
 ### 8.7 pre-main hardening：别让宿主环境轻易劫持你
 
@@ -388,7 +388,7 @@ Codex 做了两件值得抄但要克制的事：
   - 清理 `LD_*` / `DYLD_*` 这类动态链接劫持入口
 - 并且注意非 UTF-8 env key 的边界条件（测试覆盖）。
 
-对 `CodePM`：
+对 `OmneAgent`：
 
 - daemon/长驻进程尤其需要这一层；否则“你以为你在沙箱里”，实际上你已经被 `LD_PRELOAD` 之类的东西劫持了。
 
@@ -400,7 +400,7 @@ Codex 做了两件值得抄但要克制的事：
   - 便于常驻进程复用
   - 可以用文件权限控制访问（比 TCP 暴露更安全）
 
-对 `CodePM`：
+对 `OmneAgent`：
 
 - 我们已有 daemon/socket 方向（见 `docs/daemon.md`）；Codex 的适配器提供了“保留 stdio 协议但支持常驻”的通用解法。
 
@@ -414,7 +414,7 @@ Codex 做了两件值得抄但要克制的事：
 - 设备码登录 UX 里明确提示钓鱼风险（“Never share this code”），这不是花活，是必要防线。
 - keyring store 被抽象成一个很小的 trait（默认实现 + mock 测试），避免把 OS keyring 细节污染到 core。
 
-对 `CodePM`：
+对 `OmneAgent`：
 
 - 如果未来做 OAuth/device-code 登录，建议同样抽象出 “credential store” 与 “login flow”，并确保日志/事件落盘不会泄露 token。
 
@@ -424,6 +424,6 @@ Codex 做了两件值得抄但要克制的事：
 
 - 把 tracing + metrics 的出口封装成独立 crate，并提供 in-memory exporter 供测试断言。
 
-对 `CodePM`：
+对 `OmneAgent`：
 
 - 我们现在以事件 log 为主，但 daemon/多 workspace 并发后，“指标化”会变得很值钱（排队时延、turn 时延、tool 失败率、重试率等）。

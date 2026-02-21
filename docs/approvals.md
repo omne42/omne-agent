@@ -122,7 +122,7 @@ key 的稳定性（v0.2.0 实现口径）：
 
 - 在 `approval_policy=auto_approve` 下触发 `prompt_strict`：
   - 必须进入 `NeedApproval`，且不会自动写入 `ApprovalDecided(Approved)`。
-- `pm inbox` / `pm watch` 必须可见 pending approvals（含 `approval.requirement` 字段）。
+- `omne inbox` / `omne watch` 必须可见 pending approvals（含 `approval.requirement` 字段）。
 
 ---
 

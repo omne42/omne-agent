@@ -54,9 +54,9 @@ PR #1641 的核心诉求是：**让 Codex CLI 在“Zero Data Retention (ZDR)”
 
 ---
 
-## 5) 对我们当前目录（CodePM 这组仓库）的直接启发
+## 5) 对我们当前目录（OmneAgent 这组仓库）的直接启发
 
-对 `codex_pm/`（CodePM app-server）来说，最关键的不是 sqlite 这个实现细节，而是一个原则：
+对 `codex_omne/`（OmneAgent app-server）来说，最关键的不是 sqlite 这个实现细节，而是一个原则：
 
 - **如果你为了对齐 Responses 的“unrolled stateless loop / compaction / encrypted_content round-trip”而必须保存 raw items，那么就必须重新评估“本地存储敏感数据”的边界**。
 

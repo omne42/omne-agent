@@ -1,4 +1,4 @@
-async fn parse_tasks_override(args: &RunArgs) -> anyhow::Result<Option<Vec<pm_core::TaskSpec>>> {
+async fn parse_tasks_override(args: &RunArgs) -> anyhow::Result<Option<Vec<omne_core::TaskSpec>>> {
     if args.tasks_file.is_some() && !args.task.is_empty() {
         anyhow::bail!("use only one of --tasks-file or --task");
     }
@@ -29,7 +29,7 @@ async fn parse_tasks_override(args: &RunArgs) -> anyhow::Result<Option<Vec<pm_co
         anyhow::bail!("tasks override provided but empty");
     }
 
-    let mut seen: HashSet<pm_core::TaskId> = HashSet::new();
+    let mut seen: HashSet<omne_core::TaskId> = HashSet::new();
     let mut specs = Vec::with_capacity(tasks.len());
     for (index, task) in tasks.into_iter().enumerate() {
         let fallback = format!("t{}", index + 1);
@@ -43,7 +43,7 @@ async fn parse_tasks_override(args: &RunArgs) -> anyhow::Result<Option<Vec<pm_co
             }
             None => fallback,
         };
-        let id = pm_core::TaskId::sanitize(&id_raw);
+        let id = omne_core::TaskId::sanitize(&id_raw);
 
         if !seen.insert(id.clone()) {
             anyhow::bail!("duplicate task id: {}", id.as_str());
@@ -54,7 +54,7 @@ async fn parse_tasks_override(args: &RunArgs) -> anyhow::Result<Option<Vec<pm_co
             anyhow::bail!("task title must not be empty (task id: {})", id.as_str());
         }
 
-        specs.push(pm_core::TaskSpec {
+        specs.push(omne_core::TaskSpec {
             id,
             title,
             description: task.description.and_then(|d| {
@@ -99,9 +99,9 @@ struct TemplateArchitect;
 
 #[async_trait::async_trait]
 impl Architect for TemplateArchitect {
-    async fn split(&self, session: &pm_core::Session) -> anyhow::Result<Vec<pm_core::TaskSpec>> {
-        Ok(vec![pm_core::TaskSpec {
-            id: pm_core::TaskId::sanitize("main"),
+    async fn split(&self, session: &omne_core::Session) -> anyhow::Result<Vec<omne_core::TaskSpec>> {
+        Ok(vec![omne_core::TaskSpec {
+            id: omne_core::TaskId::sanitize("main"),
             title: format!("Implement {}", session.pr_name.as_str()),
             description: Some("Phase 1: template single-task split".to_string()),
         }])

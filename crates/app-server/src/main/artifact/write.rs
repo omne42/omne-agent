@@ -19,7 +19,7 @@ async fn handle_artifact_write(
             state.allowed_tools.clone(),
         )
     };
-    let tool_id = pm_protocol::ToolId::new();
+    let tool_id = omne_protocol::ToolId::new();
     let bytes_len = params.text.len();
     let artifact_type = params.artifact_type.clone();
     let summary = params.summary.clone();
@@ -42,15 +42,15 @@ async fn handle_artifact_write(
         return Ok(result);
     }
 
-    let catalog = pm_core::modes::ModeCatalog::load(&thread_root).await;
+    let catalog = omne_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {
         Some(mode) => mode,
         None => {
             let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
-            let decision = pm_core::modes::Decision::Deny;
+            let decision = omne_core::modes::Decision::Deny;
 
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                .append_event(omne_protocol::ThreadEventKind::ToolStarted {
                     tool_id,
                     turn_id: params.turn_id,
                     tool: "artifact/write".to_string(),
@@ -58,9 +58,9 @@ async fn handle_artifact_write(
                 })
                 .await?;
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
-                    status: pm_protocol::ToolStatus::Denied,
+                    status: omne_protocol::ToolStatus::Denied,
                     error: Some("unknown mode".to_string()),
                     result: Some(serde_json::json!({
                         "mode": mode_name,
@@ -86,9 +86,9 @@ async fn handle_artifact_write(
         Some(override_decision) => base_decision.combine(override_decision),
         None => base_decision,
     };
-    if effective_decision == pm_core::modes::Decision::Deny {
+    if effective_decision == omne_core::modes::Decision::Deny {
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+            .append_event(omne_protocol::ThreadEventKind::ToolStarted {
                 tool_id,
                 turn_id: params.turn_id,
                 tool: "artifact/write".to_string(),
@@ -96,9 +96,9 @@ async fn handle_artifact_write(
             })
             .await?;
         thread_rt
-            .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+            .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                 tool_id,
-                status: pm_protocol::ToolStatus::Denied,
+                status: omne_protocol::ToolStatus::Denied,
                 error: Some("mode denies artifact/write".to_string()),
                 result: Some(serde_json::json!({
                     "mode": mode_name,
@@ -114,7 +114,7 @@ async fn handle_artifact_write(
         }));
     }
 
-    if effective_decision == pm_core::modes::Decision::Prompt {
+    if effective_decision == omne_core::modes::Decision::Prompt {
         match gate_approval(
             server,
             &thread_rt,
@@ -132,7 +132,7 @@ async fn handle_artifact_write(
             ApprovalGate::Approved => {}
             ApprovalGate::Denied { remembered } => {
                 thread_rt
-                    .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+                    .append_event(omne_protocol::ThreadEventKind::ToolStarted {
                         tool_id,
                         turn_id: params.turn_id,
                         tool: "artifact/write".to_string(),
@@ -140,9 +140,9 @@ async fn handle_artifact_write(
                     })
                     .await?;
                     thread_rt
-                        .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                        .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                             tool_id,
-                            status: pm_protocol::ToolStatus::Denied,
+                            status: omne_protocol::ToolStatus::Denied,
                             error: Some(approval_denied_error(remembered).to_string()),
                             result: Some(serde_json::json!({
                                 "approval_policy": approval_policy,
@@ -166,7 +166,7 @@ async fn handle_artifact_write(
     }
 
     thread_rt
-        .append_event(pm_protocol::ThreadEventKind::ToolStarted {
+        .append_event(omne_protocol::ThreadEventKind::ToolStarted {
             tool_id,
             turn_id: params.turn_id,
             tool: "artifact/write".to_string(),
@@ -191,9 +191,9 @@ async fn handle_artifact_write(
     match outcome {
         Ok((response, completed)) => {
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
-                    status: pm_protocol::ToolStatus::Completed,
+                    status: omne_protocol::ToolStatus::Completed,
                     error: None,
                     result: Some(completed),
                 })
@@ -202,9 +202,9 @@ async fn handle_artifact_write(
         }
         Err(err) => {
             thread_rt
-                .append_event(pm_protocol::ThreadEventKind::ToolCompleted {
+                .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
-                    status: pm_protocol::ToolStatus::Failed,
+                    status: omne_protocol::ToolStatus::Failed,
                     error: Some(err.to_string()),
                     result: None,
                 })
@@ -215,7 +215,7 @@ async fn handle_artifact_write(
 }
 
 struct UserArtifactWriteRequest {
-    tool_id: pm_protocol::ToolId,
+    tool_id: omne_protocol::ToolId,
     thread_id: ThreadId,
     turn_id: Option<TurnId>,
     artifact_id: Option<ArtifactId>,
@@ -279,7 +279,7 @@ async fn write_user_artifact(
         }
     }
 
-    let text = pm_core::redact_text(&text);
+    let text = omne_core::redact_text(&text);
     let bytes = text.as_bytes().to_vec();
     write_file_atomic(&content_path, &bytes).await?;
 
@@ -349,16 +349,16 @@ async fn write_user_artifact(
     Ok((response, completed))
 }
 
-fn infer_artifact_preview(artifact_type: &str) -> pm_protocol::ArtifactPreview {
+fn infer_artifact_preview(artifact_type: &str) -> omne_protocol::ArtifactPreview {
     let kind = match artifact_type {
-        "diff" => pm_protocol::ArtifactPreviewKind::DiffUnified,
-        "patch" => pm_protocol::ArtifactPreviewKind::PatchUnified,
-        "html" => pm_protocol::ArtifactPreviewKind::Html,
-        "code" => pm_protocol::ArtifactPreviewKind::Code,
-        "log" | "log_excerpt" => pm_protocol::ArtifactPreviewKind::Log,
-        _ => pm_protocol::ArtifactPreviewKind::Markdown,
+        "diff" => omne_protocol::ArtifactPreviewKind::DiffUnified,
+        "patch" => omne_protocol::ArtifactPreviewKind::PatchUnified,
+        "html" => omne_protocol::ArtifactPreviewKind::Html,
+        "code" => omne_protocol::ArtifactPreviewKind::Code,
+        "log" | "log_excerpt" => omne_protocol::ArtifactPreviewKind::Log,
+        _ => omne_protocol::ArtifactPreviewKind::Markdown,
     };
-    pm_protocol::ArtifactPreview {
+    omne_protocol::ArtifactPreview {
         kind,
         language: None,
         title: None,
@@ -366,7 +366,7 @@ fn infer_artifact_preview(artifact_type: &str) -> pm_protocol::ArtifactPreview {
 }
 
 fn artifact_history_max_versions() -> usize {
-    std::env::var("CODE_PM_ARTIFACT_HISTORY_MAX_VERSIONS")
+    std::env::var("OMNE_ARTIFACT_HISTORY_MAX_VERSIONS")
         .ok()
         .and_then(|value| value.trim().parse::<usize>().ok())
         .unwrap_or(0)

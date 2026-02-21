@@ -1,0 +1,13 @@
+# OmneAgent project config (v0.2.x)
+#
+# This file is safe to commit. Secrets belong in `.omne_data/.env` (gitignored).
+# For per-machine overrides, use `.omne_data/config_local.toml` (gitignored).
+#
+# When disabled, OmneAgent ignores project-level overrides from `config.toml` and `.env`.
+
+[project_config]
+enabled = false
+
+[openai]
+# base_url = "https://api.openai.com"
+# model = "gpt-4.1"

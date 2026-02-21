@@ -3,7 +3,7 @@ use std::path::Path;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
-use pm_core::PmPaths;
+use omne_core::PmPaths;
 use tokio::process::Command;
 use tower::ServiceExt;
 
@@ -30,11 +30,11 @@ async fn init_bare_repo(path: &Path) -> anyhow::Result<()> {
 #[tokio::test]
 async fn list_repos_returns_repo_names() -> anyhow::Result<()> {
     let tmp = tempfile::tempdir()?;
-    let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
+    let omne_paths = PmPaths::new(tmp.path().join(".omne"));
 
-    init_bare_repo(&pm_paths.repos_dir().join("demo.git")).await?;
+    init_bare_repo(&omne_paths.repos_dir().join("demo.git")).await?;
 
-    let app = pm_http::router(pm_paths.clone())?;
+    let app = omne_http::router(omne_paths.clone())?;
     let request = Request::builder()
         .uri("/api/v0/repos")
         .body(Body::empty())?;
@@ -50,11 +50,11 @@ async fn list_repos_returns_repo_names() -> anyhow::Result<()> {
 #[tokio::test]
 async fn list_repos_verbose_returns_repo_metadata() -> anyhow::Result<()> {
     let tmp = tempfile::tempdir()?;
-    let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
+    let omne_paths = PmPaths::new(tmp.path().join(".omne"));
 
-    init_bare_repo(&pm_paths.repos_dir().join("demo.git")).await?;
+    init_bare_repo(&omne_paths.repos_dir().join("demo.git")).await?;
 
-    let app = pm_http::router(pm_paths.clone())?;
+    let app = omne_http::router(omne_paths.clone())?;
     let request = Request::builder()
         .uri("/api/v0/repos?verbose=true")
         .body(Body::empty())?;
@@ -69,11 +69,19 @@ async fn list_repos_verbose_returns_repo_metadata() -> anyhow::Result<()> {
     assert_eq!(item["name"], "demo");
     assert_eq!(
         item["bare_path"],
-        pm_paths.repos_dir().join("demo.git").display().to_string()
+        omne_paths
+            .repos_dir()
+            .join("demo.git")
+            .display()
+            .to_string()
     );
     assert_eq!(
         item["lock_path"],
-        pm_paths.locks_dir().join("demo.lock").display().to_string()
+        omne_paths
+            .locks_dir()
+            .join("demo.lock")
+            .display()
+            .to_string()
     );
     Ok(())
 }
@@ -81,11 +89,11 @@ async fn list_repos_verbose_returns_repo_metadata() -> anyhow::Result<()> {
 #[tokio::test]
 async fn list_repos_verbose_flag_without_value_is_true() -> anyhow::Result<()> {
     let tmp = tempfile::tempdir()?;
-    let pm_paths = PmPaths::new(tmp.path().join(".code_pm"));
+    let omne_paths = PmPaths::new(tmp.path().join(".omne"));
 
-    init_bare_repo(&pm_paths.repos_dir().join("demo.git")).await?;
+    init_bare_repo(&omne_paths.repos_dir().join("demo.git")).await?;
 
-    let app = pm_http::router(pm_paths.clone())?;
+    let app = omne_http::router(omne_paths.clone())?;
     let request = Request::builder()
         .uri("/api/v0/repos?verbose")
         .body(Body::empty())?;

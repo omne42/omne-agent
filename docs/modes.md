@@ -36,21 +36,21 @@
 
 ### 2.1 Project config（仓库内，可提交/可 review）
 
-- **Canonical**：`./.codepm_data/spec/modes.yaml`
-- **Fallback**：`./.codepm_data/spec/modes.yml`
+- **Canonical**：`./.omne_data/spec/modes.yaml`
+- **Fallback**：`./.omne_data/spec/modes.yml`
 
 ### 2.2 发现顺序（高 → 低）
 
-1. CLI 显式参数（未来实现，例如 `pm thread config set --modes <path>` 或 `pm --modes <path>`）
-2. env：`CODE_PM_MODES_FILE`
-3. `./.codepm_data/spec/modes.yaml`
-4. `./.codepm_data/spec/modes.yml`
+1. CLI 显式参数（未来实现，例如 `omne thread config set --modes <path>` 或 `omne --modes <path>`）
+2. env：`OMNE_MODES_FILE`
+3. `./.omne_data/spec/modes.yaml`
+4. `./.omne_data/spec/modes.yml`
 5. user/global（可选；默认可不启用）
 6. 内置默认 modes（兜底）
 
-> 注意：`./.codepm_data/` 同时承载运行时数据（threads/artifacts）与项目 spec（`.codepm_data/spec/*`）。secrets 放在 `.codepm_data/.env`，且默认禁止被 file tools 读取。
+> 注意：`./.omne_data/` 同时承载运行时数据（threads/artifacts）与项目 spec（`.omne_data/spec/*`）。secrets 放在 `.omne_data/.env`，且默认禁止被 file tools 读取。
 >
-> `CODE_PM_MODES_FILE`：
+> `OMNE_MODES_FILE`：
 >
 > - 支持绝对路径。
 > - 相对路径按 **thread cwd（workspace root）** 解析（不是按当前进程 cwd）。
@@ -118,7 +118,7 @@ v0.2.0 MVP 已支持字段：
 约束：
 
 - `process.interact` **必须为** `deny`（只读 attach，不做 stdin/PTY）。
-- `edit.allow_globs/deny_globs` 为相对 workspace root 的 glob；建议默认把 `.git/**`、`.codepm_data/config.toml`、`.codepm_data/config_local.toml`、`.codepm_data/spec/**`、`.codepm_data/{tmp,data,repos,threads,locks,logs}/**`、`**/.env` 放入 `deny_globs`，避免 agent 自举修改边界/运行时数据或读取 secrets。
+- `edit.allow_globs/deny_globs` 为相对 workspace root 的 glob；建议默认把 `.git/**`、`.omne_data/config.toml`、`.omne_data/config_local.toml`、`.omne_data/spec/**`、`.omne_data/{tmp,data,repos,threads,locks,logs}/**`、`**/.env` 放入 `deny_globs`，避免 agent 自举修改边界/运行时数据或读取 secrets。
 
 ### 5.4 示例（节选）
 
@@ -135,15 +135,15 @@ modes:
         deny_globs:
           [
             ".git/**",
-            ".codepm_data/config.toml",
-            ".codepm_data/config_local.toml",
-            ".codepm_data/spec/**",
-            ".codepm_data/tmp/**",
-            ".codepm_data/data/**",
-            ".codepm_data/repos/**",
-            ".codepm_data/threads/**",
-            ".codepm_data/locks/**",
-            ".codepm_data/logs/**",
+            ".omne_data/config.toml",
+            ".omne_data/config_local.toml",
+            ".omne_data/spec/**",
+            ".omne_data/tmp/**",
+            ".omne_data/data/**",
+            ".omne_data/repos/**",
+            ".omne_data/threads/**",
+            ".omne_data/locks/**",
+            ".omne_data/logs/**",
             "**/.env",
           ]
       command:
@@ -158,7 +158,7 @@ modes:
           decision: deny
 ```
 
-> JSON 也是 YAML 的子集：如果你更喜欢 JSON 语法，可以写成 JSON 但仍保存为 `.yaml`，或用 `CODE_PM_MODES_FILE` 指向 `.json`。
+> JSON 也是 YAML 的子集：如果你更喜欢 JSON 语法，可以写成 JSON 但仍保存为 `.yaml`，或用 `OMNE_MODES_FILE` 指向 `.json`。
 
 ---
 
@@ -187,4 +187,4 @@ v0.2.0 内置最小模式（作为没有 project config 时的兜底）：
 
 - `file/*` 与 `fs/mkdir`：当 `mode` 的 `edit` 对目标路径判定为 `deny` 时，工具调用会被拒绝并落盘 `ToolStatus=Denied`。
 - `process/start`：当 `mode` 的 `command=deny` 时，工具调用会被拒绝并落盘 `ToolStatus=Denied`（后续仍会叠加 `sandbox/execpolicy/approval`）。
-- `file/read|glob|grep`：当 `mode.read=deny` 或目标路径命中默认 deny globs（如 `.git/**`、`.codepm_data/threads/**`）时会被拒绝；`.env` 永远拒绝（避免 secrets 入上下文）。
+- `file/read|glob|grep`：当 `mode.read=deny` 或目标路径命中默认 deny globs（如 `.git/**`、`.omne_data/threads/**`）时会被拒绝；`.env` 永远拒绝（避免 secrets 入上下文）。

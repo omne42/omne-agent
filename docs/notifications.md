@@ -2,7 +2,7 @@
 
 > 目标：RTS 场景下用户不该“刷屏盯日志”。系统必须在关键状态变化时把人叫回来。
 >
-> v0.2.0 MVP：只做终端 bell（`\x07`），并提供去重/节流；其它通知渠道（系统通知/webhook）留接口但不强做。
+> v0.2.0 MVP：通知发送统一走 `notify-kit`（当前默认 `SoundSink`，表现为终端 bell），并提供去重/节流；其它渠道可按需追加 sink。
 
 ---
 
@@ -22,12 +22,12 @@ Attention 的派生语义与状态集合见：
 
 ---
 
-## 1) 已实现：`pm watch --bell`
+## 1) 已实现：`omne watch --bell`（经 `notify-kit`）
 
-`pm watch --bell` 是单 thread 的事件流订阅：
+`omne watch --bell` 是单 thread 的事件流订阅：
 
 - 从事件流推导状态变化（例如 `ApprovalRequested` → `need_approval`，`TurnCompleted{Stuck}` → `stuck`）。
-- 只有当状态变为 `need_approval|failed|stuck` 才会响铃。
+- 只有当状态变为 `need_approval|failed|stuck` 才会发通知（默认 sound bell）。
 - 默认抑制首次 bell（避免刚 attach 就响）。
 - 支持 `--debounce-ms`：相同状态在窗口内只响一次。
 
@@ -37,17 +37,51 @@ Attention 的派生语义与状态集合见：
 
 ---
 
-## 2) 已实现：`pm inbox --watch --bell`
+## 2) 已实现：`omne inbox --watch --bell`（经 `notify-kit`）
 
-`pm inbox --watch --bell` 轮询所有 thread meta：
+`omne inbox --watch --bell` 轮询所有 thread meta：
 
-- 只对 `need_approval|failed|stuck` 响铃。
+- 只对 `need_approval|failed|stuck` 发通知（默认 sound bell）。
 - 按 `(thread_id, attention_state)` 去重/节流：相同 thread 的相同状态在 `debounce_window` 内只提醒一次；状态变化才再次提醒。
 - 会在 stderr 输出一行 `attention: <thread_id> -> <state>`，并响铃（方便脚本抓取）。
 
 对照实现：
 
 - `crates/agent-cli/src/main/watch_inbox.rs`
+
+---
+
+## 2.1 `OMNE_NOTIFY_*` 配置（`omne --bell`）
+
+`omne watch --bell` / `omne inbox --watch --bell` 会在启动时读取以下环境变量并构造 `notify-kit` sinks：
+
+- `OMNE_NOTIFY_SOUND`：是否启用本地 sound sink（`1/true/yes/on` 开；默认开）
+- `OMNE_NOTIFY_WEBHOOK_URL`：通用 webhook URL（HTTPS）
+- `OMNE_NOTIFY_WEBHOOK_FIELD`：通用 webhook payload 字段名（默认 `text`）
+- `OMNE_NOTIFY_FEISHU_WEBHOOK_URL`：飞书 webhook URL
+- `OMNE_NOTIFY_SLACK_WEBHOOK_URL`：Slack Incoming Webhook URL
+- `OMNE_NOTIFY_TIMEOUT_MS`：sink 超时毫秒（默认 `5000`）
+- `OMNE_NOTIFY_EVENTS`：可选事件 kind 白名单（逗号分隔；例如 `attention_state,stale_process`）
+
+默认行为：
+
+- 如果不配置任何 webhook，且未显式关闭 sound，则等价于原先的 bell 行为（sound sink）。
+- 如果显式关闭 sound 且未配置任何 webhook，`--bell` 会报错（无可用通知 sink）。
+
+---
+
+## 2.2 `OMNE_NOTIFY_*` 配置（`omne-app-server`）
+
+`omne-app-server` 也会读取同一组 `OMNE_NOTIFY_*` 环境变量，并在关键 thread 事件上直接发通知：
+
+- `ApprovalRequested` → `attention_state=need_approval`
+- `TurnCompleted{Failed|Stuck}` → `attention_state=failed|stuck`
+- `ProcessExited{exit_code!=0}` → `attention_state=failed`
+
+注意：
+
+- 服务端默认不启用 sound（`OMNE_NOTIFY_SOUND` 默认关闭），避免改变 app-server 的默认行为。
+- 若未配置任何 sink（sound/webhook/feishu/slack 均未启用），服务端不会发送外部通知。
 
 ---
 
@@ -61,7 +95,7 @@ Attention 的派生语义与状态集合见：
   - running process 在 `idle_window` 内无新输出（以 stdout/stderr artifacts 的 mtime 近似）
 - 行为：
   - `thread/attention` 输出 `stale_processes=[{process_id, idle_seconds, last_update_at, stdout_path, stderr_path}]`
-  - `pm inbox --bell` / `pm watch --bell` 在 `stale_processes` 从空变非空时提醒一次（节流同上）
+  - `omne inbox --bell` / `omne watch --bell` 在 `stale_processes` 从空变非空时提醒一次（节流同上）
 - 默认阈值建议：`idle_window=300s`；`0` 禁用
 
 建议实现（写死一个简单、可复用的算法）：
@@ -79,7 +113,7 @@ Attention 的派生语义与状态集合见：
 
 配置项：
 
-- `CODE_PM_PROCESS_IDLE_WINDOW_SECONDS`：
+- `OMNE_PROCESS_IDLE_WINDOW_SECONDS`：
   - `0` = 禁用
   - `N>0` = idle_window 秒数（默认建议 300）
 
@@ -93,6 +127,6 @@ Attention 的派生语义与状态集合见：
 
 ```bash
 # bell 逻辑（状态推导 + debounce）
-rg -n \"pm inbox\" crates/agent-cli/src/main/watch_inbox.rs
+rg -n \"omne inbox\" crates/agent-cli/src/main/watch_inbox.rs
 rg -n \"maybe_bell\" crates/agent-cli/src/main/watch_inbox.rs
 ```

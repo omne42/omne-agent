@@ -2,17 +2,17 @@
 mod thread_diff_tests {
     use super::*;
 
-    fn build_test_server(pm_root: PathBuf) -> Server {
+    fn build_test_server(omne_root: PathBuf) -> Server {
         let (notify_tx, _notify_rx) = broadcast::channel::<String>(16);
         Server {
-            cwd: pm_root.clone(),
+            cwd: omne_root.clone(),
             notify_tx,
-            thread_store: ThreadStore::new(PmPaths::new(pm_root)),
+            thread_store: ThreadStore::new(PmPaths::new(omne_root)),
             threads: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             processes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             mcp: Arc::new(tokio::sync::Mutex::new(McpManager::default())),
             disk_warning: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-            exec_policy: pm_execpolicy::Policy::empty(),
+            exec_policy: omne_execpolicy::Policy::empty(),
         }
     }
 
@@ -54,7 +54,7 @@ mod thread_diff_tests {
 
         tokio::fs::write(&file_path, "hello\nworld\n").await?;
 
-        let server = build_test_server(tmp.path().join(".codepm_data"));
+        let server = build_test_server(tmp.path().join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -90,7 +90,7 @@ mod thread_diff_tests {
         assert_eq!(meta.artifact_type, "diff");
         assert_eq!(
             meta.preview.as_ref().map(|p| p.kind),
-            Some(pm_protocol::ArtifactPreviewKind::DiffUnified)
+            Some(omne_protocol::ArtifactPreviewKind::DiffUnified)
         );
 
         let text = read["text"]
@@ -118,7 +118,7 @@ mod thread_diff_tests {
 
         tokio::fs::write(&file_path, "hello\nworld\n").await?;
 
-        let server = build_test_server(tmp.path().join(".codepm_data"));
+        let server = build_test_server(tmp.path().join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -156,7 +156,7 @@ mod thread_diff_tests {
         assert_eq!(meta.artifact_type, "patch");
         assert_eq!(
             meta.preview.as_ref().map(|p| p.kind),
-            Some(pm_protocol::ArtifactPreviewKind::PatchUnified)
+            Some(omne_protocol::ArtifactPreviewKind::PatchUnified)
         );
 
         let text = read["text"]
