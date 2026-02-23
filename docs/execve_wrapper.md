@@ -4,7 +4,6 @@
 >
 > 状态：v0.2.x **已实现（实验性；unix + bash）**。实现落点：
 >
-> - patched bash patch：`docs/patches/bash-exec-wrapper.patch`
 > - execve gate（MCP server over unix socket）：`crates/app-server/src/main/process_control/execve_gate.rs`
 > - execve wrapper 二进制：`crates/execve-wrapper`（`omne-execve-wrapper`）
 > - 启用方式（最小）：`OMNE_EXECVE_WRAPPER=omne-execve-wrapper` + 用 patched bash 运行 `process/start`（见下文）。

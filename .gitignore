@@ -13,3 +13,10 @@
 /.codex/
 /bitto-llm/
 node_modules/
+/packages/omne/dist/
+/packages/omne/vendor/
+
+# generated git diff/patch artifacts
+*.gitdiff
+*.diff
+*.patch

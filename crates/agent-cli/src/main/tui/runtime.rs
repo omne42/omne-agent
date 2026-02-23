@@ -54,18 +54,18 @@
     ) -> PollInFlight {
         let task = tokio::spawn(async move {
             let request = async {
+                let params = serde_json::to_value(omne_app_server_protocol::ThreadSubscribeParams {
+                    thread_id,
+                    since_seq,
+                    max_events: Some(10_000),
+                    wait_ms: Some(0),
+                })
+                .context("serialize thread/subscribe params")?;
                 let value = handle
-                    .request(
-                        "thread/subscribe",
-                        serde_json::json!({
-                            "thread_id": thread_id,
-                            "since_seq": since_seq,
-                            "max_events": 10_000,
-                            "wait_ms": 0,
-                        }),
-                    )
+                    .request("thread/subscribe", params)
                     .await?;
-                Ok(serde_json::from_value::<SubscribeResponse>(value)?)
+                serde_json::from_value::<SubscribeResponse>(value)
+                    .context("parse thread/subscribe response")
             };
 
             match tokio::time::timeout(poll_timeout, request).await {
@@ -88,24 +88,16 @@
     ) -> ModelFetchInFlight {
         let task = tokio::spawn(async move {
             let request = async {
+                let params = serde_json::to_value(omne_app_server_protocol::ThreadModelsParams {
+                    thread_id,
+                })
+                .context("serialize thread/models params")?;
                 let value = handle
-                    .request(
-                        "thread/models",
-                        serde_json::json!({
-                            "thread_id": thread_id,
-                        }),
-                    )
+                    .request("thread/models", params)
                     .await?;
-                let models = value
-                    .get("models")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str().map(str::to_string))
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
-                Ok(models)
+                let response: omne_app_server_protocol::ThreadModelsResponse =
+                    serde_json::from_value(value).context("parse thread/models response")?;
+                Ok(response.models)
             };
             match tokio::time::timeout(timeout, request).await {
                 Ok(result) => result,
@@ -122,22 +114,24 @@
         input: String,
         priority: Option<omne_protocol::TurnPriority>,
     ) -> anyhow::Result<TurnStartInFlight> {
-        let (input, context_refs, attachments) = super::split_special_directives(&input)?;
+        let (input, context_refs, attachments, directives) = super::split_special_directives(&input)?;
         let input_for_request = input.clone();
         let task = tokio::spawn(async move {
+            let params = serde_json::to_value(omne_app_server_protocol::TurnStartParams {
+                thread_id,
+                input: input_for_request,
+                context_refs: Some(context_refs),
+                attachments: Some(attachments),
+                directives: Some(directives),
+                priority,
+            })
+            .context("serialize turn/start params")?;
             let value = handle
-                .request(
-                    "turn/start",
-                    serde_json::json!({
-                        "thread_id": thread_id,
-                        "input": input_for_request,
-                        "context_refs": context_refs,
-                        "attachments": attachments,
-                        "priority": priority,
-                    }),
-                )
+                .request("turn/start", params)
                 .await?;
-            serde_json::from_value(value["turn_id"].clone()).context("turn_id missing in result")
+            let response: omne_app_server_protocol::TurnStartResponse =
+                serde_json::from_value(value).context("parse turn/start response")?;
+            Ok(response.turn_id)
         });
         Ok(TurnStartInFlight {
             thread_id,
@@ -364,7 +358,9 @@
                 .as_ref()
                 .is_some_and(|fetch| fetch.handle.is_finished())
             {
-                let fetch = state.model_fetch.take().expect("checked model fetch");
+                let Some(fetch) = state.model_fetch.take() else {
+                    continue;
+                };
                 let result = fetch.handle.await;
                 match result {
                     Ok(Ok(models)) => {
@@ -421,7 +417,9 @@
                 .as_ref()
                 .is_some_and(|pending| pending.handle.is_finished())
             {
-                let pending = state.turn_start.take().expect("checked turn start");
+                let Some(pending) = state.turn_start.take() else {
+                    continue;
+                };
                 let result = pending.handle.await;
                 match result {
                     Ok(Ok(turn_id)) => {
@@ -489,38 +487,33 @@
                 let resume = tokio::time::timeout(timeout, app.thread_resume(thread_id))
                     .await
                     .context("thread/resume timeout")??;
-                let last_seq = resume["last_seq"].as_u64().unwrap_or(0);
+                let last_seq = resume.last_seq;
                 state.activate_thread(thread_id, last_seq);
                 if let Ok(value) = app.thread_state(thread_id).await {
                     state.thread_cwd = value
-                        .get("cwd")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty());
-                    state.total_tokens_used = value
-                        .get("total_tokens_used")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0);
+                        .cwd
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(ToString::to_string);
+                    state.total_tokens_used = value.total_tokens_used;
                 }
             }
             None => {
                 let started = tokio::time::timeout(timeout, app.thread_start(None))
                     .await
                     .context("thread/start timeout")??;
-                let thread_id: ThreadId = serde_json::from_value(started["thread_id"].clone())
-                    .context("thread_id missing")?;
-                let last_seq = started["last_seq"].as_u64().unwrap_or(0);
+                let thread_id = started.thread_id;
+                let last_seq = started.last_seq;
                 state.activate_thread(thread_id, last_seq);
                 if let Ok(value) = app.thread_state(thread_id).await {
                     state.thread_cwd = value
-                        .get("cwd")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty());
-                    state.total_tokens_used = value
-                        .get("total_tokens_used")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0);
+                        .cwd
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(ToString::to_string);
+                    state.total_tokens_used = value.total_tokens_used;
                 }
             }
         }

@@ -8,6 +8,12 @@
 ## [Unreleased]
 
 ### Added
+- 新增 Node vendoring 最小 CI 预演工作流：`.github/workflows/omne-node-vendor.yml`（Linux/macOS/Windows host matrix；`packages/omne` check/test + host binaries 构建 + `release-local-vendor-bundle` 产物上传；`workflow_dispatch` 支持 `profile/version/clean`；`v*` tag 自动以 tag 版本上传 release assets 并附 `SHA256SUMS`，发布前由 `packages/omne/scripts/validate-tag-release-artifacts.mjs` 校验 artifact 结构、per-target 唯一性、`index.json` 与 bundle 目录目标集合完全一致、`release_dir`/bundle-name 与 version/target 一致性，再由 `packages/omne/scripts/package-tag-release-assets.mjs` 仅打包当前 tag 对应版本目录（同样强制目标集合一致），并由 `packages/omne/scripts/verify-tag-release-tarballs.mjs` 校验 tarball 条目白名单与 tar 内 `index.json`/`RELEASE.json` 语义一致性，且持续清理输出目录避免旧产物混入）。
+- `omne-app-server thread/list_meta`：补齐 marker 布尔摘要字段（`has_plan_ready`/`has_diff_ready`/`has_test_failed`），与 `thread/attention` 对齐，便于 inbox/GUI 直接按标记过滤；并支持可选 `include_attention_markers=true` 返回完整 marker 详情（CLI: `omne thread list-meta --include-attention-markers`）。
+- `omne-protocol`/`omne-app-server`：新增 `ThreadEventKind::AttentionMarkerSet`，并在 `artifact/write`（`plan/diff/patch`）与测试进程失败（`ProcessExited(exit_code!=0)`）时显式落盘 `plan_ready/diff_ready/test_failed` marker；`thread/attention` 与 `thread/list_meta` 现在优先消费显式 marker 事件，对历史线程保留推断回退。
+- `omne-protocol`/`omne-app-server`：新增 `ThreadEventKind::AttentionMarkerCleared`，当前用于测试命令成功后清除 `test_failed` marker（避免“历史失败”长期挂在 inbox）；`thread/attention` 聚合规则更新为事件序列优先（set/clear）再回退推断。
+- `omne-app-server`：在新 turn 开始时自动追加 `AttentionMarkerCleared(plan_ready/diff_ready)`，用于清理上一轮“待确认/待review”标记，避免历史 plan/diff 持续占用 inbox。
+- `thread/events`：新增可选 `kinds` 过滤（CLI: `omne thread events --kind <event_type>` 可重复；MCP: `omne.thread.events` 支持 `kinds: string[]`），便于只轮询 `attention_marker_set/attention_marker_cleared` 等关键信号。
 - 新增 Agent-first 重新开发流程文档：`docs/development_process.md`。
 - 新增 vNext 目标态“RTS 风格使用流程”文档：`docs/rts_workflow.md`。
 - 新增 v0.2.x 文档索引与 v0.2.0 口径补充（approval/attention/event model/runtime/execpolicy 等，详见 `docs/README.md`）。
@@ -127,6 +133,7 @@
 ### Changed
 - `omne`/`omne-app-server`：`omne_root` 默认目录改为 `./.omne_data/`（可用 `--omne-root` 或 `OMNE_ROOT` 覆盖）。
 - （breaking）project spec 目录固定为 `./.omne_data/spec/`（modes/workspace hooks/skills 等），不再支持 legacy `.omne/`/`.omne/` 路径。
+- subagent fan-out：`fan_out_result` 结构化结果统一到 `schema_version=fan_out_result.v1`，`artifact/read` 提供机器可读字段；`workspace_mode=isolated_write` 文档同步为“已支持 patch handoff（人工回填）/未支持自动 apply 与冲突处理”；并移除仓库内自动生成 patch 样例 `docs/patches/bash-exec-wrapper.patch`（相关文档改为仅引用说明），同时将 `*.gitdiff|*.diff|*.patch` 加入 `.gitignore` 以避免后续污染。
 - 更新 `docs/ditto_llm.md`：同步 ditto-llm 统一 SDK 层已落地（LanguageModel/EmbeddingModel + OpenAI/Anthropic/Google + streaming/tools/embeddings）。
 - 更新 `docs/ditto_llm_todos.md`：标记已完成的 ditto-llm TODO，并作为后续推进清单。
 - 更新 `docs/ditto_llm_todos.md`：标记 `provider_options`（reasoning/response_format）已落地并完成。
@@ -167,7 +174,7 @@
 - `omne-app-server`：当 `sandbox_policy=read_only` 时，`file/write`/`file/patch`/`file/edit`/`file/delete`/`fs/mkdir`/`process/start` 会直接拒绝（ToolStatus=Denied）。
 - `omne-app-server approvals`：`approval/decide` 支持 `remember=true`（session 内记忆 approve/deny），同类操作无需重复弹审批；拒绝也会被记住并直接拦截。
 - `omne-app-server process/start`：引入 `omne-execpolicy` gate（`prefix_rule`）：`forbidden` 直接拒绝并写入 `ToolStatus::Denied`；`manual` 策略下仅当 `prompt`/未匹配时才要求 approval（用 allowlist 降低骚扰）。
-- `omne-app-server process/start`：当启动 `bash` 且设置 `OMNE_EXECVE_WRAPPER` 时，启用 patched bash 的 `BASH_EXEC_WRAPPER` 机制并启动 per-process execve gate（MCP over unix socket）拦截 shell 内部 `execve`（新增 `omne-execve-wrapper`；见 `docs/execve_wrapper.md` 与 `docs/patches/bash-exec-wrapper.patch`）。
+- `omne-app-server process/start`：当启动 `bash` 且设置 `OMNE_EXECVE_WRAPPER` 时，启用 patched bash 的 `BASH_EXEC_WRAPPER` 机制并启动 per-process execve gate（MCP over unix socket）拦截 shell 内部 `execve`（新增 `omne-execve-wrapper`；见 `docs/execve_wrapper.md`）。
 - `omne-execpolicy`：新增 decision `prompt_strict`；`process/start` 命中后会触发 Escalate（强制人工审批，不受 `auto_approve/on_request/unless_trusted` 与 remembered approvals 影响）。
 - `omne-app-server turn/interrupt`：会先对同一 turn 下仍在运行的后台进程发送 `process/interrupt`（SIGINT，best-effort），随后再 fallback `process/kill`（避免直接硬杀导致环境残留）。
 - `omne-app-server turn/interrupt`：当 turn 被中断时，`TurnCompleted` 会携带 `reason`（与 `TurnInterruptRequested` 一致），便于 resume 拼合历史与审计。
