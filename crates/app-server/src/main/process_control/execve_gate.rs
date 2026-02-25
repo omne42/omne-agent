@@ -655,12 +655,6 @@ fn execve_gate_tools() -> Vec<Value> {
 mod execve_gate_tests {
     use super::*;
 
-    fn build_test_server(omne_root: PathBuf, exec_policy: omne_execpolicy::Policy) -> Server {
-        let mut server = crate::build_test_server_shared(omne_root);
-        server.exec_policy = exec_policy;
-        server
-    }
-
     async fn mcp_initialize(
         lines: &mut tokio::io::Lines<tokio::io::BufReader<tokio::net::unix::OwnedReadHalf>>,
         write_half: &mut tokio::net::unix::OwnedWriteHalf,
@@ -730,7 +724,8 @@ mod execve_gate_tests {
         let mut exec_policy = omne_execpolicy::Policy::empty();
         exec_policy.add_prefix_rule(&["git".to_string()], ExecDecision::Forbidden)?;
 
-        let server = build_test_server(tmp.path().join(".omne_data"), exec_policy.clone());
+        let mut server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        server.exec_policy = exec_policy.clone();
         let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -784,7 +779,8 @@ mod execve_gate_tests {
         let mut exec_policy = omne_execpolicy::Policy::empty();
         exec_policy.add_prefix_rule(&["git".to_string()], ExecDecision::PromptStrict)?;
 
-        let server = build_test_server(tmp.path().join(".omne_data"), exec_policy.clone());
+        let mut server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        server.exec_policy = exec_policy.clone();
         let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
         let thread_id = handle.thread_id();
         drop(handle);
