@@ -763,17 +763,7 @@ mod approval_proxy_tests {
     use super::*;
 
     fn build_test_server(omne_root: PathBuf) -> Server {
-        let (notify_tx, _notify_rx) = broadcast::channel::<String>(16);
-        Server {
-            cwd: omne_root.clone(),
-            notify_tx,
-            thread_store: ThreadStore::new(PmPaths::new(omne_root)),
-            threads: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-            processes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-            mcp: Arc::new(tokio::sync::Mutex::new(McpManager::default())),
-            disk_warning: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-            exec_policy: omne_execpolicy::Policy::empty(),
-        }
+        crate::build_test_server_shared(omne_root)
     }
 
     #[tokio::test]
@@ -1277,17 +1267,7 @@ mod approval_prompt_strict_tests {
     use super::*;
 
     fn build_test_server(omne_root: PathBuf) -> Server {
-        let (notify_tx, _notify_rx) = broadcast::channel::<String>(16);
-        Server {
-            cwd: omne_root.clone(),
-            notify_tx,
-            thread_store: ThreadStore::new(PmPaths::new(omne_root)),
-            threads: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-            processes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-            mcp: Arc::new(tokio::sync::Mutex::new(McpManager::default())),
-            disk_warning: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-            exec_policy: omne_execpolicy::Policy::empty(),
-        }
+        crate::build_test_server_shared(omne_root)
     }
 
     #[tokio::test]
