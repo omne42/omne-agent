@@ -374,4 +374,19 @@ impl FanOutScheduler {
 
         Ok(())
     }
+
+    async fn run_to_completion(
+        mut self,
+        app: &mut App,
+        parent_thread_id: ThreadId,
+        parent_turn_id: Option<TurnId>,
+    ) -> anyhow::Result<Vec<WorkflowTaskResult>> {
+        while !self.is_done() {
+            self.tick(app, parent_thread_id, parent_turn_id).await?;
+            if !self.is_done() {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+        }
+        Ok(self.results_ordered())
+    }
 }

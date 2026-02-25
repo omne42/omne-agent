@@ -1232,14 +1232,15 @@ async fn run_command_run(
                 scheduler.tick(app, thread_id, None).await?;
                 fan_out_scheduler = Some(scheduler);
             } else {
-                fan_out_results = run_workflow_fan_out(
+                let scheduler = FanOutScheduler::start(
                     app,
                     thread_id,
-                    &tasks,
+                    tasks,
                     artifact_id,
                     wf.frontmatter.subagent_fork,
                 )
                 .await?;
+                fan_out_results = scheduler.run_to_completion(app, thread_id, None).await?;
                 let _artifact_path =
                     write_fan_in_summary_artifact(
                         app,
