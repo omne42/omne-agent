@@ -381,13 +381,8 @@ async fn shutdown_running_processes(server: &Server) {
 #[cfg(test)]
 mod process_signal_tests {
     use super::*;
-    use std::path::PathBuf;
     use std::sync::Arc;
     use tokio::sync::mpsc;
-
-    fn build_test_server(omne_root: PathBuf) -> Server {
-        crate::build_test_server_shared(omne_root)
-    }
 
     async fn configure_thread_mode(
         server: &Server,
@@ -460,7 +455,7 @@ modes:
         )
         .await?;
 
-        let server = build_test_server(tmp.path().join(".omne_data"));
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -492,7 +487,7 @@ modes:
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = build_test_server(tmp.path().join(".omne_data"));
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -561,7 +556,7 @@ modes:
         )
         .await?;
 
-        let server = build_test_server(tmp.path().join(".omne_data"));
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);

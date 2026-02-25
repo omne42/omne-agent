@@ -758,17 +758,13 @@ mod stale_process_tests {
 mod stuck_report_tests {
     use super::*;
 
-    fn build_test_server(omne_root: PathBuf) -> Server {
-        crate::build_test_server_shared(omne_root)
-    }
-
     #[tokio::test]
     async fn writes_stuck_report_artifact_for_stuck_turn() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = build_test_server(tmp.path().join(".omne_data"));
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
         let thread_id = handle.thread_id();
         drop(handle);

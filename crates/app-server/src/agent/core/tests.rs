@@ -438,10 +438,6 @@ mod auto_summary_tests {
 
     use omne_protocol::TurnStatus;
 
-    fn build_test_server(omne_root: PathBuf) -> crate::Server {
-        crate::build_test_server_shared(omne_root)
-    }
-
     #[test]
     fn should_auto_compact_triggers_at_threshold() {
         assert!(!should_auto_compact(0, None, 0, 80));
@@ -457,7 +453,7 @@ mod auto_summary_tests {
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = build_test_server(tmp.path().join(".omne_data"));
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -579,7 +575,7 @@ mod auto_summary_tests {
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = build_test_server(tmp.path().join(".omne_data"));
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -625,7 +621,7 @@ mod auto_summary_tests {
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = build_test_server(tmp.path().join(".omne_data"));
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
