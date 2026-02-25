@@ -1,11 +1,6 @@
 #[cfg(test)]
 mod reference_repo_file_tools_tests {
     use super::*;
-    use std::path::PathBuf;
-
-    fn build_test_server(omne_root: PathBuf) -> super::super::Server {
-        crate::build_test_server_shared(omne_root)
-    }
 
     async fn append_plan_turn_started(
         server: &super::super::Server,
@@ -105,7 +100,7 @@ mod reference_repo_file_tools_tests {
         )
         .await?;
 
-        let server = build_test_server(tmp.path().join("omne_root"));
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
         let handle = server.thread_store.create_thread(project_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -144,7 +139,7 @@ mod reference_repo_file_tools_tests {
         )
         .await?;
 
-        let server = build_test_server(tmp.path().join("omne_root"));
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
         let handle = server.thread_store.create_thread(project_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -183,7 +178,7 @@ mod reference_repo_file_tools_tests {
         tokio::fs::create_dir_all(&project_dir).await?;
         tokio::fs::write(project_dir.join("hello.txt"), "hello\n").await?;
 
-        let server = build_test_server(tmp.path().join("omne_root"));
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
         let handle = server.thread_store.create_thread(project_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -211,7 +206,7 @@ mod reference_repo_file_tools_tests {
         let project_dir = tmp.path().join("project");
         tokio::fs::create_dir_all(&project_dir).await?;
 
-        let server = build_test_server(tmp.path().join("omne_root"));
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
         let handle = server
             .thread_store
             .create_thread(project_dir.clone())
@@ -247,7 +242,7 @@ mod reference_repo_file_tools_tests {
         tokio::fs::create_dir_all(&project_dir).await?;
         tokio::fs::write(project_dir.join("note.txt"), "hello-plan\n").await?;
 
-        let server = build_test_server(tmp.path().join("omne_root"));
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
         let handle = server.thread_store.create_thread(project_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -291,7 +286,7 @@ modes:
         )
         .await?;
 
-        let server = build_test_server(tmp.path().join("omne_root"));
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
         let handle = server.thread_store.create_thread(project_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -336,7 +331,7 @@ modes:
         )
         .await?;
 
-        let server = build_test_server(tmp.path().join("omne_root"));
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
         let handle = server.thread_store.create_thread(project_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -385,7 +380,7 @@ modes:
         )
         .await?;
 
-        let server = build_test_server(tmp.path().join("omne_root"));
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
         let handle = server.thread_store.create_thread(project_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -434,7 +429,7 @@ modes:
         )
         .await?;
 
-        let server = build_test_server(tmp.path().join("omne_root"));
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
         let handle = server.thread_store.create_thread(project_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -483,7 +478,7 @@ modes:
         )
         .await?;
 
-        let server = build_test_server(tmp.path().join("omne_root"));
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
         let handle = server.thread_store.create_thread(project_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -533,7 +528,7 @@ modes:
         )
         .await?;
 
-        let server = build_test_server(tmp.path().join("omne_root"));
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
         let handle = server.thread_store.create_thread(project_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -583,7 +578,7 @@ modes:
         )
         .await?;
 
-        let server = build_test_server(tmp.path().join("omne_root"));
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
         let handle = server.thread_store.create_thread(project_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -633,7 +628,7 @@ modes:
         )
         .await?;
 
-        let server = build_test_server(tmp.path().join("omne_root"));
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
         let handle = server.thread_store.create_thread(project_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -683,7 +678,7 @@ modes:
         )
         .await?;
 
-        let server = build_test_server(tmp.path().join("omne_root"));
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
         let handle = server.thread_store.create_thread(project_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -733,7 +728,7 @@ modes:
         )
         .await?;
 
-        let server = build_test_server(tmp.path().join("omne_root"));
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
         let handle = server.thread_store.create_thread(project_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -770,7 +765,7 @@ modes:
         tokio::fs::create_dir_all(&project_a).await?;
         tokio::fs::create_dir_all(&project_b).await?;
 
-        let server = build_test_server(tmp.path().join("omne_root"));
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
         let handle_a = server.thread_store.create_thread(project_a).await?;
         let thread_a = handle_a.thread_id();
         drop(handle_a);
@@ -806,7 +801,7 @@ modes:
         let project = tmp.path().join("project");
         tokio::fs::create_dir_all(&project).await?;
 
-        let server = build_test_server(tmp.path().join("omne_root"));
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
         let handle = server.thread_store.create_thread(project).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -838,7 +833,7 @@ modes:
         tokio::fs::create_dir_all(&project_a).await?;
         tokio::fs::create_dir_all(&project_b).await?;
 
-        let server = build_test_server(tmp.path().join("omne_root"));
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
         let handle_a = server.thread_store.create_thread(project_a).await?;
         let thread_a = handle_a.thread_id();
         drop(handle_a);
@@ -874,7 +869,7 @@ modes:
         let project = tmp.path().join("project");
         tokio::fs::create_dir_all(&project).await?;
 
-        let server = build_test_server(tmp.path().join("omne_root"));
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
         let handle = server.thread_store.create_thread(project).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -907,7 +902,7 @@ modes:
         tokio::fs::create_dir_all(&project_a).await?;
         tokio::fs::create_dir_all(&project_b).await?;
 
-        let server = build_test_server(tmp.path().join("omne_root"));
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
         let handle_a = server.thread_store.create_thread(project_a).await?;
         let thread_a = handle_a.thread_id();
         drop(handle_a);
@@ -946,7 +941,7 @@ modes:
         let project = tmp.path().join("project");
         tokio::fs::create_dir_all(&project).await?;
 
-        let server = build_test_server(tmp.path().join("omne_root"));
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
         let handle = server.thread_store.create_thread(project).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -981,7 +976,7 @@ modes:
         tokio::fs::create_dir_all(&project_a).await?;
         tokio::fs::create_dir_all(&project_b).await?;
 
-        let server = build_test_server(tmp.path().join("omne_root"));
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
         let handle_a = server.thread_store.create_thread(project_a).await?;
         let thread_a = handle_a.thread_id();
         drop(handle_a);
@@ -1023,7 +1018,7 @@ modes:
         let project = tmp.path().join("project");
         tokio::fs::create_dir_all(&project).await?;
 
-        let server = build_test_server(tmp.path().join("omne_root"));
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
         let handle = server.thread_store.create_thread(project).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -1064,7 +1059,7 @@ modes:
         tokio::fs::create_dir_all(&project_a).await?;
         tokio::fs::create_dir_all(&project_b).await?;
 
-        let server = build_test_server(tmp.path().join("omne_root"));
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
         let handle_a = server.thread_store.create_thread(project_a).await?;
         let thread_a = handle_a.thread_id();
         drop(handle_a);
@@ -1107,7 +1102,7 @@ modes:
         let project = tmp.path().join("project");
         tokio::fs::create_dir_all(&project).await?;
 
-        let server = build_test_server(tmp.path().join("omne_root"));
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
         let handle = server.thread_store.create_thread(project).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -1145,7 +1140,7 @@ modes:
         tokio::fs::create_dir_all(&project_a).await?;
         tokio::fs::create_dir_all(&project_b).await?;
 
-        let server = build_test_server(tmp.path().join("omne_root"));
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
         let handle_a = server.thread_store.create_thread(project_a).await?;
         let thread_a = handle_a.thread_id();
         drop(handle_a);
@@ -1189,7 +1184,7 @@ modes:
         let project = tmp.path().join("project");
         tokio::fs::create_dir_all(&project).await?;
 
-        let server = build_test_server(tmp.path().join("omne_root"));
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
         let handle = server.thread_store.create_thread(project).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -1243,7 +1238,7 @@ modes:
         )
         .await?;
 
-        let server = build_test_server(tmp.path().join("omne_root"));
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
         let handle = server.thread_store.create_thread(project).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -1295,7 +1290,7 @@ modes:
         )
         .await?;
 
-        let server = build_test_server(tmp.path().join("omne_root"));
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
         let handle = server.thread_store.create_thread(project).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -1349,7 +1344,7 @@ modes:
         )
         .await?;
 
-        let server = build_test_server(tmp.path().join("omne_root"));
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
         let handle = server.thread_store.create_thread(project).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -1403,7 +1398,7 @@ modes:
         )
         .await?;
 
-        let server = build_test_server(tmp.path().join("omne_root"));
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
         let handle = server.thread_store.create_thread(project).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -1451,7 +1446,7 @@ modes:
         )
         .await?;
 
-        let server = build_test_server(tmp.path().join("omne_root"));
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
         let handle = server.thread_store.create_thread(project).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -1499,7 +1494,7 @@ modes:
         )
         .await?;
 
-        let server = build_test_server(tmp.path().join("omne_root"));
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
         let handle = server.thread_store.create_thread(project).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -1548,7 +1543,7 @@ modes:
         )
         .await?;
 
-        let server = build_test_server(tmp.path().join("omne_root"));
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
         let handle = server.thread_store.create_thread(project).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -1597,7 +1592,7 @@ modes:
         )
         .await?;
 
-        let server = build_test_server(tmp.path().join("omne_root"));
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
         let handle = server.thread_store.create_thread(project).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -1642,7 +1637,7 @@ modes:
         )
         .await?;
 
-        let server = build_test_server(tmp.path().join("omne_root"));
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
         let handle = server.thread_store.create_thread(project).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -1691,7 +1686,7 @@ modes:
         )
         .await?;
 
-        let server = build_test_server(tmp.path().join("omne_root"));
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
         let handle = server.thread_store.create_thread(project).await?;
         let thread_id = handle.thread_id();
         drop(handle);
