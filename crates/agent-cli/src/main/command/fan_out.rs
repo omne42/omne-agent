@@ -1,6 +1,26 @@
 use super::*;
 
 impl FanOutScheduler {
+    async fn write_progress_artifact(
+        &self,
+        app: &mut App,
+        parent_thread_id: ThreadId,
+        parent_turn_id: Option<TurnId>,
+    ) -> anyhow::Result<()> {
+        write_fan_out_progress_artifact(
+            app,
+            parent_thread_id,
+            parent_turn_id,
+            self.fan_in_artifact_id,
+            self.tasks.len(),
+            &self.finished,
+            &self.active,
+            self.started_at,
+            self.scheduling,
+        )
+        .await
+    }
+
     pub(super) async fn start(
         app: &mut App,
         parent_thread_id: ThreadId,
@@ -34,18 +54,9 @@ impl FanOutScheduler {
             last_progress_artifact_write: Instant::now(),
         };
 
-        write_fan_out_progress_artifact(
-            app,
-            parent_thread_id,
-            None,
-            scheduler.fan_in_artifact_id,
-            scheduler.tasks.len(),
-            &scheduler.finished,
-            &scheduler.active,
-            scheduler.started_at,
-            scheduler.scheduling,
-        )
-        .await?;
+        scheduler
+            .write_progress_artifact(app, parent_thread_id, None)
+            .await?;
 
         Ok(scheduler)
     }
@@ -338,18 +349,9 @@ impl FanOutScheduler {
             }
 
             if self.last_progress_artifact_write.elapsed() >= Duration::from_secs(2) {
-                let outcome = write_fan_out_progress_artifact(
-                    app,
-                    parent_thread_id,
-                    parent_turn_id,
-                    self.fan_in_artifact_id,
-                    self.tasks.len(),
-                    &self.finished,
-                    &self.active,
-                    self.started_at,
-                    self.scheduling,
-                )
-                .await;
+                let outcome = self
+                    .write_progress_artifact(app, parent_thread_id, parent_turn_id)
+                    .await;
                 if let Err(err) = outcome {
                     eprintln!("[fan-out] progress artifact update failed: {err}");
                 } else {
@@ -357,18 +359,9 @@ impl FanOutScheduler {
                 }
             }
         } else {
-            let outcome = write_fan_out_progress_artifact(
-                app,
-                parent_thread_id,
-                parent_turn_id,
-                self.fan_in_artifact_id,
-                self.tasks.len(),
-                &self.finished,
-                &self.active,
-                self.started_at,
-                self.scheduling,
-            )
-            .await;
+            let outcome = self
+                .write_progress_artifact(app, parent_thread_id, parent_turn_id)
+                .await;
             if let Err(err) = outcome {
                 eprintln!("[fan-out] final progress artifact update failed: {err}");
             }
