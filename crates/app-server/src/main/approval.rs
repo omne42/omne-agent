@@ -762,17 +762,13 @@ async fn remembered_approval_decision(
 mod approval_proxy_tests {
     use super::*;
 
-    fn build_test_server(omne_root: PathBuf) -> Server {
-        crate::build_test_server_shared(omne_root)
-    }
-
     #[tokio::test]
     async fn approval_decide_forwards_subagent_proxy_to_child() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = build_test_server(tmp.path().join(".omne_data"));
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
         let parent_handle = server.thread_store.create_thread(repo_dir.clone()).await?;
         let parent_thread_id = parent_handle.thread_id();
         drop(parent_handle);
@@ -871,7 +867,7 @@ mod approval_proxy_tests {
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = build_test_server(tmp.path().join(".omne_data"));
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
         let parent_handle = server.thread_store.create_thread(repo_dir.clone()).await?;
         let parent_thread_id = parent_handle.thread_id();
         drop(parent_handle);
@@ -940,7 +936,7 @@ mod approval_proxy_tests {
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = build_test_server(tmp.path().join(".omne_data"));
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
         let parent_handle = server.thread_store.create_thread(repo_dir.clone()).await?;
         let parent_thread_id = parent_handle.thread_id();
         drop(parent_handle);
@@ -1028,7 +1024,7 @@ mod approval_proxy_tests {
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = build_test_server(tmp.path().join(".omne_data"));
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
         let parent_handle = server.thread_store.create_thread(repo_dir).await?;
         let parent_thread_id = parent_handle.thread_id();
         drop(parent_handle);
@@ -1055,7 +1051,7 @@ mod approval_proxy_tests {
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = build_test_server(tmp.path().join(".omne_data"));
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
         let parent_handle = server.thread_store.create_thread(repo_dir).await?;
         let parent_thread_id = parent_handle.thread_id();
         drop(parent_handle);
@@ -1120,7 +1116,7 @@ mod approval_proxy_tests {
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = build_test_server(tmp.path().join(".omne_data"));
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
         let parent_handle = server.thread_store.create_thread(repo_dir.clone()).await?;
         let parent_thread_id = parent_handle.thread_id();
         drop(parent_handle);
@@ -1199,7 +1195,7 @@ mod approval_proxy_tests {
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = build_test_server(tmp.path().join(".omne_data"));
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
         let parent_handle = server.thread_store.create_thread(repo_dir).await?;
         let parent_thread_id = parent_handle.thread_id();
         drop(parent_handle);
@@ -1266,17 +1262,13 @@ mod approval_proxy_tests {
 mod approval_prompt_strict_tests {
     use super::*;
 
-    fn build_test_server(omne_root: PathBuf) -> Server {
-        crate::build_test_server_shared(omne_root)
-    }
-
     #[tokio::test]
     async fn prompt_strict_forces_manual_even_when_auto_approve() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");
 
         tokio::fs::create_dir_all(repo_dir.join(".omne_data")).await?;
-        let server = build_test_server(repo_dir.join(".omne_data"));
+        let server = crate::build_test_server_shared(repo_dir.join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -1331,7 +1323,7 @@ mod approval_prompt_strict_tests {
         let repo_dir = tmp.path().join("repo");
 
         tokio::fs::create_dir_all(repo_dir.join(".omne_data")).await?;
-        let server = build_test_server(repo_dir.join(".omne_data"));
+        let server = crate::build_test_server_shared(repo_dir.join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
