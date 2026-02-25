@@ -1,62 +1,64 @@
+use super::*;
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct WorkflowFileFrontmatterV1 {
-    version: u32,
+pub(super) struct WorkflowFileFrontmatterV1 {
+    pub(super) version: u32,
     #[serde(default)]
-    name: Option<String>,
-    mode: String,
+    pub(super) name: Option<String>,
+    pub(super) mode: String,
     #[serde(default, rename = "subagent-fork")]
-    subagent_fork: bool,
+    pub(super) subagent_fork: bool,
     #[serde(default)]
-    allowed_tools: Option<Vec<String>>,
+    pub(super) allowed_tools: Option<Vec<String>>,
     #[serde(default)]
-    context: Vec<WorkflowContextStep>,
+    pub(super) context: Vec<WorkflowContextStep>,
     #[serde(default)]
-    inputs: Vec<WorkflowInputDecl>,
+    pub(super) inputs: Vec<WorkflowInputDecl>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct WorkflowContextStep {
-    argv: Vec<String>,
-    summary: String,
+pub(super) struct WorkflowContextStep {
+    pub(super) argv: Vec<String>,
+    pub(super) summary: String,
     #[serde(default)]
-    ok_exit_codes: Option<Vec<i32>>,
+    pub(super) ok_exit_codes: Option<Vec<i32>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct WorkflowInputDecl {
-    name: String,
+pub(super) struct WorkflowInputDecl {
+    pub(super) name: String,
     #[serde(default)]
-    required: bool,
+    pub(super) required: bool,
 }
 
 #[derive(Debug, Clone)]
-struct WorkflowFile {
-    frontmatter: WorkflowFileFrontmatterV1,
-    body: String,
-    modes_load_error: Option<String>,
+pub(super) struct WorkflowFile {
+    pub(super) frontmatter: WorkflowFileFrontmatterV1,
+    pub(super) body: String,
+    pub(super) modes_load_error: Option<String>,
 }
 
 #[derive(Debug, Clone)]
-struct WorkflowTask {
-    id: String,
-    title: String,
-    body: String,
-    depends_on: Vec<String>,
-    priority: WorkflowTaskPriority,
+pub(super) struct WorkflowTask {
+    pub(super) id: String,
+    pub(super) title: String,
+    pub(super) body: String,
+    pub(super) depends_on: Vec<String>,
+    pub(super) priority: WorkflowTaskPriority,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum WorkflowTaskPriority {
+pub(super) enum WorkflowTaskPriority {
     High,
     Normal,
     Low,
 }
 
 impl WorkflowTaskPriority {
-    fn parse(raw: &str) -> Option<Self> {
+    pub(super) fn parse(raw: &str) -> Option<Self> {
         match raw.trim().to_ascii_lowercase().as_str() {
             "high" => Some(Self::High),
             "normal" => Some(Self::Normal),
@@ -65,7 +67,7 @@ impl WorkflowTaskPriority {
         }
     }
 
-    fn rank(self) -> usize {
+    pub(super) fn rank(self) -> usize {
         match self {
             Self::High => 0,
             Self::Normal => 1,
@@ -75,61 +77,61 @@ impl WorkflowTaskPriority {
 }
 
 #[derive(Debug, Clone)]
-struct WorkflowTaskResult {
-    task_id: String,
-    title: String,
-    thread_id: Option<ThreadId>,
-    turn_id: Option<TurnId>,
-    result_artifact_id: Option<ArtifactId>,
-    result_artifact_error: Option<String>,
-    result_artifact_error_id: Option<ArtifactId>,
-    status: TurnStatus,
-    reason: Option<String>,
-    dependency_blocked: bool,
-    assistant_text: Option<String>,
-    pending_approval: Option<WorkflowPendingApproval>,
+pub(super) struct WorkflowTaskResult {
+    pub(super) task_id: String,
+    pub(super) title: String,
+    pub(super) thread_id: Option<ThreadId>,
+    pub(super) turn_id: Option<TurnId>,
+    pub(super) result_artifact_id: Option<ArtifactId>,
+    pub(super) result_artifact_error: Option<String>,
+    pub(super) result_artifact_error_id: Option<ArtifactId>,
+    pub(super) status: TurnStatus,
+    pub(super) reason: Option<String>,
+    pub(super) dependency_blocked: bool,
+    pub(super) assistant_text: Option<String>,
+    pub(super) pending_approval: Option<WorkflowPendingApproval>,
 }
 
 #[derive(Debug, Clone)]
-struct WorkflowPendingApproval {
-    approval_id: ApprovalId,
-    action: String,
-    summary: Option<String>,
-    approve_cmd: Option<String>,
-    deny_cmd: Option<String>,
+pub(super) struct WorkflowPendingApproval {
+    pub(super) approval_id: ApprovalId,
+    pub(super) action: String,
+    pub(super) summary: Option<String>,
+    pub(super) approve_cmd: Option<String>,
+    pub(super) deny_cmd: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
-struct FanOutSchedulingParams {
-    env_max_concurrent_subagents: usize,
-    effective_concurrency_limit: usize,
-    priority_aging_rounds: usize,
+pub(super) struct FanOutSchedulingParams {
+    pub(super) env_max_concurrent_subagents: usize,
+    pub(super) effective_concurrency_limit: usize,
+    pub(super) priority_aging_rounds: usize,
 }
 
 #[derive(Debug)]
-struct FanOutScheduler {
-    tasks: Vec<WorkflowTask>,
-    fan_in_artifact_id: omne_protocol::ArtifactId,
-    scheduling: FanOutSchedulingParams,
-    subagent_fork: bool,
-    parent_cwd: Option<String>,
-    started_ids: BTreeSet<String>,
-    ready_wait_rounds: BTreeMap<String, usize>,
-    task_statuses: BTreeMap<String, TurnStatus>,
-    active: Vec<FanOutActiveTask>,
-    finished: Vec<WorkflowTaskResult>,
-    final_summary_written: bool,
-    started_at: Instant,
-    last_progress_print: Instant,
-    last_progress_artifact_write: Instant,
+pub(super) struct FanOutScheduler {
+    pub(super) tasks: Vec<WorkflowTask>,
+    pub(super) fan_in_artifact_id: omne_protocol::ArtifactId,
+    pub(super) scheduling: FanOutSchedulingParams,
+    pub(super) subagent_fork: bool,
+    pub(super) parent_cwd: Option<String>,
+    pub(super) started_ids: BTreeSet<String>,
+    pub(super) ready_wait_rounds: BTreeMap<String, usize>,
+    pub(super) task_statuses: BTreeMap<String, TurnStatus>,
+    pub(super) active: Vec<FanOutActiveTask>,
+    pub(super) finished: Vec<WorkflowTaskResult>,
+    pub(super) final_summary_written: bool,
+    pub(super) started_at: Instant,
+    pub(super) last_progress_print: Instant,
+    pub(super) last_progress_artifact_write: Instant,
 }
 
 #[derive(Debug)]
-struct FanOutActiveTask {
-    task_id: String,
-    title: String,
-    thread_id: ThreadId,
-    turn_id: TurnId,
-    since_seq: u64,
-    assistant_text: Option<String>,
+pub(super) struct FanOutActiveTask {
+    pub(super) task_id: String,
+    pub(super) title: String,
+    pub(super) thread_id: ThreadId,
+    pub(super) turn_id: TurnId,
+    pub(super) since_seq: u64,
+    pub(super) assistant_text: Option<String>,
 }

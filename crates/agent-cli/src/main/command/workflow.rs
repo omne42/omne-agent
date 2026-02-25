@@ -113,14 +113,6 @@ impl std::fmt::Display for CommandSpecError {
 
 impl std::error::Error for CommandSpecError {}
 
-fn workflow_spec_dir(omne_root: &std::path::Path) -> PathBuf {
-    omne_workflow_spec::workflow_spec_dir(omne_root)
-}
-
-fn validate_workflow_name(name: &str) -> anyhow::Result<()> {
-    omne_workflow_spec::validate_workflow_name(name)
-}
-
 fn ensure_valid_var_name(name: &str, label: &str) -> anyhow::Result<()> {
     omne_workflow_spec::ensure_valid_var_name(name, label)
 }
@@ -253,10 +245,10 @@ fn sanitize_frontmatter(
 }
 
 async fn load_workflow_file(cli: &Cli, name: &str) -> anyhow::Result<WorkflowFile> {
-    validate_workflow_name(name)?;
+    omne_workflow_spec::validate_workflow_name(name)?;
     let omne_root = resolve_pm_root(cli)?;
     let mode_catalog = omne_core::modes::ModeCatalog::load(&omne_root).await;
-    let dir = workflow_spec_dir(&omne_root);
+    let dir = omne_workflow_spec::workflow_spec_dir(&omne_root);
     if !tokio::fs::try_exists(&dir).await? {
         anyhow::bail!(
             "commands dir is missing: {} (run `omne init`?)",
@@ -832,7 +824,7 @@ async fn wait_for_process_exit(
 async fn run_command_list(cli: &Cli, json: bool) -> anyhow::Result<()> {
     let omne_root = resolve_pm_root(cli)?;
     let mode_catalog = omne_core::modes::ModeCatalog::load(&omne_root).await;
-    let dir = workflow_spec_dir(&omne_root);
+    let dir = omne_workflow_spec::workflow_spec_dir(&omne_root);
     if !tokio::fs::try_exists(&dir).await? {
         anyhow::bail!(
             "commands dir is missing: {} (run `omne init`?)",
@@ -1029,7 +1021,7 @@ async fn collect_command_validate_result(
 ) -> anyhow::Result<CommandValidateResult> {
     let omne_root = resolve_pm_root(cli)?;
     let mode_catalog = omne_core::modes::ModeCatalog::load(&omne_root).await;
-    let dir = workflow_spec_dir(&omne_root);
+    let dir = omne_workflow_spec::workflow_spec_dir(&omne_root);
     if !tokio::fs::try_exists(&dir).await? {
         anyhow::bail!(
             "commands dir is missing: {} (run `omne init`?)",
@@ -1040,7 +1032,7 @@ async fn collect_command_validate_result(
     let requested_name = name.clone();
     let mut targets = Vec::<(String, PathBuf)>::new();
     if let Some(name) = name {
-        validate_workflow_name(&name)?;
+        omne_workflow_spec::validate_workflow_name(&name)?;
         targets.push((name.clone(), dir.join(format!("{name}.md"))));
     } else {
         let mut entries = tokio::fs::read_dir(&dir)
