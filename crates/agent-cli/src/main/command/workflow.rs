@@ -1,29 +1,31 @@
+use super::*;
+
 #[derive(Debug, Clone, Serialize)]
-struct CommandListItem {
-    name: String,
-    version: u32,
-    mode: String,
-    file: String,
+pub(super) struct CommandListItem {
+    pub(super) name: String,
+    pub(super) version: u32,
+    pub(super) mode: String,
+    pub(super) file: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct CommandListError {
-    file: String,
-    error: String,
+pub(super) struct CommandListError {
+    pub(super) file: String,
+    pub(super) error: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    error_code: Option<String>,
+    pub(super) error_code: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct CommandResultSummary {
-    ok: bool,
-    commands_dir: String,
-    item_count: usize,
-    error_count: usize,
+pub(super) struct CommandResultSummary {
+    pub(super) ok: bool,
+    pub(super) commands_dir: String,
+    pub(super) item_count: usize,
+    pub(super) error_count: usize,
 }
 
 impl CommandResultSummary {
-    fn new(commands_dir: String, item_count: usize, error_count: usize) -> Self {
+    pub(super) fn new(commands_dir: String, item_count: usize, error_count: usize) -> Self {
         Self {
             ok: error_count == 0,
             commands_dir,
@@ -34,47 +36,47 @@ impl CommandResultSummary {
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct CommandListResult {
+pub(super) struct CommandListResult {
     #[serde(flatten)]
-    summary: CommandResultSummary,
-    command_count: usize,
-    commands: Vec<CommandListItem>,
-    errors: Vec<CommandListError>,
+    pub(super) summary: CommandResultSummary,
+    pub(super) command_count: usize,
+    pub(super) commands: Vec<CommandListItem>,
+    pub(super) errors: Vec<CommandListError>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    modes_load_error: Option<String>,
+    pub(super) modes_load_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct CommandValidateItem {
-    name: String,
-    version: u32,
-    mode: String,
-    file: String,
+pub(super) struct CommandValidateItem {
+    pub(super) name: String,
+    pub(super) version: u32,
+    pub(super) mode: String,
+    pub(super) file: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct CommandValidateError {
-    file: String,
-    error: String,
+pub(super) struct CommandValidateError {
+    pub(super) file: String,
+    pub(super) error: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    error_code: Option<String>,
+    pub(super) error_code: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct CommandValidateResult {
+pub(super) struct CommandValidateResult {
     #[serde(flatten)]
-    summary: CommandResultSummary,
-    strict: bool,
-    target: String,
-    validated_count: usize,
-    validated: Vec<CommandValidateItem>,
-    errors: Vec<CommandValidateError>,
+    pub(super) summary: CommandResultSummary,
+    pub(super) strict: bool,
+    pub(super) target: String,
+    pub(super) validated_count: usize,
+    pub(super) validated: Vec<CommandValidateItem>,
+    pub(super) errors: Vec<CommandValidateError>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    modes_load_error: Option<String>,
+    pub(super) modes_load_error: Option<String>,
 }
 
 #[derive(Debug)]
-enum CommandSpecError {
+pub(super) enum CommandSpecError {
     UnknownMode { mode: String, available: String },
     UnknownAllowedTool { tool: String, known: String },
     AllowedToolDeniedByMode { mode: String, tool: String },
@@ -82,7 +84,7 @@ enum CommandSpecError {
 }
 
 impl CommandSpecError {
-    fn error_code(&self) -> &'static str {
+    pub(super) fn error_code(&self) -> &'static str {
         match self {
             Self::UnknownMode { .. } => "mode_unknown",
             Self::UnknownAllowedTool { .. } => "allowed_tools_unknown_tool",
@@ -113,15 +115,15 @@ impl std::fmt::Display for CommandSpecError {
 
 impl std::error::Error for CommandSpecError {}
 
-fn ensure_valid_var_name(name: &str, label: &str) -> anyhow::Result<()> {
+pub(super) fn ensure_valid_var_name(name: &str, label: &str) -> anyhow::Result<()> {
     omne_workflow_spec::ensure_valid_var_name(name, label)
 }
 
-fn split_frontmatter(contents: &str) -> anyhow::Result<(&str, &str)> {
+pub(super) fn split_frontmatter(contents: &str) -> anyhow::Result<(&str, &str)> {
     omne_workflow_spec::split_frontmatter(contents)
 }
 
-fn normalize_string(value: String, label: &str) -> anyhow::Result<String> {
+pub(super) fn normalize_string(value: String, label: &str) -> anyhow::Result<String> {
     let value = value.trim().to_string();
     if value.is_empty() {
         anyhow::bail!("{label} must not be empty");
@@ -129,17 +131,17 @@ fn normalize_string(value: String, label: &str) -> anyhow::Result<String> {
     Ok(value)
 }
 
-fn normalize_optional_string(value: Option<String>) -> Option<String> {
+pub(super) fn normalize_optional_string(value: Option<String>) -> Option<String> {
     value
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
 }
 
-fn normalize_unique_list(values: Vec<String>) -> Vec<String> {
+pub(super) fn normalize_unique_list(values: Vec<String>) -> Vec<String> {
     omne_workflow_spec::normalize_unique_list(values)
 }
 
-fn validate_workflow_mode(
+pub(super) fn validate_workflow_mode(
     mode: &str,
     mode_catalog: &omne_core::modes::ModeCatalog,
 ) -> anyhow::Result<()> {
@@ -154,7 +156,7 @@ fn validate_workflow_mode(
     .into())
 }
 
-fn validate_allowed_tools_for_mode(
+pub(super) fn validate_allowed_tools_for_mode(
     mode_name: &str,
     tools: &[String],
     mode_catalog: &omne_core::modes::ModeCatalog,
@@ -195,7 +197,7 @@ fn validate_allowed_tools_for_mode(
     Ok(())
 }
 
-fn sanitize_frontmatter(
+pub(super) fn sanitize_frontmatter(
     mut fm: WorkflowFileFrontmatterV1,
     default_name: String,
     mode_catalog: &omne_core::modes::ModeCatalog,
@@ -244,7 +246,7 @@ fn sanitize_frontmatter(
     Ok(fm)
 }
 
-async fn load_workflow_file(cli: &Cli, name: &str) -> anyhow::Result<WorkflowFile> {
+pub(super) async fn load_workflow_file(cli: &Cli, name: &str) -> anyhow::Result<WorkflowFile> {
     omne_workflow_spec::validate_workflow_name(name)?;
     let omne_root = resolve_pm_root(cli)?;
     let mode_catalog = omne_core::modes::ModeCatalog::load(&omne_root).await;
@@ -287,7 +289,7 @@ async fn load_workflow_file(cli: &Cli, name: &str) -> anyhow::Result<WorkflowFil
     })
 }
 
-fn collect_vars(vars: &[CommandVar]) -> anyhow::Result<BTreeMap<String, String>> {
+pub(super) fn collect_vars(vars: &[CommandVar]) -> anyhow::Result<BTreeMap<String, String>> {
     let mut out = BTreeMap::<String, String>::new();
     for var in vars {
         if out.contains_key(&var.key) {
@@ -298,7 +300,7 @@ fn collect_vars(vars: &[CommandVar]) -> anyhow::Result<BTreeMap<String, String>>
     Ok(out)
 }
 
-fn render_template(
+pub(super) fn render_template(
     template: &str,
     declared: &BTreeSet<String>,
     vars: &BTreeMap<String, String>,
@@ -306,15 +308,15 @@ fn render_template(
     omne_workflow_spec::render_template(template, declared, vars)
 }
 
-fn fan_out_require_completed() -> bool {
+pub(super) fn fan_out_require_completed() -> bool {
     parse_env_bool("OMNE_COMMAND_FAN_OUT_REQUIRE_COMPLETED", true)
 }
 
-fn fan_out_priority_aging_rounds() -> usize {
+pub(super) fn fan_out_priority_aging_rounds() -> usize {
     parse_env_usize("OMNE_FAN_OUT_PRIORITY_AGING_ROUNDS", 3, 1, 10_000)
 }
 
-fn fan_out_scheduling_params(total_tasks: usize) -> FanOutSchedulingParams {
+pub(super) fn fan_out_scheduling_params(total_tasks: usize) -> FanOutSchedulingParams {
     let env_max_concurrent_subagents = parse_env_usize("OMNE_MAX_CONCURRENT_SUBAGENTS", 4, 0, 64);
     let effective_concurrency_limit = if env_max_concurrent_subagents == 0 {
         total_tasks.max(1)
@@ -329,7 +331,7 @@ fn fan_out_scheduling_params(total_tasks: usize) -> FanOutSchedulingParams {
     }
 }
 
-fn duplicate_command_name_errors(validated: &[CommandValidateItem]) -> Vec<CommandValidateError> {
+pub(super) fn duplicate_command_name_errors(validated: &[CommandValidateItem]) -> Vec<CommandValidateError> {
     let mut by_name = std::collections::BTreeMap::<String, Vec<String>>::new();
     for item in validated {
         by_name
@@ -360,7 +362,7 @@ fn duplicate_command_name_errors(validated: &[CommandValidateItem]) -> Vec<Comma
     errors
 }
 
-fn command_error_code(err: &anyhow::Error) -> Option<&'static str> {
+pub(super) fn command_error_code(err: &anyhow::Error) -> Option<&'static str> {
     for cause in err.chain() {
         if let Some(spec) = cause.downcast_ref::<CommandSpecError>() {
             return Some(spec.error_code());
@@ -379,7 +381,7 @@ fn command_error_code(err: &anyhow::Error) -> Option<&'static str> {
     None
 }
 
-fn command_run_error_code(err: &anyhow::Error) -> Option<&'static str> {
+pub(super) fn command_run_error_code(err: &anyhow::Error) -> Option<&'static str> {
     if let Some(code) = command_error_code(err) {
         return Some(code);
     }
@@ -424,7 +426,7 @@ fn command_run_error_code(err: &anyhow::Error) -> Option<&'static str> {
     None
 }
 
-fn ensure_auto_hook_ready(
+pub(super) fn ensure_auto_hook_ready(
     action: &str,
     hook_context: &str,
     auto_hook: &omne_app_server_protocol::ThreadAutoHookResponse,
@@ -464,20 +466,20 @@ fn ensure_auto_hook_ready(
     }
 }
 
-fn ensure_thread_start_auto_hook_ready(
+pub(super) fn ensure_thread_start_auto_hook_ready(
     action: &str,
     started: &omne_app_server_protocol::ThreadStartResponse,
 ) -> anyhow::Result<()> {
     ensure_auto_hook_ready(action, "thread/start auto hook", &started.auto_hook)
 }
 
-fn first_non_completed_result(results: &[WorkflowTaskResult]) -> Option<&WorkflowTaskResult> {
+pub(super) fn first_non_completed_result(results: &[WorkflowTaskResult]) -> Option<&WorkflowTaskResult> {
     results
         .iter()
         .find(|result| !matches!(result.status, TurnStatus::Completed))
 }
 
-fn format_non_completed_fan_out_issue(
+pub(super) fn format_non_completed_fan_out_issue(
     prefix: &str,
     result: &WorkflowTaskResult,
     parent_thread_id: ThreadId,
@@ -556,7 +558,7 @@ fn format_non_completed_fan_out_issue(
     )
 }
 
-fn first_non_completed_task_from_fan_in_summary(
+pub(super) fn first_non_completed_task_from_fan_in_summary(
     payload: &omne_app_server_protocol::ArtifactFanInSummaryStructuredData,
 ) -> Option<&omne_app_server_protocol::ArtifactFanInSummaryTask> {
     payload
@@ -565,14 +567,14 @@ fn first_non_completed_task_from_fan_in_summary(
         .find(|task| !task.status.eq_ignore_ascii_case("completed"))
 }
 
-fn display_optional_structured_id(value: Option<&str>) -> &str {
+pub(super) fn display_optional_structured_id(value: Option<&str>) -> &str {
     value
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or("-")
 }
 
-fn format_non_completed_fan_out_issue_from_structured_task(
+pub(super) fn format_non_completed_fan_out_issue_from_structured_task(
     prefix: &str,
     parent_thread_id: &str,
     task: &omne_app_server_protocol::ArtifactFanInSummaryTask,
@@ -671,7 +673,7 @@ fn format_non_completed_fan_out_issue_from_structured_task(
     )
 }
 
-async fn format_non_completed_fan_out_issue_from_summary_artifact(
+pub(super) async fn format_non_completed_fan_out_issue_from_summary_artifact(
     app: &mut App,
     parent_thread_id: ThreadId,
     artifact_id: omne_protocol::ArtifactId,
@@ -691,14 +693,14 @@ async fn format_non_completed_fan_out_issue_from_summary_artifact(
     ))
 }
 
-fn format_fan_out_linkage_issue_from_structured_payload(
+pub(super) fn format_fan_out_linkage_issue_from_structured_payload(
     payload: &omne_app_server_protocol::ArtifactFanOutLinkageIssueStructuredData,
     artifact_id: omne_protocol::ArtifactId,
 ) -> Option<String> {
     format_fan_out_linkage_issue_detail_from_payload(payload, artifact_id)
 }
 
-async fn format_fan_out_linkage_issue_from_artifact(
+pub(super) async fn format_fan_out_linkage_issue_from_artifact(
     app: &mut App,
     parent_thread_id: ThreadId,
     artifact_id: omne_protocol::ArtifactId,
@@ -711,18 +713,18 @@ async fn format_fan_out_linkage_issue_from_artifact(
     format_fan_out_linkage_issue_from_structured_payload(&payload, artifact_id)
 }
 
-fn format_fan_out_linkage_issue_clear_from_structured_payload(
+pub(super) fn format_fan_out_linkage_issue_clear_from_structured_payload(
     payload: &omne_app_server_protocol::ArtifactFanOutLinkageIssueClearStructuredData,
     artifact_id: omne_protocol::ArtifactId,
 ) -> String {
     format_fan_out_linkage_issue_clear_detail_from_payload(payload, artifact_id)
 }
 
-fn default_fan_out_linkage_issue_clear_text(artifact_id: omne_protocol::ArtifactId) -> String {
+pub(super) fn default_fan_out_linkage_issue_clear_text(artifact_id: omne_protocol::ArtifactId) -> String {
     format!("fan-out linkage issue cleared (see fan_out_linkage_issue_clear artifact_id={artifact_id})")
 }
 
-async fn format_fan_out_linkage_issue_clear_from_artifact(
+pub(super) async fn format_fan_out_linkage_issue_clear_from_artifact(
     app: &mut App,
     parent_thread_id: ThreadId,
     artifact_id: omne_protocol::ArtifactId,
@@ -738,7 +740,7 @@ async fn format_fan_out_linkage_issue_clear_from_artifact(
     ))
 }
 
-async fn validate_fan_out_results_with_artifact_fallback(
+pub(super) async fn validate_fan_out_results_with_artifact_fallback(
     app: &mut App,
     results: &[WorkflowTaskResult],
     parent_thread_id: ThreadId,
@@ -762,7 +764,7 @@ async fn validate_fan_out_results_with_artifact_fallback(
     Ok(())
 }
 
-fn validate_fan_out_results(
+pub(super) fn validate_fan_out_results(
     results: &[WorkflowTaskResult],
     parent_thread_id: ThreadId,
     artifact_id: omne_protocol::ArtifactId,
@@ -785,7 +787,7 @@ fn validate_fan_out_results(
     Ok(())
 }
 
-async fn wait_for_process_exit(
+pub(super) async fn wait_for_process_exit(
     app: &mut App,
     process_id: ProcessId,
     summary: &str,
@@ -825,7 +827,7 @@ async fn wait_for_process_exit(
     }
 }
 
-async fn run_command_list(cli: &Cli, json: bool) -> anyhow::Result<()> {
+pub(super) async fn run_command_list(cli: &Cli, json: bool) -> anyhow::Result<()> {
     let omne_root = resolve_pm_root(cli)?;
     let mode_catalog = omne_core::modes::ModeCatalog::load(&omne_root).await;
     let dir = omne_workflow_spec::workflow_spec_dir(&omne_root);
@@ -867,12 +869,12 @@ async fn run_command_list(cli: &Cli, json: bool) -> anyhow::Result<()> {
 }
 
 #[cfg(test)]
-async fn collect_command_list_result(dir: &std::path::Path) -> anyhow::Result<CommandListResult> {
+pub(super) async fn collect_command_list_result(dir: &std::path::Path) -> anyhow::Result<CommandListResult> {
     let mode_catalog = omne_core::modes::ModeCatalog::builtin();
     collect_command_list_result_with_mode_catalog(dir, &mode_catalog).await
 }
 
-async fn collect_command_list_result_with_mode_catalog(
+pub(super) async fn collect_command_list_result_with_mode_catalog(
     dir: &std::path::Path,
     mode_catalog: &omne_core::modes::ModeCatalog,
 ) -> anyhow::Result<CommandListResult> {
@@ -931,7 +933,7 @@ async fn collect_command_list_result_with_mode_catalog(
     })
 }
 
-async fn run_command_show(cli: &Cli, name: &str, json: bool) -> anyhow::Result<()> {
+pub(super) async fn run_command_show(cli: &Cli, name: &str, json: bool) -> anyhow::Result<()> {
     let wf = load_workflow_file(cli, name).await?;
     if json {
         let mut v = serde_json::Map::new();
@@ -961,7 +963,7 @@ async fn run_command_show(cli: &Cli, name: &str, json: bool) -> anyhow::Result<(
     Ok(())
 }
 
-async fn run_command_validate(
+pub(super) async fn run_command_validate(
     cli: &Cli,
     name: Option<String>,
     strict: bool,
@@ -1018,7 +1020,7 @@ async fn run_command_validate(
     )
 }
 
-async fn collect_command_validate_result(
+pub(super) async fn collect_command_validate_result(
     cli: &Cli,
     name: Option<String>,
     strict: bool,
@@ -1117,7 +1119,7 @@ async fn collect_command_validate_result(
     Ok(result)
 }
 
-async fn run_command_run(
+pub(super) async fn run_command_run(
     cli: &Cli,
     app: &mut App,
     command: &CommandCommand,

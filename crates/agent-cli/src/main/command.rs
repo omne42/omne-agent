@@ -10,7 +10,9 @@ use types::*;
 #[path = "command/fan_out.rs"]
 mod fan_out;
 
-include!("command/workflow.rs");
+#[path = "command/workflow.rs"]
+mod workflow;
+use workflow::*;
 
 #[path = "command/tasks.rs"]
 mod tasks;
