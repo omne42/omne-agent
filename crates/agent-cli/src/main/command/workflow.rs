@@ -718,6 +718,10 @@ fn format_fan_out_linkage_issue_clear_from_structured_payload(
     format_fan_out_linkage_issue_clear_detail_from_payload(payload, artifact_id)
 }
 
+fn default_fan_out_linkage_issue_clear_text(artifact_id: omne_protocol::ArtifactId) -> String {
+    format!("fan-out linkage issue cleared (see fan_out_linkage_issue_clear artifact_id={artifact_id})")
+}
+
 async fn format_fan_out_linkage_issue_clear_from_artifact(
     app: &mut App,
     parent_thread_id: ThreadId,
@@ -1262,11 +1266,7 @@ async fn run_command_run(
                         clear_artifact_id,
                     )
                     .await
-                    .unwrap_or_else(|| {
-                        format!(
-                            "fan-out linkage issue cleared (see fan_out_linkage_issue_clear artifact_id={clear_artifact_id})"
-                        )
-                    });
+                    .unwrap_or_else(|| default_fan_out_linkage_issue_clear_text(clear_artifact_id));
                     eprintln!("[fan-out] {clear_text}");
                 }
             }
@@ -1490,11 +1490,7 @@ async fn run_command_run(
                     clear_artifact_id,
                 )
                 .await
-                .unwrap_or_else(|| {
-                    format!(
-                        "fan-out linkage issue cleared (see fan_out_linkage_issue_clear artifact_id={clear_artifact_id})"
-                    )
-                });
+                .unwrap_or_else(|| default_fan_out_linkage_issue_clear_text(clear_artifact_id));
                 eprintln!("[fan-out] {clear_text}");
             }
         }

@@ -6,7 +6,10 @@ use std::collections::{BTreeMap, BTreeSet};
 #[path = "command/types.rs"]
 mod types;
 use types::*;
-include!("command/fan_out.rs");
+
+#[path = "command/fan_out.rs"]
+mod fan_out;
+
 include!("command/workflow.rs");
 
 #[path = "command/tasks.rs"]

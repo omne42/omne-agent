@@ -1,5 +1,7 @@
+use super::*;
+
 impl FanOutScheduler {
-    async fn start(
+    pub(super) async fn start(
         app: &mut App,
         parent_thread_id: ThreadId,
         tasks: Vec<WorkflowTask>,
@@ -48,11 +50,11 @@ impl FanOutScheduler {
         Ok(scheduler)
     }
 
-    fn is_done(&self) -> bool {
+    pub(super) fn is_done(&self) -> bool {
         self.finished.len() >= self.tasks.len()
     }
 
-    fn results_ordered(&self) -> Vec<WorkflowTaskResult> {
+    pub(super) fn results_ordered(&self) -> Vec<WorkflowTaskResult> {
         let mut by_id = std::collections::HashMap::<String, WorkflowTaskResult>::new();
         for result in &self.finished {
             by_id.insert(result.task_id.clone(), result.clone());
@@ -66,7 +68,7 @@ impl FanOutScheduler {
         ordered
     }
 
-    fn first_non_completed_result(&self) -> Option<&WorkflowTaskResult> {
+    pub(super) fn first_non_completed_result(&self) -> Option<&WorkflowTaskResult> {
         self.finished
             .iter()
             .find(|result| !matches!(result.status, TurnStatus::Completed))
@@ -76,7 +78,7 @@ impl FanOutScheduler {
         pick_next_runnable_task(&self.tasks, &self.started_ids, &self.task_statuses).is_some()
     }
 
-    async fn tick(
+    pub(super) async fn tick(
         &mut self,
         app: &mut App,
         parent_thread_id: ThreadId,
@@ -375,7 +377,7 @@ impl FanOutScheduler {
         Ok(())
     }
 
-    async fn run_to_completion(
+    pub(super) async fn run_to_completion(
         mut self,
         app: &mut App,
         parent_thread_id: ThreadId,
