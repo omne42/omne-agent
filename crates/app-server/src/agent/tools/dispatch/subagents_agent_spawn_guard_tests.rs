@@ -1,24 +1,12 @@
 #[cfg(test)]
 mod agent_spawn_guard_tests {
     use super::*;
-    use std::collections::{HashMap, HashSet};
+    use std::collections::HashSet;
     use std::path::{Path, PathBuf};
-    use std::sync::Arc;
-    use tokio::sync::broadcast;
     use tokio::time::{Duration, Instant};
 
     fn build_test_server(omne_root: PathBuf) -> super::super::Server {
-        let (notify_tx, _notify_rx) = broadcast::channel::<String>(16);
-        super::super::Server {
-            cwd: omne_root.clone(),
-            notify_tx,
-            thread_store: super::super::ThreadStore::new(super::super::PmPaths::new(omne_root)),
-            threads: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-            processes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-            mcp: Arc::new(tokio::sync::Mutex::new(super::super::McpManager::default())),
-            disk_warning: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-            exec_policy: omne_execpolicy::Policy::empty(),
-        }
+        crate::build_test_server_shared(omne_root)
     }
 
     #[tokio::test]
