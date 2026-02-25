@@ -7,5 +7,9 @@ include!("command/types.rs");
 include!("command/fan_out.rs");
 include!("command/workflow.rs");
 include!("command/tasks.rs");
-include!("command/utils.rs");
+
+#[path = "command/utils.rs"]
+mod utils;
+use utils::*;
+
 include!("command/tests.rs");

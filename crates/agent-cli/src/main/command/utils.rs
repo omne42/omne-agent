@@ -1,8 +1,8 @@
-fn truncate_chars(input: &str, max_chars: usize) -> String {
+pub(super) fn truncate_chars(input: &str, max_chars: usize) -> String {
     input.chars().take(max_chars).collect()
 }
 
-fn parse_env_usize(key: &str, default: usize, min: usize, max: usize) -> usize {
+pub(super) fn parse_env_usize(key: &str, default: usize, min: usize, max: usize) -> usize {
     std::env::var(key)
         .ok()
         .and_then(|value| value.trim().parse::<usize>().ok())
@@ -10,7 +10,7 @@ fn parse_env_usize(key: &str, default: usize, min: usize, max: usize) -> usize {
         .unwrap_or(default)
 }
 
-fn parse_bool_token(value: &str) -> Option<bool> {
+pub(super) fn parse_bool_token(value: &str) -> Option<bool> {
     match value.trim().to_ascii_lowercase().as_str() {
         "1" | "true" | "yes" | "on" => Some(true),
         "0" | "false" | "no" | "off" => Some(false),
@@ -18,7 +18,7 @@ fn parse_bool_token(value: &str) -> Option<bool> {
     }
 }
 
-fn parse_env_bool(key: &str, default: bool) -> bool {
+pub(super) fn parse_env_bool(key: &str, default: bool) -> bool {
     std::env::var(key)
         .ok()
         .and_then(|value| parse_bool_token(&value))
