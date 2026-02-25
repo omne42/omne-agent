@@ -1,6 +1,7 @@
+use super::*;
 use omne_eventlog::ThreadState;
 
-async fn handle_thread_attention(
+pub(super) async fn handle_thread_attention(
     server: &Server,
     params: ThreadAttentionParams,
 ) -> anyhow::Result<omne_app_server_protocol::ThreadAttentionResponse> {
@@ -225,7 +226,7 @@ async fn handle_thread_attention(
     })
 }
 
-fn summarize_pending_approval(
+pub(super) fn summarize_pending_approval(
     params: &serde_json::Value,
 ) -> Option<omne_app_server_protocol::ThreadAttentionPendingApprovalSummary> {
     summarize_pending_approval_with_context(None, None, None, params)
@@ -462,7 +463,9 @@ fn child_attention_state_from_state(state: &ThreadState) -> &'static str {
     }
 }
 
-fn parse_thread_approval_action_id(action: &str) -> omne_app_server_protocol::ThreadApprovalActionId {
+pub(super) fn parse_thread_approval_action_id(
+    action: &str,
+) -> omne_app_server_protocol::ThreadApprovalActionId {
     match action {
         "artifact/write" => omne_app_server_protocol::ThreadApprovalActionId::ArtifactWrite,
         "artifact/list" => omne_app_server_protocol::ThreadApprovalActionId::ArtifactList,
@@ -504,12 +507,12 @@ fn parse_thread_approval_action_id(action: &str) -> omne_app_server_protocol::Th
 }
 
 #[derive(Debug, Serialize)]
-struct StaleProcessInfo {
-    process_id: ProcessId,
-    idle_seconds: u64,
-    last_update_at: String,
-    stdout_path: String,
-    stderr_path: String,
+pub(super) struct StaleProcessInfo {
+    pub(super) process_id: ProcessId,
+    pub(super) idle_seconds: u64,
+    pub(super) last_update_at: String,
+    pub(super) stdout_path: String,
+    pub(super) stderr_path: String,
 }
 
 impl From<AttentionArtifactMarker> for omne_app_server_protocol::ThreadAttentionArtifactMarker {
@@ -570,7 +573,7 @@ impl From<StaleProcessInfo> for omne_app_server_protocol::ThreadAttentionStalePr
     }
 }
 
-async fn compute_stale_processes(
+pub(super) async fn compute_stale_processes(
     running_processes: &[ProcessInfo],
     idle_window: Duration,
 ) -> anyhow::Result<Vec<StaleProcessInfo>> {
@@ -1246,7 +1249,7 @@ fn fan_in_result_diagnostics_summary_from_payload(
     )
 }
 
-fn process_command_label(argv: &[String]) -> Option<String> {
+pub(super) fn process_command_label(argv: &[String]) -> Option<String> {
     let first = argv.first()?.trim();
     if first.is_empty() {
         return None;
@@ -1260,7 +1263,7 @@ fn process_command_label(argv: &[String]) -> Option<String> {
     Some(first.to_string())
 }
 
-fn looks_like_test_command(argv: &[String]) -> bool {
+pub(super) fn looks_like_test_command(argv: &[String]) -> bool {
     let Some(first_raw) = argv.first() else {
         return false;
     };
@@ -3281,7 +3284,7 @@ mod attention_marker_tests {
     }
 }
 
-async fn maybe_write_stuck_report(
+pub(super) async fn maybe_write_stuck_report(
     server: &Server,
     thread_id: ThreadId,
     turn_id: TurnId,
@@ -3619,7 +3622,7 @@ fn pending_subagent_proxy_approval_count(events: &[ThreadEvent]) -> usize {
     pending.values().filter(|is_subagent| **is_subagent).count()
 }
 
-async fn handle_thread_list_meta(
+pub(super) async fn handle_thread_list_meta(
     server: &Server,
     params: ThreadListMetaParams,
 ) -> anyhow::Result<omne_app_server_protocol::ThreadListMetaResponse> {
@@ -3779,7 +3782,7 @@ async fn handle_thread_list_meta(
     })
 }
 
-async fn handle_thread_subscribe(
+pub(super) async fn handle_thread_subscribe(
     server: &Server,
     params: ThreadSubscribeParams,
 ) -> anyhow::Result<omne_app_server_protocol::ThreadSubscribeResponse> {

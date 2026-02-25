@@ -1,3 +1,7 @@
+use super::*;
+#[cfg(test)]
+use super::attention_and_subscribe::compute_stale_processes;
+
 #[derive(Debug)]
 struct ThreadDiskUsage {
     total_bytes: u64,
@@ -75,7 +79,7 @@ fn scan_thread_disk_usage(
     })
 }
 
-async fn handle_thread_disk_usage(
+pub(super) async fn handle_thread_disk_usage(
     server: &Server,
     params: ThreadDiskUsageParams,
 ) -> anyhow::Result<omne_app_server_protocol::ThreadDiskUsageResponse> {
@@ -149,7 +153,7 @@ fn build_thread_disk_report_markdown(
     report
 }
 
-async fn handle_thread_disk_report(
+pub(super) async fn handle_thread_disk_report(
     server: &Server,
     params: ThreadDiskReportParams,
 ) -> anyhow::Result<omne_app_server_protocol::ThreadDiskReportResponse> {
@@ -221,16 +225,16 @@ const MAX_THREAD_DIFF_WAIT_SECONDS: u64 = 10 * 60;
 const THREAD_DIFF_POLL_INTERVAL_MS: u64 = 50;
 const THREAD_DIFF_MAX_STDERR_BYTES: u64 = 32 * 1024;
 
-struct ThreadGitSnapshotSpec {
-    thread_id: ThreadId,
-    turn_id: Option<TurnId>,
-    approval_id: Option<omne_protocol::ApprovalId>,
-    max_bytes: Option<u64>,
-    wait_seconds: Option<u64>,
-    argv: Vec<String>,
-    artifact_type: &'static str,
-    summary_clean: &'static str,
-    summary_dirty: &'static str,
+pub(super) struct ThreadGitSnapshotSpec {
+    pub(super) thread_id: ThreadId,
+    pub(super) turn_id: Option<TurnId>,
+    pub(super) approval_id: Option<omne_protocol::ApprovalId>,
+    pub(super) max_bytes: Option<u64>,
+    pub(super) wait_seconds: Option<u64>,
+    pub(super) argv: Vec<String>,
+    pub(super) artifact_type: &'static str,
+    pub(super) summary_clean: &'static str,
+    pub(super) summary_dirty: &'static str,
 }
 
 fn thread_git_snapshot_denied_error_code(
@@ -280,7 +284,7 @@ fn thread_git_snapshot_denied_error_code(
     }
 }
 
-async fn handle_thread_git_snapshot(
+pub(super) async fn handle_thread_git_snapshot(
     server: &Server,
     spec: ThreadGitSnapshotSpec,
 ) -> anyhow::Result<omne_app_server_protocol::ThreadGitSnapshotRpcResponse> {
@@ -486,7 +490,7 @@ async fn handle_thread_git_snapshot(
     ))
 }
 
-async fn handle_thread_diff(
+pub(super) async fn handle_thread_diff(
     server: &Server,
     params: ThreadDiffParams,
 ) -> anyhow::Result<omne_app_server_protocol::ThreadGitSnapshotRpcResponse> {
@@ -514,7 +518,7 @@ async fn handle_thread_diff(
     .await
 }
 
-async fn handle_thread_patch(
+pub(super) async fn handle_thread_patch(
     server: &Server,
     params: ThreadPatchParams,
 ) -> anyhow::Result<omne_app_server_protocol::ThreadGitSnapshotRpcResponse> {
@@ -598,7 +602,7 @@ async fn read_rotating_log_prefix(
     Ok((out, truncated))
 }
 
-async fn maybe_emit_thread_disk_warning(
+pub(super) async fn maybe_emit_thread_disk_warning(
     server: &Server,
     thread_id: ThreadId,
 ) -> anyhow::Result<()> {
