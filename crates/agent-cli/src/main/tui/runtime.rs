@@ -58,6 +58,7 @@
                     thread_id,
                     since_seq,
                     max_events: Some(10_000),
+                    kinds: None,
                     wait_ms: Some(0),
                 })
                 .context("serialize thread/subscribe params")?;
@@ -147,6 +148,9 @@
         last_threads_refresh: &mut Instant,
     ) -> bool {
         let mut changed = false;
+        if state.expire_status_if_needed(Instant::now()) {
+            changed = true;
+        }
         if let Some(thread_id) = state.active_thread {
             if state.header_needs_refresh {
                 match tokio::time::timeout(header_timeout, state.refresh_header(app, thread_id))
@@ -161,6 +165,17 @@
                         changed = true;
                     }
                     Err(_) => {}
+                }
+            }
+
+            if state.subagent_pending_summary_needs_refresh {
+                if let Ok(Ok(())) = tokio::time::timeout(
+                    header_timeout,
+                    state.refresh_subagent_pending_summary(app, thread_id),
+                )
+                .await
+                {
+                    changed = true;
                 }
             }
         }
@@ -191,7 +206,7 @@
         terminal.clear().context("clear terminal")?;
 
         let mut state = UiState::new(args.include_archived);
-        state.status = Some("connecting...".to_string());
+        state.set_status("connecting...".to_string());
         terminal.draw(|f| draw_ui(f, &mut state))?;
 
         let startup_timeout = std::env::var("OMNE_TUI_STARTUP_TIMEOUT_MS")
@@ -206,7 +221,7 @@
         {
             state.set_status(format!("startup error: {err}"));
         } else {
-            state.status = None;
+            state.clear_status();
         }
 
         let rpc_handle = app.rpc_handle();

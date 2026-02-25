@@ -77,7 +77,7 @@ impl ModeCatalog {
                     out.modes.insert(name, mode);
                 }
                 Err(err) => {
-                    errors.push(err.to_string());
+                    errors.push(format!("{err:#}"));
                 }
             }
         }
@@ -115,7 +115,7 @@ impl ModeCatalog {
                 "Read code/docs; edits require approvals and are limited to docs + a few root files.",
                 ModePermissions {
                     read: Decision::Allow,
-                    edit: EditPermissions::new(
+                    edit: builtin_edit_permissions(
                         Decision::Prompt,
                         vec![
                             "docs/**".to_string(),
@@ -123,8 +123,7 @@ impl ModeCatalog {
                             "CHANGELOG.md".to_string(),
                         ],
                         default_deny_globs.clone(),
-                    )
-                    .expect("builtin globs must compile"),
+                    ),
                     command: Decision::Prompt,
                     process: ProcessPermissions {
                         inspect: Decision::Allow,
@@ -141,6 +140,7 @@ impl ModeCatalog {
                                 "reviewer".to_string(),
                                 "builder".to_string(),
                             ]),
+                            max_threads: None,
                         },
                     },
                 },
@@ -153,12 +153,11 @@ impl ModeCatalog {
                 "Implement changes; edits and commands require approvals by default.",
                 ModePermissions {
                     read: Decision::Allow,
-                    edit: EditPermissions::new(
+                    edit: builtin_edit_permissions(
                         Decision::Prompt,
                         Vec::new(),
                         default_deny_globs.clone(),
-                    )
-                    .expect("builtin globs must compile"),
+                    ),
                     command: Decision::Prompt,
                     process: ProcessPermissions {
                         inspect: Decision::Allow,
@@ -175,6 +174,7 @@ impl ModeCatalog {
                                 "reviewer".to_string(),
                                 "builder".to_string(),
                             ]),
+                            max_threads: None,
                         },
                     },
                 },
@@ -187,12 +187,11 @@ impl ModeCatalog {
                 "Read-only review; commands require approvals; no edits.",
                 ModePermissions {
                     read: Decision::Allow,
-                    edit: EditPermissions::new(
+                    edit: builtin_edit_permissions(
                         Decision::Deny,
                         Vec::new(),
                         default_deny_globs.clone(),
-                    )
-                    .expect("builtin globs must compile"),
+                    ),
                     command: Decision::Prompt,
                     process: ProcessPermissions {
                         inspect: Decision::Allow,
@@ -212,8 +211,59 @@ impl ModeCatalog {
                 "Run checks/tests; no edits; commands require approvals.",
                 ModePermissions {
                     read: Decision::Allow,
-                    edit: EditPermissions::new(Decision::Deny, Vec::new(), default_deny_globs)
-                        .expect("builtin globs must compile"),
+                    edit: builtin_edit_permissions(
+                        Decision::Deny,
+                        Vec::new(),
+                        default_deny_globs.clone(),
+                    ),
+                    command: Decision::Prompt,
+                    process: ProcessPermissions {
+                        inspect: Decision::Allow,
+                        kill: Decision::Prompt,
+                        interact: Decision::Deny,
+                    },
+                    artifact: Decision::Allow,
+                    browser: Decision::Deny,
+                    subagent: SubagentPermissions::default(),
+                },
+            ),
+        );
+
+        modes.insert(
+            "debugger".to_string(),
+            ModeDef::builtin(
+                "Debug failures; inspect state and patch with approvals.",
+                ModePermissions {
+                    read: Decision::Allow,
+                    edit: builtin_edit_permissions(
+                        Decision::Prompt,
+                        Vec::new(),
+                        default_deny_globs.clone(),
+                    ),
+                    command: Decision::Prompt,
+                    process: ProcessPermissions {
+                        inspect: Decision::Allow,
+                        kill: Decision::Prompt,
+                        interact: Decision::Deny,
+                    },
+                    artifact: Decision::Allow,
+                    browser: Decision::Prompt,
+                    subagent: SubagentPermissions::default(),
+                },
+            ),
+        );
+
+        modes.insert(
+            "merger".to_string(),
+            ModeDef::builtin(
+                "Integrate and finalize changes; edits and commands require approvals.",
+                ModePermissions {
+                    read: Decision::Allow,
+                    edit: builtin_edit_permissions(
+                        Decision::Prompt,
+                        Vec::new(),
+                        default_deny_globs,
+                    ),
                     command: Decision::Prompt,
                     process: ProcessPermissions {
                         inspect: Decision::Allow,
@@ -385,6 +435,7 @@ impl SubagentPermissions {
 pub struct SubagentSpawnPermissions {
     pub decision: Decision,
     pub allowed_modes: Option<Vec<String>>,
+    pub max_threads: Option<usize>,
 }
 
 impl Default for SubagentSpawnPermissions {
@@ -392,6 +443,7 @@ impl Default for SubagentSpawnPermissions {
         Self {
             decision: Decision::Deny,
             allowed_modes: None,
+            max_threads: None,
         }
     }
 }
@@ -412,10 +464,14 @@ impl SubagentSpawnPermissions {
             }
             out
         });
+        if raw.max_threads.is_some_and(|value| value > 64) {
+            anyhow::bail!("subagent.spawn.max_threads must be <= 64");
+        }
 
         Ok(Self {
             decision: raw.decision,
             allowed_modes,
+            max_threads: raw.max_threads,
         })
     }
 }
@@ -467,6 +523,29 @@ impl EditPermissions {
 
     pub fn is_denied(&self, rel_path: &Path) -> bool {
         self.deny.is_match(rel_path)
+    }
+}
+
+fn builtin_edit_permissions(
+    decision: Decision,
+    allow_globs: Vec<String>,
+    deny_globs: Vec<String>,
+) -> EditPermissions {
+    match EditPermissions::new(decision, allow_globs, deny_globs) {
+        Ok(edit) => edit,
+        Err(err) => {
+            tracing::error!(
+                error = %err,
+                "failed to compile built-in mode globs; falling back to deny-all edit permissions"
+            );
+            EditPermissions {
+                decision: Decision::Deny,
+                allow_globs: Vec::new(),
+                deny_globs: Vec::new(),
+                allow: None,
+                deny: GlobSet::default(),
+            }
+        }
     }
 }
 
@@ -637,6 +716,8 @@ struct RawSubagentSpawn {
     decision: Decision,
     #[serde(default)]
     allowed_modes: Option<Vec<String>>,
+    #[serde(default)]
+    max_threads: Option<usize>,
 }
 
 #[cfg(test)]
@@ -680,6 +761,11 @@ modes:
         interact: { decision: deny }
       artifact: { decision: allow }
       browser: { decision: deny }
+      subagent:
+        spawn:
+          decision: allow
+          allowed_modes: ["reviewer"]
+          max_threads: 2
 "#,
         )
         .await?;
@@ -687,6 +773,8 @@ modes:
         let catalog = ModeCatalog::load(root).await;
         assert!(matches!(catalog.source, ModeCatalogSource::Project(_)));
         assert!(catalog.mode("coder").is_some());
+        assert!(catalog.mode("debugger").is_some());
+        assert!(catalog.mode("merger").is_some());
         let docs_only = catalog.mode("docs-only").expect("custom mode present");
         assert_eq!(docs_only.permissions.command, Decision::Deny);
         assert_eq!(
@@ -703,6 +791,43 @@ modes:
             .edit
             .decision_for_path(Path::new("src/lib.rs"));
         assert_eq!(decision, Decision::Deny);
+        assert_eq!(
+            docs_only.permissions.subagent.spawn.decision,
+            Decision::Allow
+        );
+        assert_eq!(
+            docs_only.permissions.subagent.spawn.allowed_modes,
+            Some(vec!["reviewer".to_string()])
+        );
+        assert_eq!(docs_only.permissions.subagent.spawn.max_threads, Some(2));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn invalid_subagent_max_threads_reports_load_error() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let root = dir.path();
+        tokio::fs::create_dir_all(root.join(".omne_data/spec")).await?;
+        tokio::fs::write(
+            root.join(".omne_data/spec/modes.yaml"),
+            r#"
+version: 1
+modes:
+  bad:
+    description: "invalid max_threads"
+    permissions:
+      subagent:
+        spawn:
+          decision: allow
+          max_threads: 65
+"#,
+        )
+        .await?;
+
+        let catalog = ModeCatalog::load(root).await;
+        assert!(catalog.mode("bad").is_none());
+        let load_error = catalog.load_error.unwrap_or_default();
+        assert!(load_error.contains("subagent.spawn.max_threads must be <= 64"));
         Ok(())
     }
 }

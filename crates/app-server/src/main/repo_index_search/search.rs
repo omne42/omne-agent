@@ -1,12 +1,3 @@
-#[derive(Debug)]
-struct RepoGrepOutcome {
-    matches: Vec<GrepMatch>,
-    truncated: bool,
-    files_scanned: usize,
-    files_skipped_too_large: usize,
-    files_skipped_binary: usize,
-}
-
 async fn handle_repo_search(server: &Server, params: RepoSearchParams) -> anyhow::Result<Value> {
     let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
     let (approval_policy, mode_name, allowed_tools) = {
@@ -41,7 +32,7 @@ async fn handle_repo_search(server: &Server, params: RepoSearchParams) -> anyhow
         "max_bytes_per_file": max_bytes_per_file,
         "max_files": max_files,
     });
-    if let Some(result) = enforce_thread_allowed_tools(
+    if let Some(_result) = enforce_thread_allowed_tools(
         &thread_rt,
         tool_id,
         params.turn_id,
@@ -51,130 +42,27 @@ async fn handle_repo_search(server: &Server, params: RepoSearchParams) -> anyhow
     )
     .await?
     {
-        return Ok(result);
+        return repo_allowed_tools_denied_response(tool_id, "repo/search", &allowed_tools);
     }
 
-    let catalog = omne_core::modes::ModeCatalog::load(&thread_root).await;
-    let mode = match catalog.mode(&mode_name) {
-        Some(mode) => mode,
-        None => {
-            let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
-            let decision = omne_core::modes::Decision::Deny;
-
-            thread_rt
-                .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                    tool_id,
-                    turn_id: params.turn_id,
-                    tool: "repo/search".to_string(),
-                    params: Some(approval_params.clone()),
-                })
-                .await?;
-            thread_rt
-                .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                    tool_id,
-                    status: omne_protocol::ToolStatus::Denied,
-                    error: Some("unknown mode".to_string()),
-                    result: Some(serde_json::json!({
-                        "mode": mode_name,
-                        "decision": decision,
-                        "available": available,
-                        "load_error": catalog.load_error.clone(),
-                    })),
-                })
-                .await?;
-            return Ok(serde_json::json!({
-                "tool_id": tool_id,
-                "denied": true,
-                "mode": mode_name,
-                "decision": decision,
-                "available": available,
-                "load_error": catalog.load_error.clone(),
-            }));
-        }
-    };
-
-    let base_decision = mode.permissions.read.combine(mode.permissions.artifact);
-    let effective_decision = match mode.tool_overrides.get("repo/search").copied() {
-        Some(override_decision) => base_decision.combine(override_decision),
-        None => base_decision,
-    };
-    if effective_decision == omne_core::modes::Decision::Deny {
-        thread_rt
-            .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                tool_id,
-                turn_id: params.turn_id,
-                tool: "repo/search".to_string(),
-                params: Some(approval_params.clone()),
-            })
-            .await?;
-        thread_rt
-            .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                tool_id,
-                status: omne_protocol::ToolStatus::Denied,
-                error: Some("mode denies repo/search".to_string()),
-                result: Some(serde_json::json!({
-                    "mode": mode_name,
-                    "decision": effective_decision,
-                })),
-            })
-            .await?;
-        return Ok(serde_json::json!({
-            "tool_id": tool_id,
-            "denied": true,
-            "mode": mode_name,
-            "decision": effective_decision,
-        }));
-    }
-
-    if effective_decision == omne_core::modes::Decision::Prompt {
-        match gate_approval(
-            server,
-            &thread_rt,
-            params.thread_id,
-            params.turn_id,
+    if let Some(result) = enforce_repo_mode_and_approval(
+        server,
+        RepoModeApprovalContext {
+            thread_rt: &thread_rt,
+            thread_root: &thread_root,
+            thread_id: params.thread_id,
+            turn_id: params.turn_id,
+            approval_id: params.approval_id,
             approval_policy,
-            ApprovalRequest {
-                approval_id: params.approval_id,
-                action: "repo/search",
-                params: &approval_params,
-            },
-        )
-        .await?
-        {
-            ApprovalGate::Approved => {}
-            ApprovalGate::Denied { remembered } => {
-                thread_rt
-                    .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                        tool_id,
-                        turn_id: params.turn_id,
-                        tool: "repo/search".to_string(),
-                        params: Some(approval_params.clone()),
-                    })
-                    .await?;
-                thread_rt
-                    .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                        tool_id,
-                        status: omne_protocol::ToolStatus::Denied,
-                        error: Some(approval_denied_error(remembered).to_string()),
-                        result: Some(serde_json::json!({
-                            "approval_policy": approval_policy,
-                        })),
-                    })
-                    .await?;
-                return Ok(serde_json::json!({
-                    "tool_id": tool_id,
-                    "denied": true,
-                    "remembered": remembered,
-                }));
-            }
-            ApprovalGate::NeedsApproval { approval_id } => {
-                return Ok(serde_json::json!({
-                    "needs_approval": true,
-                    "thread_id": params.thread_id,
-                    "approval_id": approval_id,
-                }));
-            }
-        }
+            mode_name: &mode_name,
+            action: "repo/search",
+            tool_id,
+            approval_params: &approval_params,
+        },
+    )
+    .await?
+    {
+        return Ok(result);
     }
 
     thread_rt
@@ -192,100 +80,19 @@ async fn handle_repo_search(server: &Server, params: RepoSearchParams) -> anyhow
             FileRoot::Reference => resolve_reference_repo_root(&thread_root).await?,
         };
 
-        let pattern = if params.is_regex {
-            query.clone()
-        } else {
-            regex::escape(&query)
-        };
-        let re = Regex::new(&pattern).with_context(|| format!("invalid regex: {query}"))?;
-
-        let include_matcher = match params.include_glob.as_deref() {
-            Some(glob) => Some(
-                Glob::new(glob)
-                    .with_context(|| format!("invalid glob pattern: {glob}"))?
-                    .compile_matcher(),
-            ),
-            None => None,
-        };
-
         let root_for_task = root.clone();
-        let grep_outcome = tokio::task::spawn_blocking(move || -> anyhow::Result<RepoGrepOutcome> {
-            let mut matches = Vec::new();
-            let mut truncated = false;
-            let mut files_scanned = 0usize;
-            let mut files_skipped_too_large = 0usize;
-            let mut files_skipped_binary = 0usize;
-
-            for entry in WalkDir::new(&root_for_task)
-                .follow_links(false)
-                .into_iter()
-                .filter_entry(should_walk_entry)
-            {
-                let entry = entry?;
-                if !entry.file_type().is_file() {
-                    continue;
-                }
-                if files_scanned >= max_files {
-                    break;
-                }
-                let rel = entry
-                    .path()
-                    .strip_prefix(&root_for_task)
-                    .unwrap_or(entry.path());
-                if rel_path_is_secret(rel) {
-                    continue;
-                }
-                if let Some(ref matcher) = include_matcher {
-                    if !matcher.is_match(rel) {
-                        continue;
-                    }
-                }
-
-                files_scanned += 1;
-
-                let meta = entry.metadata()?;
-                if meta.len() > max_bytes_per_file {
-                    files_skipped_too_large += 1;
-                    continue;
-                }
-
-                let bytes = match std::fs::read(entry.path()) {
-                    Ok(bytes) => bytes,
-                    Err(_) => continue,
-                };
-                if bytes.contains(&0) {
-                    files_skipped_binary += 1;
-                    continue;
-                }
-
-                let text = String::from_utf8_lossy(&bytes);
-                for (idx, line) in text.lines().enumerate() {
-                    if !re.is_match(line) {
-                        continue;
-                    }
-
-                    matches.push(GrepMatch {
-                        path: rel.to_string_lossy().to_string(),
-                        line_number: (idx + 1) as u64,
-                        line: truncate_line(line, 4000),
-                    });
-                    if matches.len() >= max_matches {
-                        truncated = true;
-                        break;
-                    }
-                }
-
-                if truncated {
-                    break;
-                }
-            }
-
-            Ok(RepoGrepOutcome {
-                matches,
-                truncated,
-                files_scanned,
-                files_skipped_too_large,
-                files_skipped_binary,
+        let query_for_task = query.clone();
+        let is_regex = params.is_regex;
+        let include_glob_for_task = params.include_glob.clone();
+        let grep_outcome = tokio::task::spawn_blocking(move || {
+            omne_repo_scan_runtime::search_repo(omne_repo_scan_runtime::RepoGrepRequest {
+                root: root_for_task,
+                query: query_for_task,
+                is_regex,
+                include_glob: include_glob_for_task,
+                max_matches,
+                max_bytes_per_file,
+                max_files,
             })
         })
         .await
@@ -302,7 +109,7 @@ async fn handle_repo_search(server: &Server, params: RepoSearchParams) -> anyhow
         };
 
         let artifact_text = format_repo_search_artifact(
-            file_root,
+            file_root.as_str(),
             &query,
             params.is_regex,
             include_glob,
@@ -355,7 +162,11 @@ async fn handle_repo_search(server: &Server, params: RepoSearchParams) -> anyhow
             );
         }
 
-        Ok((artifact_response, completed))
+        let response: omne_app_server_protocol::RepoSearchResponse =
+            serde_json::from_value(artifact_response).context("parse repo/search response")?;
+        let response_value =
+            serde_json::to_value(response).context("serialize repo/search response")?;
+        Ok((response_value, completed))
     }
     .await;
 
@@ -384,4 +195,3 @@ async fn handle_repo_search(server: &Server, params: RepoSearchParams) -> anyhow
         }
     }
 }
-

@@ -1,0 +1,46 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ArtifactUnknownModeDeniedResponse",
+  "type": "object",
+  "required": [
+    "available",
+    "decision",
+    "mode",
+    "tool_id"
+  ],
+  "properties": {
+    "available": {
+      "type": "string"
+    },
+    "decision": {
+      "$ref": "#/definitions/ArtifactModeDecision"
+    },
+    "denied": {
+      "default": false,
+      "type": "boolean"
+    },
+    "load_error": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "mode": {
+      "type": "string"
+    },
+    "tool_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  },
+  "definitions": {
+    "ArtifactModeDecision": {
+      "type": "string",
+      "enum": [
+        "allow",
+        "prompt",
+        "deny"
+      ]
+    }
+  }
+}

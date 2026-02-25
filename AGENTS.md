@@ -12,9 +12,6 @@
   - `crates/openai/`: OpenAI Responses API（含 SSE stream）
   - `crates/jsonrpc/`: JSON-RPC stdio client（`omne` 使用）
   - `crates/execpolicy/`: prefix-rule 执行策略引擎（Codex 子集）
-  - `crates/legacy-git-adapter/`：v0.1.x git adapter（保留参考；v0.2.x 目标是 agent-first CLI）
-  - `crates/legacy-git-http-server/`：v0.1.x git smart-http server（保留参考）
-  - `crates/legacy-cli/`: v0.1.x 遗留 CLI（git pipeline；保留参考）
 - `docs/`: 规划、架构与调研文档
   - `docs/start.md`: 目标、范围与约束
   - `docs/implementation_plan.md`: Rust 优先的实现计划与里程碑

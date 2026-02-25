@@ -56,7 +56,7 @@ async fn main() -> anyhow::Result<()> {
         exec_policy,
     });
 
-    let listen = args.listen.clone();
+    let listen = args.listen;
 
     let local = tokio::task::LocalSet::new();
     local
@@ -143,7 +143,9 @@ where
         };
 
         let line = serde_json::to_string(&response)?;
-        let _ = out_tx.send(line);
+        if out_tx.send(line).is_err() {
+            break;
+        }
     }
 
     Ok(())
@@ -158,7 +160,9 @@ async fn spawn_stdio_writer(mut out_rx: mpsc::UnboundedReceiver<String>) {
         if stdout.write_all(b"\n").await.is_err() {
             break;
         }
-        let _ = stdout.flush().await;
+        if stdout.flush().await.is_err() {
+            break;
+        }
     }
 }
 
@@ -192,11 +196,15 @@ async fn serve_unix_socket(server: Arc<Server>, listen_path: PathBuf) -> anyhow:
         if UnixStream::connect(&listen_path).await.is_ok() {
             anyhow::bail!("daemon already running: {}", listen_path.display());
         }
-        let _ = tokio::fs::remove_file(&listen_path).await;
+        tokio::fs::remove_file(&listen_path)
+            .await
+            .with_context(|| format!("remove stale unix socket {}", listen_path.display()))?;
     }
 
     let listener = UnixListener::bind(&listen_path)?;
-    let _ = tokio::fs::set_permissions(&listen_path, std::fs::Permissions::from_mode(0o600)).await;
+    tokio::fs::set_permissions(&listen_path, std::fs::Permissions::from_mode(0o600))
+        .await
+        .with_context(|| format!("set unix socket permissions {}", listen_path.display()))?;
 
     loop {
         tokio::select! {
@@ -213,7 +221,15 @@ async fn serve_unix_socket(server: Arc<Server>, listen_path: PathBuf) -> anyhow:
         }
     }
 
-    let _ = tokio::fs::remove_file(&listen_path).await;
+    if let Err(err) = tokio::fs::remove_file(&listen_path).await
+        && err.kind() != std::io::ErrorKind::NotFound
+    {
+        tracing::warn!(
+            path = %listen_path.display(),
+            error = %err,
+            "failed to remove unix socket on shutdown"
+        );
+    }
     shutdown_running_processes(&server).await;
     Ok(())
 }
@@ -251,6 +267,8 @@ async fn write_lines_to_socket(
         if writer.write_all(b"\n").await.is_err() {
             break;
         }
-        let _ = writer.flush().await;
+        if writer.flush().await.is_err() {
+            break;
+        }
     }
 }

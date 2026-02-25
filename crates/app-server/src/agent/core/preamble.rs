@@ -490,13 +490,19 @@ struct AgentLlmResponse {
 }
 
 fn token_usage_json_from_ditto_usage(usage: &ditto_llm::Usage) -> Option<Value> {
-    if usage.input_tokens.is_none() && usage.output_tokens.is_none() && usage.total_tokens.is_none()
+    if usage.input_tokens.is_none()
+        && usage.cache_input_tokens.is_none()
+        && usage.cache_creation_input_tokens.is_none()
+        && usage.output_tokens.is_none()
+        && usage.total_tokens.is_none()
     {
         return None;
     }
 
     Some(serde_json::json!({
         "input_tokens": usage.input_tokens,
+        "cache_input_tokens": usage.cache_input_tokens,
+        "cache_creation_input_tokens": usage.cache_creation_input_tokens,
         "output_tokens": usage.output_tokens,
         "total_tokens": usage.total_tokens,
     }))
@@ -880,4 +886,3 @@ async fn build_provider_runtime(
         file_uploader,
     })
 }
-

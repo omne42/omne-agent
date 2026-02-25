@@ -75,9 +75,7 @@ pub enum ClientRequest {
     ThreadList {
         #[serde(rename = "id")]
         request_id: RequestId,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        #[ts(type = "undefined")]
-        params: Option<()>,
+        params: ThreadListParams,
     },
     #[serde(rename = "thread/list_meta")]
     ThreadListMeta {
@@ -89,9 +87,7 @@ pub enum ClientRequest {
     ThreadLoaded {
         #[serde(rename = "id")]
         request_id: RequestId,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        #[ts(type = "undefined")]
-        params: Option<()>,
+        params: ThreadLoadedParams,
     },
     #[serde(rename = "thread/events")]
     ThreadEvents {
@@ -110,6 +106,12 @@ pub enum ClientRequest {
         #[serde(rename = "id")]
         request_id: RequestId,
         params: ThreadStateParams,
+    },
+    #[serde(rename = "thread/usage")]
+    ThreadUsage {
+        #[serde(rename = "id")]
+        request_id: RequestId,
+        params: ThreadUsageParams,
     },
     #[serde(rename = "thread/attention")]
     ThreadAttention {
@@ -267,6 +269,36 @@ pub enum ClientRequest {
         request_id: RequestId,
         params: RepoIndexParams,
     },
+    #[serde(rename = "repo/symbols")]
+    RepoSymbols {
+        #[serde(rename = "id")]
+        request_id: RequestId,
+        params: RepoSymbolsParams,
+    },
+    #[serde(rename = "mcp/list_servers")]
+    McpListServers {
+        #[serde(rename = "id")]
+        request_id: RequestId,
+        params: McpListServersParams,
+    },
+    #[serde(rename = "mcp/list_tools")]
+    McpListTools {
+        #[serde(rename = "id")]
+        request_id: RequestId,
+        params: McpListToolsParams,
+    },
+    #[serde(rename = "mcp/list_resources")]
+    McpListResources {
+        #[serde(rename = "id")]
+        request_id: RequestId,
+        params: McpListResourcesParams,
+    },
+    #[serde(rename = "mcp/call")]
+    McpCall {
+        #[serde(rename = "id")]
+        request_id: RequestId,
+        params: McpCallParams,
+    },
     #[serde(rename = "file/write")]
     FileWrite {
         #[serde(rename = "id")]
@@ -314,6 +346,12 @@ pub enum ClientRequest {
         #[serde(rename = "id")]
         request_id: RequestId,
         params: ArtifactReadParams,
+    },
+    #[serde(rename = "artifact/versions")]
+    ArtifactVersions {
+        #[serde(rename = "id")]
+        request_id: RequestId,
+        params: ArtifactVersionsParams,
     },
     #[serde(rename = "artifact/delete")]
     ArtifactDelete {

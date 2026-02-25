@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ProcessNeedsApprovalResponse",
+  "type": "object",
+  "required": [
+    "approval_id",
+    "needs_approval",
+    "thread_id"
+  ],
+  "properties": {
+    "approval_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "needs_approval": {
+      "type": "boolean"
+    },
+    "thread_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

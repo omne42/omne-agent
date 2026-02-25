@@ -10,6 +10,22 @@
         #[serde(default)]
         cwd: Option<String>,
         #[serde(default)]
+        attention_state: String,
+        #[serde(default)]
+        has_plan_ready: bool,
+        #[serde(default)]
+        has_diff_ready: bool,
+        #[serde(default)]
+        has_fan_out_linkage_issue: bool,
+        #[serde(default)]
+        has_fan_out_auto_apply_error: bool,
+        #[serde(default)]
+        has_fan_in_dependency_blocked: bool,
+        #[serde(default)]
+        pending_subagent_proxy_approvals: usize,
+        #[serde(default)]
+        has_test_failed: bool,
+        #[serde(default)]
         created_at: Option<String>,
         #[serde(default)]
         updated_at: Option<String>,
@@ -40,6 +56,12 @@
         text: String,
     }
 
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct SubagentPendingSummary {
+        total: usize,
+        states: std::collections::BTreeMap<String, usize>,
+    }
+
     #[derive(Debug, Clone)]
     enum Overlay {
         Approvals(ApprovalsOverlay),
@@ -58,6 +80,8 @@
         ApprovalPolicy,
         SandboxPolicy,
         SandboxNetworkAccess,
+        AllowedTools,
+        ExecpolicyRules,
     }
 
     #[derive(Debug, Clone)]
@@ -70,8 +94,18 @@
     struct ApprovalsOverlay {
         thread_id: ThreadId,
         approvals: Vec<ApprovalItem>,
+        all_approvals: Vec<ApprovalItem>,
         selected: usize,
         remember: bool,
+        filter: ApprovalsFilter,
+        subagent_pending_summary: Option<SubagentPendingSummary>,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum ApprovalsFilter {
+        All,
+        FailedSubagent,
+        RunningSubagent,
     }
 
     #[derive(Debug, Clone)]
@@ -86,6 +120,11 @@
         thread_id: ThreadId,
         artifacts: Vec<ArtifactMetadata>,
         selected: usize,
+        versions_for: Option<ArtifactId>,
+        versions: Vec<u32>,
+        selected_version: usize,
+        version_cache: HashMap<ArtifactId, Vec<u32>>,
+        selected_version_cache: HashMap<ArtifactId, usize>,
     }
 
     #[derive(Debug, Clone)]
@@ -114,11 +153,18 @@
     #[derive(Debug, Clone)]
     enum PaletteCommand {
         Quit,
+        ClosePalette,
         OpenRoot,
         Help,
         NewThread,
         ThreadPicker,
         RefreshThreads,
+        ToggleIncludeArchived,
+        ToggleLinkageFilter,
+        ToggleAutoApplyErrorFilter,
+        ToggleFanInDependencyBlockedFilter,
+        ToggleSubagentProxyApprovalFilter,
+        ClearThreadFilters,
         OpenApprovals,
         OpenProcesses,
         OpenArtifacts,
@@ -127,11 +173,41 @@
         PickApprovalPolicy,
         PickSandboxPolicy,
         PickSandboxNetworkAccess,
+        PickAllowedTools,
+        PickExecpolicyRules,
         SetMode(String),
         SetModel(String),
         SetApprovalPolicy(super::CliApprovalPolicy),
         SetSandboxPolicy(super::CliSandboxPolicy),
         SetSandboxNetworkAccess(super::CliSandboxNetworkAccess),
+        SetAllowedTools(String),
+        ClearAllowedTools,
+        ClearExecpolicyRules,
+        ApprovalsCycleFilter,
+        ApprovalsNextFailed,
+        ApprovalsPrevFailed,
+        ApprovalsRefresh,
+        ApprovalsSelectPrev,
+        ApprovalsSelectNext,
+        ApprovalsApprove,
+        ApprovalsDeny,
+        ApprovalsToggleRemember,
+        ApprovalsOpenDetails,
+        ProcessesRefresh,
+        ProcessesSelectPrev,
+        ProcessesSelectNext,
+        ProcessesInspect,
+        ProcessesKill,
+        ProcessesInterrupt,
+        ArtifactsRefresh,
+        ArtifactsSelectPrev,
+        ArtifactsSelectNext,
+        ArtifactsRead,
+        ArtifactsLoadVersions,
+        ArtifactsReloadVersions,
+        ArtifactsPrevVersion,
+        ArtifactsNextVersion,
+        ArtifactsLatestVersion,
         InsertSkill(String),
         Noop,
     }
@@ -212,10 +288,40 @@
             let idx = *self.filtered.get(self.selected)?;
             self.items.get(idx).map(|item| item.action.clone())
         }
+
+        fn context_label(&self) -> String {
+            let title = self.title.trim();
+            if title.is_empty() {
+                "commands".to_string()
+            } else {
+                title.to_ascii_lowercase()
+            }
+        }
     }
 
     fn build_root_palette(state: &UiState) -> CommandPaletteOverlay {
         let mut items = Vec::<PaletteItem>::new();
+        let include_archived = if state.include_archived { "on" } else { "off" };
+        let linkage_filter = if state.only_fan_out_linkage_issue {
+            "on"
+        } else {
+            "off"
+        };
+        let auto_apply_filter = if state.only_fan_out_auto_apply_error {
+            "on"
+        } else {
+            "off"
+        };
+        let fan_in_filter = if state.only_fan_in_dependency_blocked {
+            "on"
+        } else {
+            "off"
+        };
+        let subagent_filter = if state.only_subagent_proxy_approval {
+            "on"
+        } else {
+            "off"
+        };
 
         items.push(PaletteItem::with_detail(
             "new",
@@ -232,10 +338,46 @@
             "refresh threads",
             PaletteCommand::RefreshThreads,
         ));
+        items.push(PaletteItem::with_detail(
+            format!("archived={include_archived}"),
+            "include archived threads",
+            PaletteCommand::ToggleIncludeArchived,
+        ));
+        items.push(PaletteItem::with_detail(
+            format!("linkage-filter={linkage_filter}"),
+            "thread picker filter",
+            PaletteCommand::ToggleLinkageFilter,
+        ));
+        items.push(PaletteItem::with_detail(
+            format!("auto-apply-filter={auto_apply_filter}"),
+            "thread picker filter",
+            PaletteCommand::ToggleAutoApplyErrorFilter,
+        ));
+        items.push(PaletteItem::with_detail(
+            format!("fan-in-filter={fan_in_filter}"),
+            "thread picker filter",
+            PaletteCommand::ToggleFanInDependencyBlockedFilter,
+        ));
+        items.push(PaletteItem::with_detail(
+            format!("subagent-filter={subagent_filter}"),
+            "thread picker filter",
+            PaletteCommand::ToggleSubagentProxyApprovalFilter,
+        ));
+        items.push(PaletteItem::with_detail(
+            "clear-filters",
+            "reset thread picker filters",
+            PaletteCommand::ClearThreadFilters,
+        ));
 
         if state.active_thread.is_some() {
             let mode = state.header.mode.as_deref().unwrap_or("-");
             let model = state.header.model.as_deref().unwrap_or("-");
+            let allowed_tools = state
+                .header
+                .allowed_tools_count
+                .map(|count| count.to_string())
+                .unwrap_or_else(|| "*".to_string());
+            let execpolicy_rules = state.header.execpolicy_rules_count;
 
             items.push(PaletteItem::with_detail(
                 "approvals",
@@ -277,6 +419,16 @@
                 "network access",
                 PaletteCommand::PickSandboxNetworkAccess,
             ));
+            items.push(PaletteItem::with_detail(
+                format!("allowed-tools={allowed_tools}"),
+                "thread tool allowlist",
+                PaletteCommand::PickAllowedTools,
+            ));
+            items.push(PaletteItem::with_detail(
+                format!("execpolicy-rules={execpolicy_rules}"),
+                "thread execpolicy rules",
+                PaletteCommand::PickExecpolicyRules,
+            ));
         }
 
         items.push(PaletteItem::with_detail(
@@ -287,6 +439,165 @@
         items.push(PaletteItem::with_detail("quit", "quit", PaletteCommand::Quit));
 
         CommandPaletteOverlay::new("commands", items)
+    }
+
+    fn build_overlay_palette(state: &UiState) -> Option<CommandPaletteOverlay> {
+        match state.overlays.last() {
+            Some(Overlay::Approvals(view)) => Some(build_approvals_overlay_palette(view)),
+            Some(Overlay::Processes(view)) => Some(build_processes_overlay_palette(view)),
+            Some(Overlay::Artifacts(view)) => Some(build_artifacts_overlay_palette(view)),
+            Some(Overlay::Text(_))
+            | Some(Overlay::CommandPalette(_))
+            | None => None,
+        }
+    }
+
+    fn build_approvals_overlay_palette(view: &ApprovalsOverlay) -> CommandPaletteOverlay {
+        let mut items = Vec::<PaletteItem>::new();
+        items.push(PaletteItem::new("back", PaletteCommand::ClosePalette));
+        items.push(PaletteItem::with_detail(
+            "refresh",
+            "reload approvals (r)",
+            PaletteCommand::ApprovalsRefresh,
+        ));
+        items.push(PaletteItem::with_detail(
+            "select-prev",
+            "select previous approval (↑)",
+            PaletteCommand::ApprovalsSelectPrev,
+        ));
+        items.push(PaletteItem::with_detail(
+            "select-next",
+            "select next approval (↓)",
+            PaletteCommand::ApprovalsSelectNext,
+        ));
+        items.push(PaletteItem::with_detail(
+            format!(
+                "filter={} ({}/{})",
+                approval_filter_label(view.filter),
+                view.approvals.len(),
+                view.all_approvals.len()
+            ),
+            "cycle approvals filter (t)",
+            PaletteCommand::ApprovalsCycleFilter,
+        ));
+        items.push(PaletteItem::with_detail(
+            "next-failed",
+            "jump to next failed/error subagent approval (f)",
+            PaletteCommand::ApprovalsNextFailed,
+        ));
+        items.push(PaletteItem::with_detail(
+            "prev-failed",
+            "jump to previous failed/error subagent approval (F)",
+            PaletteCommand::ApprovalsPrevFailed,
+        ));
+        items.push(PaletteItem::with_detail(
+            "approve",
+            "approve selected item (y)",
+            PaletteCommand::ApprovalsApprove,
+        ));
+        items.push(PaletteItem::with_detail(
+            "deny",
+            "deny selected item (n)",
+            PaletteCommand::ApprovalsDeny,
+        ));
+        items.push(PaletteItem::with_detail(
+            format!("remember={}", if view.remember { "on" } else { "off" }),
+            "toggle remember (m)",
+            PaletteCommand::ApprovalsToggleRemember,
+        ));
+        items.push(PaletteItem::with_detail(
+            "details",
+            "open selected approval details (Enter)",
+            PaletteCommand::ApprovalsOpenDetails,
+        ));
+        CommandPaletteOverlay::new("approvals", items)
+    }
+
+    fn build_processes_overlay_palette(view: &ProcessesOverlay) -> CommandPaletteOverlay {
+        let mut items = Vec::<PaletteItem>::new();
+        items.push(PaletteItem::new("back", PaletteCommand::ClosePalette));
+        items.push(PaletteItem::with_detail(
+            format!("refresh ({})", view.processes.len()),
+            "reload process list (r)",
+            PaletteCommand::ProcessesRefresh,
+        ));
+        items.push(PaletteItem::with_detail(
+            "select-prev",
+            "select previous process (↑)",
+            PaletteCommand::ProcessesSelectPrev,
+        ));
+        items.push(PaletteItem::with_detail(
+            "select-next",
+            "select next process (↓)",
+            PaletteCommand::ProcessesSelectNext,
+        ));
+        items.push(PaletteItem::with_detail(
+            "inspect",
+            "inspect selected process (Enter/i)",
+            PaletteCommand::ProcessesInspect,
+        ));
+        items.push(PaletteItem::with_detail(
+            "kill",
+            "kill selected process (k)",
+            PaletteCommand::ProcessesKill,
+        ));
+        items.push(PaletteItem::with_detail(
+            "interrupt",
+            "interrupt selected process (x)",
+            PaletteCommand::ProcessesInterrupt,
+        ));
+        CommandPaletteOverlay::new("processes", items)
+    }
+
+    fn build_artifacts_overlay_palette(view: &ArtifactsOverlay) -> CommandPaletteOverlay {
+        let mut items = Vec::<PaletteItem>::new();
+        items.push(PaletteItem::new("back", PaletteCommand::ClosePalette));
+        items.push(PaletteItem::with_detail(
+            format!("refresh ({})", view.artifacts.len()),
+            "reload artifact list (r)",
+            PaletteCommand::ArtifactsRefresh,
+        ));
+        items.push(PaletteItem::with_detail(
+            "select-prev",
+            "select previous artifact (↑)",
+            PaletteCommand::ArtifactsSelectPrev,
+        ));
+        items.push(PaletteItem::with_detail(
+            "select-next",
+            "select next artifact (↓)",
+            PaletteCommand::ArtifactsSelectNext,
+        ));
+        items.push(PaletteItem::with_detail(
+            "read",
+            "read selected artifact (Enter/i)",
+            PaletteCommand::ArtifactsRead,
+        ));
+        items.push(PaletteItem::with_detail(
+            "versions",
+            "load versions for selected artifact (v)",
+            PaletteCommand::ArtifactsLoadVersions,
+        ));
+        items.push(PaletteItem::with_detail(
+            "versions-reload",
+            "force reload versions (R)",
+            PaletteCommand::ArtifactsReloadVersions,
+        ));
+        items.push(PaletteItem::with_detail(
+            "version-prev",
+            "older version ([)",
+            PaletteCommand::ArtifactsPrevVersion,
+        ));
+        items.push(PaletteItem::with_detail(
+            "version-next",
+            "newer version (])",
+            PaletteCommand::ArtifactsNextVersion,
+        ));
+        items.push(PaletteItem::with_detail(
+            "version-latest",
+            "jump to latest version (0)",
+            PaletteCommand::ArtifactsLatestVersion,
+        ));
+        CommandPaletteOverlay::new("artifacts", items)
     }
 
     fn build_mode_palette(modes: Vec<String>, current: Option<&str>) -> CommandPaletteOverlay {
@@ -451,6 +762,16 @@
                 "network access",
                 PaletteCommand::PickSandboxNetworkAccess,
             ));
+            items.push(PaletteItem::with_detail(
+                "/allowed-tools",
+                "thread tool allowlist",
+                PaletteCommand::PickAllowedTools,
+            ));
+            items.push(PaletteItem::with_detail(
+                "/execpolicy-rules",
+                "thread execpolicy rules",
+                PaletteCommand::PickExecpolicyRules,
+            ));
         }
         items.push(PaletteItem::with_detail(
             "/help",
@@ -561,6 +882,56 @@
         CommandPaletteOverlay::new("sandbox-network", items)
     }
 
+    const KNOWN_ALLOWED_TOOLS: &[&str] = &[
+        "file/read",
+        "file/glob",
+        "file/grep",
+        "file/write",
+        "file/patch",
+        "file/edit",
+        "file/delete",
+        "fs/mkdir",
+        "repo/search",
+        "repo/index",
+        "repo/symbols",
+        "mcp/list_servers",
+        "mcp/list_tools",
+        "mcp/list_resources",
+        "mcp/call",
+        "artifact/write",
+        "artifact/list",
+        "artifact/read",
+        "artifact/versions",
+        "artifact/delete",
+        "process/start",
+        "process/list",
+        "process/inspect",
+        "process/kill",
+        "process/interrupt",
+        "process/tail",
+        "process/follow",
+    ];
+
+    fn build_inline_allowed_tools_palette() -> CommandPaletteOverlay {
+        let mut items = Vec::<PaletteItem>::new();
+        items.push(PaletteItem::new("clear", PaletteCommand::ClearAllowedTools));
+        for tool in KNOWN_ALLOWED_TOOLS {
+            items.push(PaletteItem::new(
+                (*tool).to_string(),
+                PaletteCommand::SetAllowedTools((*tool).to_string()),
+            ));
+        }
+        CommandPaletteOverlay::new("allowed-tools", items)
+    }
+
+    fn build_inline_execpolicy_rules_palette() -> CommandPaletteOverlay {
+        let items = vec![
+            PaletteItem::new("clear", PaletteCommand::ClearExecpolicyRules),
+            PaletteItem::new("type comma-separated paths", PaletteCommand::Noop),
+        ];
+        CommandPaletteOverlay::new("execpolicy-rules", items)
+    }
+
     fn approval_policy_label(value: super::CliApprovalPolicy) -> &'static str {
         match value {
             super::CliApprovalPolicy::AutoApprove => "auto_approve",
@@ -616,8 +987,20 @@
         out.push_str("  Ctrl-A           approvals overlay\n");
         out.push_str("  Ctrl-P           processes overlay\n");
         out.push_str("  Ctrl-O           artifacts overlay\n\n");
+        out.push_str("  Ctrl-K (overlay) overlay command palette\n\n");
+        out.push_str("slash commands:\n\n");
+        out.push_str("  /allowed-tools <a,b>      set thread allowed_tools\n");
+        out.push_str("  /allowed-tools clear      clear thread allowed_tools\n");
+        out.push_str("  /execpolicy-rules <a,b>   set thread execpolicy_rules\n");
+        out.push_str("  /execpolicy-rules clear   clear thread execpolicy_rules\n\n");
         out.push_str("thread picker:\n\n");
         out.push_str("  n                new thread\n");
+        out.push_str("  h                toggle include archived\n");
+        out.push_str("  l                toggle linkage filter\n");
+        out.push_str("  a                toggle auto-apply-error filter\n");
+        out.push_str("  b                toggle fan-in-blocked filter\n");
+        out.push_str("  s                toggle subagent-approval filter\n");
+        out.push_str("  c                clear thread picker filters\n");
         out.push_str("  r                refresh\n");
         out.push_str("  ↑/↓ Enter        open\n");
         out
@@ -629,10 +1012,16 @@
             thread_id: ThreadId,
             approval_id: ApprovalId,
         },
+        ArtifactVersions {
+            thread_id: ThreadId,
+            artifact_id: ArtifactId,
+            approval_id: ApprovalId,
+        },
         ArtifactRead {
             thread_id: ThreadId,
             artifact_id: ArtifactId,
             max_bytes: u64,
+            version: Option<u32>,
             approval_id: ApprovalId,
         },
         ProcessInspect {
@@ -657,6 +1046,7 @@
         fn approval_id(&self) -> ApprovalId {
             match self {
                 Self::ArtifactList { approval_id, .. } => *approval_id,
+                Self::ArtifactVersions { approval_id, .. } => *approval_id,
                 Self::ArtifactRead { approval_id, .. } => *approval_id,
                 Self::ProcessInspect { approval_id, .. } => *approval_id,
                 Self::ProcessKill { approval_id, .. } => *approval_id,
@@ -665,98 +1055,23 @@
         }
     }
 
-    #[derive(Debug, Clone, Deserialize)]
-    struct ApprovalListResponse {
-        #[serde(default)]
-        approvals: Vec<ApprovalItem>,
-    }
+    type ApprovalListResponse = omne_app_server_protocol::ApprovalListResponse;
 
-    #[derive(Debug, Clone, Deserialize)]
-    struct ApprovalItem {
-        request: ApprovalRequestInfo,
-        #[serde(default)]
-        decision: Option<ApprovalDecisionInfo>,
-    }
+    type ApprovalItem = omne_app_server_protocol::ApprovalListItem;
 
-    #[derive(Debug, Clone, Deserialize)]
-    struct ApprovalRequestInfo {
-        approval_id: ApprovalId,
-        #[serde(default)]
-        turn_id: Option<TurnId>,
-        action: String,
-        #[serde(default)]
-        params: Value,
-        requested_at: String,
-    }
+    type ApprovalRequestInfo = omne_app_server_protocol::ApprovalRequestInfo;
 
-    #[derive(Debug, Clone, Deserialize)]
-    struct ApprovalDecisionInfo {
-        decision: ApprovalDecision,
-        #[serde(default)]
-        remember: bool,
-        #[serde(default)]
-        reason: Option<String>,
-        decided_at: String,
-    }
+    type ProcessListResponse = omne_app_server_protocol::ProcessListResponse;
 
-    #[derive(Debug, Clone, Deserialize)]
-    struct ProcessListResponse {
-        #[serde(default)]
-        processes: Vec<ProcessInfo>,
-    }
+    type ProcessStatus = omne_app_server_protocol::ProcessStatus;
 
-    #[derive(Debug, Clone, Copy, Deserialize)]
-    #[serde(rename_all = "snake_case")]
-    enum ProcessStatus {
-        Running,
-        Exited,
-        Abandoned,
-    }
+    type ProcessInfo = omne_app_server_protocol::ProcessInfo;
 
-    #[derive(Debug, Clone, Deserialize)]
-    struct ProcessInfo {
-        process_id: ProcessId,
-        thread_id: ThreadId,
-        #[serde(default)]
-        turn_id: Option<TurnId>,
-        argv: Vec<String>,
-        cwd: String,
-        started_at: String,
-        status: ProcessStatus,
-        #[serde(default)]
-        exit_code: Option<i32>,
-        stdout_path: String,
-        stderr_path: String,
-        last_update_at: String,
-    }
+    type ProcessInspectResponse = omne_app_server_protocol::ProcessInspectResponse;
 
-    #[derive(Debug, Clone, Deserialize)]
-    struct ProcessInspectResponse {
-        process: ProcessInfo,
-        #[serde(default)]
-        stdout_tail: String,
-        #[serde(default)]
-        stderr_tail: String,
-    }
+    type ArtifactReadResponse = omne_app_server_protocol::ArtifactReadResponse;
 
-    #[derive(Debug, Clone, Deserialize)]
-    struct ArtifactListResponse {
-        #[serde(default)]
-        artifacts: Vec<ArtifactMetadata>,
-        #[serde(default)]
-        errors: Vec<Value>,
-    }
-
-    #[derive(Debug, Clone, Deserialize)]
-    struct ArtifactReadResponse {
-        metadata: ArtifactMetadata,
-        #[serde(default)]
-        text: String,
-        #[serde(default)]
-        truncated: bool,
-        #[serde(default)]
-        bytes: u64,
-    }
+    type ArtifactVersionsResponse = omne_app_server_protocol::ArtifactVersionsResponse;
 
     #[derive(Debug, Clone, Default)]
     struct HeaderState {
@@ -766,6 +1081,8 @@
         thinking: Option<String>,
         mcp_enabled: bool,
         model_context_window: Option<u64>,
+        allowed_tools_count: Option<usize>,
+        execpolicy_rules_count: usize,
     }
 
     fn env_truthy(key: &str) -> bool {
@@ -777,6 +1094,10 @@
 
     struct UiState {
         include_archived: bool,
+        only_fan_out_linkage_issue: bool,
+        only_fan_out_auto_apply_error: bool,
+        only_fan_in_dependency_blocked: bool,
+        only_subagent_proxy_approval: bool,
         threads: Vec<ThreadMeta>,
         selected_thread: usize,
         active_thread: Option<ThreadId>,
@@ -793,8 +1114,11 @@
         tool_events: HashMap<ToolId, String>,
         streaming: Option<StreamingState>,
         active_turn_id: Option<TurnId>,
+        subagent_pending_summary: Option<SubagentPendingSummary>,
+        subagent_pending_summary_needs_refresh: bool,
         input: String,
         status: Option<String>,
+        status_expires_at: Option<Instant>,
         total_tokens_used: u64,
         counted_usage_responses: HashSet<String>,
         skip_token_usage_before_seq: Option<u64>,
@@ -811,3 +1135,28 @@
         turn_start: Option<TurnStartInFlight>,
     }
 
+    fn thread_picker_filter_label(
+        only_fan_out_linkage_issue: bool,
+        only_fan_out_auto_apply_error: bool,
+        only_fan_in_dependency_blocked: bool,
+        only_subagent_proxy_approval: bool,
+    ) -> String {
+        let mut labels = Vec::<&str>::new();
+        if only_fan_out_linkage_issue {
+            labels.push("link");
+        }
+        if only_fan_out_auto_apply_error {
+            labels.push("auto");
+        }
+        if only_fan_in_dependency_blocked {
+            labels.push("fanin");
+        }
+        if only_subagent_proxy_approval {
+            labels.push("subagent");
+        }
+        if labels.is_empty() {
+            "all".to_string()
+        } else {
+            labels.join("+")
+        }
+    }

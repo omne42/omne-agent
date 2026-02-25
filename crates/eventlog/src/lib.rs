@@ -24,6 +24,7 @@ impl EventLogWriter {
             tokio::fs::create_dir_all(parent)
                 .await
                 .with_context(|| format!("create dir {}", parent.display()))?;
+            tighten_dir_permissions_best_effort(parent).await;
         }
 
         let lock_path = lock_path_for(&log_path);
@@ -45,6 +46,8 @@ impl EventLogWriter {
             .open(&log_path)
             .await
             .with_context(|| format!("open {}", log_path.display()))?;
+        tighten_file_permissions_best_effort(&lock_path).await;
+        tighten_file_permissions_best_effort(&log_path).await;
 
         Ok(Self {
             thread_id,
@@ -143,6 +146,26 @@ fn lock_path_for(log_path: &Path) -> PathBuf {
     lock_path
 }
 
+#[cfg(unix)]
+async fn tighten_dir_permissions_best_effort(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let perm = std::fs::Permissions::from_mode(0o700);
+    let _ = tokio::fs::set_permissions(path, perm).await;
+}
+
+#[cfg(not(unix))]
+async fn tighten_dir_permissions_best_effort(_path: &Path) {}
+
+#[cfg(unix)]
+async fn tighten_file_permissions_best_effort(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let perm = std::fs::Permissions::from_mode(0o600);
+    let _ = tokio::fs::set_permissions(path, perm).await;
+}
+
+#[cfg(not(unix))]
+async fn tighten_file_permissions_best_effort(_path: &Path) {}
+
 async fn sanitize_and_get_last_seq(
     expected_thread_id: ThreadId,
     log_path: &Path,
@@ -225,6 +248,7 @@ pub struct ThreadState {
     pub thinking: Option<String>,
     pub openai_base_url: Option<String>,
     pub allowed_tools: Option<Vec<String>>,
+    pub execpolicy_rules: Vec<String>,
     pub last_seq: EventSeq,
     pub active_turn_id: Option<TurnId>,
     pub active_turn_interrupt_requested: bool,
@@ -235,6 +259,11 @@ pub struct ThreadState {
     pub running_processes: HashSet<ProcessId>,
     pub failed_processes: HashSet<ProcessId>,
     pub total_tokens_used: u64,
+    pub input_tokens_used: u64,
+    pub output_tokens_used: u64,
+    pub cache_input_tokens_used: u64,
+    pub cache_creation_input_tokens_used: u64,
+    counted_usage_response_ids: HashSet<String>,
 }
 
 impl ThreadState {
@@ -257,6 +286,7 @@ impl ThreadState {
             thinking: None,
             openai_base_url: None,
             allowed_tools: None,
+            execpolicy_rules: Vec::new(),
             last_seq: EventSeq::ZERO,
             active_turn_id: None,
             active_turn_interrupt_requested: false,
@@ -267,6 +297,11 @@ impl ThreadState {
             running_processes: HashSet::new(),
             failed_processes: HashSet::new(),
             total_tokens_used: 0,
+            input_tokens_used: 0,
+            output_tokens_used: 0,
+            cache_input_tokens_used: 0,
+            cache_creation_input_tokens_used: 0,
+            counted_usage_response_ids: HashSet::new(),
         }
     }
 
@@ -320,6 +355,7 @@ impl ThreadState {
                 thinking,
                 openai_base_url,
                 allowed_tools,
+                execpolicy_rules,
             } => {
                 self.approval_policy = *approval_policy;
                 if let Some(policy) = sandbox_policy {
@@ -345,6 +381,9 @@ impl ThreadState {
                 }
                 if let Some(allowed_tools) = allowed_tools {
                     self.allowed_tools = allowed_tools.clone();
+                }
+                if let Some(execpolicy_rules) = execpolicy_rules {
+                    self.execpolicy_rules = execpolicy_rules.clone();
                 }
             }
             ThreadEventKind::TurnStarted { turn_id, .. } => {
@@ -400,32 +439,77 @@ impl ThreadState {
                     }
                 }
             }
-            ThreadEventKind::AgentStep { token_usage, .. } => {
-                if let Some(usage) = token_usage.as_ref()
-                    && let Some(tokens) = usage_total_tokens(usage)
-                {
-                    self.total_tokens_used = self.total_tokens_used.saturating_add(tokens);
-                }
+            ThreadEventKind::AgentStep {
+                response_id,
+                token_usage,
+                ..
+            } => {
+                self.record_token_usage(Some(response_id.as_str()), token_usage.as_ref());
             }
-            ThreadEventKind::AssistantMessage { .. } => {}
+            ThreadEventKind::AssistantMessage {
+                response_id,
+                token_usage,
+                ..
+            } => {
+                self.record_token_usage(response_id.as_deref(), token_usage.as_ref());
+            }
             _ => {}
         }
 
         self.last_seq = event.seq;
         Ok(())
     }
+
+    fn record_token_usage(&mut self, response_id: Option<&str>, usage: Option<&serde_json::Value>) {
+        let Some(usage) = usage else {
+            return;
+        };
+
+        let total_tokens = usage_total_tokens(usage);
+        let input_tokens = usage_input_tokens(usage);
+        let output_tokens = usage_output_tokens(usage);
+        let cache_input_tokens = usage_cache_input_tokens(usage);
+        let cache_creation_input_tokens = usage_cache_creation_input_tokens(usage);
+        if total_tokens.is_none()
+            && input_tokens.is_none()
+            && output_tokens.is_none()
+            && cache_input_tokens.is_none()
+            && cache_creation_input_tokens.is_none()
+        {
+            return;
+        }
+
+        if let Some(response_id) = response_id.map(str::trim).filter(|s| !s.is_empty())
+            && !self
+                .counted_usage_response_ids
+                .insert(response_id.to_string())
+        {
+            return;
+        }
+
+        if let Some(tokens) = total_tokens {
+            self.total_tokens_used = self.total_tokens_used.saturating_add(tokens);
+        }
+        if let Some(tokens) = input_tokens {
+            self.input_tokens_used = self.input_tokens_used.saturating_add(tokens);
+        }
+        if let Some(tokens) = output_tokens {
+            self.output_tokens_used = self.output_tokens_used.saturating_add(tokens);
+        }
+        if let Some(tokens) = cache_input_tokens {
+            self.cache_input_tokens_used = self.cache_input_tokens_used.saturating_add(tokens);
+        }
+        if let Some(tokens) = cache_creation_input_tokens {
+            self.cache_creation_input_tokens_used =
+                self.cache_creation_input_tokens_used.saturating_add(tokens);
+        }
+    }
 }
 
 fn usage_total_tokens(usage: &serde_json::Value) -> Option<u64> {
-    let total_tokens = usage
-        .get("total_tokens")
-        .and_then(serde_json::Value::as_u64);
-    let input_tokens = usage
-        .get("input_tokens")
-        .and_then(serde_json::Value::as_u64);
-    let output_tokens = usage
-        .get("output_tokens")
-        .and_then(serde_json::Value::as_u64);
+    let total_tokens = usage_total_tokens_field(usage);
+    let input_tokens = usage_input_tokens(usage);
+    let output_tokens = usage_output_tokens(usage);
 
     total_tokens.or_else(|| match (input_tokens, output_tokens) {
         (Some(input), Some(output)) => input.checked_add(output),
@@ -433,6 +517,36 @@ fn usage_total_tokens(usage: &serde_json::Value) -> Option<u64> {
         (None, Some(output)) => Some(output),
         (None, None) => None,
     })
+}
+
+fn usage_total_tokens_field(usage: &serde_json::Value) -> Option<u64> {
+    usage
+        .get("total_tokens")
+        .and_then(serde_json::Value::as_u64)
+}
+
+fn usage_input_tokens(usage: &serde_json::Value) -> Option<u64> {
+    usage
+        .get("input_tokens")
+        .and_then(serde_json::Value::as_u64)
+}
+
+fn usage_output_tokens(usage: &serde_json::Value) -> Option<u64> {
+    usage
+        .get("output_tokens")
+        .and_then(serde_json::Value::as_u64)
+}
+
+fn usage_cache_input_tokens(usage: &serde_json::Value) -> Option<u64> {
+    usage
+        .get("cache_input_tokens")
+        .and_then(serde_json::Value::as_u64)
+}
+
+fn usage_cache_creation_input_tokens(usage: &serde_json::Value) -> Option<u64> {
+    usage
+        .get("cache_creation_input_tokens")
+        .and_then(serde_json::Value::as_u64)
 }
 
 #[cfg(test)]
@@ -516,6 +630,36 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn writer_tightens_permissions() -> anyhow::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir()?;
+        let thread_id = ThreadId::new();
+        let thread_dir = dir.path().join("threads").join(thread_id.to_string());
+        let log_path = thread_dir.join("events.jsonl");
+
+        let mut writer = EventLogWriter::open(thread_id, log_path.clone()).await?;
+        writer
+            .append(ThreadEventKind::ThreadCreated {
+                cwd: "/tmp".to_string(),
+            })
+            .await?;
+        drop(writer);
+
+        let dir_mode = tokio::fs::metadata(&thread_dir).await?.permissions().mode() & 0o777u32;
+        assert_eq!(dir_mode, 0o700);
+
+        let log_mode = tokio::fs::metadata(&log_path).await?.permissions().mode() & 0o777u32;
+        assert_eq!(log_mode, 0o600);
+
+        let lock_path = lock_path_for(&log_path);
+        let lock_mode = tokio::fs::metadata(&lock_path).await?.permissions().mode() & 0o777u32;
+        assert_eq!(lock_mode, 0o600);
+        Ok(())
+    }
+
     #[test]
     fn turn_started_clears_failed_processes() -> anyhow::Result<()> {
         let thread_id = ThreadId::new();
@@ -583,11 +727,222 @@ mod tests {
                 input: "hello".to_string(),
                 context_refs: None,
                 attachments: None,
+                directives: None,
                 priority: omne_protocol::TurnPriority::Foreground,
             },
         )?;
         assert!(state.failed_processes.is_empty());
 
+        Ok(())
+    }
+
+    #[test]
+    fn token_usage_counts_cache_fields_and_dedupes_by_response_id() -> anyhow::Result<()> {
+        let thread_id = ThreadId::new();
+        let mut state = ThreadState::new(thread_id);
+        let mut seq = 1u64;
+
+        fn apply(
+            state: &mut ThreadState,
+            thread_id: ThreadId,
+            seq: &mut u64,
+            kind: ThreadEventKind,
+        ) -> anyhow::Result<()> {
+            let event = ThreadEvent {
+                seq: EventSeq(*seq),
+                timestamp: OffsetDateTime::now_utc(),
+                thread_id,
+                kind,
+            };
+            *seq += 1;
+            state.apply(&event)?;
+            Ok(())
+        }
+
+        apply(
+            &mut state,
+            thread_id,
+            &mut seq,
+            ThreadEventKind::ThreadCreated {
+                cwd: "/tmp".to_string(),
+            },
+        )?;
+        apply(
+            &mut state,
+            thread_id,
+            &mut seq,
+            ThreadEventKind::AgentStep {
+                turn_id: TurnId::new(),
+                step: 1,
+                model: "gpt-5".to_string(),
+                response_id: "resp_1".to_string(),
+                text: Some("step".to_string()),
+                tool_calls: Vec::new(),
+                tool_results: Vec::new(),
+                token_usage: Some(serde_json::json!({
+                    "total_tokens": 120,
+                    "input_tokens": 90,
+                    "output_tokens": 30,
+                    "cache_input_tokens": 70,
+                    "cache_creation_input_tokens": 11
+                })),
+                warnings_count: None,
+            },
+        )?;
+        apply(
+            &mut state,
+            thread_id,
+            &mut seq,
+            ThreadEventKind::AssistantMessage {
+                turn_id: None,
+                text: "final".to_string(),
+                model: Some("gpt-5".to_string()),
+                response_id: Some("resp_1".to_string()),
+                token_usage: Some(serde_json::json!({
+                    "total_tokens": 120,
+                    "input_tokens": 90,
+                    "output_tokens": 30,
+                    "cache_input_tokens": 70,
+                    "cache_creation_input_tokens": 11
+                })),
+            },
+        )?;
+
+        assert_eq!(state.total_tokens_used, 120);
+        assert_eq!(state.input_tokens_used, 90);
+        assert_eq!(state.output_tokens_used, 30);
+        assert_eq!(state.cache_input_tokens_used, 70);
+        assert_eq!(state.cache_creation_input_tokens_used, 11);
+        Ok(())
+    }
+
+    #[test]
+    fn token_usage_counts_assistant_message_without_agent_step() -> anyhow::Result<()> {
+        let thread_id = ThreadId::new();
+        let mut state = ThreadState::new(thread_id);
+        let mut seq = 1u64;
+
+        fn apply(
+            state: &mut ThreadState,
+            thread_id: ThreadId,
+            seq: &mut u64,
+            kind: ThreadEventKind,
+        ) -> anyhow::Result<()> {
+            let event = ThreadEvent {
+                seq: EventSeq(*seq),
+                timestamp: OffsetDateTime::now_utc(),
+                thread_id,
+                kind,
+            };
+            *seq += 1;
+            state.apply(&event)?;
+            Ok(())
+        }
+
+        apply(
+            &mut state,
+            thread_id,
+            &mut seq,
+            ThreadEventKind::ThreadCreated {
+                cwd: "/tmp".to_string(),
+            },
+        )?;
+        apply(
+            &mut state,
+            thread_id,
+            &mut seq,
+            ThreadEventKind::AssistantMessage {
+                turn_id: None,
+                text: "final".to_string(),
+                model: Some("gpt-5".to_string()),
+                response_id: Some("resp_2".to_string()),
+                token_usage: Some(serde_json::json!({
+                    "input_tokens": 40,
+                    "output_tokens": 10,
+                    "cache_input_tokens": 16
+                })),
+            },
+        )?;
+
+        assert_eq!(state.total_tokens_used, 50);
+        assert_eq!(state.input_tokens_used, 40);
+        assert_eq!(state.output_tokens_used, 10);
+        assert_eq!(state.cache_input_tokens_used, 16);
+        assert_eq!(state.cache_creation_input_tokens_used, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn token_usage_ignores_uncountable_response_before_dedup() -> anyhow::Result<()> {
+        let thread_id = ThreadId::new();
+        let mut state = ThreadState::new(thread_id);
+        let mut seq = 1u64;
+
+        fn apply(
+            state: &mut ThreadState,
+            thread_id: ThreadId,
+            seq: &mut u64,
+            kind: ThreadEventKind,
+        ) -> anyhow::Result<()> {
+            let event = ThreadEvent {
+                seq: EventSeq(*seq),
+                timestamp: OffsetDateTime::now_utc(),
+                thread_id,
+                kind,
+            };
+            *seq += 1;
+            state.apply(&event)?;
+            Ok(())
+        }
+
+        apply(
+            &mut state,
+            thread_id,
+            &mut seq,
+            ThreadEventKind::ThreadCreated {
+                cwd: "/tmp".to_string(),
+            },
+        )?;
+        apply(
+            &mut state,
+            thread_id,
+            &mut seq,
+            ThreadEventKind::AgentStep {
+                turn_id: TurnId::new(),
+                step: 1,
+                model: "gpt-5".to_string(),
+                response_id: "resp_3".to_string(),
+                text: Some("step".to_string()),
+                tool_calls: Vec::new(),
+                tool_results: Vec::new(),
+                token_usage: Some(serde_json::json!({
+                    "total_tokens": "<REDACTED>",
+                    "cache_input_tokens": "<REDACTED>"
+                })),
+                warnings_count: None,
+            },
+        )?;
+        apply(
+            &mut state,
+            thread_id,
+            &mut seq,
+            ThreadEventKind::AssistantMessage {
+                turn_id: None,
+                text: "final".to_string(),
+                model: Some("gpt-5".to_string()),
+                response_id: Some("resp_3".to_string()),
+                token_usage: Some(serde_json::json!({
+                    "total_tokens": 22,
+                    "cache_input_tokens": 5
+                })),
+            },
+        )?;
+
+        assert_eq!(state.total_tokens_used, 22);
+        assert_eq!(state.input_tokens_used, 0);
+        assert_eq!(state.output_tokens_used, 0);
+        assert_eq!(state.cache_input_tokens_used, 5);
+        assert_eq!(state.cache_creation_input_tokens_used, 0);
         Ok(())
     }
 }

@@ -91,7 +91,7 @@ prefix_rule(
 
 ---
 
-## 3) 如何加载（v0.2.0：global + per-mode）
+## 3) 如何加载（v0.2.0：global + per-mode + per-thread）
 
 ### 3.1 global（启动参数）
 
@@ -114,6 +114,26 @@ v0.2.0 支持为某个 mode 单独配置额外的规则文件列表：
 - 合并顺序（写死）：`global rules（启动参数） → mode rules`
 - fail-closed（写死）：mode 指定的 rules 文件缺失/不可读/解析失败时，该次 `process/start` 必须直接拒绝并返回可诊断错误（不要静默忽略该层）
 
+### 3.3 per-thread（`thread/configure`）
+
+v0.2.0 当前支持 thread 级临时覆盖：
+
+- 配置入口：`thread/configure` 参数 `execpolicy_rules: [<path>...]`
+- 落盘事件：`ThreadConfigUpdated.execpolicy_rules`
+- 路径解析：绝对路径按原样使用；相对路径按 **thread cwd（workspace root）** 解析（并通过 path boundary 校验）
+- 合并顺序（写死）：`global rules（启动参数） → mode rules → thread rules`
+- fail-closed（写死）：thread 指定的 rules 文件缺失/不可读/解析失败时，该次 `process/start` / `execve gate` / MCP command 必须直接拒绝并返回可诊断错误
+
+CLI 示例：
+
+```bash
+# 设置 thread 级规则（逗号分隔）
+cargo run -p omne -- thread configure <thread_id> --execpolicy-rules rules/thread.rules,rules/team.rules
+
+# 清空 thread 级规则（回退到 global + mode）
+cargo run -p omne -- thread configure <thread_id> --clear-execpolicy-rules
+```
+
 ---
 
 ## 4) 快速验证（可复制）
@@ -132,22 +152,18 @@ cargo run -p omne -- --execpolicy-rules /path/to/policy.rules thread start --jso
 
 ---
 
-## 5) per-mode / per-thread execpolicy rules
+## 5) per-mode / per-thread execpolicy rules（已落地）
 
-问题：全局 `--execpolicy-rules` 很容易“要么过宽要么过窄”。不同 mode（architect/coder/reviewer/builder）需要不同的命令白名单与提示策略。
+问题：全局 `--execpolicy-rules` 很容易“要么过宽要么过窄”。不同 mode（architect/coder/reviewer/builder/debugger/merger）需要不同的命令白名单与提示策略。
 
 实现状态：
 
 - **per-mode**：已实现（见上文 3.2）。
-- **per-thread**：TODO（未来通过 `thread/configure` 写入 thread config 事件实现）。
-
-规格草案（per-thread 仍未落地）：
-
-- **per-thread**：允许 thread config 增加 `execpolicy_rules: [<path>...]`（例如通过 `thread/configure` 写入 `ThreadConfigUpdated`），用于：
+- **per-thread**：已实现（见上文 3.3），用于：
   - 临时补充 allowlist（让某些命令免审批）
   - 或临时收紧（强制 `prompt/forbidden`）
   - 路径解析同上（按 thread cwd 解析相对路径）。
-- **合并顺序（写死）**：`global rules（启动参数） → mode rules → thread override（如有，TODO）`
+- **合并顺序（写死）**：`global rules（启动参数） → mode rules → thread rules（如有）`
   - 决策合并仍为 `forbidden > prompt > allow`。
   - 语义提醒（写死，避免误会）：规则是“并集叠加”。
     - 任一层命中 `forbidden` ⇒ 最终 `forbidden`（无法被其它层的 `allow` 抵消）。
@@ -157,7 +173,7 @@ cargo run -p omne -- --execpolicy-rules /path/to/policy.rules thread start --jso
   - fail-closed（写死）：
     - mode/thread 指定的 rules 文件缺失/不可读/解析失败：应直接拒绝 `process/start`（等价 forbidden）并返回可诊断错误（不要静默忽略该层）。
 
-验收（未来实现时）：
+验收（当前口径）：
 
-- `omne thread config-explain <thread_id>` 能解释：当前有效的 rules 来源顺序（global/mode/thread）与每次 `process/start` 的 matched rules。
-- `ApprovalPolicy=unless_trusted` 仍以 **最终 execpolicy decision** 为准（allow 才可能自动批准）。
+- `omne thread config-explain <thread_id>` 可看到 thread 层 `execpolicy_rules`（来源于 `ThreadConfigUpdated`）。
+- `ApprovalPolicy=unless_trusted` 以 **最终 execpolicy decision** 为准（包含 global/mode/thread 合并后的结果）。

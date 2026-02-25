@@ -66,6 +66,94 @@ impl App {
         Ok(self.rpc.request(method, params).await?)
     }
 
+    async fn rpc_with_serialized_params<T>(
+        &mut self,
+        method: &'static str,
+        params: T,
+    ) -> anyhow::Result<Value>
+    where
+        T: serde::Serialize,
+    {
+        let params =
+            serde_json::to_value(params).with_context(|| format!("serialize {method} params"))?;
+        self.rpc(method, params).await
+    }
+
+    async fn rpc_typed<P, R>(&mut self, method: &'static str, params: P) -> anyhow::Result<R>
+    where
+        P: serde::Serialize,
+        R: serde::de::DeserializeOwned,
+    {
+        let value = self.rpc_with_serialized_params(method, params).await?;
+        serde_json::from_value(value).with_context(|| format!("parse {method} response"))
+    }
+
+    async fn rpc_parsed<P, R, F>(
+        &mut self,
+        method: &'static str,
+        params: P,
+        parse: F,
+    ) -> anyhow::Result<R>
+    where
+        P: serde::Serialize,
+        F: FnOnce(&str, Value) -> anyhow::Result<R>,
+    {
+        let value = self.rpc_with_serialized_params(method, params).await?;
+        parse(method, value)
+    }
+
+    fn ensure_ok(action: &str, ok: bool) -> anyhow::Result<()> {
+        if ok {
+            return Ok(());
+        }
+        anyhow::bail!("{action} failed: expected ok=true");
+    }
+
+    async fn rpc_artifact_list_value(
+        &mut self,
+        params: omne_app_server_protocol::ArtifactListParams,
+    ) -> anyhow::Result<Value> {
+        self.rpc_with_serialized_params("artifact/list", params).await
+    }
+
+    async fn rpc_artifact_read_value(
+        &mut self,
+        params: omne_app_server_protocol::ArtifactReadParams,
+    ) -> anyhow::Result<Value> {
+        self.rpc_with_serialized_params("artifact/read", params).await
+    }
+
+    async fn rpc_artifact_versions_value(
+        &mut self,
+        params: omne_app_server_protocol::ArtifactVersionsParams,
+    ) -> anyhow::Result<Value> {
+        self.rpc_with_serialized_params("artifact/versions", params)
+            .await
+    }
+
+    async fn rpc_process_inspect_value(
+        &mut self,
+        params: omne_app_server_protocol::ProcessInspectParams,
+    ) -> anyhow::Result<Value> {
+        self.rpc_with_serialized_params("process/inspect", params)
+            .await
+    }
+
+    async fn rpc_process_kill_value(
+        &mut self,
+        params: omne_app_server_protocol::ProcessKillParams,
+    ) -> anyhow::Result<Value> {
+        self.rpc_with_serialized_params("process/kill", params).await
+    }
+
+    async fn rpc_process_interrupt_value(
+        &mut self,
+        params: omne_app_server_protocol::ProcessInterruptParams,
+    ) -> anyhow::Result<Value> {
+        self.rpc_with_serialized_params("process/interrupt", params)
+            .await
+    }
+
     fn take_notifications(
         &mut self,
     ) -> Option<tokio::sync::mpsc::Receiver<omne_jsonrpc::Notification>> {
@@ -76,22 +164,40 @@ impl App {
         self.rpc.handle()
     }
 
-    async fn thread_start(&mut self, cwd: Option<String>) -> anyhow::Result<Value> {
-        self.rpc("thread/start", serde_json::json!({ "cwd": cwd }))
-            .await
-    }
-
-    async fn thread_resume(&mut self, thread_id: ThreadId) -> anyhow::Result<Value> {
-        self.rpc(
-            "thread/resume",
-            serde_json::json!({ "thread_id": thread_id }),
+    async fn thread_start(
+        &mut self,
+        cwd: Option<String>,
+    ) -> anyhow::Result<omne_app_server_protocol::ThreadStartResponse> {
+        self.rpc_typed(
+            "thread/start",
+            omne_app_server_protocol::ThreadStartParams { cwd },
         )
         .await
     }
 
-    async fn thread_fork(&mut self, thread_id: ThreadId) -> anyhow::Result<Value> {
-        self.rpc("thread/fork", serde_json::json!({ "thread_id": thread_id }))
-            .await
+    async fn thread_resume(
+        &mut self,
+        thread_id: ThreadId,
+    ) -> anyhow::Result<omne_app_server_protocol::ThreadHandleResponse> {
+        self.rpc_typed(
+            "thread/resume",
+            omne_app_server_protocol::ThreadResumeParams { thread_id },
+        )
+        .await
+    }
+
+    async fn thread_fork(
+        &mut self,
+        thread_id: ThreadId,
+    ) -> anyhow::Result<omne_app_server_protocol::ThreadHandleResponse> {
+        self.rpc_typed(
+            "thread/fork",
+            omne_app_server_protocol::ThreadForkParams {
+                thread_id,
+                cwd: None,
+            },
+        )
+        .await
     }
 
     async fn thread_spawn(
@@ -100,31 +206,24 @@ impl App {
         input: String,
         model: Option<String>,
         openai_base_url: Option<String>,
-    ) -> anyhow::Result<Value> {
-        #[derive(Debug, Deserialize)]
-        struct ForkResult {
-            thread_id: ThreadId,
-            log_path: String,
-            last_seq: u64,
-        }
-
+    ) -> anyhow::Result<ThreadSpawnResponse> {
         let forked = self.thread_fork(thread_id).await?;
-        let forked: ForkResult = serde_json::from_value(forked).context("parse thread/fork")?;
 
         if model.is_some() || openai_base_url.is_some() {
-            let _ = self
-                .rpc(
-                    "thread/configure",
-                    serde_json::json!({
-                        "thread_id": forked.thread_id,
-                        "approval_policy": null,
-                        "sandbox_policy": null,
-                        "mode": null,
-                        "model": model,
-                        "openai_base_url": openai_base_url,
-                    }),
-                )
-                .await?;
+            self.thread_configure_rpc(omne_app_server_protocol::ThreadConfigureParams {
+                thread_id: forked.thread_id,
+                approval_policy: None,
+                sandbox_policy: None,
+                sandbox_writable_roots: None,
+                sandbox_network_access: None,
+                mode: None,
+                model,
+                thinking: None,
+                openai_base_url,
+                allowed_tools: None,
+                execpolicy_rules: None,
+            })
+            .await?;
         }
 
         let turn_id = self
@@ -134,12 +233,12 @@ impl App {
                 Some(omne_protocol::TurnPriority::Background),
             )
             .await?;
-        Ok(serde_json::json!({
-            "thread_id": forked.thread_id,
-            "turn_id": turn_id,
-            "log_path": forked.log_path,
-            "last_seq": forked.last_seq,
-        }))
+        Ok(ThreadSpawnResponse {
+            thread_id: forked.thread_id,
+            turn_id,
+            log_path: forked.log_path,
+            last_seq: forked.last_seq,
+        })
     }
 
     async fn thread_archive(
@@ -147,14 +246,14 @@ impl App {
         thread_id: ThreadId,
         force: bool,
         reason: Option<String>,
-    ) -> anyhow::Result<Value> {
-        self.rpc(
+    ) -> anyhow::Result<omne_app_server_protocol::ThreadArchiveResponse> {
+        self.rpc_typed(
             "thread/archive",
-            serde_json::json!({
-                "thread_id": thread_id,
-                "force": force,
-                "reason": reason,
-            }),
+            omne_app_server_protocol::ThreadArchiveParams {
+                thread_id,
+                force,
+                reason,
+            },
         )
         .await
     }
@@ -163,13 +262,10 @@ impl App {
         &mut self,
         thread_id: ThreadId,
         reason: Option<String>,
-    ) -> anyhow::Result<Value> {
-        self.rpc(
+    ) -> anyhow::Result<omne_app_server_protocol::ThreadUnarchiveResponse> {
+        self.rpc_typed(
             "thread/unarchive",
-            serde_json::json!({
-                "thread_id": thread_id,
-                "reason": reason,
-            }),
+            omne_app_server_protocol::ThreadUnarchiveParams { thread_id, reason },
         )
         .await
     }
@@ -178,13 +274,10 @@ impl App {
         &mut self,
         thread_id: ThreadId,
         reason: Option<String>,
-    ) -> anyhow::Result<Value> {
-        self.rpc(
+    ) -> anyhow::Result<omne_app_server_protocol::ThreadPauseResponse> {
+        self.rpc_typed(
             "thread/pause",
-            serde_json::json!({
-                "thread_id": thread_id,
-                "reason": reason,
-            }),
+            omne_app_server_protocol::ThreadPauseParams { thread_id, reason },
         )
         .await
     }
@@ -193,21 +286,22 @@ impl App {
         &mut self,
         thread_id: ThreadId,
         reason: Option<String>,
-    ) -> anyhow::Result<Value> {
-        self.rpc(
+    ) -> anyhow::Result<omne_app_server_protocol::ThreadUnpauseResponse> {
+        self.rpc_typed(
             "thread/unpause",
-            serde_json::json!({
-                "thread_id": thread_id,
-                "reason": reason,
-            }),
+            omne_app_server_protocol::ThreadUnpauseParams { thread_id, reason },
         )
         .await
     }
 
-    async fn thread_delete(&mut self, thread_id: ThreadId, force: bool) -> anyhow::Result<Value> {
-        self.rpc(
+    async fn thread_delete(
+        &mut self,
+        thread_id: ThreadId,
+        force: bool,
+    ) -> anyhow::Result<omne_app_server_protocol::ThreadDeleteResponse> {
+        self.rpc_typed(
             "thread/delete",
-            serde_json::json!({ "thread_id": thread_id, "force": force }),
+            omne_app_server_protocol::ThreadDeleteParams { thread_id, force },
         )
         .await
     }
@@ -216,18 +310,21 @@ impl App {
         &mut self,
         thread_id: ThreadId,
         force: bool,
-    ) -> anyhow::Result<Value> {
-        self.rpc(
+    ) -> anyhow::Result<omne_app_server_protocol::ThreadClearArtifactsResponse> {
+        self.rpc_typed(
             "thread/clear_artifacts",
-            serde_json::json!({ "thread_id": thread_id, "force": force }),
+            omne_app_server_protocol::ThreadClearArtifactsParams { thread_id, force },
         )
         .await
     }
 
-    async fn thread_disk_usage(&mut self, thread_id: ThreadId) -> anyhow::Result<Value> {
-        self.rpc(
+    async fn thread_disk_usage(
+        &mut self,
+        thread_id: ThreadId,
+    ) -> anyhow::Result<omne_app_server_protocol::ThreadDiskUsageResponse> {
+        self.rpc_typed(
             "thread/disk_usage",
-            serde_json::json!({ "thread_id": thread_id }),
+            omne_app_server_protocol::ThreadDiskUsageParams { thread_id },
         )
         .await
     }
@@ -236,10 +333,13 @@ impl App {
         &mut self,
         thread_id: ThreadId,
         top_files: Option<usize>,
-    ) -> anyhow::Result<Value> {
-        self.rpc(
+    ) -> anyhow::Result<omne_app_server_protocol::ThreadDiskReportResponse> {
+        self.rpc_typed(
             "thread/disk_report",
-            serde_json::json!({ "thread_id": thread_id, "top_files": top_files }),
+            omne_app_server_protocol::ThreadDiskReportParams {
+                thread_id,
+                top_files,
+            },
         )
         .await
     }
@@ -250,20 +350,18 @@ impl App {
         approval_id: Option<ApprovalId>,
         max_bytes: Option<u64>,
         wait_seconds: Option<u64>,
-    ) -> anyhow::Result<Value> {
-        let v = self
-            .rpc(
-                "thread/diff",
-                serde_json::json!({
-                    "thread_id": thread_id,
-                    "approval_id": approval_id,
-                    "max_bytes": max_bytes,
-                    "wait_seconds": wait_seconds,
-                }),
-            )
-            .await?;
-        ensure_approval_and_denial_handled("thread/diff", &v)?;
-        Ok(v)
+    ) -> anyhow::Result<omne_app_server_protocol::ThreadGitSnapshotRpcResponse> {
+        self.thread_git_snapshot_rpc(
+            "thread/diff",
+            omne_app_server_protocol::ThreadDiffParams {
+                thread_id,
+                turn_id: None,
+                approval_id,
+                max_bytes,
+                wait_seconds,
+            },
+        )
+        .await
     }
 
     async fn thread_patch(
@@ -272,20 +370,30 @@ impl App {
         approval_id: Option<ApprovalId>,
         max_bytes: Option<u64>,
         wait_seconds: Option<u64>,
-    ) -> anyhow::Result<Value> {
-        let v = self
-            .rpc(
-                "thread/patch",
-                serde_json::json!({
-                    "thread_id": thread_id,
-                    "approval_id": approval_id,
-                    "max_bytes": max_bytes,
-                    "wait_seconds": wait_seconds,
-                }),
-            )
-            .await?;
-        ensure_approval_and_denial_handled("thread/patch", &v)?;
-        Ok(v)
+    ) -> anyhow::Result<omne_app_server_protocol::ThreadGitSnapshotRpcResponse> {
+        self.thread_git_snapshot_rpc(
+            "thread/patch",
+            omne_app_server_protocol::ThreadPatchParams {
+                thread_id,
+                turn_id: None,
+                approval_id,
+                max_bytes,
+                wait_seconds,
+            },
+        )
+        .await
+    }
+
+    async fn thread_git_snapshot_rpc<T>(
+        &mut self,
+        method: &'static str,
+        params: T,
+    ) -> anyhow::Result<omne_app_server_protocol::ThreadGitSnapshotRpcResponse>
+    where
+        T: serde::Serialize,
+    {
+        self.rpc_parsed(method, params, parse_thread_git_snapshot_rpc_response)
+            .await
     }
 
     async fn thread_hook_run(
@@ -293,24 +401,23 @@ impl App {
         thread_id: ThreadId,
         hook: CliWorkspaceHookName,
         approval_id: Option<ApprovalId>,
-    ) -> anyhow::Result<Value> {
+    ) -> anyhow::Result<omne_app_server_protocol::ThreadHookRunResponse> {
         let hook = match hook {
-            CliWorkspaceHookName::Setup => "setup",
-            CliWorkspaceHookName::Run => "run",
-            CliWorkspaceHookName::Archive => "archive",
+            CliWorkspaceHookName::Setup => omne_app_server_protocol::WorkspaceHookName::Setup,
+            CliWorkspaceHookName::Run => omne_app_server_protocol::WorkspaceHookName::Run,
+            CliWorkspaceHookName::Archive => omne_app_server_protocol::WorkspaceHookName::Archive,
         };
-        let v = self
-            .rpc(
-                "thread/hook_run",
-                serde_json::json!({
-                    "thread_id": thread_id,
-                    "hook": hook,
-                    "approval_id": approval_id,
-                }),
-            )
-            .await?;
-        ensure_approval_and_denial_handled("thread/hook_run", &v)?;
-        Ok(v)
+        self.rpc_parsed(
+            "thread/hook_run",
+            omne_app_server_protocol::ThreadHookRunParams {
+                thread_id,
+                turn_id: None,
+                approval_id,
+                hook,
+            },
+            parse_thread_hook_run_rpc_response,
+        )
+        .await
     }
 
     async fn thread_events(
@@ -318,79 +425,126 @@ impl App {
         thread_id: ThreadId,
         since_seq: u64,
         max_events: Option<usize>,
-    ) -> anyhow::Result<Value> {
-        self.rpc(
+        kinds: Option<Vec<omne_protocol::ThreadEventKindTag>>,
+    ) -> anyhow::Result<omne_app_server_protocol::ThreadEventsResponse> {
+        self.rpc_typed(
             "thread/events",
-            serde_json::json!({
-                "thread_id": thread_id,
-                "since_seq": since_seq,
-                "max_events": max_events,
-            }),
+            omne_app_server_protocol::ThreadEventsParams {
+                thread_id,
+                since_seq,
+                max_events,
+                kinds,
+            },
         )
         .await
     }
 
-    async fn thread_loaded(&mut self) -> anyhow::Result<Value> {
-        self.rpc("thread/loaded", serde_json::json!({})).await
-    }
-
-    async fn thread_list(&mut self) -> anyhow::Result<Value> {
-        self.rpc("thread/list", serde_json::json!({})).await
-    }
-
-    async fn thread_list_meta(&mut self, include_archived: bool) -> anyhow::Result<Value> {
-        self.rpc(
-            "thread/list_meta",
-            serde_json::json!({ "include_archived": include_archived }),
+    async fn thread_loaded(
+        &mut self,
+    ) -> anyhow::Result<omne_app_server_protocol::ThreadListResponse> {
+        self.rpc_typed(
+            "thread/loaded",
+            omne_app_server_protocol::ThreadLoadedParams {},
         )
         .await
     }
 
-    async fn thread_attention(&mut self, thread_id: ThreadId) -> anyhow::Result<Value> {
-        self.rpc(
-            "thread/attention",
-            serde_json::json!({ "thread_id": thread_id }),
-        )
-        .await
-    }
-
-    async fn thread_state(&mut self, thread_id: ThreadId) -> anyhow::Result<Value> {
-        self.rpc(
-            "thread/state",
-            serde_json::json!({ "thread_id": thread_id }),
-        )
-        .await
-    }
-
-    async fn thread_config_explain(&mut self, thread_id: ThreadId) -> anyhow::Result<Value> {
-        self.rpc(
-            "thread/config/explain",
-            serde_json::json!({ "thread_id": thread_id }),
-        )
-        .await
-    }
-
-    async fn thread_models(&mut self, thread_id: ThreadId) -> anyhow::Result<Value> {
-        self.rpc("thread/models", serde_json::json!({ "thread_id": thread_id }))
+    async fn thread_list(&mut self) -> anyhow::Result<omne_app_server_protocol::ThreadListResponse> {
+        self.rpc_typed("thread/list", omne_app_server_protocol::ThreadListParams {})
             .await
+    }
+
+    async fn thread_list_meta(
+        &mut self,
+        include_archived: bool,
+        include_attention_markers: bool,
+    ) -> anyhow::Result<omne_app_server_protocol::ThreadListMetaResponse> {
+        self.rpc_typed(
+            "thread/list_meta",
+            omne_app_server_protocol::ThreadListMetaParams {
+                include_archived,
+                include_attention_markers,
+            },
+        )
+        .await
+    }
+
+    async fn thread_attention(
+        &mut self,
+        thread_id: ThreadId,
+    ) -> anyhow::Result<omne_app_server_protocol::ThreadAttentionResponse> {
+        self.rpc_typed(
+            "thread/attention",
+            omne_app_server_protocol::ThreadAttentionParams { thread_id },
+        )
+        .await
+    }
+
+    async fn thread_state(
+        &mut self,
+        thread_id: ThreadId,
+    ) -> anyhow::Result<omne_app_server_protocol::ThreadStateResponse> {
+        self.rpc_typed(
+            "thread/state",
+            omne_app_server_protocol::ThreadStateParams { thread_id },
+        )
+        .await
+    }
+
+    async fn thread_usage(
+        &mut self,
+        thread_id: ThreadId,
+    ) -> anyhow::Result<omne_app_server_protocol::ThreadUsageResponse> {
+        self.rpc_typed(
+            "thread/usage",
+            omne_app_server_protocol::ThreadUsageParams { thread_id },
+        )
+        .await
+    }
+
+    async fn thread_config_explain(
+        &mut self,
+        thread_id: ThreadId,
+    ) -> anyhow::Result<ThreadConfigExplainResponse> {
+        self.rpc_typed(
+            "thread/config/explain",
+            omne_app_server_protocol::ThreadConfigExplainParams {
+                thread_id,
+            },
+        )
+        .await
+    }
+
+    async fn thread_models(
+        &mut self,
+        thread_id: ThreadId,
+    ) -> anyhow::Result<omne_app_server_protocol::ThreadModelsResponse> {
+        self.rpc_typed(
+            "thread/models",
+            omne_app_server_protocol::ThreadModelsParams { thread_id },
+        )
+        .await
     }
 
     async fn checkpoint_create(
         &mut self,
         thread_id: ThreadId,
         label: Option<String>,
-    ) -> anyhow::Result<Value> {
-        self.rpc(
+    ) -> anyhow::Result<omne_app_server_protocol::ThreadCheckpointCreateResponse> {
+        self.rpc_typed(
             "thread/checkpoint/create",
-            serde_json::json!({ "thread_id": thread_id, "label": label }),
+            omne_app_server_protocol::ThreadCheckpointCreateParams { thread_id, label },
         )
         .await
     }
 
-    async fn checkpoint_list(&mut self, thread_id: ThreadId) -> anyhow::Result<Value> {
-        self.rpc(
+    async fn checkpoint_list(
+        &mut self,
+        thread_id: ThreadId,
+    ) -> anyhow::Result<omne_app_server_protocol::ThreadCheckpointListResponse> {
+        self.rpc_typed(
             "thread/checkpoint/list",
-            serde_json::json!({ "thread_id": thread_id }),
+            omne_app_server_protocol::ThreadCheckpointListParams { thread_id },
         )
         .await
     }
@@ -400,43 +554,70 @@ impl App {
         thread_id: ThreadId,
         checkpoint_id: omne_protocol::CheckpointId,
         approval_id: Option<ApprovalId>,
-    ) -> anyhow::Result<Value> {
-        let v = self
-            .rpc(
-                "thread/checkpoint/restore",
-                serde_json::json!({
-                    "thread_id": thread_id,
-                    "checkpoint_id": checkpoint_id,
-                    "approval_id": approval_id,
-                }),
-            )
-            .await?;
-        ensure_approval_and_denial_handled("thread/checkpoint/restore", &v)?;
-        Ok(v)
+    ) -> anyhow::Result<omne_app_server_protocol::ThreadCheckpointRestoreResponse> {
+        self.rpc_parsed(
+            "thread/checkpoint/restore",
+            omne_app_server_protocol::ThreadCheckpointRestoreParams {
+                thread_id,
+                checkpoint_id,
+                turn_id: None,
+                approval_id,
+            },
+            parse_checkpoint_restore_rpc_response,
+        )
+        .await
     }
 
     async fn thread_configure(&mut self, args: ThreadConfigureArgs) -> anyhow::Result<()> {
+        if args.clear_allowed_tools && args.allowed_tools.is_some() {
+            anyhow::bail!(
+                "conflicting options: --allowed-tools cannot be used with --clear-allowed-tools"
+            );
+        }
+        if args.clear_execpolicy_rules && args.execpolicy_rules.is_some() {
+            anyhow::bail!(
+                "conflicting options: --execpolicy-rules cannot be used with --clear-execpolicy-rules"
+            );
+        }
         let approval_policy: Option<ApprovalPolicy> = args.approval_policy.map(Into::into);
         let sandbox_policy: Option<SandboxPolicy> = args.sandbox_policy.map(Into::into);
         let sandbox_network_access: Option<omne_protocol::SandboxNetworkAccess> =
             args.sandbox_network_access.map(Into::into);
-        let _ = self
-            .rpc(
-                "thread/configure",
-                serde_json::json!({
-                    "thread_id": args.thread_id,
-                    "approval_policy": approval_policy,
-                    "sandbox_policy": sandbox_policy,
-                    "sandbox_writable_roots": args.sandbox_writable_roots,
-                "sandbox_network_access": sandbox_network_access,
-                "mode": args.mode,
-                "model": args.model,
-                "openai_base_url": args.openai_base_url,
-                "thinking": args.thinking,
-            }),
-            )
-            .await?;
-        Ok(())
+        let allowed_tools = if args.clear_allowed_tools {
+            Some(None)
+        } else {
+            args.allowed_tools
+                .map(normalize_string_list)
+                .map(Some)
+        };
+        let execpolicy_rules = if args.clear_execpolicy_rules {
+            Some(Vec::<String>::new())
+        } else {
+            args.execpolicy_rules.map(normalize_string_list)
+        };
+        self.thread_configure_rpc(omne_app_server_protocol::ThreadConfigureParams {
+            thread_id: args.thread_id,
+            approval_policy,
+            sandbox_policy,
+            sandbox_writable_roots: args.sandbox_writable_roots,
+            sandbox_network_access,
+            mode: args.mode,
+            model: args.model,
+            thinking: args.thinking,
+            openai_base_url: args.openai_base_url,
+            allowed_tools,
+            execpolicy_rules,
+        })
+        .await
+    }
+
+    async fn thread_configure_rpc(
+        &mut self,
+        params: omne_app_server_protocol::ThreadConfigureParams,
+    ) -> anyhow::Result<()> {
+        let response: omne_app_server_protocol::ThreadConfigureResponse =
+            self.rpc_typed("thread/configure", params).await?;
+        Self::ensure_ok("thread/configure", response.ok)
     }
 
     async fn turn_start(
@@ -445,20 +626,21 @@ impl App {
         input: String,
         priority: Option<omne_protocol::TurnPriority>,
     ) -> anyhow::Result<TurnId> {
-        let (input, context_refs, attachments) = split_special_directives(&input)?;
-        let v = self
-            .rpc(
+        let (input, context_refs, attachments, directives) = split_special_directives(&input)?;
+        let response: omne_app_server_protocol::TurnStartResponse = self
+            .rpc_typed(
                 "turn/start",
-                serde_json::json!({
-                    "thread_id": thread_id,
-                    "input": input,
-                    "context_refs": context_refs,
-                    "attachments": attachments,
-                    "priority": priority,
-                }),
+                omne_app_server_protocol::TurnStartParams {
+                    thread_id,
+                    input,
+                    context_refs: Some(context_refs),
+                    attachments: Some(attachments),
+                    directives: Some(directives),
+                    priority,
+                },
             )
             .await?;
-        serde_json::from_value(v["turn_id"].clone()).context("turn_id missing in result")
+        Ok(response.turn_id)
     }
 
     async fn turn_interrupt(
@@ -467,17 +649,17 @@ impl App {
         turn_id: TurnId,
         reason: Option<String>,
     ) -> anyhow::Result<()> {
-        let _ = self
-            .rpc(
+        let response: omne_app_server_protocol::TurnInterruptResponse = self
+            .rpc_typed(
                 "turn/interrupt",
-                serde_json::json!({
-                    "thread_id": thread_id,
-                    "turn_id": turn_id,
-                    "reason": reason,
-                }),
+                omne_app_server_protocol::TurnInterruptParams {
+                    thread_id,
+                    turn_id,
+                    reason,
+                },
             )
             .await?;
-        Ok(())
+        Self::ensure_ok("turn/interrupt", response.ok)
     }
 
     async fn thread_subscribe(
@@ -487,31 +669,30 @@ impl App {
         max_events: Option<usize>,
         wait_ms: Option<u64>,
     ) -> anyhow::Result<SubscribeResponse> {
-        let v = self
-            .rpc(
-                "thread/subscribe",
-                serde_json::json!({
-                    "thread_id": thread_id,
-                    "since_seq": since_seq,
-                    "max_events": max_events,
-                    "wait_ms": wait_ms,
-                }),
-            )
-            .await?;
-        Ok(serde_json::from_value(v)?)
+        self.rpc_typed(
+            "thread/subscribe",
+            omne_app_server_protocol::ThreadSubscribeParams {
+                thread_id,
+                since_seq,
+                max_events,
+                kinds: None,
+                wait_ms,
+            },
+        )
+        .await
     }
 
     async fn approval_list(
         &mut self,
         thread_id: ThreadId,
         include_decided: bool,
-    ) -> anyhow::Result<Value> {
-        self.rpc(
+    ) -> anyhow::Result<omne_app_server_protocol::ApprovalListResponse> {
+        self.rpc_typed(
             "approval/list",
-            serde_json::json!({
-                "thread_id": thread_id,
-                "include_decided": include_decided,
-            }),
+            omne_app_server_protocol::ApprovalListParams {
+                thread_id,
+                include_decided,
+            },
         )
         .await
     }
@@ -523,30 +704,38 @@ impl App {
         decision: ApprovalDecision,
         remember: bool,
         reason: Option<String>,
-    ) -> anyhow::Result<()> {
-        let _ = self
-            .rpc(
-                "approval/decide",
-                serde_json::json!({
-                    "thread_id": thread_id,
-                    "approval_id": approval_id,
-                    "decision": decision,
-                    "remember": remember,
-                    "reason": reason,
-                }),
-            )
-            .await?;
-        Ok(())
-    }
-
-    async fn process_list(&mut self, thread_id: Option<ThreadId>) -> anyhow::Result<Value> {
-        self.rpc(
-            "process/list",
-            serde_json::json!({
-                "thread_id": thread_id,
-            }),
+    ) -> anyhow::Result<omne_app_server_protocol::ApprovalDecideResponse> {
+        self.rpc_typed(
+            "approval/decide",
+            omne_app_server_protocol::ApprovalDecideParams {
+                thread_id,
+                approval_id,
+                decision,
+                remember,
+                reason,
+            },
         )
         .await
+    }
+
+    async fn process_list(
+        &mut self,
+        thread_id: Option<ThreadId>,
+    ) -> anyhow::Result<omne_app_server_protocol::ProcessListResponse> {
+        self.rpc_parsed(
+            "process/list",
+            omne_app_server_protocol::ProcessListParams { thread_id },
+            parse_process_rpc_response_typed,
+        )
+        .await
+    }
+
+    async fn process_start(
+        &mut self,
+        params: omne_app_server_protocol::ProcessStartParams,
+    ) -> anyhow::Result<omne_app_server_protocol::ProcessStartResponse> {
+        self.rpc_parsed("process/start", params, parse_process_rpc_response_typed)
+            .await
     }
 
     async fn process_inspect(
@@ -554,19 +743,18 @@ impl App {
         process_id: ProcessId,
         max_lines: Option<usize>,
         approval_id: Option<ApprovalId>,
-    ) -> anyhow::Result<Value> {
-        let v = self
-            .rpc(
+    ) -> anyhow::Result<omne_app_server_protocol::ProcessInspectResponse> {
+        self.rpc_parsed(
             "process/inspect",
-            serde_json::json!({
-                "process_id": process_id,
-                "max_lines": max_lines,
-                "approval_id": approval_id,
-            }),
-            )
-            .await?;
-        ensure_approval_and_denial_handled("process/inspect", &v)?;
-        Ok(v)
+            omne_app_server_protocol::ProcessInspectParams {
+                process_id,
+                turn_id: None,
+                approval_id,
+                max_lines,
+            },
+            parse_process_rpc_response_typed,
+        )
+        .await
     }
 
     async fn process_tail(
@@ -576,20 +764,25 @@ impl App {
         max_lines: Option<usize>,
         approval_id: Option<ApprovalId>,
     ) -> anyhow::Result<String> {
-        let stream = if stderr { "stderr" } else { "stdout" };
-        let v = self
-            .rpc(
+        let stream = if stderr {
+            omne_app_server_protocol::ProcessStream::Stderr
+        } else {
+            omne_app_server_protocol::ProcessStream::Stdout
+        };
+        let response: omne_app_server_protocol::ProcessTailResponse = self
+            .rpc_parsed(
                 "process/tail",
-                serde_json::json!({
-                    "process_id": process_id,
-                    "stream": stream,
-                    "max_lines": max_lines,
-                    "approval_id": approval_id,
-                }),
+                omne_app_server_protocol::ProcessTailParams {
+                    process_id,
+                    turn_id: None,
+                    approval_id,
+                    stream,
+                    max_lines,
+                },
+                parse_process_rpc_response_typed,
             )
             .await?;
-        ensure_approval_and_denial_handled("process/tail", &v)?;
-        Ok(v["text"].as_str().unwrap_or("").to_string())
+        Ok(response.text)
     }
 
     async fn process_follow(
@@ -600,33 +793,37 @@ impl App {
         max_bytes: Option<u64>,
         approval_id: Option<ApprovalId>,
     ) -> anyhow::Result<(String, u64, bool)> {
-        let stream = if stderr { "stderr" } else { "stdout" };
-        let v = self
-            .rpc(
+        let stream = if stderr {
+            omne_app_server_protocol::ProcessStream::Stderr
+        } else {
+            omne_app_server_protocol::ProcessStream::Stdout
+        };
+        let response: omne_app_server_protocol::ProcessFollowResponse = self
+            .rpc_parsed(
                 "process/follow",
-                serde_json::json!({
-                    "process_id": process_id,
-                    "stream": stream,
-                    "since_offset": since_offset,
-                    "max_bytes": max_bytes,
-                    "approval_id": approval_id,
-                }),
+                omne_app_server_protocol::ProcessFollowParams {
+                    process_id,
+                    turn_id: None,
+                    approval_id,
+                    stream,
+                    since_offset,
+                    max_bytes,
+                },
+                parse_process_rpc_response_typed,
             )
             .await?;
-        ensure_approval_and_denial_handled("process/follow", &v)?;
 
-        let text = v["text"].as_str().unwrap_or("").to_string();
-        let next_offset = v["next_offset"].as_u64().unwrap_or(since_offset);
-        let eof = v["eof"].as_bool().unwrap_or(true);
-        Ok((text, next_offset, eof))
+        Ok((response.text, response.next_offset, response.eof))
     }
 
     async fn process_status(&mut self, process_id: ProcessId) -> anyhow::Result<String> {
-        let v = self.process_inspect(process_id, Some(0), None).await?;
-        Ok(v["process"]["status"]
-            .as_str()
-            .unwrap_or("unknown")
-            .to_string())
+        let response = self.process_inspect(process_id, Some(0), None).await?;
+        let status = match response.process.status {
+            omne_app_server_protocol::ProcessStatus::Running => "running",
+            omne_app_server_protocol::ProcessStatus::Exited => "exited",
+            omne_app_server_protocol::ProcessStatus::Abandoned => "abandoned",
+        };
+        Ok(status.to_string())
     }
 
     async fn process_kill(
@@ -635,18 +832,19 @@ impl App {
         reason: Option<String>,
         approval_id: Option<ApprovalId>,
     ) -> anyhow::Result<()> {
-        let v = self
-            .rpc(
+        let response: omne_app_server_protocol::ProcessSignalResponse = self
+            .rpc_parsed(
                 "process/kill",
-                serde_json::json!({
-                    "process_id": process_id,
-                    "reason": reason,
-                    "approval_id": approval_id,
-                }),
+                omne_app_server_protocol::ProcessKillParams {
+                    process_id,
+                    turn_id: None,
+                    approval_id,
+                    reason,
+                },
+                parse_process_rpc_response_typed,
             )
             .await?;
-        ensure_approval_and_denial_handled("process/kill", &v)?;
-        Ok(())
+        Self::ensure_ok("process/kill", response.ok)
     }
 
     async fn process_interrupt(
@@ -655,176 +853,142 @@ impl App {
         reason: Option<String>,
         approval_id: Option<ApprovalId>,
     ) -> anyhow::Result<()> {
-        let v = self
-            .rpc(
+        let response: omne_app_server_protocol::ProcessSignalResponse = self
+            .rpc_parsed(
                 "process/interrupt",
-                serde_json::json!({
-                    "process_id": process_id,
-                    "reason": reason,
-                    "approval_id": approval_id,
-                }),
+                omne_app_server_protocol::ProcessInterruptParams {
+                    process_id,
+                    turn_id: None,
+                    approval_id,
+                    reason,
+                },
+                parse_process_rpc_response_typed,
             )
             .await?;
-        ensure_approval_and_denial_handled("process/interrupt", &v)?;
-        Ok(())
+        Self::ensure_ok("process/interrupt", response.ok)
     }
 
-    async fn repo_search(&mut self, req: RepoSearchRequest) -> anyhow::Result<Value> {
-        let v = self
-            .rpc(
-                "repo/search",
-                serde_json::json!({
-                    "thread_id": req.thread_id,
-                    "approval_id": req.approval_id,
-                    "root": req.root,
-                    "query": req.query,
-                    "is_regex": req.is_regex,
-                    "include_glob": req.include_glob,
-                    "max_matches": req.max_matches,
-                    "max_bytes_per_file": req.max_bytes_per_file,
-                    "max_files": req.max_files,
-                }),
-            )
-            .await?;
-        ensure_approval_and_denial_handled("repo/search", &v)?;
-        Ok(v)
+    async fn repo_search(
+        &mut self,
+        req: omne_app_server_protocol::RepoSearchParams,
+    ) -> anyhow::Result<omne_app_server_protocol::RepoSearchResponse> {
+        self.rpc_parsed("repo/search", req, parse_repo_rpc_response_typed)
+            .await
     }
 
-    async fn repo_index(&mut self, req: RepoIndexRequest) -> anyhow::Result<Value> {
-        let v = self
-            .rpc(
-                "repo/index",
-                serde_json::json!({
-                    "thread_id": req.thread_id,
-                    "approval_id": req.approval_id,
-                    "root": req.root,
-                    "include_glob": req.include_glob,
-                    "max_files": req.max_files,
-                }),
-            )
-            .await?;
-        ensure_approval_and_denial_handled("repo/index", &v)?;
-        Ok(v)
+    async fn repo_index(
+        &mut self,
+        req: omne_app_server_protocol::RepoIndexParams,
+    ) -> anyhow::Result<omne_app_server_protocol::RepoIndexResponse> {
+        self.rpc_parsed("repo/index", req, parse_repo_rpc_response_typed)
+            .await
     }
 
-    async fn repo_symbols(&mut self, req: RepoSymbolsRequest) -> anyhow::Result<Value> {
-        let v = self
-            .rpc(
-                "repo/symbols",
-                serde_json::json!({
-                    "thread_id": req.thread_id,
-                    "approval_id": req.approval_id,
-                    "root": req.root,
-                    "include_glob": req.include_glob,
-                    "max_files": req.max_files,
-                    "max_bytes_per_file": req.max_bytes_per_file,
-                    "max_symbols": req.max_symbols,
-                }),
-            )
-            .await?;
-        ensure_approval_and_denial_handled("repo/symbols", &v)?;
-        Ok(v)
+    async fn repo_symbols(
+        &mut self,
+        req: omne_app_server_protocol::RepoSymbolsParams,
+    ) -> anyhow::Result<omne_app_server_protocol::RepoSymbolsResponse> {
+        self.rpc_parsed("repo/symbols", req, parse_repo_rpc_response_typed)
+            .await
     }
 
-    async fn mcp_list_servers(&mut self, req: McpListServersRequest) -> anyhow::Result<Value> {
-        let v = self
-            .rpc(
-                "mcp/list_servers",
-                serde_json::json!({
-                    "thread_id": req.thread_id,
-                    "approval_id": req.approval_id,
-                }),
-            )
-            .await?;
-        ensure_approval_and_denial_handled("mcp/list_servers", &v)?;
-        Ok(v)
+    async fn mcp_list_servers(
+        &mut self,
+        req: omne_app_server_protocol::McpListServersParams,
+    ) -> anyhow::Result<McpListServersOrFailedResponse> {
+        self.rpc_parsed("mcp/list_servers", req, parse_mcp_rpc_response_typed)
+            .await
     }
 
-    async fn mcp_list_tools(&mut self, req: McpListToolsRequest) -> anyhow::Result<Value> {
-        let v = self
-            .rpc(
-                "mcp/list_tools",
-                serde_json::json!({
-                    "thread_id": req.thread_id,
-                    "approval_id": req.approval_id,
-                    "server": req.server,
-                }),
-            )
-            .await?;
-        ensure_approval_and_denial_handled("mcp/list_tools", &v)?;
-        Ok(v)
+    async fn mcp_list_tools(
+        &mut self,
+        req: omne_app_server_protocol::McpListToolsParams,
+    ) -> anyhow::Result<McpActionOrFailedResponse> {
+        self.rpc_parsed("mcp/list_tools", req, parse_mcp_rpc_response_typed)
+            .await
     }
 
-    async fn mcp_list_resources(&mut self, req: McpListResourcesRequest) -> anyhow::Result<Value> {
-        let v = self
-            .rpc(
-                "mcp/list_resources",
-                serde_json::json!({
-                    "thread_id": req.thread_id,
-                    "approval_id": req.approval_id,
-                    "server": req.server,
-                }),
-            )
-            .await?;
-        ensure_approval_and_denial_handled("mcp/list_resources", &v)?;
-        Ok(v)
+    async fn mcp_list_resources(
+        &mut self,
+        req: omne_app_server_protocol::McpListResourcesParams,
+    ) -> anyhow::Result<McpActionOrFailedResponse> {
+        self.rpc_parsed("mcp/list_resources", req, parse_mcp_rpc_response_typed)
+            .await
     }
 
-    async fn mcp_call(&mut self, req: McpCallRequest) -> anyhow::Result<Value> {
-        let v = self
-            .rpc(
-                "mcp/call",
-                serde_json::json!({
-                    "thread_id": req.thread_id,
-                    "approval_id": req.approval_id,
-                    "server": req.server,
-                    "tool": req.tool,
-                    "arguments": req.arguments,
-                }),
-            )
-            .await?;
-        ensure_approval_and_denial_handled("mcp/call", &v)?;
-        Ok(v)
+    async fn mcp_call(
+        &mut self,
+        req: omne_app_server_protocol::McpCallParams,
+    ) -> anyhow::Result<McpActionOrFailedResponse> {
+        self.rpc_parsed("mcp/call", req, parse_mcp_rpc_response_typed)
+            .await
+    }
+
+    async fn artifact_write(
+        &mut self,
+        params: omne_app_server_protocol::ArtifactWriteParams,
+    ) -> anyhow::Result<omne_app_server_protocol::ArtifactWriteResponse> {
+        self.rpc_parsed("artifact/write", params, parse_artifact_rpc_response_typed)
+            .await
     }
 
     async fn artifact_list(
         &mut self,
         thread_id: ThreadId,
         approval_id: Option<ApprovalId>,
-    ) -> anyhow::Result<Value> {
-        let v = self
-            .rpc(
+    ) -> anyhow::Result<omne_app_server_protocol::ArtifactListResponse> {
+        self.rpc_parsed(
             "artifact/list",
-            serde_json::json!({
-                "thread_id": thread_id,
-                "approval_id": approval_id,
-            }),
-            )
-            .await?;
-        ensure_approval_and_denial_handled("artifact/list", &v)?;
-        Ok(v)
+            omne_app_server_protocol::ArtifactListParams {
+                thread_id,
+                turn_id: None,
+                approval_id,
+            },
+            parse_artifact_rpc_response_typed,
+        )
+        .await
     }
 
     async fn artifact_read(
         &mut self,
         thread_id: ThreadId,
         artifact_id: omne_protocol::ArtifactId,
+        version: Option<u32>,
         max_bytes: Option<u64>,
         approval_id: Option<ApprovalId>,
-    ) -> anyhow::Result<Value> {
-        let v = self
-            .rpc(
+    ) -> anyhow::Result<omne_app_server_protocol::ArtifactReadResponse> {
+        self.rpc_parsed(
             "artifact/read",
-            serde_json::json!({
-                "thread_id": thread_id,
-                "artifact_id": artifact_id,
-                "max_bytes": max_bytes,
-                "approval_id": approval_id,
-            }),
-            )
-            .await?;
-        ensure_approval_and_denial_handled("artifact/read", &v)?;
-        Ok(v)
+            omne_app_server_protocol::ArtifactReadParams {
+                thread_id,
+                turn_id: None,
+                approval_id,
+                artifact_id,
+                version,
+                max_bytes,
+            },
+            parse_artifact_rpc_response_typed,
+        )
+        .await
+    }
+
+    async fn artifact_versions(
+        &mut self,
+        thread_id: ThreadId,
+        artifact_id: omne_protocol::ArtifactId,
+        approval_id: Option<ApprovalId>,
+    ) -> anyhow::Result<omne_app_server_protocol::ArtifactVersionsResponse> {
+        self.rpc_parsed(
+            "artifact/versions",
+            omne_app_server_protocol::ArtifactVersionsParams {
+                thread_id,
+                turn_id: None,
+                approval_id,
+                artifact_id,
+            },
+            parse_artifact_rpc_response_typed,
+        )
+        .await
     }
 
     async fn artifact_delete(
@@ -832,18 +996,33 @@ impl App {
         thread_id: ThreadId,
         artifact_id: omne_protocol::ArtifactId,
         approval_id: Option<ApprovalId>,
-    ) -> anyhow::Result<Value> {
-        let v = self
-            .rpc(
+    ) -> anyhow::Result<omne_app_server_protocol::ArtifactDeleteResponse> {
+        self.rpc_parsed(
             "artifact/delete",
-            serde_json::json!({
-                "thread_id": thread_id,
-                "artifact_id": artifact_id,
-                "approval_id": approval_id,
-            }),
-            )
-            .await?;
-        ensure_approval_and_denial_handled("artifact/delete", &v)?;
-        Ok(v)
+            omne_app_server_protocol::ArtifactDeleteParams {
+                thread_id,
+                turn_id: None,
+                approval_id,
+                artifact_id,
+            },
+            parse_artifact_rpc_response_typed,
+        )
+        .await
     }
+}
+
+fn normalize_string_list(values: Vec<String>) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut seen = std::collections::BTreeSet::<String>::new();
+    for value in values {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let value = trimmed.to_string();
+        if seen.insert(value.clone()) {
+            out.push(value);
+        }
+    }
+    out
 }

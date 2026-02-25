@@ -350,6 +350,7 @@ fn tool_is_read_only(tool_name: &str) -> bool {
             | "artifact_list"
             | "artifact_read"
             | "thread_state"
+            | "thread_usage"
             | "thread_events"
     )
 }
@@ -438,4 +439,3 @@ async fn load_latest_summary_artifact(
         .with_context(|| format!("read {}", content_path.display()))?;
     Ok(Some((meta, text)))
 }
-

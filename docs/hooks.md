@@ -1,8 +1,8 @@
-# Hooks（SessionStart / PreToolUse / PostToolUse / Stop）（v0.2.0 最小实现）
+# Hooks（SessionStart / PreToolUse / PostToolUse / Stop / SubagentStart / SubagentStop）（v0.2.0 最小实现）
 
 > 目标：把“安全提醒/环境提示/自动化守门”从 prompt 里剥离出来，变成可版本化、可审计的 hook。
 >
-> 状态：**v0.2.0 已实现最小子集**（可用）：读取 `./.omne_data/spec/hooks.yaml`，在 `SessionStart/PreToolUse/PostToolUse/Stop` 触发命令，并支持 `additional_context` 注入 + 落盘审计。
+> 状态：**v0.2.0 已实现最小子集**（可用）：读取 `./.omne_data/spec/hooks.yaml`，在 `SessionStart/PreToolUse/PostToolUse/Stop/SubagentStart/SubagentStop` 触发命令，并支持 `additional_context` 注入 + 落盘审计。
 >
 > 注意：这不是 `docs/workspace_hooks.md` 的 workspace 生命周期 hooks（v0.2.0 已实现；对应 `thread/hook_run`）。
 
@@ -26,6 +26,12 @@ Project config（可提交/可 review）：
 
 - **Canonical**：`./.omne_data/spec/hooks.yaml`
 
+初始化提示：
+
+- `omne init` 默认会创建 `./.omne_data/spec/hooks.yaml` 的最小空模板（`version: 1` + 六个 hook point 空数组）。
+- 若不希望自动生成，可使用 `omne init --no-hooks-template`。
+- 若希望一次跳过所有 spec 模板（commands/workspace/hooks/modes），可使用 `omne init --no-spec-templates`（等价 `--minimal`）。
+
 发现顺序（v1 建议写死，避免隐式执行未 review 的脚本）：
 
 1. `./.omne_data/spec/hooks.yaml`
@@ -40,12 +46,14 @@ fail-closed（写死）：
 
 ## 2) Hook points（最小集合）
 
-先只定义最小四个点，避免一次性铺太大：
+先只定义最小六个点，避免一次性铺太大：
 
 - `SessionStart`：thread start 或 resume 后、开始第一个 turn 之前。
 - `PreToolUse`：某次工具调用即将执行前（已经拿到 tool name + params；但尚未执行）。
 - `PostToolUse`：某次工具调用执行完成后（有 status/result）。
 - `Stop`：turn 结束时（`TurnCompleted` 写入后；可拿到 `status/reason`）。
+- `SubagentStart`：父 thread 调度子任务并成功启动子 turn 后触发（可拿到 `task_id/child_thread_id/child_turn_id`）。
+- `SubagentStop`：子 turn 完成后在父 thread 触发（可拿到 `task_id/child_thread_id/child_turn_id/status/reason`）。
 
 备注：
 
@@ -77,7 +85,7 @@ hook 本质上是“自动触发的执行 + 可选的上下文注入”。
 
 - `OMNE_HOOK_INPUT_PATH`
 - `OMNE_HOOK_OUTPUT_PATH`
-- `OMNE_HOOK_POINT`（`session_start|pre_tool_use|post_tool_use|stop`）
+- `OMNE_HOOK_POINT`（`session_start|pre_tool_use|post_tool_use|stop|subagent_start|subagent_stop`）
 - `OMNE_HOOK_TOOL`（仅 tool hooks；例如 `file/write`）
 
 （进程 stdin 默认为空，因此不要指望从 stdin 读 JSON。）
@@ -121,6 +129,11 @@ hooks:
       argv: ["echo", "suggestions..."]
       ok_exit_codes: [0]
       emit_additional_context: true
+  subagent_stop:
+    - when_turn_status: ["failed"]
+      argv: ["echo", "child task failed; collect diagnostics"]
+      ok_exit_codes: [0]
+      emit_additional_context: false
 ```
 
 字段约定（建议）：
@@ -129,7 +142,7 @@ hooks:
   - 建议避免 `sh -c` / `bash -lc` 这类“解释执行字符串”；把逻辑写进脚本文件并直接执行更可审计。
 - `ok_exit_codes`：允许的 exit code 列表（可选；默认 `[0]`）。
 - `when_tools`：仅对特定工具触发（可选）。
-- `when_turn_status`：仅在特定 turn 状态触发（可选）。
+- `when_turn_status`：仅在特定 turn 状态触发（可选；常用于 `stop/subagent_stop`）。
 - `emit_additional_context`：是否把 `output.additional_context` 写入 `<thread_dir>/artifacts/hooks/<hook_id>.additional_context.md` 并注入模型（可选；默认 false）。
 - 未知字段：直接报错（fail-closed）。
 

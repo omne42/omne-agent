@@ -2,7 +2,7 @@
 
 > 结论先行：TUI 不是“另一套 core”，只是 `omne-app-server`（JSON-RPC 事件流）的一个投影。**唯一真相**仍然是 `Thread/Turn/Item` 落盘事件与可重放语义。
 >
-> v0.2.0 现状：已落地 `omne`/`omne tui`（默认新建 thread；Esc 回 thread picker；Ctrl-K 指令菜单；Ctrl-C 中断（空闲退出）；transcript scrollback；`item/delta` 流式）以及 Approvals/Processes/Artifacts 弹窗（只调用既有 JSON-RPC；无 stdin/PTY 交互）。
+> v0.2.0 现状：已落地 `omne`/`omne tui`（默认新建 thread；Esc 回 thread picker；Ctrl-K 指令菜单；Ctrl-C 中断（空闲退出）；transcript scrollback；`item/delta` 流式；支持 `/allowed-tools` 与 `/execpolicy-rules` 的 thread 级快速配置；thread picker 支持 `h` 切换是否包含 archived threads，支持 `l`（linkage）、`a`（auto-apply-error）、`b`（fan-in dependency blocked）与 `s`（subagent proxy approvals）快捷切换过滤，支持 `c` 一键清空过滤；列表头显式显示 `threads [all|link|auto|fanin|subagent|...]` 与 `archived=on|off`、footer 显示 `threads f=all|link|auto|fanin|subagent|...`，并在列表 Attention badge 中显示 `sub<N>`（待处理 subagent proxy approvals 数量，`N>999` 时显示 `sub999+`）；进入 thread 后，footer 也会显示 `sub=<total>`（宽屏附带状态分布如 `running:2,failed:1`），便于快速判断是否需要先处理子任务审批；打开 approvals overlay 时，标题会展示 `filter=<all|failed|running>`、`failed=<N>`（失败子任务审批计数）与 `sub=<total>(...)` 汇总，pending 行会对 `subagent/proxy_approval` 直接附加紧凑状态提示（如 `(running)` / `(failed)`，并按状态着色：`running` 黄色、`failed` 红色），同时列表默认按风险优先排序（`failed/error` 子任务审批在前，其次 `running`，再到其它），并支持 `t` 循环过滤（all/failed/running）与 `f/F` 快捷键跳到下一个/上一个 failed/error 子任务审批，方便在审批列表内保持全局感知；同一能力也可通过 Ctrl-K 根菜单 `archived=on|off`、`linkage-filter=on|off`、`auto-apply-filter=on|off`、`fan-in-filter=on|off`、`subagent-filter=on|off` 与 `clear-filters` 切换/重置；footer 显示当前 thread gate 摘要 `g=<allowed_tools_count|*>/<execpolicy_rules_count>`；Ctrl-K 根菜单显示 `allowed-tools=<*|N>` 与 `execpolicy-rules=<N>` 当前值）以及 Approvals/Processes/Artifacts 弹窗（只调用既有 JSON-RPC；无 stdin/PTY 交互；Artifacts 支持 `artifact/versions` 历史版本浏览、按版本读取，提供 `0` 快捷回到 latest 与 `R` 强制刷新版本列表；若历史版本已清理/不存在会提示回退到 latest）。
 
 ## 1) v0.2.0 P0 目标与边界
 
@@ -14,8 +14,12 @@
   - 订阅事件并增量渲染 transcript（含 `item/delta` 文本流）。
   - 支持输入并提交 `turn/start`。
 - Approvals：展示 pending approvals，并在 UI 内 `approve/deny`（调用既有 JSON-RPC；不引入新语义）。
+  - 在 approvals overlay 内支持 `Ctrl-K` 打开局部 command palette（`refresh` / `select-prev` / `select-next` / `filter-cycle` / `next-failed` / `prev-failed` / `approve` / `deny` / `remember-toggle` / `details`）。
 - Process：只读 `inspect`（stdout/stderr tail）+ `kill` + `interrupt`（继续遵守 v0.2.0 约束：**禁止 stdin/PTY 交互**）。
-- Artifacts：列表/读取（内置滚动查看，pager/less 级别即可）。
+  - 在 processes overlay 内支持 `Ctrl-K` 打开局部 command palette（`refresh` / `select-prev` / `select-next` / `inspect` / `kill` / `interrupt`）。
+- Artifacts：列表/读取（内置滚动查看，pager/less 级别即可），支持加载版本列表并按历史版本读取。
+  - 在 artifacts overlay 内支持 `Ctrl-K` 打开局部 command palette（`refresh` / `select-prev` / `select-next` / `read` / `versions` / `versions-reload` / `version-prev` / `version-next` / `version-latest`）。
+  - `Ctrl-K` 触发后会在 status 显示 overlay 上下文（`overlay commands: approvals|processes|artifacts`）；若当前 overlay 不支持局部菜单则显示 `overlay commands unavailable`；两类提示均约 2 秒后自动清理。
 
 ### 1.2 明确不做（v0.2.0）
 

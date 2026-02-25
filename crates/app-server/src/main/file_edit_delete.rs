@@ -31,7 +31,7 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
         "edits": params.edits.len(),
         "max_bytes": max_bytes,
     });
-    if let Some(result) = enforce_thread_allowed_tools(
+    if let Some(_result) = enforce_thread_allowed_tools(
         &thread_rt,
         tool_id,
         params.turn_id,
@@ -41,97 +41,62 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
     )
     .await?
     {
-        return Ok(result);
+        return file_allowed_tools_denied_response(tool_id, "file/edit", &allowed_tools);
     }
     if sandbox_policy == omne_protocol::SandboxPolicy::ReadOnly {
-        thread_rt
-            .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                tool_id,
-                turn_id: params.turn_id,
-                tool: "file/edit".to_string(),
-                params: Some(approval_params),
-            })
-            .await?;
-        thread_rt
-            .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                tool_id,
-                status: omne_protocol::ToolStatus::Denied,
-                error: Some("sandbox_policy=read_only forbids file/edit".to_string()),
-                result: Some(serde_json::json!({
-                    "sandbox_policy": sandbox_policy,
-                })),
-            })
-            .await?;
-        return Ok(serde_json::json!({
-            "tool_id": tool_id,
-            "denied": true,
-            "sandbox_policy": sandbox_policy,
-        }));
+        let result = file_sandbox_policy_denied_response(tool_id, sandbox_policy)?;
+        emit_file_tool_denied(
+            &thread_rt,
+            tool_id,
+            params.turn_id,
+            "file/edit",
+            &approval_params,
+            "sandbox_policy=read_only forbids file/edit".to_string(),
+            result.clone(),
+        )
+        .await?;
+        return Ok(result);
     }
 
     let rel_path = omne_core::modes::relative_path_under_root(&thread_root, Path::new(&params.path));
     if let Ok(rel) = rel_path.as_ref()
         && rel_path_is_secret(rel)
     {
-        thread_rt
-            .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                tool_id,
-                turn_id: params.turn_id,
-                tool: "file/edit".to_string(),
-                params: Some(approval_params),
-            })
-            .await?;
-        thread_rt
-            .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                tool_id,
-                status: omne_protocol::ToolStatus::Denied,
-                error: Some("refusing to edit secrets file (.env)".to_string()),
-                result: Some(serde_json::json!({
-                    "reason": "secrets file is always denied",
-                })),
-            })
-            .await?;
-        return Ok(serde_json::json!({
-            "tool_id": tool_id,
-            "denied": true,
-        }));
+        let result = file_denied_response(tool_id, None)?;
+        emit_file_tool_denied(
+            &thread_rt,
+            tool_id,
+            params.turn_id,
+            "file/edit",
+            &approval_params,
+            "refusing to edit secrets file (.env)".to_string(),
+            result.clone(),
+        )
+        .await?;
+        return Ok(result);
     }
     let catalog = omne_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {
         Some(mode) => mode,
         None => {
             let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
-            let decision = omne_core::modes::Decision::Deny;
-
-            thread_rt
-                .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                    tool_id,
-                    turn_id: params.turn_id,
-                    tool: "file/edit".to_string(),
-                    params: Some(approval_params),
-                })
-                .await?;
-            thread_rt
-                .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                    tool_id,
-                    status: omne_protocol::ToolStatus::Denied,
-                    error: Some("unknown mode".to_string()),
-                    result: Some(serde_json::json!({
-                        "mode": mode_name,
-                        "decision": decision,
-                        "available": available,
-                        "load_error": catalog.load_error.clone(),
-                    })),
-                })
-                .await?;
-            return Ok(serde_json::json!({
-                "tool_id": tool_id,
-                "denied": true,
-                "mode": mode_name,
-                "decision": decision,
-                "available": available,
-                "load_error": catalog.load_error.clone(),
-            }));
+            let result = file_unknown_mode_denied_response(
+                tool_id,
+                &mode_name,
+                available,
+                catalog.load_error.clone(),
+            )?;
+            emit_file_tool_denied(
+                &thread_rt,
+                tool_id,
+                params.turn_id,
+                "file/edit",
+                &approval_params,
+                "unknown mode".to_string(),
+                result.clone(),
+            )
+            .await?;
+            return Ok(result);
         }
     };
 
@@ -139,39 +104,23 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
         Ok(rel) => mode.permissions.edit.decision_for_path(rel),
         Err(_) => omne_core::modes::Decision::Deny,
     };
-    let effective_decision = match mode.tool_overrides.get("file/edit").copied() {
-        Some(override_decision) => base_decision.combine(override_decision),
-        None => base_decision,
-    };
-    if effective_decision == omne_core::modes::Decision::Deny {
-        thread_rt
-            .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                tool_id,
-                turn_id: params.turn_id,
-                tool: "file/edit".to_string(),
-                params: Some(approval_params),
-            })
-            .await?;
-        thread_rt
-            .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                tool_id,
-                status: omne_protocol::ToolStatus::Denied,
-                error: Some("mode denies file/edit".to_string()),
-                result: Some(serde_json::json!({
-                    "mode": mode_name,
-                    "decision": effective_decision,
-                })),
-            })
-            .await?;
-        return Ok(serde_json::json!({
-            "tool_id": tool_id,
-            "denied": true,
-            "mode": mode_name,
-            "decision": effective_decision,
-        }));
+    let mode_decision = resolve_mode_decision_audit(mode, "file/edit", base_decision);
+    if mode_decision.decision == omne_core::modes::Decision::Deny {
+        let result = file_mode_denied_response(tool_id, &mode_name, mode_decision)?;
+        emit_file_tool_denied(
+            &thread_rt,
+            tool_id,
+            params.turn_id,
+            "file/edit",
+            &approval_params,
+            "mode denies file/edit".to_string(),
+            result.clone(),
+        )
+        .await?;
+        return Ok(result);
     }
 
-    if effective_decision == omne_core::modes::Decision::Prompt {
+    if mode_decision.decision == omne_core::modes::Decision::Prompt {
         match gate_approval(
             server,
             &thread_rt,
@@ -188,35 +137,21 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
         {
             ApprovalGate::Approved => {}
             ApprovalGate::Denied { remembered } => {
-                thread_rt
-                    .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                        tool_id,
-                        turn_id: params.turn_id,
-                        tool: "file/edit".to_string(),
-                        params: Some(approval_params),
-                    })
-                    .await?;
-                    thread_rt
-                        .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                            tool_id,
-                            status: omne_protocol::ToolStatus::Denied,
-                            error: Some(approval_denied_error(remembered).to_string()),
-                            result: Some(serde_json::json!({
-                                "approval_policy": approval_policy,
-                            })),
-                        })
-                        .await?;
-                return Ok(serde_json::json!({
-                    "tool_id": tool_id,
-                    "denied": true,
-                    "remembered": remembered,
-                }));
+                let result = file_denied_response(tool_id, Some(remembered))?;
+                emit_file_tool_denied(
+                    &thread_rt,
+                    tool_id,
+                    params.turn_id,
+                    "file/edit",
+                    &approval_params,
+                    approval_denied_error(remembered).to_string(),
+                    result.clone(),
+                )
+                .await?;
+                return Ok(result);
             }
             ApprovalGate::NeedsApproval { approval_id } => {
-                return Ok(serde_json::json!({
-                    "needs_approval": true,
-                    "approval_id": approval_id,
-                }));
+                return file_needs_approval_response(approval_id);
             }
         }
     }
@@ -235,7 +170,7 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
         .await?;
 
     let outcome: anyhow::Result<(PathBuf, bool, usize, usize)> = async {
-        let path = resolve_file_for_sandbox(
+        let path = omne_core::resolve_file_for_sandbox(
             &thread_root,
             sandbox_policy,
             &sandbox_writable_roots,
@@ -247,25 +182,19 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
 
         let resolved_rel = canonical_rel_path_for_write(&thread_root, &path).await?;
         if rel_path_is_secret(&resolved_rel) {
+            let result = file_denied_response(tool_id, None)?;
             return Err(tool_denied(
                 "refusing to edit secrets file (.env)".to_string(),
-                serde_json::json!({
-                    "reason": "secrets file is always denied",
-                }),
+                result,
             ));
         }
         let base_decision = mode.permissions.edit.decision_for_path(&resolved_rel);
-        let effective_decision = match mode.tool_overrides.get("file/edit").copied() {
-            Some(override_decision) => base_decision.combine(override_decision),
-            None => base_decision,
-        };
-        if effective_decision == omne_core::modes::Decision::Deny {
+        let mode_decision = resolve_mode_decision_audit(mode, "file/edit", base_decision);
+        if mode_decision.decision == omne_core::modes::Decision::Deny {
+            let result = file_mode_denied_response(tool_id, &mode_name, mode_decision)?;
             return Err(tool_denied(
                 "mode denies file/edit".to_string(),
-                serde_json::json!({
-                    "mode": mode_name,
-                    "decision": effective_decision,
-                }),
+                result,
             ));
         }
 
@@ -348,13 +277,7 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
                         result: Some(denied.result.clone()),
                     })
                     .await?;
-                Ok(merge_json_object(
-                    serde_json::json!({
-                        "tool_id": tool_id,
-                        "denied": true,
-                    }),
-                    &denied.result,
-                ))
+                Ok(denied.result.clone())
             } else {
                 thread_rt
                     .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
@@ -390,7 +313,7 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
         "path": params.path.clone(),
         "recursive": params.recursive,
     });
-    if let Some(result) = enforce_thread_allowed_tools(
+    if let Some(_result) = enforce_thread_allowed_tools(
         &thread_rt,
         tool_id,
         params.turn_id,
@@ -400,97 +323,62 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
     )
     .await?
     {
-        return Ok(result);
+        return file_allowed_tools_denied_response(tool_id, "file/delete", &allowed_tools);
     }
     if sandbox_policy == omne_protocol::SandboxPolicy::ReadOnly {
-        thread_rt
-            .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                tool_id,
-                turn_id: params.turn_id,
-                tool: "file/delete".to_string(),
-                params: Some(approval_params),
-            })
-            .await?;
-        thread_rt
-            .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                tool_id,
-                status: omne_protocol::ToolStatus::Denied,
-                error: Some("sandbox_policy=read_only forbids file/delete".to_string()),
-                result: Some(serde_json::json!({
-                    "sandbox_policy": sandbox_policy,
-                })),
-            })
-            .await?;
-        return Ok(serde_json::json!({
-            "tool_id": tool_id,
-            "denied": true,
-            "sandbox_policy": sandbox_policy,
-        }));
+        let result = file_sandbox_policy_denied_response(tool_id, sandbox_policy)?;
+        emit_file_tool_denied(
+            &thread_rt,
+            tool_id,
+            params.turn_id,
+            "file/delete",
+            &approval_params,
+            "sandbox_policy=read_only forbids file/delete".to_string(),
+            result.clone(),
+        )
+        .await?;
+        return Ok(result);
     }
 
     let rel_path = omne_core::modes::relative_path_under_root(&thread_root, Path::new(&params.path));
     if let Ok(rel) = rel_path.as_ref()
         && rel_path_is_secret(rel)
     {
-        thread_rt
-            .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                tool_id,
-                turn_id: params.turn_id,
-                tool: "file/delete".to_string(),
-                params: Some(approval_params),
-            })
-            .await?;
-        thread_rt
-            .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                tool_id,
-                status: omne_protocol::ToolStatus::Denied,
-                error: Some("refusing to delete secrets file (.env)".to_string()),
-                result: Some(serde_json::json!({
-                    "reason": "secrets file is always denied",
-                })),
-            })
-            .await?;
-        return Ok(serde_json::json!({
-            "tool_id": tool_id,
-            "denied": true,
-        }));
+        let result = file_denied_response(tool_id, None)?;
+        emit_file_tool_denied(
+            &thread_rt,
+            tool_id,
+            params.turn_id,
+            "file/delete",
+            &approval_params,
+            "refusing to delete secrets file (.env)".to_string(),
+            result.clone(),
+        )
+        .await?;
+        return Ok(result);
     }
     let catalog = omne_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {
         Some(mode) => mode,
         None => {
             let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
-            let decision = omne_core::modes::Decision::Deny;
-
-            thread_rt
-                .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                    tool_id,
-                    turn_id: params.turn_id,
-                    tool: "file/delete".to_string(),
-                    params: Some(approval_params),
-                })
-                .await?;
-            thread_rt
-                .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                    tool_id,
-                    status: omne_protocol::ToolStatus::Denied,
-                    error: Some("unknown mode".to_string()),
-                    result: Some(serde_json::json!({
-                        "mode": mode_name,
-                        "decision": decision,
-                        "available": available,
-                        "load_error": catalog.load_error.clone(),
-                    })),
-                })
-                .await?;
-            return Ok(serde_json::json!({
-                "tool_id": tool_id,
-                "denied": true,
-                "mode": mode_name,
-                "decision": decision,
-                "available": available,
-                "load_error": catalog.load_error.clone(),
-            }));
+            let result = file_unknown_mode_denied_response(
+                tool_id,
+                &mode_name,
+                available,
+                catalog.load_error.clone(),
+            )?;
+            emit_file_tool_denied(
+                &thread_rt,
+                tool_id,
+                params.turn_id,
+                "file/delete",
+                &approval_params,
+                "unknown mode".to_string(),
+                result.clone(),
+            )
+            .await?;
+            return Ok(result);
         }
     };
 
@@ -498,39 +386,23 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
         Ok(rel) => mode.permissions.edit.decision_for_path(rel),
         Err(_) => omne_core::modes::Decision::Deny,
     };
-    let effective_decision = match mode.tool_overrides.get("file/delete").copied() {
-        Some(override_decision) => base_decision.combine(override_decision),
-        None => base_decision,
-    };
-    if effective_decision == omne_core::modes::Decision::Deny {
-        thread_rt
-            .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                tool_id,
-                turn_id: params.turn_id,
-                tool: "file/delete".to_string(),
-                params: Some(approval_params),
-            })
-            .await?;
-        thread_rt
-            .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                tool_id,
-                status: omne_protocol::ToolStatus::Denied,
-                error: Some("mode denies file/delete".to_string()),
-                result: Some(serde_json::json!({
-                    "mode": mode_name,
-                    "decision": effective_decision,
-                })),
-            })
-            .await?;
-        return Ok(serde_json::json!({
-            "tool_id": tool_id,
-            "denied": true,
-            "mode": mode_name,
-            "decision": effective_decision,
-        }));
+    let mode_decision = resolve_mode_decision_audit(mode, "file/delete", base_decision);
+    if mode_decision.decision == omne_core::modes::Decision::Deny {
+        let result = file_mode_denied_response(tool_id, &mode_name, mode_decision)?;
+        emit_file_tool_denied(
+            &thread_rt,
+            tool_id,
+            params.turn_id,
+            "file/delete",
+            &approval_params,
+            "mode denies file/delete".to_string(),
+            result.clone(),
+        )
+        .await?;
+        return Ok(result);
     }
 
-    if effective_decision == omne_core::modes::Decision::Prompt {
+    if mode_decision.decision == omne_core::modes::Decision::Prompt {
         match gate_approval(
             server,
             &thread_rt,
@@ -547,35 +419,21 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
         {
             ApprovalGate::Approved => {}
             ApprovalGate::Denied { remembered } => {
-                thread_rt
-                    .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                        tool_id,
-                        turn_id: params.turn_id,
-                        tool: "file/delete".to_string(),
-                        params: Some(approval_params),
-                    })
-                    .await?;
-                    thread_rt
-                        .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                            tool_id,
-                            status: omne_protocol::ToolStatus::Denied,
-                            error: Some(approval_denied_error(remembered).to_string()),
-                            result: Some(serde_json::json!({
-                                "approval_policy": approval_policy,
-                            })),
-                        })
-                        .await?;
-                return Ok(serde_json::json!({
-                    "tool_id": tool_id,
-                    "denied": true,
-                    "remembered": remembered,
-                }));
+                let result = file_denied_response(tool_id, Some(remembered))?;
+                emit_file_tool_denied(
+                    &thread_rt,
+                    tool_id,
+                    params.turn_id,
+                    "file/delete",
+                    &approval_params,
+                    approval_denied_error(remembered).to_string(),
+                    result.clone(),
+                )
+                .await?;
+                return Ok(result);
             }
             ApprovalGate::NeedsApproval { approval_id } => {
-                return Ok(serde_json::json!({
-                    "needs_approval": true,
-                    "approval_id": approval_id,
-                }));
+                return file_needs_approval_response(approval_id);
             }
         }
     }
@@ -591,7 +449,7 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
 
     let thread_root = thread_root.clone();
     let outcome: anyhow::Result<(bool, PathBuf)> = async {
-        let path = resolve_file_for_sandbox(
+        let path = omne_core::resolve_file_for_sandbox(
             &thread_root,
             sandbox_policy,
             &sandbox_writable_roots,
@@ -607,25 +465,19 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
 
         let resolved_rel = canonical_rel_path_for_write(&thread_root, &path).await?;
         if rel_path_is_secret(&resolved_rel) {
+            let result = file_denied_response(tool_id, None)?;
             return Err(tool_denied(
                 "refusing to delete secrets file (.env)".to_string(),
-                serde_json::json!({
-                    "reason": "secrets file is always denied",
-                }),
+                result,
             ));
         }
         let base_decision = mode.permissions.edit.decision_for_path(&resolved_rel);
-        let effective_decision = match mode.tool_overrides.get("file/delete").copied() {
-            Some(override_decision) => base_decision.combine(override_decision),
-            None => base_decision,
-        };
-        if effective_decision == omne_core::modes::Decision::Deny {
+        let mode_decision = resolve_mode_decision_audit(mode, "file/delete", base_decision);
+        if mode_decision.decision == omne_core::modes::Decision::Deny {
+            let result = file_mode_denied_response(tool_id, &mode_name, mode_decision)?;
             return Err(tool_denied(
                 "mode denies file/delete".to_string(),
-                serde_json::json!({
-                    "mode": mode_name,
-                    "decision": effective_decision,
-                }),
+                result,
             ));
         }
 
@@ -684,13 +536,7 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
                         result: Some(denied.result.clone()),
                     })
                     .await?;
-                Ok(merge_json_object(
-                    serde_json::json!({
-                        "tool_id": tool_id,
-                        "denied": true,
-                    }),
-                    &denied.result,
-                ))
+                Ok(denied.result.clone())
             } else {
                 thread_rt
                     .append_event(omne_protocol::ThreadEventKind::ToolCompleted {

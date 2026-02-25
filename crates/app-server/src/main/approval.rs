@@ -1,7 +1,63 @@
+pub(crate) const SUBAGENT_PROXY_FORWARDED_REASON_PREFIX: &str = "[subagent_proxy_forwarded]";
+pub(crate) const SUBAGENT_PROXY_AUTO_DENIED_REASON_PREFIX: &str = "[subagent_proxy_auto_denied]";
+
+fn decorate_subagent_proxy_forwarded_reason(reason: Option<&str>) -> String {
+    let suffix = reason.unwrap_or_default().trim();
+    if suffix.is_empty() {
+        SUBAGENT_PROXY_FORWARDED_REASON_PREFIX.to_string()
+    } else {
+        format!("{SUBAGENT_PROXY_FORWARDED_REASON_PREFIX} {suffix}")
+    }
+}
+
 async fn handle_approval_decide(
     server: &Server,
     params: ApprovalDecideParams,
 ) -> anyhow::Result<Value> {
+    let proxy_route = resolve_pending_approval_proxy(
+        &server.thread_store,
+        params.thread_id,
+        params.approval_id,
+    )
+    .await?;
+    if let Some(proxy_route) = proxy_route {
+        ensure_pending_approval(
+            &server.thread_store,
+            proxy_route.child_thread_id,
+            proxy_route.child_approval_id,
+        )
+        .await?;
+        let child_rt = server
+            .get_or_load_thread(proxy_route.child_thread_id)
+            .await?;
+        child_rt
+            .append_event(omne_protocol::ThreadEventKind::ApprovalDecided {
+                approval_id: proxy_route.child_approval_id,
+                decision: params.decision,
+                remember: params.remember,
+                reason: Some(decorate_subagent_proxy_forwarded_reason(
+                    params.reason.as_deref(),
+                )),
+            })
+            .await?;
+        let parent_rt = server.get_or_load_thread(params.thread_id).await?;
+        parent_rt
+            .append_event(omne_protocol::ThreadEventKind::ApprovalDecided {
+                approval_id: params.approval_id,
+                decision: params.decision,
+                remember: params.remember,
+                reason: params.reason.clone(),
+            })
+            .await?;
+        return serde_json::to_value(omne_app_server_protocol::ApprovalDecideResponse {
+            ok: true,
+            forwarded: true,
+            child_thread_id: Some(proxy_route.child_thread_id),
+            child_approval_id: Some(proxy_route.child_approval_id),
+        })
+        .context("serialize approval/decide forwarded response");
+    }
+
     let rt = server.get_or_load_thread(params.thread_id).await?;
     rt.append_event(omne_protocol::ThreadEventKind::ApprovalDecided {
         approval_id: params.approval_id,
@@ -10,7 +66,126 @@ async fn handle_approval_decide(
         reason: params.reason,
     })
     .await?;
-    Ok(serde_json::json!({ "ok": true }))
+    serde_json::to_value(omne_app_server_protocol::ApprovalDecideResponse {
+        ok: true,
+        forwarded: false,
+        child_thread_id: None,
+        child_approval_id: None,
+    })
+    .context("serialize approval/decide response")
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SubagentApprovalProxy {
+    child_thread_id: ThreadId,
+    child_approval_id: omne_protocol::ApprovalId,
+}
+
+fn parse_subagent_approval_proxy(params: &Value) -> Option<SubagentApprovalProxy> {
+    let proxy = params.get("subagent_proxy")?.as_object()?;
+    if proxy.get("kind").and_then(Value::as_str) != Some("approval") {
+        return None;
+    }
+    let child_thread_id = proxy
+        .get("child_thread_id")
+        .and_then(Value::as_str)?
+        .parse()
+        .ok()?;
+    let child_approval_id = proxy
+        .get("child_approval_id")
+        .and_then(Value::as_str)?
+        .parse()
+        .ok()?;
+    Some(SubagentApprovalProxy {
+        child_thread_id,
+        child_approval_id,
+    })
+}
+
+async fn resolve_pending_approval_proxy(
+    thread_store: &ThreadStore,
+    thread_id: ThreadId,
+    approval_id: omne_protocol::ApprovalId,
+) -> anyhow::Result<Option<SubagentApprovalProxy>> {
+    let events = thread_store
+        .read_events_since(thread_id, EventSeq::ZERO)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("thread not found: {thread_id}"))?;
+
+    let mut requested = false;
+    let mut decided = false;
+    let mut proxy: Option<SubagentApprovalProxy> = None;
+    for event in events {
+        match event.kind {
+            omne_protocol::ThreadEventKind::ApprovalRequested {
+                approval_id: got,
+                params,
+                ..
+            } => {
+                if got != approval_id {
+                    continue;
+                }
+                requested = true;
+                proxy = parse_subagent_approval_proxy(&params);
+            }
+            omne_protocol::ThreadEventKind::ApprovalDecided {
+                approval_id: got, ..
+            } => {
+                if got == approval_id {
+                    decided = true;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if !requested {
+        anyhow::bail!("approval not requested: thread_id={thread_id} approval_id={approval_id}");
+    }
+    if decided {
+        anyhow::bail!("approval already decided: thread_id={thread_id} approval_id={approval_id}");
+    }
+
+    Ok(proxy)
+}
+
+async fn ensure_pending_approval(
+    thread_store: &ThreadStore,
+    thread_id: ThreadId,
+    approval_id: omne_protocol::ApprovalId,
+) -> anyhow::Result<()> {
+    let events = thread_store
+        .read_events_since(thread_id, EventSeq::ZERO)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("thread not found: {thread_id}"))?;
+
+    let mut requested = false;
+    let mut decided = false;
+    for event in events {
+        match event.kind {
+            omne_protocol::ThreadEventKind::ApprovalRequested { approval_id: got, .. } => {
+                if got == approval_id {
+                    requested = true;
+                }
+            }
+            omne_protocol::ThreadEventKind::ApprovalDecided {
+                approval_id: got, ..
+            } => {
+                if got == approval_id {
+                    decided = true;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if !requested {
+        anyhow::bail!("approval not requested: thread_id={thread_id} approval_id={approval_id}");
+    }
+    if decided {
+        anyhow::bail!("approval already decided: thread_id={thread_id} approval_id={approval_id}");
+    }
+    Ok(())
 }
 
 async fn handle_approval_list(
@@ -23,8 +198,10 @@ async fn handle_approval_list(
         .await?
         .ok_or_else(|| anyhow::anyhow!("thread not found: {}", params.thread_id))?;
 
-    let mut requested = BTreeMap::<omne_protocol::ApprovalId, serde_json::Value>::new();
-    let mut decided = BTreeMap::<omne_protocol::ApprovalId, serde_json::Value>::new();
+    let mut requested =
+        BTreeMap::<omne_protocol::ApprovalId, omne_app_server_protocol::ApprovalRequestInfo>::new();
+    let mut decided =
+        BTreeMap::<omne_protocol::ApprovalId, omne_app_server_protocol::ApprovalDecisionInfo>::new();
 
     for event in events {
         let ts = event.timestamp.format(&Rfc3339)?;
@@ -37,13 +214,15 @@ async fn handle_approval_list(
             } => {
                 requested.insert(
                     approval_id,
-                    serde_json::json!({
-                        "approval_id": approval_id,
-                        "turn_id": turn_id,
-                        "action": action,
-                        "params": params,
-                        "requested_at": ts,
-                    }),
+                    omne_app_server_protocol::ApprovalRequestInfo {
+                        approval_id,
+                        turn_id,
+                        action: action.clone(),
+                        action_id: Some(parse_thread_approval_action_id(&action)),
+                        params: params.clone(),
+                        summary: summarize_pending_approval(&params),
+                        requested_at: ts,
+                    },
                 );
             }
             omne_protocol::ThreadEventKind::ApprovalDecided {
@@ -54,37 +233,37 @@ async fn handle_approval_list(
             } => {
                 decided.insert(
                     approval_id,
-                    serde_json::json!({
-                        "approval_id": approval_id,
-                        "decision": decision,
-                        "remember": remember,
-                        "reason": reason,
-                        "decided_at": ts,
-                    }),
+                    omne_app_server_protocol::ApprovalDecisionInfo {
+                        decision,
+                        remember,
+                        reason,
+                        decided_at: ts,
+                    },
                 );
             }
             _ => {}
         }
     }
 
-    let mut approvals = Vec::new();
+    let mut approvals = Vec::<omne_app_server_protocol::ApprovalListItem>::new();
     for (id, req) in requested {
         if let Some(decision) = decided.get(&id) {
             if params.include_decided {
-                approvals.push(serde_json::json!({
-                    "request": req,
-                    "decision": decision,
-                }));
+                approvals.push(omne_app_server_protocol::ApprovalListItem {
+                    request: req,
+                    decision: Some(decision.clone()),
+                });
             }
         } else {
-            approvals.push(serde_json::json!({
-                "request": req,
-                "decision": null,
-            }));
+            approvals.push(omne_app_server_protocol::ApprovalListItem {
+                request: req,
+                decision: None,
+            });
         }
     }
 
-    Ok(serde_json::json!({ "approvals": approvals }))
+    serde_json::to_value(omne_app_server_protocol::ApprovalListResponse { approvals })
+        .context("serialize approval/list response")
 }
 
 async fn ensure_approval(
@@ -580,6 +759,520 @@ async fn remembered_approval_decision(
 }
 
 #[cfg(test)]
+mod approval_proxy_tests {
+    use super::*;
+
+    fn build_test_server(omne_root: PathBuf) -> Server {
+        let (notify_tx, _notify_rx) = broadcast::channel::<String>(16);
+        Server {
+            cwd: omne_root.clone(),
+            notify_tx,
+            thread_store: ThreadStore::new(PmPaths::new(omne_root)),
+            threads: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            processes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            mcp: Arc::new(tokio::sync::Mutex::new(McpManager::default())),
+            disk_warning: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            exec_policy: omne_execpolicy::Policy::empty(),
+        }
+    }
+
+    #[tokio::test]
+    async fn approval_decide_forwards_subagent_proxy_to_child() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = build_test_server(tmp.path().join(".omne_data"));
+        let parent_handle = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let parent_thread_id = parent_handle.thread_id();
+        drop(parent_handle);
+
+        let child_handle = server.thread_store.create_thread(repo_dir).await?;
+        let child_thread_id = child_handle.thread_id();
+        drop(child_handle);
+
+        let proxy_approval_id = omne_protocol::ApprovalId::new();
+        let child_approval_id = omne_protocol::ApprovalId::new();
+        let child_rt = server.get_or_load_thread(child_thread_id).await?;
+        child_rt
+            .append_event(omne_protocol::ThreadEventKind::ApprovalRequested {
+                approval_id: child_approval_id,
+                turn_id: None,
+                action: "process/start".to_string(),
+                params: serde_json::json!({
+                    "argv": ["echo", "hi"],
+                }),
+            })
+            .await?;
+        let parent_rt = server.get_or_load_thread(parent_thread_id).await?;
+        parent_rt
+            .append_event(omne_protocol::ThreadEventKind::ApprovalRequested {
+                approval_id: proxy_approval_id,
+                turn_id: None,
+                action: "subagent/proxy_approval".to_string(),
+                params: serde_json::json!({
+                    "subagent_proxy": {
+                        "kind": "approval",
+                        "child_thread_id": child_thread_id,
+                        "child_approval_id": child_approval_id,
+                    },
+                    "child_request": {
+                        "action": "process/start",
+                        "params": {
+                            "argv": ["echo", "hi"],
+                        },
+                    },
+                }),
+            })
+            .await?;
+
+        let result = handle_approval_decide(
+            &server,
+            ApprovalDecideParams {
+                thread_id: parent_thread_id,
+                approval_id: proxy_approval_id,
+                decision: omne_protocol::ApprovalDecision::Approved,
+                remember: false,
+                reason: Some("approved from parent".to_string()),
+            },
+        )
+        .await?;
+        let result: omne_app_server_protocol::ApprovalDecideResponse =
+            serde_json::from_value(result).context("parse approval/decide test response")?;
+        assert!(result.forwarded);
+        assert_eq!(result.child_thread_id, Some(child_thread_id));
+        assert_eq!(result.child_approval_id, Some(child_approval_id));
+
+        let child_events = server
+            .thread_store
+            .read_events_since(child_thread_id, EventSeq::ZERO)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("thread not found: {child_thread_id}"))?;
+        assert!(child_events.iter().any(|event| {
+            matches!(
+                &event.kind,
+                omne_protocol::ThreadEventKind::ApprovalDecided {
+                    approval_id,
+                    decision: omne_protocol::ApprovalDecision::Approved,
+                    ..
+                } if *approval_id == child_approval_id
+            )
+        }));
+
+        let parent_events = server
+            .thread_store
+            .read_events_since(parent_thread_id, EventSeq::ZERO)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("thread not found: {parent_thread_id}"))?;
+        assert!(parent_events.iter().any(|event| {
+            matches!(
+                &event.kind,
+                omne_protocol::ThreadEventKind::ApprovalDecided { approval_id, .. }
+                    if *approval_id == proxy_approval_id
+            )
+        }));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn approval_decide_rejects_proxy_when_child_approval_missing() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = build_test_server(tmp.path().join(".omne_data"));
+        let parent_handle = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let parent_thread_id = parent_handle.thread_id();
+        drop(parent_handle);
+
+        let child_handle = server.thread_store.create_thread(repo_dir).await?;
+        let child_thread_id = child_handle.thread_id();
+        drop(child_handle);
+
+        let proxy_approval_id = omne_protocol::ApprovalId::new();
+        let child_approval_id = omne_protocol::ApprovalId::new();
+        let parent_rt = server.get_or_load_thread(parent_thread_id).await?;
+        parent_rt
+            .append_event(omne_protocol::ThreadEventKind::ApprovalRequested {
+                approval_id: proxy_approval_id,
+                turn_id: None,
+                action: "subagent/proxy_approval".to_string(),
+                params: serde_json::json!({
+                    "subagent_proxy": {
+                        "kind": "approval",
+                        "child_thread_id": child_thread_id,
+                        "child_approval_id": child_approval_id,
+                    },
+                    "child_request": {
+                        "action": "process/start",
+                        "params": {
+                            "argv": ["echo", "hi"],
+                        },
+                    },
+                }),
+            })
+            .await?;
+
+        let err = handle_approval_decide(
+            &server,
+            ApprovalDecideParams {
+                thread_id: parent_thread_id,
+                approval_id: proxy_approval_id,
+                decision: omne_protocol::ApprovalDecision::Approved,
+                remember: false,
+                reason: Some("approved from parent".to_string()),
+            },
+        )
+        .await
+        .expect_err("proxy decision should fail when child approval request is missing");
+        assert!(err.to_string().contains("approval not requested"));
+
+        let parent_events = server
+            .thread_store
+            .read_events_since(parent_thread_id, EventSeq::ZERO)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("thread not found: {parent_thread_id}"))?;
+        assert!(!parent_events.iter().any(|event| {
+            matches!(
+                &event.kind,
+                omne_protocol::ThreadEventKind::ApprovalDecided { approval_id, .. }
+                    if *approval_id == proxy_approval_id
+            )
+        }));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn approval_decide_rejects_proxy_when_child_approval_already_decided()
+    -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = build_test_server(tmp.path().join(".omne_data"));
+        let parent_handle = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let parent_thread_id = parent_handle.thread_id();
+        drop(parent_handle);
+
+        let child_handle = server.thread_store.create_thread(repo_dir).await?;
+        let child_thread_id = child_handle.thread_id();
+        drop(child_handle);
+
+        let child_approval_id = omne_protocol::ApprovalId::new();
+        let child_rt = server.get_or_load_thread(child_thread_id).await?;
+        child_rt
+            .append_event(omne_protocol::ThreadEventKind::ApprovalRequested {
+                approval_id: child_approval_id,
+                turn_id: None,
+                action: "process/start".to_string(),
+                params: serde_json::json!({
+                    "argv": ["echo", "hi"],
+                }),
+            })
+            .await?;
+        child_rt
+            .append_event(omne_protocol::ThreadEventKind::ApprovalDecided {
+                approval_id: child_approval_id,
+                decision: omne_protocol::ApprovalDecision::Denied,
+                remember: false,
+                reason: Some("denied in child".to_string()),
+            })
+            .await?;
+
+        let proxy_approval_id = omne_protocol::ApprovalId::new();
+        let parent_rt = server.get_or_load_thread(parent_thread_id).await?;
+        parent_rt
+            .append_event(omne_protocol::ThreadEventKind::ApprovalRequested {
+                approval_id: proxy_approval_id,
+                turn_id: None,
+                action: "subagent/proxy_approval".to_string(),
+                params: serde_json::json!({
+                    "subagent_proxy": {
+                        "kind": "approval",
+                        "child_thread_id": child_thread_id,
+                        "child_approval_id": child_approval_id,
+                    },
+                    "child_request": {
+                        "action": "process/start",
+                        "params": {
+                            "argv": ["echo", "hi"],
+                        },
+                    },
+                }),
+            })
+            .await?;
+
+        let err = handle_approval_decide(
+            &server,
+            ApprovalDecideParams {
+                thread_id: parent_thread_id,
+                approval_id: proxy_approval_id,
+                decision: omne_protocol::ApprovalDecision::Approved,
+                remember: false,
+                reason: Some("approved from parent".to_string()),
+            },
+        )
+        .await
+        .expect_err("proxy decision should fail when child approval is already decided");
+        assert!(err.to_string().contains("approval already decided"));
+
+        let parent_events = server
+            .thread_store
+            .read_events_since(parent_thread_id, EventSeq::ZERO)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("thread not found: {parent_thread_id}"))?;
+        assert!(!parent_events.iter().any(|event| {
+            matches!(
+                &event.kind,
+                omne_protocol::ThreadEventKind::ApprovalDecided { approval_id, .. }
+                    if *approval_id == proxy_approval_id
+            )
+        }));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn approval_decide_rejects_unknown_approval_id() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = build_test_server(tmp.path().join(".omne_data"));
+        let parent_handle = server.thread_store.create_thread(repo_dir).await?;
+        let parent_thread_id = parent_handle.thread_id();
+        drop(parent_handle);
+
+        let err = handle_approval_decide(
+            &server,
+            ApprovalDecideParams {
+                thread_id: parent_thread_id,
+                approval_id: omne_protocol::ApprovalId::new(),
+                decision: omne_protocol::ApprovalDecision::Approved,
+                remember: false,
+                reason: Some("approve".to_string()),
+            },
+        )
+        .await
+        .expect_err("unknown approval id should be rejected");
+        assert!(err.to_string().contains("approval not requested"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn approval_decide_succeeds_for_pending_non_proxy_approval() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = build_test_server(tmp.path().join(".omne_data"));
+        let parent_handle = server.thread_store.create_thread(repo_dir).await?;
+        let parent_thread_id = parent_handle.thread_id();
+        drop(parent_handle);
+
+        let approval_id = omne_protocol::ApprovalId::new();
+        let parent_rt = server.get_or_load_thread(parent_thread_id).await?;
+        parent_rt
+            .append_event(omne_protocol::ThreadEventKind::ApprovalRequested {
+                approval_id,
+                turn_id: None,
+                action: "file/write".to_string(),
+                params: serde_json::json!({
+                    "path": "a.txt",
+                    "content": "hi",
+                }),
+            })
+            .await?;
+
+        let result = handle_approval_decide(
+            &server,
+            ApprovalDecideParams {
+                thread_id: parent_thread_id,
+                approval_id,
+                decision: omne_protocol::ApprovalDecision::Approved,
+                remember: false,
+                reason: Some("approved".to_string()),
+            },
+        )
+        .await?;
+        let result: omne_app_server_protocol::ApprovalDecideResponse =
+            serde_json::from_value(result).context("parse approval/decide test response")?;
+        assert!(result.ok);
+        assert!(!result.forwarded);
+        assert_eq!(result.child_thread_id, None);
+        assert_eq!(result.child_approval_id, None);
+
+        let parent_events = server
+            .thread_store
+            .read_events_since(parent_thread_id, EventSeq::ZERO)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("thread not found: {parent_thread_id}"))?;
+        let decided_count = parent_events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    &event.kind,
+                    omne_protocol::ThreadEventKind::ApprovalDecided {
+                        approval_id: got,
+                        decision: omne_protocol::ApprovalDecision::Approved,
+                        ..
+                    } if *got == approval_id
+                )
+            })
+            .count();
+        assert_eq!(decided_count, 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn approval_decide_rejects_already_decided_approval() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = build_test_server(tmp.path().join(".omne_data"));
+        let parent_handle = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let parent_thread_id = parent_handle.thread_id();
+        drop(parent_handle);
+
+        let child_handle = server.thread_store.create_thread(repo_dir).await?;
+        let child_thread_id = child_handle.thread_id();
+        drop(child_handle);
+
+        let proxy_approval_id = omne_protocol::ApprovalId::new();
+        let child_approval_id = omne_protocol::ApprovalId::new();
+        let parent_rt = server.get_or_load_thread(parent_thread_id).await?;
+        parent_rt
+            .append_event(omne_protocol::ThreadEventKind::ApprovalRequested {
+                approval_id: proxy_approval_id,
+                turn_id: None,
+                action: "subagent/proxy_approval".to_string(),
+                params: serde_json::json!({
+                    "subagent_proxy": {
+                        "kind": "approval",
+                        "child_thread_id": child_thread_id,
+                        "child_approval_id": child_approval_id,
+                    },
+                    "child_request": {
+                        "action": "process/start",
+                        "params": {
+                            "argv": ["echo", "hi"],
+                        },
+                    },
+                }),
+            })
+            .await?;
+        parent_rt
+            .append_event(omne_protocol::ThreadEventKind::ApprovalDecided {
+                approval_id: proxy_approval_id,
+                decision: omne_protocol::ApprovalDecision::Approved,
+                remember: false,
+                reason: Some("approved".to_string()),
+            })
+            .await?;
+
+        let err = handle_approval_decide(
+            &server,
+            ApprovalDecideParams {
+                thread_id: parent_thread_id,
+                approval_id: proxy_approval_id,
+                decision: omne_protocol::ApprovalDecision::Denied,
+                remember: false,
+                reason: Some("deny".to_string()),
+            },
+        )
+        .await
+        .expect_err("already decided approval id should be rejected");
+        assert!(err.to_string().contains("approval already decided"));
+
+        let child_events = server
+            .thread_store
+            .read_events_since(child_thread_id, EventSeq::ZERO)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("thread not found: {child_thread_id}"))?;
+        assert!(!child_events.iter().any(|event| {
+            matches!(
+                &event.kind,
+                omne_protocol::ThreadEventKind::ApprovalDecided {
+                    approval_id,
+                    decision: omne_protocol::ApprovalDecision::Denied,
+                    ..
+                } if *approval_id == child_approval_id
+            )
+        }));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn approval_decide_rejects_already_decided_non_proxy_approval() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = build_test_server(tmp.path().join(".omne_data"));
+        let parent_handle = server.thread_store.create_thread(repo_dir).await?;
+        let parent_thread_id = parent_handle.thread_id();
+        drop(parent_handle);
+
+        let approval_id = omne_protocol::ApprovalId::new();
+        let parent_rt = server.get_or_load_thread(parent_thread_id).await?;
+        parent_rt
+            .append_event(omne_protocol::ThreadEventKind::ApprovalRequested {
+                approval_id,
+                turn_id: None,
+                action: "file/write".to_string(),
+                params: serde_json::json!({
+                    "path": "a.txt",
+                    "content": "hi",
+                }),
+            })
+            .await?;
+        parent_rt
+            .append_event(omne_protocol::ThreadEventKind::ApprovalDecided {
+                approval_id,
+                decision: omne_protocol::ApprovalDecision::Denied,
+                remember: false,
+                reason: Some("deny".to_string()),
+            })
+            .await?;
+
+        let err = handle_approval_decide(
+            &server,
+            ApprovalDecideParams {
+                thread_id: parent_thread_id,
+                approval_id,
+                decision: omne_protocol::ApprovalDecision::Approved,
+                remember: false,
+                reason: Some("approve".to_string()),
+            },
+        )
+        .await
+        .expect_err("already decided non-proxy approval id should be rejected");
+        assert!(err.to_string().contains("approval already decided"));
+
+        let parent_events = server
+            .thread_store
+            .read_events_since(parent_thread_id, EventSeq::ZERO)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("thread not found: {parent_thread_id}"))?;
+        let decided_count = parent_events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    &event.kind,
+                    omne_protocol::ThreadEventKind::ApprovalDecided {
+                        approval_id: got,
+                        ..
+                    } if *got == approval_id
+                )
+            })
+            .count();
+        assert_eq!(decided_count, 1);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
 mod approval_prompt_strict_tests {
     use super::*;
 
@@ -730,52 +1423,6 @@ async fn load_thread_root(
     Ok((thread_rt, thread_root))
 }
 
-async fn resolve_dir_for_sandbox(
-    thread_root: &Path,
-    sandbox_policy: omne_protocol::SandboxPolicy,
-    input: &Path,
-) -> anyhow::Result<PathBuf> {
-    match sandbox_policy {
-        omne_protocol::SandboxPolicy::DangerFullAccess => {
-            omne_core::resolve_dir_unrestricted(thread_root, input).await
-        }
-        _ => omne_core::resolve_dir(thread_root, input).await,
-    }
-}
-
-async fn resolve_file_for_sandbox(
-    thread_root: &Path,
-    sandbox_policy: omne_protocol::SandboxPolicy,
-    sandbox_writable_roots: &[String],
-    input: &Path,
-    access: omne_core::PathAccess,
-    create_parent_dirs: bool,
-) -> anyhow::Result<PathBuf> {
-    match sandbox_policy {
-        omne_protocol::SandboxPolicy::DangerFullAccess => {
-            omne_core::resolve_file_unrestricted(thread_root, input, access, create_parent_dirs).await
-        }
-        _ => {
-            if matches!(access, omne_core::PathAccess::Write) && !sandbox_writable_roots.is_empty() {
-                let writable_roots = sandbox_writable_roots
-                    .iter()
-                    .map(PathBuf::from)
-                    .collect::<Vec<_>>();
-                omne_core::resolve_file_with_writable_roots(
-                    thread_root,
-                    &writable_roots,
-                    input,
-                    access,
-                    create_parent_dirs,
-                )
-                .await
-            } else {
-                omne_core::resolve_file(thread_root, input, access, create_parent_dirs).await
-            }
-        }
-    }
-}
-
 #[derive(Debug)]
 struct ToolDenied {
     error: String,
@@ -801,19 +1448,6 @@ impl std::error::Error for ToolDenied {}
 
 fn tool_denied(error: impl Into<String>, result: Value) -> anyhow::Error {
     anyhow::Error::new(ToolDenied::new(error, result))
-}
-
-fn merge_json_object(mut base: Value, extra: &Value) -> Value {
-    let (Some(base_obj), Some(extra_obj)) = (base.as_object_mut(), extra.as_object()) else {
-        return base;
-    };
-    for (key, value) in extra_obj {
-        if key == "tool_id" || key == "denied" {
-            continue;
-        }
-        base_obj.insert(key.clone(), value.clone());
-    }
-    base
 }
 
 async fn canonical_rel_path_for_write(thread_root: &Path, path: &Path) -> anyhow::Result<PathBuf> {

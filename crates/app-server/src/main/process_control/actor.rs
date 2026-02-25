@@ -61,16 +61,21 @@ async fn run_process_actor(args: ProcessActorArgs) {
                             interrupt_reason = reason;
                         }
                         if !interrupt_logged {
-                            let _ = thread_rt
+                            if let Err(err) = thread_rt
                                 .append_event(omne_protocol::ThreadEventKind::ProcessInterruptRequested {
                                     process_id,
                                     reason: interrupt_reason.clone(),
                                 })
-                                .await;
+                                .await
+                            {
+                                tracing::warn!(process_id = %process_id, error = %err, "failed to append ProcessInterruptRequested event");
+                            }
                             interrupt_logged = true;
                         }
                         if try_send_interrupt(&child).is_err() {
-                            let _ = child.start_kill();
+                            if let Err(err) = child.start_kill() {
+                                tracing::warn!(process_id = %process_id, error = %err, "failed to kill process after interrupt failure");
+                            }
                         }
                     }
                     ProcessCommand::Kill { reason } => {
@@ -78,13 +83,17 @@ async fn run_process_actor(args: ProcessActorArgs) {
                             kill_reason = reason;
                         }
                         if !kill_logged {
-                            let _ = thread_rt.append_event(omne_protocol::ThreadEventKind::ProcessKillRequested {
+                            if let Err(err) = thread_rt.append_event(omne_protocol::ThreadEventKind::ProcessKillRequested {
                                 process_id,
                                 reason: kill_reason.clone(),
-                            }).await;
+                            }).await {
+                                tracing::warn!(process_id = %process_id, error = %err, "failed to append ProcessKillRequested event");
+                            }
                             kill_logged = true;
                         }
-                        let _ = child.start_kill();
+                        if let Err(err) = child.start_kill() {
+                            tracing::warn!(process_id = %process_id, error = %err, "failed to kill process");
+                        }
                     }
                 }
             }
@@ -94,10 +103,26 @@ async fn run_process_actor(args: ProcessActorArgs) {
         match child.try_wait() {
             Ok(Some(status)) => {
                 if let Some(task) = stdout_task {
-                    let _ = task.await;
+                    match task.await {
+                        Ok(Ok(())) => {}
+                        Ok(Err(err)) => {
+                            tracing::warn!(process_id = %process_id, error = %err, "stdout streaming task failed");
+                        }
+                        Err(err) => {
+                            tracing::warn!(process_id = %process_id, error = %err, "stdout streaming task panicked");
+                        }
+                    }
                 }
                 if let Some(task) = stderr_task {
-                    let _ = task.await;
+                    match task.await {
+                        Ok(Ok(())) => {}
+                        Ok(Err(err)) => {
+                            tracing::warn!(process_id = %process_id, error = %err, "stderr streaming task failed");
+                        }
+                        Err(err) => {
+                            tracing::warn!(process_id = %process_id, error = %err, "stderr streaming task panicked");
+                        }
+                    }
                 }
 
                 let exit_code = status.code();
@@ -115,6 +140,42 @@ async fn run_process_actor(args: ProcessActorArgs) {
                         info.status = ProcessStatus::Exited;
                         info.exit_code = exit_code;
                         info.last_update_at = ts;
+                    }
+                }
+
+                let marker_context = {
+                    let info = info.lock().await;
+                    if looks_like_test_command(&info.argv) {
+                        Some((info.turn_id, process_command_label(&info.argv)))
+                    } else {
+                        None
+                    }
+                };
+                if let Some((turn_id, command)) = marker_context {
+                    if exit_code.unwrap_or_default() != 0 {
+                        if let Err(err) = thread_rt
+                            .append_event(omne_protocol::ThreadEventKind::AttentionMarkerSet {
+                                marker: omne_protocol::AttentionMarkerKind::TestFailed,
+                                turn_id,
+                                artifact_id: None,
+                                artifact_type: None,
+                                process_id: Some(process_id),
+                                exit_code,
+                                command,
+                            })
+                            .await
+                        {
+                            tracing::warn!(process_id = %process_id, error = %err, "failed to append AttentionMarkerSet(test_failed) event");
+                        }
+                    } else if let Err(err) = thread_rt
+                        .append_event(omne_protocol::ThreadEventKind::AttentionMarkerCleared {
+                            marker: omne_protocol::AttentionMarkerKind::TestFailed,
+                            turn_id,
+                            reason: Some("test command succeeded".to_string()),
+                        })
+                        .await
+                    {
+                        tracing::warn!(process_id = %process_id, error = %err, "failed to append AttentionMarkerCleared(test_failed) event");
                     }
                 }
                 cleanup_execve_gate(&mut execve_gate).await;

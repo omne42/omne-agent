@@ -1,3 +1,692 @@
+fn is_known_agent_tool(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        "file_read"
+            | "file_glob"
+            | "file_grep"
+            | "repo_search"
+            | "repo_index"
+            | "repo_symbols"
+            | "mcp_list_servers"
+            | "mcp_list_tools"
+            | "mcp_list_resources"
+            | "mcp_call"
+            | "file_write"
+            | "file_patch"
+            | "file_edit"
+            | "file_delete"
+            | "fs_mkdir"
+            | "process_start"
+            | "process_inspect"
+            | "process_tail"
+            | "process_follow"
+            | "process_kill"
+            | "artifact_write"
+            | "artifact_list"
+            | "artifact_read"
+            | "artifact_delete"
+            | "thread_diff"
+            | "thread_state"
+            | "thread_usage"
+            | "thread_events"
+            | "thread_hook_run"
+            | "agent_spawn"
+    )
+}
+
+const FAN_OUT_PRIORITY_AGING_ROUNDS_ENV: &str = "OMNE_FAN_OUT_PRIORITY_AGING_ROUNDS";
+const DEFAULT_FAN_OUT_PRIORITY_AGING_ROUNDS: usize = 3;
+const MIN_FAN_OUT_PRIORITY_AGING_ROUNDS: usize = 1;
+const MAX_FAN_OUT_PRIORITY_AGING_ROUNDS: usize = 10_000;
+
+fn parse_fan_out_priority_aging_rounds_value(raw: Option<&str>) -> usize {
+    raw.and_then(|value| value.trim().parse::<usize>().ok())
+        .map(|value| {
+            value.clamp(
+                MIN_FAN_OUT_PRIORITY_AGING_ROUNDS,
+                MAX_FAN_OUT_PRIORITY_AGING_ROUNDS,
+            )
+        })
+        .unwrap_or(DEFAULT_FAN_OUT_PRIORITY_AGING_ROUNDS)
+}
+
+fn fan_out_priority_aging_rounds_from_env() -> usize {
+    parse_fan_out_priority_aging_rounds_value(
+        std::env::var(FAN_OUT_PRIORITY_AGING_ROUNDS_ENV)
+            .ok()
+            .as_deref(),
+    )
+}
+
+fn is_plan_read_only_tool(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        "file_read"
+            | "file_glob"
+            | "file_grep"
+            | "repo_search"
+            | "repo_index"
+            | "repo_symbols"
+            | "mcp_list_servers"
+            | "mcp_list_tools"
+            | "mcp_list_resources"
+            | "process_inspect"
+            | "process_tail"
+            | "process_follow"
+            | "artifact_list"
+            | "artifact_read"
+            | "thread_diff"
+            | "thread_state"
+            | "thread_usage"
+            | "thread_events"
+    )
+}
+
+fn plan_tool_action(tool_name: &str) -> Option<&'static str> {
+    match tool_name {
+        "file_read" => Some("file/read"),
+        "file_glob" => Some("file/glob"),
+        "file_grep" => Some("file/grep"),
+        "repo_search" => Some("repo/search"),
+        "repo_index" => Some("repo/index"),
+        "repo_symbols" => Some("repo/symbols"),
+        "mcp_list_servers" => Some("mcp/list_servers"),
+        "mcp_list_tools" => Some("mcp/list_tools"),
+        "mcp_list_resources" => Some("mcp/list_resources"),
+        "process_inspect" => Some("process/inspect"),
+        "process_tail" => Some("process/tail"),
+        "process_follow" => Some("process/follow"),
+        "artifact_list" => Some("artifact/list"),
+        "artifact_read" => Some("artifact/read"),
+        "thread_diff" => Some("thread/diff"),
+        "thread_state" => Some("thread/state"),
+        "thread_usage" => Some("thread/usage"),
+        "thread_events" => Some("thread/events"),
+        _ => None,
+    }
+}
+
+fn plan_architect_base_decision(
+    mode: &omne_core::modes::ModeDef,
+    tool_action: &str,
+) -> Option<omne_core::modes::Decision> {
+    let decision = match tool_action {
+        "file/read" | "file/glob" | "file/grep" | "thread/state" | "thread/usage"
+        | "thread/events" => mode.permissions.read,
+        "repo/search" | "repo/index" | "repo/symbols" => {
+            mode.permissions.read.combine(mode.permissions.artifact)
+        }
+        "mcp/list_servers" | "mcp/list_tools" | "mcp/list_resources" => mode.permissions.read,
+        "process/inspect" | "process/tail" | "process/follow" => mode.permissions.process.inspect,
+        "artifact/list" | "artifact/read" => mode.permissions.artifact,
+        "thread/diff" => mode.permissions.command.combine(mode.permissions.artifact),
+        _ => return None,
+    };
+    Some(decision)
+}
+
+fn plan_architect_effective_decision(
+    mode: &omne_core::modes::ModeDef,
+    tool_action: &str,
+) -> Option<omne_core::modes::Decision> {
+    let base_decision = plan_architect_base_decision(mode, tool_action)?;
+    Some(crate::resolve_mode_decision_audit(mode, tool_action, base_decision).decision)
+}
+
+async fn plan_architect_file_read_decision(
+    mode: &omne_core::modes::ModeDef,
+    thread_root: &std::path::Path,
+    args: &Value,
+) -> Option<omne_core::modes::Decision> {
+    let parsed: FileReadArgs = serde_json::from_value(args.clone()).ok()?;
+    let root = parsed.root.unwrap_or(crate::FileRoot::Workspace);
+    let target_root = resolve_plan_target_root(thread_root, root).await?;
+
+    let base_decision = match omne_core::modes::relative_path_under_root(
+        &target_root,
+        std::path::Path::new(&parsed.path),
+    ) {
+        Ok(rel) if mode.permissions.edit.is_denied(&rel) => omne_core::modes::Decision::Deny,
+        Ok(_) => mode.permissions.read,
+        Err(_) => omne_core::modes::Decision::Deny,
+    };
+    Some(crate::resolve_mode_decision_audit(mode, "file/read", base_decision).decision)
+}
+
+fn is_glob_meta_char(ch: char) -> bool {
+    matches!(ch, '*' | '?' | '[' | ']' | '{' | '}')
+}
+
+fn glob_static_prefix_for_mode_path(pattern: &str) -> (Option<&str>, bool) {
+    let pattern = pattern.trim();
+    if pattern.is_empty() {
+        return (None, false);
+    }
+
+    let first_meta = pattern
+        .char_indices()
+        .find_map(|(idx, ch)| is_glob_meta_char(ch).then_some(idx));
+
+    let prefix = match first_meta {
+        None => pattern,
+        Some(0) => return (None, true),
+        Some(idx) => pattern[..idx].trim_end_matches('/'),
+    };
+
+    if prefix.is_empty() {
+        (None, first_meta.is_some())
+    } else {
+        (Some(prefix), first_meta.is_some())
+    }
+}
+
+async fn resolve_plan_target_root(
+    thread_root: &std::path::Path,
+    root: crate::FileRoot,
+) -> Option<std::path::PathBuf> {
+    match root {
+        crate::FileRoot::Workspace => Some(thread_root.to_path_buf()),
+        crate::FileRoot::Reference => omne_core::resolve_dir(
+            thread_root,
+            std::path::Path::new(".omne_data/reference/repo"),
+        )
+        .await
+        .ok(),
+    }
+}
+
+fn read_decision_with_optional_explicit_path(
+    mode: &omne_core::modes::ModeDef,
+    target_root: &std::path::Path,
+    maybe_path: Option<&str>,
+) -> omne_core::modes::Decision {
+    let Some(path) = maybe_path else {
+        return mode.permissions.read;
+    };
+    let (prefix, has_meta) = glob_static_prefix_for_mode_path(path);
+    let Some(path) = prefix else {
+        return mode.permissions.read;
+    };
+
+    match omne_core::modes::relative_path_under_root(target_root, std::path::Path::new(path)) {
+        Ok(rel) if mode.permissions.edit.is_denied(&rel) => {
+            return omne_core::modes::Decision::Deny;
+        }
+        Err(_) => return omne_core::modes::Decision::Deny,
+        Ok(_) => {}
+    }
+
+    // For glob patterns, probe a synthetic child path so rules like `blocked/**` apply to
+    // prefixes such as `blocked/**/*.rs`.
+    if has_meta {
+        let synthetic = format!("{}/__omne_glob_probe__", path.trim_end_matches('/'));
+        match omne_core::modes::relative_path_under_root(
+            target_root,
+            std::path::Path::new(&synthetic),
+        ) {
+            Ok(rel) if mode.permissions.edit.is_denied(&rel) => {
+                return omne_core::modes::Decision::Deny;
+            }
+            Err(_) => return omne_core::modes::Decision::Deny,
+            Ok(_) => {}
+        }
+    }
+
+    mode.permissions.read
+}
+
+async fn plan_architect_file_glob_decision(
+    mode: &omne_core::modes::ModeDef,
+    thread_root: &std::path::Path,
+    args: &Value,
+) -> Option<omne_core::modes::Decision> {
+    let parsed: FileGlobArgs = serde_json::from_value(args.clone()).ok()?;
+    let root = parsed.root.unwrap_or(crate::FileRoot::Workspace);
+    let target_root = resolve_plan_target_root(thread_root, root).await?;
+
+    let base_decision = read_decision_with_optional_explicit_path(
+        mode,
+        &target_root,
+        Some(parsed.pattern.as_str()),
+    );
+    Some(crate::resolve_mode_decision_audit(mode, "file/glob", base_decision).decision)
+}
+
+async fn plan_architect_file_grep_decision(
+    mode: &omne_core::modes::ModeDef,
+    thread_root: &std::path::Path,
+    args: &Value,
+) -> Option<omne_core::modes::Decision> {
+    let parsed: FileGrepArgs = serde_json::from_value(args.clone()).ok()?;
+    let root = parsed.root.unwrap_or(crate::FileRoot::Workspace);
+    let target_root = resolve_plan_target_root(thread_root, root).await?;
+
+    let base_decision = read_decision_with_optional_explicit_path(
+        mode,
+        &target_root,
+        parsed.include_glob.as_deref(),
+    );
+    Some(crate::resolve_mode_decision_audit(mode, "file/grep", base_decision).decision)
+}
+
+fn plan_architect_repo_base_decision_after_path_gate(
+    mode: &omne_core::modes::ModeDef,
+    target_root: &std::path::Path,
+    include_glob: Option<&str>,
+) -> omne_core::modes::Decision {
+    let path_decision = read_decision_with_optional_explicit_path(mode, target_root, include_glob);
+    if path_decision == omne_core::modes::Decision::Deny {
+        omne_core::modes::Decision::Deny
+    } else {
+        mode.permissions.read.combine(mode.permissions.artifact)
+    }
+}
+
+fn plan_architect_thread_scope_decision(
+    mode: &omne_core::modes::ModeDef,
+    tool_action: &str,
+    current_thread_id: &omne_protocol::ThreadId,
+    target_thread_id_raw: &str,
+) -> Option<omne_core::modes::Decision> {
+    let target_thread_id: omne_protocol::ThreadId = target_thread_id_raw.parse().ok()?;
+    if target_thread_id != *current_thread_id {
+        return Some(omne_core::modes::Decision::Deny);
+    }
+    plan_architect_effective_decision(mode, tool_action)
+}
+
+fn plan_architect_thread_state_decision(
+    mode: &omne_core::modes::ModeDef,
+    current_thread_id: &omne_protocol::ThreadId,
+    args: &Value,
+) -> Option<omne_core::modes::Decision> {
+    let parsed: ThreadStateArgs = serde_json::from_value(args.clone()).ok()?;
+    plan_architect_thread_scope_decision(mode, "thread/state", current_thread_id, &parsed.thread_id)
+}
+
+fn plan_architect_thread_usage_decision(
+    mode: &omne_core::modes::ModeDef,
+    current_thread_id: &omne_protocol::ThreadId,
+    args: &Value,
+) -> Option<omne_core::modes::Decision> {
+    let parsed: ThreadUsageArgs = serde_json::from_value(args.clone()).ok()?;
+    plan_architect_thread_scope_decision(mode, "thread/usage", current_thread_id, &parsed.thread_id)
+}
+
+fn plan_architect_thread_events_decision(
+    mode: &omne_core::modes::ModeDef,
+    current_thread_id: &omne_protocol::ThreadId,
+    args: &Value,
+) -> Option<omne_core::modes::Decision> {
+    let parsed: ThreadEventsArgs = serde_json::from_value(args.clone()).ok()?;
+    plan_architect_thread_scope_decision(
+        mode,
+        "thread/events",
+        current_thread_id,
+        &parsed.thread_id,
+    )
+}
+
+async fn plan_architect_process_scope_decision(
+    server: &super::Server,
+    mode: &omne_core::modes::ModeDef,
+    tool_action: &str,
+    current_thread_id: &omne_protocol::ThreadId,
+    process_id_raw: &str,
+) -> Option<omne_core::modes::Decision> {
+    let process_id: omne_protocol::ProcessId = process_id_raw.parse().ok()?;
+    let listed = super::handle_process_list(server, super::ProcessListParams { thread_id: None })
+        .await
+        .ok()?;
+    let info = listed
+        .into_iter()
+        .find(|item| item.process_id == process_id);
+    let Some(info) = info else {
+        return Some(omne_core::modes::Decision::Deny);
+    };
+    if info.thread_id != *current_thread_id {
+        return Some(omne_core::modes::Decision::Deny);
+    }
+    plan_architect_effective_decision(mode, tool_action)
+}
+
+async fn plan_architect_process_inspect_decision(
+    server: &super::Server,
+    mode: &omne_core::modes::ModeDef,
+    current_thread_id: &omne_protocol::ThreadId,
+    args: &Value,
+) -> Option<omne_core::modes::Decision> {
+    let parsed: ProcessInspectArgs = serde_json::from_value(args.clone()).ok()?;
+    plan_architect_process_scope_decision(
+        server,
+        mode,
+        "process/inspect",
+        current_thread_id,
+        &parsed.process_id,
+    )
+    .await
+}
+
+async fn plan_architect_process_tail_decision(
+    server: &super::Server,
+    mode: &omne_core::modes::ModeDef,
+    current_thread_id: &omne_protocol::ThreadId,
+    args: &Value,
+) -> Option<omne_core::modes::Decision> {
+    let parsed: ProcessTailArgs = serde_json::from_value(args.clone()).ok()?;
+    plan_architect_process_scope_decision(
+        server,
+        mode,
+        "process/tail",
+        current_thread_id,
+        &parsed.process_id,
+    )
+    .await
+}
+
+async fn plan_architect_process_follow_decision(
+    server: &super::Server,
+    mode: &omne_core::modes::ModeDef,
+    current_thread_id: &omne_protocol::ThreadId,
+    args: &Value,
+) -> Option<omne_core::modes::Decision> {
+    let parsed: ProcessFollowArgs = serde_json::from_value(args.clone()).ok()?;
+    plan_architect_process_scope_decision(
+        server,
+        mode,
+        "process/follow",
+        current_thread_id,
+        &parsed.process_id,
+    )
+    .await
+}
+
+async fn plan_architect_repo_search_decision(
+    mode: &omne_core::modes::ModeDef,
+    thread_root: &std::path::Path,
+    args: &Value,
+) -> Option<omne_core::modes::Decision> {
+    let parsed: RepoSearchArgs = serde_json::from_value(args.clone()).ok()?;
+    let root = parsed.root.unwrap_or(crate::FileRoot::Workspace);
+    let target_root = resolve_plan_target_root(thread_root, root).await?;
+
+    let base_decision = plan_architect_repo_base_decision_after_path_gate(
+        mode,
+        &target_root,
+        parsed.include_glob.as_deref(),
+    );
+    Some(crate::resolve_mode_decision_audit(mode, "repo/search", base_decision).decision)
+}
+
+async fn plan_architect_repo_index_decision(
+    mode: &omne_core::modes::ModeDef,
+    thread_root: &std::path::Path,
+    args: &Value,
+) -> Option<omne_core::modes::Decision> {
+    let parsed: RepoIndexArgs = serde_json::from_value(args.clone()).ok()?;
+    let root = parsed.root.unwrap_or(crate::FileRoot::Workspace);
+    let target_root = resolve_plan_target_root(thread_root, root).await?;
+
+    let base_decision = plan_architect_repo_base_decision_after_path_gate(
+        mode,
+        &target_root,
+        parsed.include_glob.as_deref(),
+    );
+    Some(crate::resolve_mode_decision_audit(mode, "repo/index", base_decision).decision)
+}
+
+async fn plan_architect_repo_symbols_decision(
+    mode: &omne_core::modes::ModeDef,
+    thread_root: &std::path::Path,
+    args: &Value,
+) -> Option<omne_core::modes::Decision> {
+    let parsed: RepoSymbolsArgs = serde_json::from_value(args.clone()).ok()?;
+    let root = parsed.root.unwrap_or(crate::FileRoot::Workspace);
+    let target_root = resolve_plan_target_root(thread_root, root).await?;
+
+    let base_decision = plan_architect_repo_base_decision_after_path_gate(
+        mode,
+        &target_root,
+        parsed.include_glob.as_deref(),
+    );
+    Some(crate::resolve_mode_decision_audit(mode, "repo/symbols", base_decision).decision)
+}
+
+async fn plan_architect_effective_decision_for_call(
+    server: &super::Server,
+    mode: &omne_core::modes::ModeDef,
+    thread_root: &std::path::Path,
+    thread_id: &omne_protocol::ThreadId,
+    tool_action: &str,
+    args: &Value,
+) -> Option<omne_core::modes::Decision> {
+    match tool_action {
+        "file/read" => plan_architect_file_read_decision(mode, thread_root, args).await,
+        "file/glob" => plan_architect_file_glob_decision(mode, thread_root, args).await,
+        "file/grep" => plan_architect_file_grep_decision(mode, thread_root, args).await,
+        "repo/search" => plan_architect_repo_search_decision(mode, thread_root, args).await,
+        "repo/index" => plan_architect_repo_index_decision(mode, thread_root, args).await,
+        "repo/symbols" => plan_architect_repo_symbols_decision(mode, thread_root, args).await,
+        "thread/state" => plan_architect_thread_state_decision(mode, thread_id, args),
+        "thread/usage" => plan_architect_thread_usage_decision(mode, thread_id, args),
+        "thread/events" => plan_architect_thread_events_decision(mode, thread_id, args),
+        "process/inspect" => {
+            plan_architect_process_inspect_decision(server, mode, thread_id, args).await
+        }
+        "process/tail" => plan_architect_process_tail_decision(server, mode, thread_id, args).await,
+        "process/follow" => {
+            plan_architect_process_follow_decision(server, mode, thread_id, args).await
+        }
+        _ => plan_architect_effective_decision(mode, tool_action),
+    }
+}
+
+async fn enforce_plan_directive_architect_mode_gate(
+    server: &super::Server,
+    thread_id: omne_protocol::ThreadId,
+    turn_id: Option<TurnId>,
+    tool_name: &str,
+    args: &Value,
+    approval_id: Option<ApprovalId>,
+) -> anyhow::Result<Option<Value>> {
+    let Some(tool_action) = plan_tool_action(tool_name) else {
+        return Ok(None);
+    };
+
+    let (thread_rt, thread_root) = crate::load_thread_root(server, thread_id).await?;
+    let catalog = omne_core::modes::ModeCatalog::load(&thread_root).await;
+    let mode = catalog.mode("architect").ok_or_else(|| {
+        let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
+        anyhow::anyhow!(
+            "tool blocked by /plan architect mode gate: architect mode missing (available: {available})"
+        )
+    })?;
+    let effective_decision = plan_architect_effective_decision_for_call(
+        server,
+        mode,
+        &thread_root,
+        &thread_id,
+        tool_action,
+        args,
+    )
+    .await;
+
+    if matches!(effective_decision, Some(omne_core::modes::Decision::Deny)) {
+        anyhow::bail!(
+            "tool blocked by /plan architect mode gate: tool={tool_name} action={tool_action}"
+        );
+    }
+
+    if matches!(effective_decision, Some(omne_core::modes::Decision::Prompt)) {
+        let approval_policy = {
+            let handle = thread_rt.handle.lock().await;
+            handle.state().approval_policy
+        };
+        let approval_params = serde_json::json!({
+            "tool": tool_name,
+            "action": tool_action,
+            "tool_args": args,
+            "approval": { "source": "plan_architect_mode" },
+        });
+        match crate::gate_approval(
+            server,
+            &thread_rt,
+            thread_id,
+            turn_id,
+            approval_policy,
+            crate::ApprovalRequest {
+                approval_id,
+                action: tool_action,
+                params: &approval_params,
+            },
+        )
+        .await?
+        {
+            crate::ApprovalGate::Approved => {}
+            crate::ApprovalGate::Denied { remembered } => {
+                return Ok(Some(serde_json::json!({
+                    "denied": true,
+                    "remembered": remembered,
+                })));
+            }
+            crate::ApprovalGate::NeedsApproval { approval_id } => {
+                return Ok(Some(serde_json::json!({
+                    "needs_approval": true,
+                    "approval_id": approval_id,
+                })));
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+async fn turn_has_plan_directive(
+    server: &super::Server,
+    thread_id: omne_protocol::ThreadId,
+    turn_id: TurnId,
+) -> anyhow::Result<bool> {
+    let events = server
+        .thread_store
+        .read_events_since(thread_id, EventSeq::ZERO)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("thread not found: {thread_id}"))?;
+
+    for event in events.iter().rev() {
+        let omne_protocol::ThreadEventKind::TurnStarted {
+            turn_id: event_turn_id,
+            directives,
+            ..
+        } = &event.kind
+        else {
+            continue;
+        };
+        if *event_turn_id != turn_id {
+            continue;
+        }
+        return Ok(directives
+            .iter()
+            .flatten()
+            .any(|directive| matches!(directive, omne_protocol::TurnDirective::Plan)));
+    }
+
+    Ok(false)
+}
+
+async fn enforce_plan_directive_tool_gate(
+    server: &super::Server,
+    thread_id: omne_protocol::ThreadId,
+    turn_id: Option<TurnId>,
+    tool_name: &str,
+) -> anyhow::Result<bool> {
+    let Some(turn_id) = turn_id else {
+        return Ok(false);
+    };
+    if !is_known_agent_tool(tool_name) {
+        return Ok(false);
+    }
+    if !turn_has_plan_directive(server, thread_id, turn_id).await? {
+        return Ok(false);
+    }
+    if is_plan_read_only_tool(tool_name) {
+        return Ok(true);
+    }
+
+    anyhow::bail!("tool blocked by /plan directive: {tool_name}")
+}
+
+#[derive(Clone, Copy)]
+enum SubagentSpawnLimitSource {
+    Unlimited,
+    Env,
+    Mode,
+    Combined,
+}
+
+impl SubagentSpawnLimitSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Unlimited => "unlimited",
+            Self::Env => "env",
+            Self::Mode => "mode",
+            Self::Combined => "combined",
+        }
+    }
+}
+
+struct SubagentSpawnLimit {
+    effective: usize,
+    source: SubagentSpawnLimitSource,
+}
+
+fn combine_subagent_spawn_limits(
+    env_limit: usize,
+    mode_limit: Option<usize>,
+) -> SubagentSpawnLimit {
+    let mode_limit = mode_limit.unwrap_or(0);
+    let effective = match (env_limit, mode_limit) {
+        (0, 0) => 0,
+        (0, mode) => mode,
+        (env, 0) => env,
+        (env, mode) => env.min(mode),
+    };
+    let source = match (env_limit > 0, mode_limit > 0) {
+        (false, false) => SubagentSpawnLimitSource::Unlimited,
+        (true, false) => SubagentSpawnLimitSource::Env,
+        (false, true) => SubagentSpawnLimitSource::Mode,
+        (true, true) => SubagentSpawnLimitSource::Combined,
+    };
+    SubagentSpawnLimit { effective, source }
+}
+
+fn usage_ratio(numerator: u64, denominator: u64) -> Option<f64> {
+    if denominator == 0 {
+        None
+    } else {
+        Some(numerator as f64 / denominator as f64)
+    }
+}
+
+fn configured_total_token_budget_limit() -> Option<u64> {
+    std::env::var("OMNE_AGENT_MAX_TOTAL_TOKENS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+}
+
+fn token_budget_snapshot(
+    total_tokens_used: u64,
+    token_budget_limit: Option<u64>,
+) -> (Option<u64>, Option<f64>, Option<bool>) {
+    let Some(limit) = token_budget_limit else {
+        return (None, None, None);
+    };
+    let remaining = Some(limit.saturating_sub(total_tokens_used));
+    let utilization = usage_ratio(total_tokens_used, limit);
+    let exceeded = Some(total_tokens_used > limit);
+    (remaining, utilization, exceeded)
+}
+
 async fn run_tool_call_once(
     server: &super::Server,
     thread_id: omne_protocol::ThreadId,
@@ -6,6 +695,23 @@ async fn run_tool_call_once(
     args: Value,
     approval_id: Option<ApprovalId>,
 ) -> anyhow::Result<Value> {
+    let has_plan_directive =
+        enforce_plan_directive_tool_gate(server, thread_id, turn_id, tool_name).await?;
+    if has_plan_directive {
+        if let Some(output) = enforce_plan_directive_architect_mode_gate(
+            server,
+            thread_id,
+            turn_id,
+            tool_name,
+            &args,
+            approval_id,
+        )
+        .await?
+        {
+            return Ok(output);
+        }
+    }
+
     match tool_name {
         "file_read" => {
             let args: FileReadArgs = serde_json::from_value(args)?;
@@ -251,6 +957,7 @@ async fn run_tool_call_once(
                     approval_id,
                     argv: args.argv,
                     cwd: args.cwd,
+                    timeout_ms: args.timeout_ms,
                 },
             )
             .await
@@ -327,7 +1034,6 @@ async fn run_tool_call_once(
             .await
         }
         "artifact_list" => {
-            let _ = args;
             super::handle_artifact_list(
                 server,
                 super::ArtifactListParams {
@@ -347,6 +1053,7 @@ async fn run_tool_call_once(
                     turn_id,
                     approval_id,
                     artifact_id: args.artifact_id.parse()?,
+                    version: args.version,
                     max_bytes: args.max_bytes,
                 },
             )
@@ -367,7 +1074,7 @@ async fn run_tool_call_once(
         }
         "thread_diff" => {
             let args: ThreadDiffArgs = serde_json::from_value(args)?;
-            super::handle_thread_diff(
+            let response = super::handle_thread_diff(
                 server,
                 super::ThreadDiffParams {
                     thread_id,
@@ -377,7 +1084,8 @@ async fn run_tool_call_once(
                     wait_seconds: args.wait_seconds,
                 },
             )
-            .await
+            .await?;
+            serde_json::to_value(response).context("serialize thread/diff response")
         }
         "thread_state" => {
             let args: ThreadStateArgs = serde_json::from_value(args)?;
@@ -406,6 +1114,35 @@ async fn run_tool_call_once(
                 "last_turn_id": state.last_turn_id,
                 "last_turn_status": state.last_turn_status,
                 "last_turn_reason": state.last_turn_reason,
+            }))
+        }
+        "thread_usage" => {
+            let args: ThreadUsageArgs = serde_json::from_value(args)?;
+            let thread_id: omne_protocol::ThreadId = args.thread_id.parse()?;
+            let rt = server.get_or_load_thread(thread_id).await?;
+            let handle = rt.handle.lock().await;
+            let state = handle.state();
+            let non_cache_input_tokens_used = state
+                .input_tokens_used
+                .saturating_sub(state.cache_input_tokens_used);
+            let token_budget_limit = configured_total_token_budget_limit();
+            let (token_budget_remaining, token_budget_utilization, token_budget_exceeded) =
+                token_budget_snapshot(state.total_tokens_used, token_budget_limit);
+            Ok(serde_json::json!({
+                "thread_id": handle.thread_id(),
+                "last_seq": handle.last_seq().0,
+                "total_tokens_used": state.total_tokens_used,
+                "input_tokens_used": state.input_tokens_used,
+                "output_tokens_used": state.output_tokens_used,
+                "cache_input_tokens_used": state.cache_input_tokens_used,
+                "cache_creation_input_tokens_used": state.cache_creation_input_tokens_used,
+                "non_cache_input_tokens_used": non_cache_input_tokens_used,
+                "cache_input_ratio": usage_ratio(state.cache_input_tokens_used, state.input_tokens_used),
+                "output_ratio": usage_ratio(state.output_tokens_used, state.total_tokens_used),
+                "token_budget_limit": token_budget_limit,
+                "token_budget_remaining": token_budget_remaining,
+                "token_budget_utilization": token_budget_utilization,
+                "token_budget_exceeded": token_budget_exceeded,
             }))
         }
         "thread_events" => {
@@ -441,7 +1178,7 @@ async fn run_tool_call_once(
         }
         "thread_hook_run" => {
             let args: ThreadHookRunArgs = serde_json::from_value(args)?;
-            super::handle_thread_hook_run(
+            let response = super::handle_thread_hook_run(
                 server,
                 super::ThreadHookRunParams {
                     thread_id,
@@ -450,7 +1187,8 @@ async fn run_tool_call_once(
                     hook: args.hook,
                 },
             )
-            .await
+            .await?;
+            serde_json::to_value(response).context("serialize thread/hook_run response")
         }
         "agent_spawn" => {
             let args: AgentSpawnArgs = serde_json::from_value(args)?;
@@ -467,13 +1205,14 @@ async fn run_tool_call_once(
             let default_spawn_mode = args.spawn_mode.unwrap_or(AgentSpawnMode::New);
             let default_mode =
                 normalize_optional(args.mode).unwrap_or_else(|| "reviewer".to_string());
-            let default_workspace_mode =
-                args.workspace_mode.unwrap_or(AgentSpawnWorkspaceMode::ReadOnly);
+            let default_workspace_mode = args
+                .workspace_mode
+                .unwrap_or(AgentSpawnWorkspaceMode::ReadOnly);
+            let default_priority = args.priority.unwrap_or(AgentSpawnTaskPriority::Normal);
             let default_model = normalize_optional(args.model);
             let default_openai_base_url = normalize_optional(args.openai_base_url);
-            let default_expected_artifact_type =
-                normalize_optional(args.expected_artifact_type)
-                    .unwrap_or_else(|| "fan_out_result".to_string());
+            let default_expected_artifact_type = normalize_optional(args.expected_artifact_type)
+                .unwrap_or_else(|| "fan_out_result".to_string());
 
             let mut seen_ids = std::collections::BTreeSet::<String>::new();
             let mut plans = Vec::<SubagentSpawnTaskPlan>::new();
@@ -510,12 +1249,11 @@ async fn run_tool_call_once(
 
                 let spawn_mode = task.spawn_mode.unwrap_or(default_spawn_mode);
                 let mode = normalize_optional(task.mode).unwrap_or_else(|| default_mode.clone());
-                let workspace_mode = task
-                    .workspace_mode
-                    .unwrap_or(default_workspace_mode);
+                let workspace_mode = task.workspace_mode.unwrap_or(default_workspace_mode);
+                let priority = task.priority.unwrap_or(default_priority);
                 let model = normalize_optional(task.model).or_else(|| default_model.clone());
-                let openai_base_url =
-                    normalize_optional(task.openai_base_url).or_else(|| default_openai_base_url.clone());
+                let openai_base_url = normalize_optional(task.openai_base_url)
+                    .or_else(|| default_openai_base_url.clone());
                 let expected_artifact_type = normalize_optional(task.expected_artifact_type)
                     .unwrap_or_else(|| default_expected_artifact_type.clone());
 
@@ -524,6 +1262,7 @@ async fn run_tool_call_once(
                     title,
                     input,
                     depends_on,
+                    priority,
                     spawn_mode,
                     mode,
                     workspace_mode,
@@ -586,12 +1325,14 @@ async fn run_tool_call_once(
                         "spawn_mode": spawn_mode_label(task.spawn_mode),
                         "mode": task.mode.clone(),
                         "workspace_mode": workspace_mode_label(task.workspace_mode),
+                        "priority": priority_label(task.priority),
                         "depends_on": task.depends_on.clone(),
                         "input_chars": task.input.chars().count(),
                         "input_preview": input_preview,
                     })
                 })
                 .collect::<Vec<_>>();
+            let priority_aging_rounds = fan_out_priority_aging_rounds_from_env();
 
             let approval_params = serde_json::json!({
                 "task_count": plans.len(),
@@ -599,6 +1340,8 @@ async fn run_tool_call_once(
                 "default_spawn_mode": spawn_mode_label(default_spawn_mode),
                 "default_mode": default_mode,
                 "default_workspace_mode": workspace_mode_label(default_workspace_mode),
+                "default_priority": priority_label(default_priority),
+                "priority_aging_rounds": priority_aging_rounds,
                 "default_expected_artifact_type": default_expected_artifact_type,
                 "model": default_model,
                 "openai_base_url": default_openai_base_url,
@@ -611,9 +1354,8 @@ async fn run_tool_call_once(
                 let state = handle.state();
                 (state.approval_policy, state.mode.clone(), state.cwd.clone())
             };
-            let thread_cwd = thread_cwd.ok_or_else(|| {
-                anyhow::anyhow!("thread cwd is missing: {}", thread_id)
-            })?;
+            let thread_cwd = thread_cwd
+                .ok_or_else(|| anyhow::anyhow!("thread cwd is missing: {}", thread_id))?;
 
             let catalog = omne_core::modes::ModeCatalog::load(&thread_root).await;
             let Some(mode) = catalog.mode(&mode_name) else {
@@ -650,44 +1392,14 @@ async fn run_tool_call_once(
                 }));
             };
 
-            let isolated_tasks = plans
-                .iter()
-                .filter(|task| matches!(task.workspace_mode, AgentSpawnWorkspaceMode::IsolatedWrite))
-                .map(|task| task.id.clone())
-                .collect::<Vec<_>>();
-            if !isolated_tasks.is_empty() {
-                thread_rt
-                    .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                        tool_id,
-                        turn_id,
-                        tool: "subagent/spawn".to_string(),
-                        params: Some(approval_params),
-                    })
-                    .await?;
-                thread_rt
-                    .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                        tool_id,
-                        status: omne_protocol::ToolStatus::Denied,
-                        error: Some("workspace_mode=isolated_write is not supported yet".to_string()),
-                        result: Some(serde_json::json!({
-                            "workspace_mode": workspace_mode_label(AgentSpawnWorkspaceMode::IsolatedWrite),
-                            "task_ids": isolated_tasks,
-                        })),
-                    })
-                    .await?;
-                return Ok(serde_json::json!({
-                    "tool_id": tool_id,
-                    "denied": true,
-                    "workspace_mode": workspace_mode_label(AgentSpawnWorkspaceMode::IsolatedWrite),
-                    "task_ids": isolated_tasks,
-                }));
-            }
-
-            let base_decision = mode.permissions.subagent.spawn.decision;
-            let effective_decision = match mode.tool_overrides.get("subagent/spawn").copied() {
-                Some(override_decision) => base_decision.combine(override_decision),
-                None => base_decision,
-            };
+            let mode_decision = crate::resolve_mode_decision_audit(
+                mode,
+                "subagent/spawn",
+                mode.permissions.subagent.spawn.decision,
+            );
+            let effective_decision = mode_decision.decision;
+            let tool_override_hit = mode_decision.tool_override_hit;
+            let decision_source = mode_decision.decision_source;
 
             if effective_decision == omne_core::modes::Decision::Deny {
                 thread_rt
@@ -705,6 +1417,8 @@ async fn run_tool_call_once(
                         error: Some("mode denies subagent/spawn".to_string()),
                         result: Some(serde_json::json!({
                             "mode": mode_name,
+                            "decision_source": decision_source,
+                            "tool_override_hit": tool_override_hit,
                             "decision": effective_decision,
                         })),
                     })
@@ -713,12 +1427,20 @@ async fn run_tool_call_once(
                     "tool_id": tool_id,
                     "denied": true,
                     "mode": mode_name,
+                    "decision_source": decision_source,
+                    "tool_override_hit": tool_override_hit,
                     "decision": effective_decision,
                 }));
             }
 
-            let max_concurrent_subagents =
+            let env_max_concurrent_subagents =
                 parse_env_usize("OMNE_MAX_CONCURRENT_SUBAGENTS", 4, 0, 64);
+            let mode_max_concurrent_subagents = mode.permissions.subagent.spawn.max_threads;
+            let limit = combine_subagent_spawn_limits(
+                env_max_concurrent_subagents,
+                mode_max_concurrent_subagents,
+            );
+            let max_concurrent_subagents = limit.effective;
             if let Some(allowed) = mode.permissions.subagent.spawn.allowed_modes.as_ref() {
                 let mut disallowed = std::collections::BTreeSet::<String>::new();
                 for task in &plans {
@@ -743,6 +1465,8 @@ async fn run_tool_call_once(
                             error: Some("mode forbids spawning this subagent mode".to_string()),
                             result: Some(serde_json::json!({
                                 "mode": mode_name,
+                                "decision_source": decision_source,
+                                "tool_override_hit": tool_override_hit,
                                 "decision": effective_decision,
                                 "requested_modes": requested_modes,
                                 "allowed_modes": allowed,
@@ -753,8 +1477,16 @@ async fn run_tool_call_once(
                         "tool_id": tool_id,
                         "denied": true,
                         "mode": mode_name,
+                        "decision_source": decision_source,
+                        "tool_override_hit": tool_override_hit,
                         "decision": effective_decision,
                         "allowed_modes": allowed,
+                        "priority_aging_rounds": priority_aging_rounds,
+                        "limit_policy": "min_non_zero",
+                        "limit_source": limit.source.as_str(),
+                        "env_max_concurrent_subagents": env_max_concurrent_subagents,
+                        "mode_max_concurrent_subagents": mode_max_concurrent_subagents,
+                        "max_concurrent_subagents": max_concurrent_subagents,
                     }));
                 }
             }
@@ -787,6 +1519,11 @@ async fn run_tool_call_once(
                             "max_concurrent_subagents limit reached: active={active}, max={max_concurrent_subagents}"
                         )),
                         result: Some(serde_json::json!({
+                            "limit_policy": "min_non_zero",
+                            "limit_source": limit.source.as_str(),
+                            "priority_aging_rounds": priority_aging_rounds,
+                            "env_max_concurrent_subagents": env_max_concurrent_subagents,
+                            "mode_max_concurrent_subagents": mode_max_concurrent_subagents,
                             "max_concurrent_subagents": max_concurrent_subagents,
                             "active": active,
                             "active_threads": active_thread_ids,
@@ -796,6 +1533,11 @@ async fn run_tool_call_once(
                 return Ok(serde_json::json!({
                     "tool_id": tool_id,
                     "denied": true,
+                    "limit_policy": "min_non_zero",
+                    "limit_source": limit.source.as_str(),
+                    "priority_aging_rounds": priority_aging_rounds,
+                    "env_max_concurrent_subagents": env_max_concurrent_subagents,
+                    "mode_max_concurrent_subagents": mode_max_concurrent_subagents,
                     "max_concurrent_subagents": max_concurrent_subagents,
                     "active": active,
                 }));
@@ -863,16 +1605,41 @@ async fn run_tool_call_once(
             let outcome: anyhow::Result<Vec<Value>> = async {
                 let mut tasks = Vec::<SubagentSpawnTask>::with_capacity(plans.len());
                 for plan in plans {
+                    let isolated_cwd =
+                        if matches!(plan.workspace_mode, AgentSpawnWorkspaceMode::IsolatedWrite) {
+                            Some(
+                                prepare_isolated_workspace(
+                                    server,
+                                    thread_id,
+                                    &plan.id,
+                                    &thread_root,
+                                )
+                                .await?,
+                            )
+                        } else {
+                            None
+                        };
+                    let spawned_cwd = isolated_cwd.as_ref().map(|path| path.display().to_string());
                     let spawned = match plan.spawn_mode {
                         AgentSpawnMode::Fork => {
                             let forked = super::handle_thread_fork(
                                 server,
-                                super::ThreadForkParams { thread_id },
+                                super::ThreadForkParams {
+                                    thread_id,
+                                    cwd: spawned_cwd.clone(),
+                                },
                             )
                             .await?;
-                            serde_json::from_value::<SpawnedThread>(forked)?
+                            SpawnedThread {
+                                thread_id: forked.thread_id,
+                                log_path: forked.log_path,
+                                last_seq: forked.last_seq,
+                            }
                         }
-                        AgentSpawnMode::New => create_new_thread(server, &thread_cwd).await?,
+                        AgentSpawnMode::New => {
+                            create_new_thread(server, spawned_cwd.as_deref().unwrap_or(&thread_cwd))
+                                .await?
+                        }
                     };
 
                     let approval_override = if matches!(plan.spawn_mode, AgentSpawnMode::New) {
@@ -880,12 +1647,18 @@ async fn run_tool_call_once(
                     } else {
                         None
                     };
+                    let sandbox_policy = match plan.workspace_mode {
+                        AgentSpawnWorkspaceMode::ReadOnly => omne_protocol::SandboxPolicy::ReadOnly,
+                        AgentSpawnWorkspaceMode::IsolatedWrite => {
+                            omne_protocol::SandboxPolicy::WorkspaceWrite
+                        }
+                    };
                     super::handle_thread_configure(
                         server,
                         super::ThreadConfigureParams {
                             thread_id: spawned.thread_id,
                             approval_policy: approval_override,
-                            sandbox_policy: Some(omne_protocol::SandboxPolicy::ReadOnly),
+                            sandbox_policy: Some(sandbox_policy),
                             sandbox_writable_roots: None,
                             sandbox_network_access: None,
                             mode: Some(plan.mode.clone()),
@@ -893,6 +1666,7 @@ async fn run_tool_call_once(
                             thinking: None,
                             openai_base_url: plan.openai_base_url.clone(),
                             allowed_tools: None,
+                            execpolicy_rules: None,
                         },
                     )
                     .await?;
@@ -902,12 +1676,14 @@ async fn run_tool_call_once(
                         title: plan.title,
                         input: plan.input,
                         depends_on: plan.depends_on,
+                        priority: plan.priority,
                         spawn_mode: plan.spawn_mode,
                         mode: plan.mode,
                         workspace_mode: plan.workspace_mode,
                         model: plan.model,
                         openai_base_url: plan.openai_base_url,
                         expected_artifact_type: plan.expected_artifact_type,
+                        workspace_cwd: spawned_cwd,
                         thread_id: spawned.thread_id,
                         log_path: spawned.log_path,
                         last_seq: spawned.last_seq,
@@ -921,11 +1697,15 @@ async fn run_tool_call_once(
                     .into_iter()
                     .collect::<std::collections::HashSet<_>>();
                 let mut schedule = SubagentSpawnSchedule::new(
+                    thread_id,
                     tasks,
                     external_active,
                     max_concurrent_subagents,
+                    priority_aging_rounds,
                 );
+                schedule.set_env_max_concurrent_subagents(env_max_concurrent_subagents);
                 schedule.start_ready_tasks(server).await;
+                schedule.catch_up_running_events(server).await;
                 let snapshot = schedule.snapshot();
                 spawn_subagent_scheduler(server.clone(), schedule);
                 Ok(snapshot)
@@ -941,6 +1721,12 @@ async fn run_tool_call_once(
                             error: None,
                             result: Some(serde_json::json!({
                                 "tasks": tasks,
+                                "priority_aging_rounds": priority_aging_rounds,
+                                "limit_policy": "min_non_zero",
+                                "limit_source": limit.source.as_str(),
+                                "env_max_concurrent_subagents": env_max_concurrent_subagents,
+                                "mode_max_concurrent_subagents": mode_max_concurrent_subagents,
+                                "max_concurrent_subagents": max_concurrent_subagents,
                             })),
                         })
                         .await?;
@@ -948,6 +1734,12 @@ async fn run_tool_call_once(
                     Ok(serde_json::json!({
                         "tool_id": tool_id,
                         "tasks": tasks,
+                        "priority_aging_rounds": priority_aging_rounds,
+                        "limit_policy": "min_non_zero",
+                        "limit_source": limit.source.as_str(),
+                        "env_max_concurrent_subagents": env_max_concurrent_subagents,
+                        "mode_max_concurrent_subagents": mode_max_concurrent_subagents,
+                        "max_concurrent_subagents": max_concurrent_subagents,
                     }))
                 }
                 Err(err) => {

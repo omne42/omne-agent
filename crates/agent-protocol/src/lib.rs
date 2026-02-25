@@ -295,6 +295,18 @@ pub enum CheckpointRestoreStatus {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
+pub enum AttentionMarkerKind {
+    PlanReady,
+    DiffReady,
+    TestFailed,
+    FanOutLinkageIssue,
+    FanOutAutoApplyError,
+    TokenBudgetWarning,
+    TokenBudgetExceeded,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
 pub enum ApprovalPolicy {
     AutoApprove,
     OnRequest,
@@ -335,7 +347,7 @@ pub enum ApprovalDecision {
     Denied,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, TS)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct ArtifactProvenance {
     pub thread_id: ThreadId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -357,7 +369,43 @@ pub enum ArtifactPreviewKind {
     Log,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, TS)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum ArtifactReadMetadataSource {
+    Latest,
+    HistorySnapshot,
+    LatestFallback,
+}
+
+impl ArtifactReadMetadataSource {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Latest => "latest",
+            Self::HistorySnapshot => "history_snapshot",
+            Self::LatestFallback => "latest_fallback",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum ArtifactReadMetadataFallbackReason {
+    HistoryMetadataMissing,
+    HistoryMetadataInvalid,
+    HistoryMetadataUnreadable,
+}
+
+impl ArtifactReadMetadataFallbackReason {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::HistoryMetadataMissing => "history_metadata_missing",
+            Self::HistoryMetadataInvalid => "history_metadata_invalid",
+            Self::HistoryMetadataUnreadable => "history_metadata_unreadable",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct ArtifactPreview {
     pub kind: ArtifactPreviewKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -366,7 +414,7 @@ pub struct ArtifactPreview {
     pub title: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, TS)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct ArtifactMetadata {
     pub artifact_id: ArtifactId,
     pub artifact_type: String,
@@ -458,6 +506,12 @@ pub enum TurnAttachment {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TurnDirective {
+    Plan,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(deny_unknown_fields)]
 pub struct AgentStepToolCall {
     pub name: String,
@@ -506,6 +560,8 @@ pub enum ThreadEventKind {
         context_refs: Option<Vec<ContextRef>>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         attachments: Option<Vec<TurnAttachment>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        directives: Option<Vec<TurnDirective>>,
         #[serde(default)]
         priority: TurnPriority,
     },
@@ -550,6 +606,8 @@ pub enum ThreadEventKind {
         openai_base_url: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         allowed_tools: Option<Option<Vec<String>>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        execpolicy_rules: Option<Vec<String>>,
     },
 
     ApprovalRequested {
@@ -651,6 +709,30 @@ pub enum ThreadEventKind {
         reason: Option<String>,
     },
 
+    AttentionMarkerSet {
+        marker: AttentionMarkerKind,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        turn_id: Option<TurnId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        artifact_id: Option<ArtifactId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        artifact_type: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        process_id: Option<ProcessId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        exit_code: Option<i32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        command: Option<String>,
+    },
+
+    AttentionMarkerCleared {
+        marker: AttentionMarkerKind,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        turn_id: Option<TurnId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+
     CheckpointCreated {
         checkpoint_id: CheckpointId,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -670,4 +752,247 @@ pub enum ThreadEventKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         report_artifact_id: Option<ArtifactId>,
     },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum ThreadEventKindTag {
+    ThreadCreated,
+    ThreadArchived,
+    ThreadUnarchived,
+    ThreadPaused,
+    ThreadUnpaused,
+    TurnStarted,
+    ModelRouted,
+    TurnInterruptRequested,
+    TurnCompleted,
+    ThreadConfigUpdated,
+    ApprovalRequested,
+    ApprovalDecided,
+    ToolStarted,
+    ToolCompleted,
+    AgentStep,
+    AssistantMessage,
+    ProcessStarted,
+    ProcessInterruptRequested,
+    ProcessKillRequested,
+    ProcessExited,
+    AttentionMarkerSet,
+    AttentionMarkerCleared,
+    CheckpointCreated,
+    CheckpointRestored,
+}
+
+impl ThreadEventKindTag {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ThreadEventKindTag::ThreadCreated => "thread_created",
+            ThreadEventKindTag::ThreadArchived => "thread_archived",
+            ThreadEventKindTag::ThreadUnarchived => "thread_unarchived",
+            ThreadEventKindTag::ThreadPaused => "thread_paused",
+            ThreadEventKindTag::ThreadUnpaused => "thread_unpaused",
+            ThreadEventKindTag::TurnStarted => "turn_started",
+            ThreadEventKindTag::ModelRouted => "model_routed",
+            ThreadEventKindTag::TurnInterruptRequested => "turn_interrupt_requested",
+            ThreadEventKindTag::TurnCompleted => "turn_completed",
+            ThreadEventKindTag::ThreadConfigUpdated => "thread_config_updated",
+            ThreadEventKindTag::ApprovalRequested => "approval_requested",
+            ThreadEventKindTag::ApprovalDecided => "approval_decided",
+            ThreadEventKindTag::ToolStarted => "tool_started",
+            ThreadEventKindTag::ToolCompleted => "tool_completed",
+            ThreadEventKindTag::AgentStep => "agent_step",
+            ThreadEventKindTag::AssistantMessage => "assistant_message",
+            ThreadEventKindTag::ProcessStarted => "process_started",
+            ThreadEventKindTag::ProcessInterruptRequested => "process_interrupt_requested",
+            ThreadEventKindTag::ProcessKillRequested => "process_kill_requested",
+            ThreadEventKindTag::ProcessExited => "process_exited",
+            ThreadEventKindTag::AttentionMarkerSet => "attention_marker_set",
+            ThreadEventKindTag::AttentionMarkerCleared => "attention_marker_cleared",
+            ThreadEventKindTag::CheckpointCreated => "checkpoint_created",
+            ThreadEventKindTag::CheckpointRestored => "checkpoint_restored",
+        }
+    }
+}
+
+impl fmt::Display for ThreadEventKindTag {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl FromStr for ThreadEventKindTag {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "thread_created" => Ok(ThreadEventKindTag::ThreadCreated),
+            "thread_archived" => Ok(ThreadEventKindTag::ThreadArchived),
+            "thread_unarchived" => Ok(ThreadEventKindTag::ThreadUnarchived),
+            "thread_paused" => Ok(ThreadEventKindTag::ThreadPaused),
+            "thread_unpaused" => Ok(ThreadEventKindTag::ThreadUnpaused),
+            "turn_started" => Ok(ThreadEventKindTag::TurnStarted),
+            "model_routed" => Ok(ThreadEventKindTag::ModelRouted),
+            "turn_interrupt_requested" => Ok(ThreadEventKindTag::TurnInterruptRequested),
+            "turn_completed" => Ok(ThreadEventKindTag::TurnCompleted),
+            "thread_config_updated" => Ok(ThreadEventKindTag::ThreadConfigUpdated),
+            "approval_requested" => Ok(ThreadEventKindTag::ApprovalRequested),
+            "approval_decided" => Ok(ThreadEventKindTag::ApprovalDecided),
+            "tool_started" => Ok(ThreadEventKindTag::ToolStarted),
+            "tool_completed" => Ok(ThreadEventKindTag::ToolCompleted),
+            "agent_step" => Ok(ThreadEventKindTag::AgentStep),
+            "assistant_message" => Ok(ThreadEventKindTag::AssistantMessage),
+            "process_started" => Ok(ThreadEventKindTag::ProcessStarted),
+            "process_interrupt_requested" => Ok(ThreadEventKindTag::ProcessInterruptRequested),
+            "process_kill_requested" => Ok(ThreadEventKindTag::ProcessKillRequested),
+            "process_exited" => Ok(ThreadEventKindTag::ProcessExited),
+            "attention_marker_set" => Ok(ThreadEventKindTag::AttentionMarkerSet),
+            "attention_marker_cleared" => Ok(ThreadEventKindTag::AttentionMarkerCleared),
+            "checkpoint_created" => Ok(ThreadEventKindTag::CheckpointCreated),
+            "checkpoint_restored" => Ok(ThreadEventKindTag::CheckpointRestored),
+            _ => Err(format!("unknown thread event kind tag: {s}")),
+        }
+    }
+}
+
+pub const THREAD_EVENT_KIND_TAGS: &[&str] = &[
+    "thread_created",
+    "thread_archived",
+    "thread_unarchived",
+    "thread_paused",
+    "thread_unpaused",
+    "turn_started",
+    "model_routed",
+    "turn_interrupt_requested",
+    "turn_completed",
+    "thread_config_updated",
+    "approval_requested",
+    "approval_decided",
+    "tool_started",
+    "tool_completed",
+    "agent_step",
+    "assistant_message",
+    "process_started",
+    "process_interrupt_requested",
+    "process_kill_requested",
+    "process_exited",
+    "attention_marker_set",
+    "attention_marker_cleared",
+    "checkpoint_created",
+    "checkpoint_restored",
+];
+
+impl ThreadEventKind {
+    pub fn tag_enum(&self) -> ThreadEventKindTag {
+        match self {
+            ThreadEventKind::ThreadCreated { .. } => ThreadEventKindTag::ThreadCreated,
+            ThreadEventKind::ThreadArchived { .. } => ThreadEventKindTag::ThreadArchived,
+            ThreadEventKind::ThreadUnarchived { .. } => ThreadEventKindTag::ThreadUnarchived,
+            ThreadEventKind::ThreadPaused { .. } => ThreadEventKindTag::ThreadPaused,
+            ThreadEventKind::ThreadUnpaused { .. } => ThreadEventKindTag::ThreadUnpaused,
+            ThreadEventKind::TurnStarted { .. } => ThreadEventKindTag::TurnStarted,
+            ThreadEventKind::ModelRouted { .. } => ThreadEventKindTag::ModelRouted,
+            ThreadEventKind::TurnInterruptRequested { .. } => {
+                ThreadEventKindTag::TurnInterruptRequested
+            }
+            ThreadEventKind::TurnCompleted { .. } => ThreadEventKindTag::TurnCompleted,
+            ThreadEventKind::ThreadConfigUpdated { .. } => ThreadEventKindTag::ThreadConfigUpdated,
+            ThreadEventKind::ApprovalRequested { .. } => ThreadEventKindTag::ApprovalRequested,
+            ThreadEventKind::ApprovalDecided { .. } => ThreadEventKindTag::ApprovalDecided,
+            ThreadEventKind::ToolStarted { .. } => ThreadEventKindTag::ToolStarted,
+            ThreadEventKind::ToolCompleted { .. } => ThreadEventKindTag::ToolCompleted,
+            ThreadEventKind::AgentStep { .. } => ThreadEventKindTag::AgentStep,
+            ThreadEventKind::AssistantMessage { .. } => ThreadEventKindTag::AssistantMessage,
+            ThreadEventKind::ProcessStarted { .. } => ThreadEventKindTag::ProcessStarted,
+            ThreadEventKind::ProcessInterruptRequested { .. } => {
+                ThreadEventKindTag::ProcessInterruptRequested
+            }
+            ThreadEventKind::ProcessKillRequested { .. } => {
+                ThreadEventKindTag::ProcessKillRequested
+            }
+            ThreadEventKind::ProcessExited { .. } => ThreadEventKindTag::ProcessExited,
+            ThreadEventKind::AttentionMarkerSet { .. } => ThreadEventKindTag::AttentionMarkerSet,
+            ThreadEventKind::AttentionMarkerCleared { .. } => {
+                ThreadEventKindTag::AttentionMarkerCleared
+            }
+            ThreadEventKind::CheckpointCreated { .. } => ThreadEventKindTag::CheckpointCreated,
+            ThreadEventKind::CheckpointRestored { .. } => ThreadEventKindTag::CheckpointRestored,
+        }
+    }
+
+    pub fn tag(&self) -> &'static str {
+        self.tag_enum().as_str()
+    }
+}
+
+pub fn is_known_thread_event_kind_tag(tag: &str) -> bool {
+    ThreadEventKindTag::from_str(tag).is_ok()
+}
+
+pub fn normalize_thread_event_kind_filter(
+    kinds: &[String],
+) -> Result<std::collections::HashSet<ThreadEventKindTag>, Vec<String>> {
+    let mut requested = std::collections::HashSet::new();
+    let mut invalid = Vec::new();
+
+    for kind in kinds {
+        let normalized = kind.trim().to_ascii_lowercase();
+        if normalized.is_empty() {
+            continue;
+        }
+        match ThreadEventKindTag::from_str(&normalized) {
+            Ok(kind_tag) => {
+                requested.insert(kind_tag);
+            }
+            Err(_) => invalid.push(normalized),
+        }
+    }
+
+    invalid.sort_unstable();
+    invalid.dedup();
+    if invalid.is_empty() {
+        Ok(requested)
+    } else {
+        Err(invalid)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn thread_event_kind_tags_are_known_and_unique() {
+        let mut unique = std::collections::HashSet::new();
+        for tag in THREAD_EVENT_KIND_TAGS {
+            assert!(is_known_thread_event_kind_tag(tag));
+            assert!(
+                unique.insert(*tag),
+                "duplicate thread event kind tag: {tag}"
+            );
+        }
+        assert_eq!(unique.len(), THREAD_EVENT_KIND_TAGS.len());
+    }
+
+    #[test]
+    fn normalize_thread_event_kind_filter_normalizes_and_rejects_invalid() {
+        let valid = vec![
+            " attention_marker_set ".to_string(),
+            "ATTENTION_MARKER_CLEARED".to_string(),
+            "".to_string(),
+            "   ".to_string(),
+        ];
+        let normalized = normalize_thread_event_kind_filter(&valid)
+            .expect("expected known kinds to normalize successfully");
+        assert!(normalized.contains(&ThreadEventKindTag::AttentionMarkerSet));
+        assert!(normalized.contains(&ThreadEventKindTag::AttentionMarkerCleared));
+
+        let invalid = vec![
+            "turn_started".to_string(),
+            "not_real".to_string(),
+            "NOT_REAL".to_string(),
+        ];
+        let err = normalize_thread_event_kind_filter(&invalid)
+            .expect_err("expected unknown kinds to be rejected");
+        assert_eq!(err, vec!["not_real".to_string()]);
+    }
 }

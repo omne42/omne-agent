@@ -19,7 +19,7 @@ async fn handle_file_glob(server: &Server, params: FileGlobParams) -> anyhow::Re
             state.allowed_tools.clone(),
         )
     };
-    if let Some(result) = enforce_thread_allowed_tools(
+    if let Some(_result) = enforce_thread_allowed_tools(
         &thread_rt,
         tool_id,
         params.turn_id,
@@ -29,80 +29,50 @@ async fn handle_file_glob(server: &Server, params: FileGlobParams) -> anyhow::Re
     )
     .await?
     {
-        return Ok(result);
+        return file_allowed_tools_denied_response(tool_id, "file/glob", &allowed_tools);
     }
     let catalog = omne_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {
         Some(mode) => mode,
         None => {
             let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
-            let decision = omne_core::modes::Decision::Deny;
+            let result = file_unknown_mode_denied_response(
+                tool_id,
+                &mode_name,
+                available,
+                catalog.load_error.clone(),
+            )?;
 
-            thread_rt
-                .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                    tool_id,
-                    turn_id: params.turn_id,
-                    tool: "file/glob".to_string(),
-                    params: Some(approval_params.clone()),
-                })
-                .await?;
-            thread_rt
-                .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                    tool_id,
-                    status: omne_protocol::ToolStatus::Denied,
-                    error: Some("unknown mode".to_string()),
-                    result: Some(serde_json::json!({
-                        "mode": mode_name,
-                        "decision": decision,
-                        "available": available,
-                        "load_error": catalog.load_error.clone(),
-                    })),
-                })
-                .await?;
-            return Ok(serde_json::json!({
-                "tool_id": tool_id,
-                "denied": true,
-                "mode": mode_name,
-                "decision": decision,
-                "available": available,
-                "load_error": catalog.load_error.clone(),
-            }));
+            emit_file_tool_denied(
+                &thread_rt,
+                tool_id,
+                params.turn_id,
+                "file/glob",
+                &approval_params,
+                "unknown mode".to_string(),
+                result.clone(),
+            )
+            .await?;
+            return Ok(result);
         }
     };
-    let base_decision = mode.permissions.read;
-    let effective_decision = match mode.tool_overrides.get("file/glob").copied() {
-        Some(override_decision) => base_decision.combine(override_decision),
-        None => base_decision,
-    };
-    if effective_decision == omne_core::modes::Decision::Deny {
-        thread_rt
-            .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                tool_id,
-                turn_id: params.turn_id,
-                tool: "file/glob".to_string(),
-                params: Some(approval_params.clone()),
-            })
-            .await?;
-        thread_rt
-            .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                tool_id,
-                status: omne_protocol::ToolStatus::Denied,
-                error: Some("mode denies file/glob".to_string()),
-                result: Some(serde_json::json!({
-                    "mode": mode_name,
-                    "decision": effective_decision,
-                })),
-            })
-            .await?;
-        return Ok(serde_json::json!({
-            "tool_id": tool_id,
-            "denied": true,
-            "mode": mode_name,
-            "decision": effective_decision,
-        }));
+    let mode_decision = resolve_mode_decision_audit(mode, "file/glob", mode.permissions.read);
+    if mode_decision.decision == omne_core::modes::Decision::Deny {
+        let result = file_mode_denied_response(tool_id, &mode_name, mode_decision)?;
+        emit_file_tool_denied(
+            &thread_rt,
+            tool_id,
+            params.turn_id,
+            "file/glob",
+            &approval_params,
+            "mode denies file/glob".to_string(),
+            result.clone(),
+        )
+        .await?;
+        return Ok(result);
     }
 
-    if effective_decision == omne_core::modes::Decision::Prompt {
+    if mode_decision.decision == omne_core::modes::Decision::Prompt {
         match gate_approval(
             server,
             &thread_rt,
@@ -119,35 +89,21 @@ async fn handle_file_glob(server: &Server, params: FileGlobParams) -> anyhow::Re
         {
             ApprovalGate::Approved => {}
             ApprovalGate::Denied { remembered } => {
-                thread_rt
-                    .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                        tool_id,
-                        turn_id: params.turn_id,
-                        tool: "file/glob".to_string(),
-                        params: Some(approval_params.clone()),
-                    })
-                    .await?;
-                    thread_rt
-                        .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                            tool_id,
-                            status: omne_protocol::ToolStatus::Denied,
-                            error: Some(approval_denied_error(remembered).to_string()),
-                            result: Some(serde_json::json!({
-                                "approval_policy": approval_policy,
-                            })),
-                        })
-                        .await?;
-                return Ok(serde_json::json!({
-                    "tool_id": tool_id,
-                    "denied": true,
-                    "remembered": remembered,
-                }));
+                let result = file_denied_response(tool_id, Some(remembered))?;
+                emit_file_tool_denied(
+                    &thread_rt,
+                    tool_id,
+                    params.turn_id,
+                    "file/glob",
+                    &approval_params,
+                    approval_denied_error(remembered).to_string(),
+                    result.clone(),
+                )
+                .await?;
+                return Ok(result);
             }
             ApprovalGate::NeedsApproval { approval_id } => {
-                return Ok(serde_json::json!({
-                    "needs_approval": true,
-                    "approval_id": approval_id,
-                }));
+                return file_needs_approval_response(approval_id);
             }
         }
     }
@@ -183,64 +139,14 @@ async fn handle_file_glob(server: &Server, params: FileGlobParams) -> anyhow::Re
             }
         },
     };
-    let outcome = tokio::task::spawn_blocking(move || -> anyhow::Result<(Vec<String>, bool)> {
-        let mut secrets = safe_fs_tools::policy::SecretRules::default();
-        secrets.deny_globs.extend([
-            ".omne_data/**",
-            "**/.omne_data/**",
-            ".omne/**",
-            "**/.omne/**",
-            ".omne/**",
-            "**/.omne/**",
-            "target/**",
-            "**/target/**",
-            "node_modules/**",
-            "**/node_modules/**",
-            "example/**",
-            "**/example/**",
-        ].into_iter().map(ToString::to_string));
-
-        let policy = safe_fs_tools::policy::SandboxPolicy {
-            roots: vec![safe_fs_tools::policy::Root {
-                id: root_id.clone(),
-                path: root,
-                mode: safe_fs_tools::policy::RootMode::ReadOnly,
-            }],
-            permissions: safe_fs_tools::policy::Permissions {
-                glob: true,
-                ..Default::default()
-            },
-            limits: safe_fs_tools::policy::Limits {
-                max_results,
-                ..Default::default()
-            },
-            secrets,
-            traversal: Default::default(),
-            paths: Default::default(),
-        };
-        let ctx = safe_fs_tools::ops::Context::new(policy)
-            .map_err(|err| anyhow::anyhow!(err.to_string()))?;
-        let resp = safe_fs_tools::ops::glob_paths(
-            &ctx,
-            safe_fs_tools::ops::GlobRequest {
-                root_id,
-                pattern,
-            },
-        )
-        .map_err(|err| anyhow::anyhow!(err.to_string()))?;
-
-        let paths = resp
-            .matches
-            .into_iter()
-            .map(|path| path.to_string_lossy().to_string())
-            .collect::<Vec<_>>();
-        Ok((paths, resp.truncated))
+    let outcome = tokio::task::spawn_blocking(move || {
+        omne_fs_runtime::glob_read_only_paths(root_id, root, pattern, max_results)
     })
     .await
     .context("join glob task")?;
 
     match outcome {
-        Ok((paths, truncated)) => {
+        Ok(omne_fs_runtime::GlobOutcome { paths, truncated }) => {
             thread_rt
                 .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,

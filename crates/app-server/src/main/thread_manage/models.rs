@@ -1,4 +1,7 @@
-async fn handle_thread_models(server: &Server, params: ThreadModelsParams) -> anyhow::Result<Value> {
+async fn handle_thread_models(
+    server: &Server,
+    params: ThreadModelsParams,
+) -> anyhow::Result<omne_app_server_protocol::ThreadModelsResponse> {
     let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
     let (thread_model, thread_openai_base_url) = {
         let handle = thread_rt.handle.lock().await;
@@ -80,16 +83,23 @@ async fn handle_thread_models(server: &Server, params: ThreadModelsParams) -> an
         .await
         .context("list /models")?;
 
-    Ok(serde_json::json!({
-        "provider": provider,
-        "base_url": base_url,
-        "current_model": current_model,
-        "thinking": thinking,
-        "default_model": provider_for_listing.default_model,
-        "model_whitelist": provider_for_listing.model_whitelist,
-        "capabilities": capabilities,
-        "models": models,
-    }))
+    Ok(omne_app_server_protocol::ThreadModelsResponse {
+        provider,
+        base_url,
+        current_model,
+        thinking: thinking_label(thinking).to_string(),
+        default_model: provider_for_listing.default_model,
+        model_whitelist: provider_for_listing.model_whitelist,
+        capabilities: omne_app_server_protocol::ThreadModelCapabilities {
+            tools: capabilities.tools,
+            vision: capabilities.vision,
+            reasoning: capabilities.reasoning,
+            json_schema: capabilities.json_schema,
+            streaming: capabilities.streaming,
+            prompt_cache: capabilities.prompt_cache,
+        },
+        models,
+    })
 }
 
 fn builtin_openai_provider_config(provider: &str) -> Option<ditto_llm::ProviderConfig> {

@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ProcessFollowResponse",
+  "type": "object",
+  "required": [
+    "eof",
+    "next_offset",
+    "text",
+    "tool_id"
+  ],
+  "properties": {
+    "eof": {
+      "type": "boolean"
+    },
+    "next_offset": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0.0
+    },
+    "text": {
+      "type": "string"
+    },
+    "tool_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

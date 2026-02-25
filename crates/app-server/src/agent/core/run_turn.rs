@@ -1,3 +1,65 @@
+fn apply_plan_parallel_tool_call_overrides(
+    has_plan_directive: bool,
+    parallel_tool_calls: bool,
+    max_parallel_tool_calls: usize,
+) -> (bool, usize) {
+    if has_plan_directive {
+        (false, 1)
+    } else {
+        (parallel_tool_calls, max_parallel_tool_calls)
+    }
+}
+
+fn resolve_turn_role_for_routing<'a>(has_plan_directive: bool, thread_mode: &'a str) -> &'a str {
+    if has_plan_directive {
+        "architect"
+    } else {
+        thread_mode
+    }
+}
+
+fn summarize_plan_artifact(text: &str) -> String {
+    let first_line = text
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("plan");
+    let summary = first_line.chars().take(120).collect::<String>();
+    if summary.is_empty() {
+        "plan".to_string()
+    } else {
+        summary
+    }
+}
+
+async fn write_plan_artifact_if_needed(
+    server: &super::Server,
+    thread_id: ThreadId,
+    turn_id: TurnId,
+    has_plan_directive: bool,
+    last_text: &str,
+) -> anyhow::Result<bool> {
+    if !has_plan_directive || last_text.trim().is_empty() {
+        return Ok(false);
+    }
+
+    let summary = summarize_plan_artifact(last_text);
+    crate::handle_artifact_write(
+        server,
+        crate::ArtifactWriteParams {
+            thread_id,
+            turn_id: Some(turn_id),
+            approval_id: None,
+            artifact_id: None,
+            artifact_type: "plan".to_string(),
+            summary,
+            text: last_text.to_string(),
+        },
+    )
+    .await?;
+    Ok(true)
+}
+
 pub async fn run_agent_turn(
     server: Arc<super::Server>,
     thread_rt: Arc<super::ThreadRuntime>,
@@ -213,8 +275,8 @@ pub async fn run_agent_turn(
         0,
         MAX_AUTO_SUMMARY_TAIL_ITEMS,
     );
-    let parallel_tool_calls = parse_env_bool("OMNE_AGENT_PARALLEL_TOOL_CALLS", false);
-    let max_parallel_tool_calls = parse_env_usize(
+    let mut parallel_tool_calls = parse_env_bool("OMNE_AGENT_PARALLEL_TOOL_CALLS", false);
+    let mut max_parallel_tool_calls = parse_env_usize(
         "OMNE_AGENT_MAX_PARALLEL_TOOL_CALLS",
         DEFAULT_MAX_PARALLEL_TOOL_CALLS,
         1,
@@ -260,6 +322,24 @@ pub async fn run_agent_turn(
 
     if let Some(skills) = load_skills_from_input(&input, thread_cwd.as_deref()).await? {
         instructions.push_str(&skills);
+    }
+
+    let directives = load_turn_directives(&server, thread_id, turn_id)
+        .await
+        .unwrap_or_default();
+    let has_plan_directive = directives
+        .iter()
+        .any(|directive| matches!(directive, omne_protocol::TurnDirective::Plan));
+    (parallel_tool_calls, max_parallel_tool_calls) = apply_plan_parallel_tool_call_overrides(
+        has_plan_directive,
+        parallel_tool_calls,
+        max_parallel_tool_calls,
+    );
+    if has_plan_directive {
+        instructions.push_str("\n\n# Turn directive (/plan)\n\n");
+        instructions.push_str(
+            "This turn is planning-oriented. Produce a concrete execution plan and avoid side effects or destructive actions unless the user explicitly overrides this intent.\n",
+        );
     }
 
     let session_start_hook_contexts =
@@ -341,22 +421,19 @@ pub async fn run_agent_turn(
         Some(thread_root) => omne_core::router::load_router_config(thread_root).await?,
         None => None,
     };
-    let routed = omne_core::router::route_model(
+    let route_role = resolve_turn_role_for_routing(has_plan_directive, &thread_mode);
+    let route_plan = omne_core::router::plan_route(
         router_config.as_ref().map(|loaded| &loaded.config),
-        Some(thread_mode.as_str()),
-        &input,
-        &global_default_model,
-        forced_model,
-        context_tokens_estimate,
+        omne_core::router::RouteIntent {
+            role: Some(route_role),
+            input: &input,
+            global_default_model: &global_default_model,
+            forced: forced_model,
+            context_tokens_estimate,
+        },
     );
-    let omne_core::router::ModelRouteDecision {
-        selected_model,
-        rule_source,
-        reason,
-        rule_id,
-    } = routed;
 
-    let final_model = selected_model;
+    let final_model = route_plan.selected_model.clone();
     if !model_allowed_by_whitelist(&final_model, &provider_config.model_whitelist) {
         anyhow::bail!(
             "model not allowed by provider whitelist: provider={provider} model={final_model}"
@@ -385,7 +462,8 @@ pub async fn run_agent_turn(
         .map(|value| parse_csv_list(&value))
         .unwrap_or_default();
 
-    let reason = reason
+    let reason = route_plan
+        .reason
         .as_deref()
         .filter(|value| !value.trim().is_empty())
         .map(|value| format!("{value}; provider={provider}"))
@@ -395,9 +473,9 @@ pub async fn run_agent_turn(
         .append_event(ThreadEventKind::ModelRouted {
             turn_id,
             selected_model: final_model.clone(),
-            rule_source,
+            rule_source: route_plan.rule_source,
             reason,
-            rule_id: rule_id.clone(),
+            rule_id: route_plan.rule_id.clone(),
         })
         .await;
 
@@ -407,9 +485,9 @@ pub async fn run_agent_turn(
             .append_event(ThreadEventKind::ModelRouted {
                 turn_id,
                 selected_model: tool_model.clone(),
-                rule_source,
+                rule_source: route_plan.rule_source,
                 reason: Some(reason),
-                rule_id: rule_id.clone(),
+                rule_id: route_plan.rule_id.clone(),
             })
             .await;
     }
@@ -452,7 +530,7 @@ pub async fn run_agent_turn(
         last_usage,
         last_text,
     } = ToolLoop {
-        server,
+        server: server.clone(),
         thread_rt: thread_rt.clone(),
         thread_id,
         turn_id,
@@ -475,8 +553,8 @@ pub async fn run_agent_turn(
         model_client,
         resolved_attachments,
         pdf_file_id_upload_min_bytes,
-        rule_source,
-        rule_id,
+        rule_source: route_plan.rule_source,
+        rule_id: route_plan.rule_id,
         cfg,
     }
     .run()
@@ -486,13 +564,17 @@ pub async fn run_agent_turn(
         let _ = thread_rt
             .append_event(ThreadEventKind::AssistantMessage {
                 turn_id: Some(turn_id),
-                text: last_text,
+                text: last_text.clone(),
                 model: Some(model),
                 response_id: Some(last_response_id),
                 token_usage: last_usage,
             })
             .await;
     }
+
+    let _ =
+        write_plan_artifact_if_needed(&server, thread_id, turn_id, has_plan_directive, &last_text)
+            .await;
 
     Ok(())
 }
@@ -515,4 +597,3 @@ struct AutoCompactSummaryConfig {
     source_max_chars: usize,
     tail_items: usize,
 }
-

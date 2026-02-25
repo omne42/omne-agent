@@ -5,6 +5,15 @@ pub enum FileRoot {
     Reference,
 }
 
+impl FileRoot {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Workspace => "workspace",
+            Self::Reference => "reference",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
 pub struct FileReadParams {
     pub thread_id: omne_protocol::ThreadId,
@@ -68,4 +77,79 @@ pub struct FileGrepParams {
     #[serde(default)]
     #[ts(optional)]
     pub max_files: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
+pub struct FileDeniedResponse {
+    pub tool_id: omne_protocol::ToolId,
+    pub denied: bool,
+    #[serde(default)]
+    #[ts(optional)]
+    pub remembered: Option<bool>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub error_code: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
+pub struct FileNeedsApprovalResponse {
+    pub needs_approval: bool,
+    pub approval_id: omne_protocol::ApprovalId,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
+pub struct FileAllowedToolsDeniedResponse {
+    pub tool_id: omne_protocol::ToolId,
+    pub denied: bool,
+    pub tool: String,
+    pub allowed_tools: Vec<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub error_code: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum FileModeDecision {
+    Allow,
+    Prompt,
+    Deny,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
+pub struct FileModeDeniedResponse {
+    pub tool_id: omne_protocol::ToolId,
+    pub denied: bool,
+    pub mode: String,
+    pub decision: FileModeDecision,
+    pub decision_source: String,
+    pub tool_override_hit: bool,
+    #[serde(default)]
+    #[ts(optional)]
+    pub error_code: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
+pub struct FileUnknownModeDeniedResponse {
+    pub tool_id: omne_protocol::ToolId,
+    pub denied: bool,
+    pub mode: String,
+    pub decision: FileModeDecision,
+    pub available: String,
+    #[serde(default)]
+    #[ts(optional)]
+    pub load_error: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub error_code: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
+pub struct FileSandboxPolicyDeniedResponse {
+    pub tool_id: omne_protocol::ToolId,
+    pub denied: bool,
+    pub sandbox_policy: omne_protocol::SandboxPolicy,
+    #[serde(default)]
+    #[ts(optional)]
+    pub error_code: Option<String>,
 }

@@ -1,0 +1,276 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ArtifactReadResponse",
+  "type": "object",
+  "required": [
+    "latest_version",
+    "metadata",
+    "metadata_source",
+    "tool_id",
+    "version"
+  ],
+  "properties": {
+    "bytes": {
+      "default": 0,
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0.0
+    },
+    "historical": {
+      "default": false,
+      "type": "boolean"
+    },
+    "latest_version": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0.0
+    },
+    "metadata": {
+      "$ref": "#/definitions/ArtifactMetadata"
+    },
+    "metadata_fallback_reason": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/ArtifactReadMetadataFallbackReason"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "metadata_source": {
+      "$ref": "#/definitions/ArtifactReadMetadataSource"
+    },
+    "prune_report": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/ArtifactPruneReportReadPayload"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "text": {
+      "default": "",
+      "type": "string"
+    },
+    "tool_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "truncated": {
+      "default": false,
+      "type": "boolean"
+    },
+    "version": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0.0
+    }
+  },
+  "definitions": {
+    "ArtifactMetadata": {
+      "type": "object",
+      "required": [
+        "artifact_id",
+        "artifact_type",
+        "content_path",
+        "created_at",
+        "size_bytes",
+        "summary",
+        "updated_at",
+        "version"
+      ],
+      "properties": {
+        "artifact_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "artifact_type": {
+          "type": "string"
+        },
+        "content_path": {
+          "type": "string"
+        },
+        "created_at": {
+          "type": "string"
+        },
+        "preview": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ArtifactPreview"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "provenance": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ArtifactProvenance"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "size_bytes": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "summary": {
+          "type": "string"
+        },
+        "updated_at": {
+          "type": "string"
+        },
+        "version": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        }
+      }
+    },
+    "ArtifactPreview": {
+      "type": "object",
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "$ref": "#/definitions/ArtifactPreviewKind"
+        },
+        "language": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "ArtifactPreviewKind": {
+      "type": "string",
+      "enum": [
+        "markdown",
+        "diff_unified",
+        "patch_unified",
+        "code",
+        "html",
+        "log"
+      ]
+    },
+    "ArtifactProvenance": {
+      "type": "object",
+      "required": [
+        "thread_id"
+      ],
+      "properties": {
+        "process_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "tool_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "turn_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      }
+    },
+    "ArtifactPruneReportReadPayload": {
+      "type": "object",
+      "properties": {
+        "pruned_count": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "pruned_version_details": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ArtifactPruneReportVersionDetail"
+          }
+        },
+        "retained_history_versions": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "source_artifact_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "ArtifactPruneReportVersionDetail": {
+      "type": "object",
+      "required": [
+        "version"
+      ],
+      "properties": {
+        "size_bytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "version": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        }
+      }
+    },
+    "ArtifactReadMetadataFallbackReason": {
+      "type": "string",
+      "enum": [
+        "history_metadata_missing",
+        "history_metadata_invalid",
+        "history_metadata_unreadable"
+      ]
+    },
+    "ArtifactReadMetadataSource": {
+      "type": "string",
+      "enum": [
+        "latest",
+        "history_snapshot",
+        "latest_fallback"
+      ]
+    }
+  }
+}

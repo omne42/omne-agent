@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ProcessExecPolicyLoadDeniedResponse",
+  "type": "object",
+  "required": [
+    "denied",
+    "details",
+    "error",
+    "mode",
+    "tool_id"
+  ],
+  "properties": {
+    "denied": {
+      "type": "boolean"
+    },
+    "details": {
+      "type": "string"
+    },
+    "error": {
+      "type": "string"
+    },
+    "mode": {
+      "type": "string"
+    },
+    "tool_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

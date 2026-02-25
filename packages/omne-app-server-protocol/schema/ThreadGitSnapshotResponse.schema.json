@@ -1,0 +1,47 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ThreadGitSnapshotResponse",
+  "type": "object",
+  "required": [
+    "artifact",
+    "max_bytes",
+    "process_id",
+    "stderr_path",
+    "stdout_path",
+    "thread_id",
+    "truncated"
+  ],
+  "properties": {
+    "artifact": true,
+    "exit_code": {
+      "default": null,
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "int32"
+    },
+    "max_bytes": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0.0
+    },
+    "process_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "stderr_path": {
+      "type": "string"
+    },
+    "stdout_path": {
+      "type": "string"
+    },
+    "thread_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "truncated": {
+      "type": "boolean"
+    }
+  }
+}

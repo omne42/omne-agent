@@ -189,14 +189,16 @@ fn parse_list_example(list: &ListRef) -> Result<Vec<String>> {
     }
 }
 
-fn policy_builder<'v, 'a>(eval: &Evaluator<'v, 'a, '_>) -> RefMut<'a, PolicyBuilder> {
-    #[expect(clippy::expect_used)]
-    eval.extra
-        .as_ref()
-        .expect("policy_builder requires Evaluator.extra to be populated")
+fn policy_builder<'v, 'a>(eval: &Evaluator<'v, 'a, '_>) -> Result<RefMut<'a, PolicyBuilder>> {
+    let extra = eval.extra.as_ref().ok_or_else(|| {
+        Error::InvalidRule("policy_builder requires Evaluator.extra to be populated".to_string())
+    })?;
+    let cell = extra
         .downcast_ref::<RefCell<PolicyBuilder>>()
-        .expect("Evaluator.extra must contain a PolicyBuilder")
-        .borrow_mut()
+        .ok_or_else(|| {
+            Error::InvalidRule("Evaluator.extra must contain a PolicyBuilder".to_string())
+        })?;
+    Ok(cell.borrow_mut())
 }
 
 #[starlark_module]
@@ -231,7 +233,7 @@ fn policy_builtins(builder: &mut GlobalsBuilder) {
             .transpose()?
             .unwrap_or_default();
 
-        let mut builder = policy_builder(eval);
+        let mut builder = policy_builder(eval)?;
 
         let (first_token, remaining_tokens) = pattern_tokens
             .split_first()

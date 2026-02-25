@@ -1,0 +1,31 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ThreadHookRunDeniedResponse",
+  "type": "object",
+  "required": [
+    "denied",
+    "detail",
+    "hook",
+    "thread_id"
+  ],
+  "properties": {
+    "config_path": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "denied": {
+      "type": "boolean"
+    },
+    "detail": true,
+    "hook": {
+      "type": "string"
+    },
+    "thread_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

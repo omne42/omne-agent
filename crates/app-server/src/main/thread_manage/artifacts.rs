@@ -1,7 +1,7 @@
 async fn handle_thread_clear_artifacts(
     server: &Server,
     params: ThreadClearArtifactsParams,
-) -> anyhow::Result<Value> {
+) -> anyhow::Result<omne_app_server_protocol::ThreadClearArtifactsResponse> {
     let thread_rt = server.get_or_load_thread(params.thread_id).await?;
 
     let mut running = Vec::<ProcessId>::new();
@@ -78,9 +78,9 @@ async fn handle_thread_clear_artifacts(
         })
         .await?;
 
-    Ok(serde_json::json!({
-        "tool_id": tool_id,
-        "removed": removed,
-        "artifacts_dir": artifacts_dir.display().to_string(),
-    }))
+    Ok(omne_app_server_protocol::ThreadClearArtifactsResponse {
+        tool_id,
+        removed,
+        artifacts_dir: artifacts_dir.display().to_string(),
+    })
 }

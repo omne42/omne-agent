@@ -21,16 +21,15 @@ fn print_json_or_pretty(json: bool, value: &Value) -> anyhow::Result<()> {
 }
 
 async fn run_ask(app: &mut App, args: AskArgs) -> anyhow::Result<()> {
-    let thread_result = if let Some(thread_id) = args.thread_id {
-        app.thread_resume(thread_id).await?
+    let (thread_id, mut since_seq) = if let Some(thread_id) = args.thread_id {
+        let resumed = app.thread_resume(thread_id).await?;
+        (resumed.thread_id, resumed.last_seq)
     } else {
         let cwd = args.cwd.map(|p| p.display().to_string());
-        app.thread_start(cwd).await?
+        let started = app.thread_start(cwd).await?;
+        ensure_thread_start_auto_hook_ready("ask", &started)?;
+        (started.thread_id, started.last_seq)
     };
-
-    let thread_id: ThreadId = serde_json::from_value(thread_result["thread_id"].clone())
-        .context("thread_id missing in result")?;
-    let mut since_seq = thread_result["last_seq"].as_u64().unwrap_or(0);
 
     if args.approval_policy.is_some()
         || args.sandbox_policy.is_some()
@@ -48,6 +47,10 @@ async fn run_ask(app: &mut App, args: AskArgs) -> anyhow::Result<()> {
             model: args.model,
             openai_base_url: args.openai_base_url,
             thinking: None,
+            allowed_tools: None,
+            clear_allowed_tools: false,
+            execpolicy_rules: None,
+            clear_execpolicy_rules: false,
         })
         .await?;
     }
@@ -134,7 +137,7 @@ async fn run_ask(app: &mut App, args: AskArgs) -> anyhow::Result<()> {
                     println!();
                     std::io::stdout().flush().ok();
                 }
-                let decision = prompt_approval(approval_id, action, params)?;
+                let decision = prompt_approval(thread_id, approval_id, action, params)?;
                 app.approval_decide(
                     thread_id,
                     *approval_id,
@@ -173,20 +176,19 @@ async fn run_ask_with_tick<F>(
     app: &mut App,
     args: AskArgs,
     mut tick: F,
-) -> anyhow::Result<()>
+) -> anyhow::Result<TurnId>
 where
     for<'a> F: FnMut(&'a mut App, ThreadId, TurnId) -> TickFuture<'a>,
 {
-    let thread_result = if let Some(thread_id) = args.thread_id {
-        app.thread_resume(thread_id).await?
+    let (thread_id, mut since_seq) = if let Some(thread_id) = args.thread_id {
+        let resumed = app.thread_resume(thread_id).await?;
+        (resumed.thread_id, resumed.last_seq)
     } else {
         let cwd = args.cwd.map(|p| p.display().to_string());
-        app.thread_start(cwd).await?
+        let started = app.thread_start(cwd).await?;
+        ensure_thread_start_auto_hook_ready("ask", &started)?;
+        (started.thread_id, started.last_seq)
     };
-
-    let thread_id: ThreadId = serde_json::from_value(thread_result["thread_id"].clone())
-        .context("thread_id missing in result")?;
-    let mut since_seq = thread_result["last_seq"].as_u64().unwrap_or(0);
 
     if args.approval_policy.is_some()
         || args.sandbox_policy.is_some()
@@ -204,6 +206,10 @@ where
             model: args.model,
             openai_base_url: args.openai_base_url,
             thinking: None,
+            allowed_tools: None,
+            clear_allowed_tools: false,
+            execpolicy_rules: None,
+            clear_execpolicy_rules: false,
         })
         .await?;
     }
@@ -267,7 +273,7 @@ where
             if let Some(handle) = streaming_handle.take() {
                 handle.abort();
             }
-            return Ok(());
+            return Ok(turn_id);
         }
 
         tick(app, thread_id, turn_id).await?;
@@ -292,7 +298,7 @@ where
                     println!();
                     std::io::stdout().flush().ok();
                 }
-                let decision = prompt_approval(approval_id, action, params)?;
+                let decision = prompt_approval(thread_id, approval_id, action, params)?;
                 app.approval_decide(
                     thread_id,
                     *approval_id,
@@ -312,7 +318,7 @@ where
                 if let Some(handle) = streaming_handle.take() {
                     handle.abort();
                 }
-                return Ok(());
+                return Ok(turn_id);
             }
         }
 
@@ -326,16 +332,15 @@ where
 }
 
 async fn run_exec(app: &mut App, args: ExecArgs) -> anyhow::Result<i32> {
-    let thread_result = if let Some(thread_id) = args.thread_id {
-        app.thread_resume(thread_id).await?
+    let (thread_id, mut since_seq) = if let Some(thread_id) = args.thread_id {
+        let resumed = app.thread_resume(thread_id).await?;
+        (resumed.thread_id, resumed.last_seq)
     } else {
         let cwd = args.cwd.map(|p| p.display().to_string());
-        app.thread_start(cwd).await?
+        let started = app.thread_start(cwd).await?;
+        ensure_thread_start_auto_hook_ready("exec", &started)?;
+        (started.thread_id, started.last_seq)
     };
-
-    let thread_id: ThreadId = serde_json::from_value(thread_result["thread_id"].clone())
-        .context("thread_id missing in result")?;
-    let mut since_seq = thread_result["last_seq"].as_u64().unwrap_or(0);
 
     if args.approval_policy.is_some()
         || args.sandbox_policy.is_some()
@@ -353,6 +358,10 @@ async fn run_exec(app: &mut App, args: ExecArgs) -> anyhow::Result<i32> {
             model: args.model,
             openai_base_url: args.openai_base_url,
             thinking: None,
+            allowed_tools: None,
+            clear_allowed_tools: false,
+            execpolicy_rules: None,
+            clear_execpolicy_rules: false,
         })
         .await?;
     }
@@ -415,7 +424,23 @@ async fn run_exec(app: &mut App, args: ExecArgs) -> anyhow::Result<i32> {
                                 Some(format!("approval required: {approval_id}")),
                             )
                             .await?;
-                            eprintln!("approval required: {approval_id} action={action}");
+                            let action_label = approval_action_label_from_action(action);
+                            eprintln!("approval required: {approval_id} action={action_label}");
+                            if let Some(summary) = approval_summary_from_params_with_context(
+                                Some(thread_id),
+                                Some(*approval_id),
+                                Some(action.as_str()),
+                                params,
+                            ) {
+                                if let Some(display) =
+                                    approval_summary_display_from_summary(&summary)
+                                {
+                                    eprintln!("summary: {display}");
+                                }
+                                for line in approval_quick_command_lines(&summary) {
+                                    eprintln!("{line}");
+                                }
+                            }
                             eprintln!("{}", serde_json::to_string_pretty(params)?);
                         }
                         CliOnApproval::Approve => {
@@ -591,10 +616,11 @@ fn render_event_to<W: std::io::Write>(
             thinking,
             openai_base_url,
             allowed_tools,
+            execpolicy_rules,
         } => {
             let _ = writeln!(
                 writer,
-                "[{ts}] config approval_policy={approval_policy:?} sandbox_policy={sandbox_policy:?} sandbox_writable_roots={sandbox_writable_roots:?} sandbox_network_access={sandbox_network_access:?} mode={} model={} thinking={} openai_base_url={} allowed_tools={allowed_tools:?}",
+                "[{ts}] config approval_policy={approval_policy:?} sandbox_policy={sandbox_policy:?} sandbox_writable_roots={sandbox_writable_roots:?} sandbox_network_access={sandbox_network_access:?} mode={} model={} thinking={} openai_base_url={} allowed_tools={allowed_tools:?} execpolicy_rules={execpolicy_rules:?}",
                 mode.as_deref().unwrap_or(""),
                 model.as_deref().unwrap_or(""),
                 thinking.as_deref().unwrap_or(""),
@@ -604,11 +630,22 @@ fn render_event_to<W: std::io::Write>(
         omne_protocol::ThreadEventKind::ApprovalRequested {
             approval_id,
             action,
+            params,
             ..
         } => {
+            let action_label = approval_action_label_from_action(action);
+            let summary_hint = approval_summary_from_params(params)
+                .and_then(|summary| approval_summary_display_from_summary(&summary))
+                .unwrap_or_default();
             let _ = writeln!(
                 writer,
-                "[{ts}] approval requested {approval_id} action={action}"
+                "[{ts}] approval requested {approval_id} action={}{}",
+                action_label,
+                if summary_hint.is_empty() {
+                    "".to_string()
+                } else {
+                    format!(" summary={summary_hint}")
+                }
             );
         }
         omne_protocol::ThreadEventKind::ApprovalDecided {
@@ -670,6 +707,48 @@ fn render_event_to<W: std::io::Write>(
                 reason.as_deref().unwrap_or("")
             );
         }
+        omne_protocol::ThreadEventKind::AttentionMarkerSet {
+            marker,
+            turn_id,
+            artifact_id,
+            artifact_type,
+            process_id,
+            exit_code,
+            command,
+        } => {
+            let _ = writeln!(
+                writer,
+                "[{ts}] attention marker set marker={marker:?} turn_id={} artifact_id={} artifact_type={} process_id={} exit_code={} command={}",
+                turn_id
+                    .map(|value| value.to_string())
+                    .unwrap_or_default(),
+                artifact_id
+                    .map(|value| value.to_string())
+                    .unwrap_or_default(),
+                artifact_type.as_deref().unwrap_or(""),
+                process_id
+                    .map(|value| value.to_string())
+                    .unwrap_or_default(),
+                exit_code
+                    .map(|value| value.to_string())
+                    .unwrap_or_default(),
+                command.as_deref().unwrap_or("")
+            );
+        }
+        omne_protocol::ThreadEventKind::AttentionMarkerCleared {
+            marker,
+            turn_id,
+            reason,
+        } => {
+            let _ = writeln!(
+                writer,
+                "[{ts}] attention marker cleared marker={marker:?} turn_id={} reason={}",
+                turn_id
+                    .map(|value| value.to_string())
+                    .unwrap_or_default(),
+                reason.as_deref().unwrap_or("")
+            );
+        }
         _ => {}
     }
 }
@@ -681,13 +760,31 @@ struct ApprovalPromptDecision {
 }
 
 fn prompt_approval(
+    thread_id: ThreadId,
     approval_id: &ApprovalId,
     action: &str,
     params: &Value,
 ) -> anyhow::Result<ApprovalPromptDecision> {
+    let action_label = approval_action_label_from_action(action);
     eprintln!();
     eprintln!("needs approval: {approval_id}");
-    eprintln!("action: {action}");
+    eprintln!("action: {action_label}");
+    if action_label != action {
+        eprintln!("raw_action: {action}");
+    }
+    if let Some(summary) = approval_summary_from_params_with_context(
+        Some(thread_id),
+        Some(*approval_id),
+        Some(action),
+        params,
+    ) {
+        if let Some(display) = approval_summary_display_from_summary(&summary) {
+            eprintln!("summary: {display}");
+        }
+        for line in approval_quick_command_lines(&summary) {
+            eprintln!("{line}");
+        }
+    }
     eprintln!("params: {}", serde_json::to_string_pretty(params)?);
 
     let decision = loop {
@@ -734,4 +831,74 @@ fn prompt_approval(
         remember,
         reason,
     })
+}
+
+fn approval_quick_command_lines(
+    summary: &omne_app_server_protocol::ThreadAttentionPendingApprovalSummary,
+) -> Vec<String> {
+    let mut lines = Vec::<String>::new();
+    if let Some(approve_cmd) = approval_approve_cmd_from_summary(summary) {
+        lines.push(format!("approve: {approve_cmd}"));
+    }
+    if let Some(deny_cmd) = approval_deny_cmd_from_summary(summary) {
+        lines.push(format!("deny: {deny_cmd}"));
+    }
+    lines
+}
+
+#[cfg(test)]
+mod ask_exec_tests {
+    use super::*;
+
+    #[test]
+    fn approval_quick_command_lines_include_approve_and_deny() {
+        let summary = omne_app_server_protocol::ThreadAttentionPendingApprovalSummary {
+            requirement: None,
+            argv: None,
+            cwd: None,
+            process_id: None,
+            artifact_type: None,
+            path: None,
+            server: None,
+            tool: None,
+            hook: None,
+            child_thread_id: None,
+            child_turn_id: None,
+            child_approval_id: None,
+            child_attention_state: None,
+            child_last_turn_status: None,
+            approve_cmd: Some("omne approval decide t1 a1 --approve".to_string()),
+            deny_cmd: Some("omne approval decide t1 a1 --deny".to_string()),
+        };
+        let lines = approval_quick_command_lines(&summary);
+        assert_eq!(lines.len(), 2);
+        assert!(lines.iter().any(|line| line.contains("approve: ")));
+        assert!(lines.iter().any(|line| line.contains("--approve")));
+        assert!(lines.iter().any(|line| line.contains("deny: ")));
+        assert!(lines.iter().any(|line| line.contains("--deny")));
+    }
+
+    #[test]
+    fn approval_quick_command_lines_are_empty_without_approve_cmd() {
+        let summary = omne_app_server_protocol::ThreadAttentionPendingApprovalSummary {
+            requirement: None,
+            argv: None,
+            cwd: None,
+            process_id: None,
+            artifact_type: None,
+            path: None,
+            server: None,
+            tool: None,
+            hook: None,
+            child_thread_id: None,
+            child_turn_id: None,
+            child_approval_id: None,
+            child_attention_state: None,
+            child_last_turn_status: None,
+            approve_cmd: None,
+            deny_cmd: None,
+        };
+        let lines = approval_quick_command_lines(&summary);
+        assert!(lines.is_empty());
+    }
 }

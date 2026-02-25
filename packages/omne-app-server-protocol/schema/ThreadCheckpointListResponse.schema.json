@@ -1,0 +1,133 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ThreadCheckpointListResponse",
+  "type": "object",
+  "required": [
+    "checkpoints_dir",
+    "thread_id"
+  ],
+  "properties": {
+    "checkpoints": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/ThreadCheckpointSummary"
+      }
+    },
+    "checkpoints_dir": {
+      "type": "string"
+    },
+    "thread_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  },
+  "definitions": {
+    "ThreadCheckpointExcluded": {
+      "type": "object",
+      "required": [
+        "oversize_count",
+        "secret_count",
+        "symlink_count"
+      ],
+      "properties": {
+        "oversize_count": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "secret_count": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "symlink_count": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        }
+      }
+    },
+    "ThreadCheckpointSizeLimits": {
+      "type": "object",
+      "required": [
+        "max_file_bytes",
+        "max_total_bytes"
+      ],
+      "properties": {
+        "max_file_bytes": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "max_total_bytes": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        }
+      }
+    },
+    "ThreadCheckpointStats": {
+      "type": "object",
+      "required": [
+        "file_count",
+        "total_bytes"
+      ],
+      "properties": {
+        "file_count": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "total_bytes": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        }
+      }
+    },
+    "ThreadCheckpointSummary": {
+      "type": "object",
+      "required": [
+        "checkpoint_id",
+        "created_at",
+        "excluded",
+        "manifest_path",
+        "size_limits",
+        "snapshot_ref",
+        "stats"
+      ],
+      "properties": {
+        "checkpoint_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "created_at": {
+          "type": "string"
+        },
+        "excluded": {
+          "$ref": "#/definitions/ThreadCheckpointExcluded"
+        },
+        "label": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "manifest_path": {
+          "type": "string"
+        },
+        "size_limits": {
+          "$ref": "#/definitions/ThreadCheckpointSizeLimits"
+        },
+        "snapshot_ref": {
+          "type": "string"
+        },
+        "stats": {
+          "$ref": "#/definitions/ThreadCheckpointStats"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RepoDeniedResponse",
+  "type": "object",
+  "required": [
+    "tool_id"
+  ],
+  "properties": {
+    "denied": {
+      "default": false,
+      "type": "boolean"
+    },
+    "remembered": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "tool_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

@@ -19,10 +19,6 @@ async fn handle_approval_request(
             },
             Err(err) => invalid_params(id, err),
         },
-        _ => {
-            let _ = params;
-            method_not_found(id, method)
-        }
+        _ => method_not_found(id, method),
     }
 }
-

@@ -1,4 +1,7 @@
-async fn handle_thread_archive(server: &Server, params: ThreadArchiveParams) -> anyhow::Result<Value> {
+async fn handle_thread_archive(
+    server: &Server,
+    params: ThreadArchiveParams,
+) -> anyhow::Result<omne_app_server_protocol::ThreadArchiveResponse> {
     let thread_rt = server.get_or_load_thread(params.thread_id).await?;
 
     let (already_archived, active_turn_id) = {
@@ -8,11 +11,14 @@ async fn handle_thread_archive(server: &Server, params: ThreadArchiveParams) -> 
     };
 
     if already_archived {
-        return Ok(serde_json::json!({
-            "thread_id": params.thread_id,
-            "archived": true,
-            "already_archived": true,
-        }));
+        return Ok(omne_app_server_protocol::ThreadArchiveResponse {
+            thread_id: params.thread_id,
+            archived: true,
+            already_archived: true,
+            force: None,
+            killed_processes: None,
+            auto_hook: None,
+        });
     }
 
     let reason = params
@@ -97,17 +103,22 @@ async fn handle_thread_archive(server: &Server, params: ThreadArchiveParams) -> 
             reason: reason.clone(),
         })
         .await?;
+    let auto_hook = run_auto_workspace_hook(server, params.thread_id, WorkspaceHookName::Archive).await;
 
-    Ok(serde_json::json!({
-        "thread_id": params.thread_id,
-        "archived": true,
-        "already_archived": false,
-        "force": params.force,
-        "killed_processes": running,
-    }))
+    Ok(omne_app_server_protocol::ThreadArchiveResponse {
+        thread_id: params.thread_id,
+        archived: true,
+        already_archived: false,
+        force: Some(params.force),
+        killed_processes: Some(running),
+        auto_hook: Some(auto_hook),
+    })
 }
 
-async fn handle_thread_unarchive(server: &Server, params: ThreadUnarchiveParams) -> anyhow::Result<Value> {
+async fn handle_thread_unarchive(
+    server: &Server,
+    params: ThreadUnarchiveParams,
+) -> anyhow::Result<omne_app_server_protocol::ThreadUnarchiveResponse> {
     let thread_rt = server.get_or_load_thread(params.thread_id).await?;
 
     let already_unarchived = {
@@ -116,11 +127,11 @@ async fn handle_thread_unarchive(server: &Server, params: ThreadUnarchiveParams)
     };
 
     if already_unarchived {
-        return Ok(serde_json::json!({
-            "thread_id": params.thread_id,
-            "archived": false,
-            "already_unarchived": true,
-        }));
+        return Ok(omne_app_server_protocol::ThreadUnarchiveResponse {
+            thread_id: params.thread_id,
+            archived: false,
+            already_unarchived: true,
+        });
     }
 
     thread_rt
@@ -129,9 +140,9 @@ async fn handle_thread_unarchive(server: &Server, params: ThreadUnarchiveParams)
         })
         .await?;
 
-    Ok(serde_json::json!({
-        "thread_id": params.thread_id,
-        "archived": false,
-        "already_unarchived": false,
-    }))
+    Ok(omne_app_server_protocol::ThreadUnarchiveResponse {
+        thread_id: params.thread_id,
+        archived: false,
+        already_unarchived: false,
+    })
 }

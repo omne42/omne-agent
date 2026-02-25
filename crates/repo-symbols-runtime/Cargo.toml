@@ -1,0 +1,16 @@
+[package]
+name = "omne-repo-symbols-runtime"
+edition.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+globset.workspace = true
+omne-fs-policy = { path = "../fs-policy" }
+tree-sitter.workspace = true
+tree-sitter-rust.workspace = true
+walkdir.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

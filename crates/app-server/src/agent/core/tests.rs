@@ -38,6 +38,48 @@ mod tool_parallelism_tests {
     }
 
     #[test]
+    fn token_usage_json_from_ditto_usage_includes_cache_fields() {
+        let usage = ditto_llm::Usage {
+            input_tokens: Some(100),
+            cache_input_tokens: Some(60),
+            cache_creation_input_tokens: Some(8),
+            output_tokens: Some(20),
+            total_tokens: Some(120),
+        };
+        let json = token_usage_json_from_ditto_usage(&usage).expect("usage json");
+        assert_eq!(json.get("input_tokens").and_then(serde_json::Value::as_u64), Some(100));
+        assert_eq!(
+            json.get("cache_input_tokens")
+                .and_then(serde_json::Value::as_u64),
+            Some(60)
+        );
+        assert_eq!(
+            json.get("cache_creation_input_tokens")
+                .and_then(serde_json::Value::as_u64),
+            Some(8)
+        );
+        assert_eq!(json.get("output_tokens").and_then(serde_json::Value::as_u64), Some(20));
+        assert_eq!(json.get("total_tokens").and_then(serde_json::Value::as_u64), Some(120));
+    }
+
+    #[test]
+    fn token_usage_json_from_ditto_usage_keeps_cache_only_usage() {
+        let usage = ditto_llm::Usage {
+            input_tokens: None,
+            cache_input_tokens: Some(42),
+            cache_creation_input_tokens: None,
+            output_tokens: None,
+            total_tokens: None,
+        };
+        let json = token_usage_json_from_ditto_usage(&usage).expect("usage json");
+        assert_eq!(
+            json.get("cache_input_tokens")
+                .and_then(serde_json::Value::as_u64),
+            Some(42)
+        );
+    }
+
+    #[test]
     fn tool_is_read_only_is_conservative() {
         assert!(tool_is_read_only("file_read"));
         assert!(tool_is_read_only("file_glob"));
@@ -48,6 +90,7 @@ mod tool_parallelism_tests {
         assert!(tool_is_read_only("artifact_list"));
         assert!(tool_is_read_only("artifact_read"));
         assert!(tool_is_read_only("thread_state"));
+        assert!(tool_is_read_only("thread_usage"));
         assert!(tool_is_read_only("thread_events"));
 
         assert!(!tool_is_read_only("file_write"));
@@ -61,6 +104,42 @@ mod tool_parallelism_tests {
         assert!(!tool_is_read_only("artifact_delete"));
         assert!(!tool_is_read_only("thread_hook_run"));
         assert!(!tool_is_read_only("agent_spawn"));
+    }
+
+    #[test]
+    fn plan_directive_forces_serial_tool_calls() {
+        let (parallel, max_parallel) = apply_plan_parallel_tool_call_overrides(true, true, 8);
+        assert!(!parallel);
+        assert_eq!(max_parallel, 1);
+    }
+
+    #[test]
+    fn no_plan_directive_keeps_parallel_settings() {
+        let (parallel, max_parallel) = apply_plan_parallel_tool_call_overrides(false, true, 8);
+        assert!(parallel);
+        assert_eq!(max_parallel, 8);
+    }
+
+    #[test]
+    fn summarize_plan_artifact_uses_first_non_empty_line() {
+        let summary = summarize_plan_artifact("\n\n# Plan\n- step 1\n");
+        assert_eq!(summary, "# Plan");
+    }
+
+    #[test]
+    fn summarize_plan_artifact_falls_back_to_plan() {
+        let summary = summarize_plan_artifact("   \n\n");
+        assert_eq!(summary, "plan");
+    }
+
+    #[test]
+    fn plan_directive_uses_architect_role_for_routing() {
+        assert_eq!(resolve_turn_role_for_routing(true, "coder"), "architect");
+    }
+
+    #[test]
+    fn non_plan_turn_keeps_thread_mode_for_routing() {
+        assert_eq!(resolve_turn_role_for_routing(false, "reviewer"), "reviewer");
     }
 }
 
@@ -403,6 +482,7 @@ mod auto_summary_tests {
                 input: "first".to_string(),
                 context_refs: None,
                 attachments: None,
+                directives: None,
                 priority: omne_protocol::TurnPriority::Foreground,
             })
             .await?;
@@ -444,6 +524,7 @@ mod auto_summary_tests {
                 input: "second".to_string(),
                 context_refs: None,
                 attachments: None,
+                directives: None,
                 priority: omne_protocol::TurnPriority::Foreground,
             })
             .await?;
@@ -500,6 +581,88 @@ mod auto_summary_tests {
             }),
             "expected summary to replace older turn input"
         );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn write_plan_artifact_if_needed_emits_plan_ready_marker() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = build_test_server(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let turn_id = TurnId::new();
+        let wrote = write_plan_artifact_if_needed(
+            &server,
+            thread_id,
+            turn_id,
+            true,
+            "# Plan\n\n1. step\n",
+        )
+        .await?;
+        assert!(wrote);
+
+        let events = server
+            .thread_store
+            .read_events_since(thread_id, EventSeq::ZERO)
+            .await?
+            .unwrap_or_default();
+
+        assert!(events.iter().any(|event| {
+            matches!(
+                &event.kind,
+                omne_protocol::ThreadEventKind::AttentionMarkerSet {
+                    marker,
+                    turn_id: event_turn_id,
+                    artifact_id: Some(_),
+                    artifact_type,
+                    ..
+                } if *marker == omne_protocol::AttentionMarkerKind::PlanReady
+                    && *event_turn_id == Some(turn_id)
+                    && artifact_type.as_deref() == Some("plan")
+            )
+        }));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn write_plan_artifact_if_needed_skips_when_disabled_or_empty() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = build_test_server(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let turn_a = TurnId::new();
+        let turn_b = TurnId::new();
+        assert!(
+            !write_plan_artifact_if_needed(&server, thread_id, turn_a, false, "plan text").await?
+        );
+        assert!(!write_plan_artifact_if_needed(&server, thread_id, turn_b, true, "  \n").await?);
+
+        let events = server
+            .thread_store
+            .read_events_since(thread_id, EventSeq::ZERO)
+            .await?
+            .unwrap_or_default();
+        assert!(!events.iter().any(|event| {
+            matches!(
+                &event.kind,
+                omne_protocol::ThreadEventKind::AttentionMarkerSet {
+                    marker: omne_protocol::AttentionMarkerKind::PlanReady,
+                    ..
+                }
+            )
+        }));
 
         Ok(())
     }

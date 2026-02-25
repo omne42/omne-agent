@@ -8,7 +8,7 @@
 
 ## 0) v0.2.0 现状：已有原语（可手工达成）
 
-v0.2.0 已提供最小的 `omne preset` import/export（无 secrets；通过 `thread/config-explain` + `thread/configure` 落盘 `ThreadConfigUpdated`）。
+v0.2.0 已提供最小的 `omne preset` list/import/export（无 secrets；通过 `thread/config-explain` + `thread/configure` 落盘 `ThreadConfigUpdated`）。
 
 ### 0.1 导出（export）
 
@@ -23,21 +23,80 @@ omne preset export <thread_id> \
   --out .omne_data/spec/presets/coder-default.yaml \
   --name coder-default \
   --description "safe defaults for this repo"
+
+# 机器可读失败输出（脚本场景）
+omne preset export <thread_id> --out .omne_data/spec/presets/coder-default.yaml --json
 ```
 
 ### 0.2 导入（import）
 
 ```bash
 omne preset import <thread_id> --file .omne_data/spec/presets/coder-default.yaml
+omne preset import <thread_id> --name coder-default
 ```
 
 约束：
 
 - `import` 默认只允许从 `<omne_root>/spec/` 下加载（可提交/可 review）；`omne_root` 默认是 `<cwd>/.omne_data`，可用 `--omne-root` 覆盖。
+- `import` 必须二选一传入 `--file` 或 `--name`（不可同时传入）。
 - preset 文件严格 allowlist（`deny_unknown_fields`），未知字段直接报错。
+- preset 会拒绝疑似 secret 的值与 env 占位符（例如 `sk-...`、`{{ENV:...}}`、`Bearer ...`、PEM 片段等）。
 - preset 文件不包含任何 secrets；密钥只来自运行环境（见 `docs/redaction.md`）。
+- `--json` 且失败时会输出 `{ ok:false, code, message }`，同时保持非 0 退出。
 
-### 0.3 仍可手工（调试/兜底）
+### 0.3 列出可用 preset（list）
+
+```bash
+omne preset list
+omne preset list --json
+```
+
+发现范围（固定）：
+
+- `<omne_root>/spec/preset.yaml` 或 `preset.yml`
+- `<omne_root>/spec/presets/*.yaml|*.yml`
+
+说明：
+
+- `list` 只做发现与解析校验，不会自动应用 preset。
+- 若某些文件解析失败，会在输出中附带 parse error 摘要（JSON 模式在 `errors[]` 字段中返回，含机读 `code`）。
+- 若 `list` 在发现阶段遇到致命错误（例如 `spec` 目录缺失），`--json` 会输出 `{ ok:false, code, message }`，并保持非 0 退出。
+
+### 0.4 查看单个 preset（show）
+
+```bash
+omne preset show --name coder-default
+omne preset show --file .omne_data/spec/presets/coder-default.yaml
+omne preset show --name coder-default --json
+```
+
+说明：
+
+- `show` 只读取并校验 preset 文件，不会应用到 thread。
+- `show` 与 `import` 一样，必须二选一传入 `--file` 或 `--name`。
+- `--name` 按 preset 的 `name` 字段或文件 stem 匹配；若匹配到多个文件会报歧义错误。
+- `--json` 且失败时会输出 `{ ok:false, code, message }`，便于脚本处理。
+
+### 0.5 批量校验 preset（validate）
+
+```bash
+omne preset validate
+omne preset validate --name coder-default
+omne preset validate --file .omne_data/spec/presets/coder-default.yaml
+omne preset validate --strict
+omne preset validate --json
+```
+
+说明：
+
+- 不传 selector 时会校验 `<omne_root>/spec/` 下全部可发现 preset。
+- 传 `--name` 或 `--file` 时只校验单个目标（`--name` 与 `--file` 互斥）。
+- 传 `--strict` 时，重复 `preset.name` 会被视为错误（便于避免 `--name` 解析歧义）。
+- `--json` 模式下 `errors[]` 包含机读 `code`（如 `parse_yaml`/`duplicate_name`/`secret_like_value`）。
+- 若任意 preset 校验失败，命令返回非 0（适合 CI gate）。
+- 若 `validate` 在目标解析阶段遇到致命错误（如 selector 冲突/缺失），`--json` 会输出 `{ ok:false, code, message }`。
+
+### 0.6 仍可手工（调试/兜底）
 
 ```bash
 omne thread config-explain <thread_id> --json
@@ -46,14 +105,14 @@ omne thread configure <thread_id> --help
 
 ---
 
-## 1) TODO：Preset 文件位置与发现顺序（建议写死）
+## 1) Preset 文件位置与发现顺序（v0.2.0 已部分落地，继续收敛）
 
 > 目标：不要发明“配置搜索 DSL”。固定路径 + 固定优先级就够了。
 
-建议的 preset 文件位置：
+当前实现（`omne preset list`）发现位置：
 
-- Canonical：`./.omne_data/spec/presets/<name>.yaml`
-- Default：`./.omne_data/spec/preset.yaml`（可选；作为“项目默认 preset”）
+- Canonical：`./.omne_data/spec/presets/<name>.yaml|yml`
+- Default：`./.omne_data/spec/preset.yaml|yml`（可选；作为“项目默认 preset”）
 
 v1 建议（写死）：
 
@@ -81,7 +140,7 @@ preset/CLI flags 的关系：
 
 备注：
 
-- v0.2.0 的 `thread/config/explain` 目前只有 `default → env → thread` 三层；引入 preset 后建议把 preset 作为独立层展示（可解释性），但实现仍是 TODO。
+- v0.2.0 的 `thread/config/explain.layers` 已支持 `preset` 层（来源于最新 `artifact_type="preset_applied"`），用于展示 preset 应用来源与时间；配置生效仍通过 `ThreadConfigUpdated`（即 thread 层）。
 
 ---
 
@@ -136,7 +195,7 @@ thread_config:
    - `version` 受支持。
    - 所有字段都在 allowlist 中（未知字段报错）。
    - `mode` 若存在，必须能在 `ModeCatalog` 找到（否则报错）。
-   - 文件中若出现任何“看起来像 secrets 的字段名/值形态”，应直接报错（宁可误报也别误放行；见 `docs/redaction.md` 的口径）。
+   - 文件中若出现任何“看起来像 secrets 的值形态”，会直接报错（当前实现宁可误报也不放行；见 `docs/redaction.md` 的口径）。
    - `sandbox_writable_roots` 必须通过与 `thread/configure` 一致的路径校验（拒绝 `..` 与 symlink escape；路径解析以 thread cwd 为基准）。
 3. 路径处理：
    - `sandbox_writable_roots` 以 thread cwd 为基准解析；
@@ -144,23 +203,23 @@ thread_config:
 4. 应用：
    - 调用 `thread/configure` 写入 `ThreadConfigUpdated` 事件。
 
-审计建议（TODO）：
+审计现状（v0.2.0）：
 
-- 导入时追加一条 provenance 事件（例如 `ThreadPresetApplied { name, path, sha256 }`），避免“只看结果看不出来源”。
-- 日志/事件只记录 `name/path/hash` 与脱敏视图；禁止落盘原始 YAML payload（见 `docs/redaction.md` 的口径）。
+- 导入时会写 `artifact_type="preset_applied"` 作为 provenance 锚点（summary + metadata 可定位），`thread/config-explain` 读取该 artifact 生成 `preset` layer。
+- 日志/事件不落盘原始 YAML payload；只记录脱敏摘要与 provenance 引用（见 `docs/redaction.md`）。
 
 ---
 
-## 4) TODO：导出语义（export preset）
+## 4) 导出语义（export preset，v0.2.0 已实现最小子集）
 
-最小导出语义建议：
+当前导出语义：
 
 1. 输入：`thread_id`。
 2. 来源：调用 `thread/config/explain`，取 `effective`（这是可解释的最终生效值）。
 3. 生成：按 2.1 的结构写出 YAML（字段稳定排序，便于 diff/review）。
 4. 便携性：
    - `sandbox_writable_roots` 若位于 thread 根目录下，导出为相对路径（例如 `.`）；
-   - 若位于根目录外，导出为绝对路径并显式标注“不可移植”（避免静默坑别人）。
+   - 若位于根目录外，导出为绝对路径，并在 preset 顶层写入 `portability_warnings[]`（以及终端输出 `warning: ...`）显式提示“不可移植”。
 
 安全约束（硬规则）：
 
@@ -172,5 +231,8 @@ thread_config:
 ## 5) DoD（v0.2.0 最小实现）
 
 - `omne preset export <id> --out .omne_data/spec/presets/x.yaml` 生成的文件里不包含任何 token 形态（例如 `rg -n \"sk-\" .omne_data/spec/presets/x.yaml` 命中为 0）。
-- `omne preset import <id> --file .omne_data/spec/presets/x.yaml` 后，`omne thread config-explain <id> --json` 的 `effective` 与 preset 对齐。
-- （如果实现了独立层）`thread/config/explain.layers` 能看到 `preset` 来源与元信息（name/hash）。
+- 当 thread 存在根目录外的绝对 writable root 时，`preset.yaml` 会包含 `portability_warnings`，且命令行会打印对应 warning。
+- `omne preset show --name x --json` 可返回 preset 内容（仅校验，不改 thread）。
+- `omne preset validate --json` 可批量输出校验结果；有错误时返回非 0。
+- `omne preset import <id> --file .omne_data/spec/presets/x.yaml`（或 `--name x`）后，`omne thread config-explain <id> --json` 的 `effective` 与 preset 对齐。
+- `thread/config-explain.layers` 能看到 `source="preset"` 的来源层，且包含 `artifact_id/summary/updated_at`（用于追溯导入来源）。

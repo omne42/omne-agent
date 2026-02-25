@@ -1,0 +1,44 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "FileModeDeniedResponse",
+  "type": "object",
+  "required": [
+    "decision",
+    "decision_source",
+    "denied",
+    "mode",
+    "tool_id",
+    "tool_override_hit"
+  ],
+  "properties": {
+    "decision": {
+      "$ref": "#/definitions/FileModeDecision"
+    },
+    "decision_source": {
+      "type": "string"
+    },
+    "denied": {
+      "type": "boolean"
+    },
+    "mode": {
+      "type": "string"
+    },
+    "tool_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "tool_override_hit": {
+      "type": "boolean"
+    }
+  },
+  "definitions": {
+    "FileModeDecision": {
+      "type": "string",
+      "enum": [
+        "allow",
+        "prompt",
+        "deny"
+      ]
+    }
+  }
+}

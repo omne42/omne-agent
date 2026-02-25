@@ -42,6 +42,9 @@
                     has_plan_ready: false,
                     has_diff_ready: false,
                     has_fan_out_linkage_issue: false,
+                    has_fan_out_auto_apply_error: false,
+                    has_fan_in_dependency_blocked: false,
+                    pending_subagent_proxy_approvals: 0,
                     has_test_failed: false,
                     created_at: None,
                     updated_at: None,
@@ -55,6 +58,9 @@
                     has_plan_ready: false,
                     has_diff_ready: false,
                     has_fan_out_linkage_issue: true,
+                    has_fan_out_auto_apply_error: false,
+                    has_fan_in_dependency_blocked: false,
+                    pending_subagent_proxy_approvals: 0,
                     has_test_failed: false,
                     created_at: None,
                     updated_at: None,
@@ -65,7 +71,7 @@
             state.selected_thread = 1;
 
             let actual = render_to_string(&mut state, 64, 12)?;
-            let expected = r#"threads [all] (↑↓ Enter n=new l=filter r=refresh q=quit)        
+            let expected = r#"threads [all] archived=off (↑↓ Enter n h l a b s c r q)         
 Updated  Attn   Title   CWD    Message                          
   -        run    First   /repo  hello                          
 ▶ -        link!  Second  /repo  world                          
@@ -78,6 +84,81 @@ Updated  Attn   Title   CWD    Message
                                                                 
 69% context left  threads f=all (Ctrl-K=commands)               "#;
             assert_eq!(actual, expected);
+            Ok(())
+        }
+
+        #[test]
+        fn renders_fan_in_dependency_blocked_badge_in_thread_list() -> anyhow::Result<()> {
+            let mut state = UiState::new(false);
+            state.threads = vec![ThreadMeta {
+                thread_id: ThreadId::from_str("00000000-0000-0000-0000-000000000001")?,
+                cwd: Some("/repo".to_string()),
+                attention_state: "running".to_string(),
+                has_plan_ready: false,
+                has_diff_ready: false,
+                has_fan_out_linkage_issue: false,
+                has_fan_out_auto_apply_error: false,
+                has_fan_in_dependency_blocked: true,
+                pending_subagent_proxy_approvals: 0,
+                has_test_failed: false,
+                created_at: None,
+                updated_at: None,
+                title: Some("First".to_string()),
+                first_message: Some("hello".to_string()),
+            }];
+
+            let actual = render_to_string(&mut state, 64, 6)?;
+            assert!(actual.contains("fanin!"));
+            Ok(())
+        }
+
+        #[test]
+        fn renders_subagent_pending_badge_in_thread_list() -> anyhow::Result<()> {
+            let mut state = UiState::new(false);
+            state.threads = vec![ThreadMeta {
+                thread_id: ThreadId::from_str("00000000-0000-0000-0000-000000000001")?,
+                cwd: Some("/repo".to_string()),
+                attention_state: "need_approval".to_string(),
+                has_plan_ready: false,
+                has_diff_ready: false,
+                has_fan_out_linkage_issue: false,
+                has_fan_out_auto_apply_error: false,
+                has_fan_in_dependency_blocked: false,
+                pending_subagent_proxy_approvals: 2,
+                has_test_failed: false,
+                created_at: None,
+                updated_at: None,
+                title: Some("First".to_string()),
+                first_message: Some("hello".to_string()),
+            }];
+
+            let actual = render_to_string(&mut state, 64, 6)?;
+            assert!(actual.contains("sub2"));
+            Ok(())
+        }
+
+        #[test]
+        fn renders_subagent_pending_badge_caps_large_counts() -> anyhow::Result<()> {
+            let mut state = UiState::new(false);
+            state.threads = vec![ThreadMeta {
+                thread_id: ThreadId::from_str("00000000-0000-0000-0000-000000000001")?,
+                cwd: Some("/repo".to_string()),
+                attention_state: "need_approval".to_string(),
+                has_plan_ready: false,
+                has_diff_ready: false,
+                has_fan_out_linkage_issue: false,
+                has_fan_out_auto_apply_error: false,
+                has_fan_in_dependency_blocked: false,
+                pending_subagent_proxy_approvals: 1200,
+                has_test_failed: false,
+                created_at: None,
+                updated_at: None,
+                title: Some("First".to_string()),
+                first_message: Some("hello".to_string()),
+            }];
+
+            let actual = render_to_string(&mut state, 64, 6)?;
+            assert!(actual.contains("sub999+"));
             Ok(())
         }
 
@@ -125,6 +206,48 @@ assistant: Streaming...
                                                                 
                                                                 "#;
             assert_eq!(actual, expected);
+            Ok(())
+        }
+
+        #[test]
+        fn thread_view_footer_shows_subagent_pending_total_on_narrow_width() -> anyhow::Result<()> {
+            let thread_id = ThreadId::from_str("00000000-0000-0000-0000-000000000001")?;
+            let mut state = UiState::new(false);
+            state.active_thread = Some(thread_id);
+            state.header.mode = Some("coder".to_string());
+            state.header.model = Some("gpt-4.1".to_string());
+            state.subagent_pending_summary = Some(SubagentPendingSummary {
+                total: 3,
+                states: std::collections::BTreeMap::from([
+                    ("failed".to_string(), 1usize),
+                    ("running".to_string(), 2usize),
+                ]),
+            });
+
+            let actual = render_to_string(&mut state, 64, 8)?;
+            assert!(actual.contains("sub=3"));
+            Ok(())
+        }
+
+        #[test]
+        fn thread_view_footer_shows_subagent_pending_state_breakdown_on_wide_width() -> anyhow::Result<()> {
+            let thread_id = ThreadId::from_str("00000000-0000-0000-0000-000000000001")?;
+            let mut state = UiState::new(false);
+            state.active_thread = Some(thread_id);
+            state.header.mode = Some("coder".to_string());
+            state.header.model = Some("gpt-4.1".to_string());
+            state.subagent_pending_summary = Some(SubagentPendingSummary {
+                total: 3,
+                states: std::collections::BTreeMap::from([
+                    ("failed".to_string(), 1usize),
+                    ("running".to_string(), 2usize),
+                ]),
+            });
+
+            let actual = render_to_string(&mut state, 140, 8)?;
+            assert!(actual.contains("sub=3("));
+            assert!(actual.contains("failed:1"));
+            assert!(actual.contains("running:2"));
             Ok(())
         }
 
@@ -191,6 +314,11 @@ assistant: Streaming...
                 .map(|item| item.label.clone())
                 .collect::<Vec<_>>();
             assert!(labels.iter().any(|label| label == "linkage-filter=off"));
+            assert!(labels.iter().any(|label| label == "auto-apply-filter=off"));
+            assert!(labels.iter().any(|label| label == "fan-in-filter=off"));
+            assert!(labels.iter().any(|label| label == "subagent-filter=off"));
+            assert!(labels.iter().any(|label| label == "clear-filters"));
+            assert!(labels.iter().any(|label| label == "archived=off"));
 
             state.only_fan_out_linkage_issue = true;
             let labels = build_root_palette(&state)
@@ -199,6 +327,765 @@ assistant: Streaming...
                 .map(|item| item.label.clone())
                 .collect::<Vec<_>>();
             assert!(labels.iter().any(|label| label == "linkage-filter=on"));
+            assert!(labels.iter().any(|label| label == "auto-apply-filter=off"));
+            assert!(labels.iter().any(|label| label == "fan-in-filter=off"));
+            assert!(labels.iter().any(|label| label == "subagent-filter=off"));
+            assert!(labels.iter().any(|label| label == "clear-filters"));
+            assert!(labels.iter().any(|label| label == "archived=off"));
+
+            state.only_fan_out_auto_apply_error = true;
+            let labels = build_root_palette(&state)
+                .items
+                .iter()
+                .map(|item| item.label.clone())
+                .collect::<Vec<_>>();
+            assert!(labels.iter().any(|label| label == "linkage-filter=on"));
+            assert!(labels.iter().any(|label| label == "auto-apply-filter=on"));
+            assert!(labels.iter().any(|label| label == "fan-in-filter=off"));
+            assert!(labels.iter().any(|label| label == "subagent-filter=off"));
+            assert!(labels.iter().any(|label| label == "clear-filters"));
+            assert!(labels.iter().any(|label| label == "archived=off"));
+
+            state.only_fan_in_dependency_blocked = true;
+            let labels = build_root_palette(&state)
+                .items
+                .iter()
+                .map(|item| item.label.clone())
+                .collect::<Vec<_>>();
+            assert!(labels.iter().any(|label| label == "linkage-filter=on"));
+            assert!(labels.iter().any(|label| label == "auto-apply-filter=on"));
+            assert!(labels.iter().any(|label| label == "fan-in-filter=on"));
+            assert!(labels.iter().any(|label| label == "subagent-filter=off"));
+            assert!(labels.iter().any(|label| label == "clear-filters"));
+            assert!(labels.iter().any(|label| label == "archived=off"));
+
+            state.only_subagent_proxy_approval = true;
+            let labels = build_root_palette(&state)
+                .items
+                .iter()
+                .map(|item| item.label.clone())
+                .collect::<Vec<_>>();
+            assert!(labels.iter().any(|label| label == "linkage-filter=on"));
+            assert!(labels.iter().any(|label| label == "auto-apply-filter=on"));
+            assert!(labels.iter().any(|label| label == "fan-in-filter=on"));
+            assert!(labels.iter().any(|label| label == "subagent-filter=on"));
+            assert!(labels.iter().any(|label| label == "clear-filters"));
+            assert!(labels.iter().any(|label| label == "archived=off"));
+
+            state.include_archived = true;
+            let labels = build_root_palette(&state)
+                .items
+                .iter()
+                .map(|item| item.label.clone())
+                .collect::<Vec<_>>();
+            assert!(labels.iter().any(|label| label == "archived=on"));
+        }
+
+        #[test]
+        fn approvals_overlay_palette_shows_filter_and_failed_navigation_actions() {
+            let failed = ApprovalItem {
+                request: omne_app_server_protocol::ApprovalRequestInfo {
+                    approval_id: ApprovalId::new(),
+                    turn_id: None,
+                    action: "subagent/proxy_approval".to_string(),
+                    action_id: Some(
+                        omne_app_server_protocol::ThreadApprovalActionId::SubagentProxyApproval,
+                    ),
+                    params: serde_json::json!({}),
+                    summary: Some(omne_app_server_protocol::ThreadAttentionPendingApprovalSummary {
+                        requirement: None,
+                        argv: None,
+                        cwd: None,
+                        process_id: None,
+                        artifact_type: None,
+                        path: None,
+                        server: None,
+                        tool: None,
+                        hook: None,
+                        child_thread_id: Some(ThreadId::new()),
+                        child_turn_id: None,
+                        child_approval_id: Some(ApprovalId::new()),
+                        child_attention_state: Some("failed".to_string()),
+                        child_last_turn_status: None,
+                        approve_cmd: None,
+                        deny_cmd: None,
+                    }),
+                    requested_at: "2026-01-01T00:00:00Z".to_string(),
+                },
+                decision: None,
+            };
+            let running = ApprovalItem {
+                request: omne_app_server_protocol::ApprovalRequestInfo {
+                    approval_id: ApprovalId::new(),
+                    turn_id: None,
+                    action: "subagent/proxy_approval".to_string(),
+                    action_id: Some(
+                        omne_app_server_protocol::ThreadApprovalActionId::SubagentProxyApproval,
+                    ),
+                    params: serde_json::json!({}),
+                    summary: Some(omne_app_server_protocol::ThreadAttentionPendingApprovalSummary {
+                        requirement: None,
+                        argv: None,
+                        cwd: None,
+                        process_id: None,
+                        artifact_type: None,
+                        path: None,
+                        server: None,
+                        tool: None,
+                        hook: None,
+                        child_thread_id: Some(ThreadId::new()),
+                        child_turn_id: None,
+                        child_approval_id: Some(ApprovalId::new()),
+                        child_attention_state: Some("running".to_string()),
+                        child_last_turn_status: None,
+                        approve_cmd: None,
+                        deny_cmd: None,
+                    }),
+                    requested_at: "2026-01-02T00:00:00Z".to_string(),
+                },
+                decision: None,
+            };
+
+            let mut state = UiState::new(false);
+            state.overlays.push(Overlay::Approvals(ApprovalsOverlay {
+                thread_id: ThreadId::new(),
+                approvals: vec![failed.clone()],
+                all_approvals: vec![failed, running],
+                selected: 0,
+                remember: false,
+                filter: ApprovalsFilter::FailedSubagent,
+                subagent_pending_summary: None,
+            }));
+
+            let palette = build_overlay_palette(&state).expect("approvals palette");
+            assert_eq!(palette.title, "approvals");
+            let labels = palette
+                .items
+                .iter()
+                .map(|item| item.label.clone())
+                .collect::<Vec<_>>();
+            assert!(labels.iter().any(|label| label == "back"));
+            assert!(labels.iter().any(|label| label == "refresh"));
+            assert!(labels.iter().any(|label| label == "select-prev"));
+            assert!(labels.iter().any(|label| label == "select-next"));
+            assert!(labels.iter().any(|label| label == "filter=failed (1/2)"));
+            assert!(labels.iter().any(|label| label == "next-failed"));
+            assert!(labels.iter().any(|label| label == "prev-failed"));
+            assert!(labels.iter().any(|label| label == "approve"));
+            assert!(labels.iter().any(|label| label == "deny"));
+            assert!(labels.iter().any(|label| label == "remember=off"));
+            assert!(labels.iter().any(|label| label == "details"));
+        }
+
+        #[test]
+        fn processes_overlay_palette_shows_process_actions() {
+            let mut state = UiState::new(false);
+            state.overlays.push(Overlay::Processes(ProcessesOverlay {
+                thread_id: ThreadId::new(),
+                processes: vec![],
+                selected: 0,
+            }));
+
+            let palette = build_overlay_palette(&state).expect("processes palette");
+            assert_eq!(palette.title, "processes");
+            let labels = palette
+                .items
+                .iter()
+                .map(|item| item.label.clone())
+                .collect::<Vec<_>>();
+            assert!(labels.iter().any(|label| label == "back"));
+            assert!(labels.iter().any(|label| label == "refresh (0)"));
+            assert!(labels.iter().any(|label| label == "select-prev"));
+            assert!(labels.iter().any(|label| label == "select-next"));
+            assert!(labels.iter().any(|label| label == "inspect"));
+            assert!(labels.iter().any(|label| label == "kill"));
+            assert!(labels.iter().any(|label| label == "interrupt"));
+        }
+
+        #[test]
+        fn artifacts_overlay_palette_shows_artifact_actions() {
+            let mut state = UiState::new(false);
+            state.overlays.push(Overlay::Artifacts(ArtifactsOverlay {
+                thread_id: ThreadId::new(),
+                artifacts: vec![],
+                selected: 0,
+                versions_for: None,
+                versions: vec![],
+                selected_version: 0,
+                version_cache: HashMap::new(),
+                selected_version_cache: HashMap::new(),
+            }));
+
+            let palette = build_overlay_palette(&state).expect("artifacts palette");
+            assert_eq!(palette.title, "artifacts");
+            let labels = palette
+                .items
+                .iter()
+                .map(|item| item.label.clone())
+                .collect::<Vec<_>>();
+            assert!(labels.iter().any(|label| label == "back"));
+            assert!(labels.iter().any(|label| label == "refresh (0)"));
+            assert!(labels.iter().any(|label| label == "select-prev"));
+            assert!(labels.iter().any(|label| label == "select-next"));
+            assert!(labels.iter().any(|label| label == "read"));
+            assert!(labels.iter().any(|label| label == "versions"));
+            assert!(labels.iter().any(|label| label == "versions-reload"));
+            assert!(labels.iter().any(|label| label == "version-prev"));
+            assert!(labels.iter().any(|label| label == "version-next"));
+            assert!(labels.iter().any(|label| label == "version-latest"));
+        }
+
+        #[test]
+        fn overlay_palette_command_key_maps_overlay_actions_to_expected_keys() {
+            let approvals = [
+                (PaletteCommand::ApprovalsCycleFilter, KeyCode::Char('t')),
+                (PaletteCommand::ApprovalsNextFailed, KeyCode::Char('f')),
+                (PaletteCommand::ApprovalsPrevFailed, KeyCode::Char('F')),
+                (PaletteCommand::ApprovalsRefresh, KeyCode::Char('r')),
+                (PaletteCommand::ApprovalsSelectPrev, KeyCode::Up),
+                (PaletteCommand::ApprovalsSelectNext, KeyCode::Down),
+                (PaletteCommand::ApprovalsApprove, KeyCode::Char('y')),
+                (PaletteCommand::ApprovalsDeny, KeyCode::Char('n')),
+                (PaletteCommand::ApprovalsToggleRemember, KeyCode::Char('m')),
+                (PaletteCommand::ApprovalsOpenDetails, KeyCode::Enter),
+            ];
+            for (command, expected_code) in approvals {
+                let key = overlay_palette_command_key(&command).expect("approvals key");
+                assert_eq!(key.code, expected_code);
+                assert_eq!(key.modifiers, KeyModifiers::NONE);
+            }
+
+            let processes = [
+                (PaletteCommand::ProcessesRefresh, KeyCode::Char('r')),
+                (PaletteCommand::ProcessesSelectPrev, KeyCode::Up),
+                (PaletteCommand::ProcessesSelectNext, KeyCode::Down),
+                (PaletteCommand::ProcessesInspect, KeyCode::Enter),
+                (PaletteCommand::ProcessesKill, KeyCode::Char('k')),
+                (PaletteCommand::ProcessesInterrupt, KeyCode::Char('x')),
+            ];
+            for (command, expected_code) in processes {
+                let key = overlay_palette_command_key(&command).expect("processes key");
+                assert_eq!(key.code, expected_code);
+                assert_eq!(key.modifiers, KeyModifiers::NONE);
+            }
+
+            let artifacts = [
+                (PaletteCommand::ArtifactsRefresh, KeyCode::Char('r')),
+                (PaletteCommand::ArtifactsSelectPrev, KeyCode::Up),
+                (PaletteCommand::ArtifactsSelectNext, KeyCode::Down),
+                (PaletteCommand::ArtifactsRead, KeyCode::Enter),
+                (PaletteCommand::ArtifactsLoadVersions, KeyCode::Char('v')),
+                (PaletteCommand::ArtifactsReloadVersions, KeyCode::Char('R')),
+                (PaletteCommand::ArtifactsPrevVersion, KeyCode::Char('[')),
+                (PaletteCommand::ArtifactsNextVersion, KeyCode::Char(']')),
+                (PaletteCommand::ArtifactsLatestVersion, KeyCode::Char('0')),
+            ];
+            for (command, expected_code) in artifacts {
+                let key = overlay_palette_command_key(&command).expect("artifacts key");
+                assert_eq!(key.code, expected_code);
+                assert_eq!(key.modifiers, KeyModifiers::NONE);
+            }
+        }
+
+        #[test]
+        fn overlay_palette_command_key_ignores_non_overlay_actions() {
+            assert!(overlay_palette_command_key(&PaletteCommand::Help).is_none());
+            assert!(overlay_palette_command_key(&PaletteCommand::Quit).is_none());
+            assert!(overlay_palette_command_key(&PaletteCommand::OpenApprovals).is_none());
+        }
+
+        #[test]
+        fn command_palette_context_label_defaults_and_normalizes() {
+            let empty = CommandPaletteOverlay::new("   ", vec![]);
+            assert_eq!(empty.context_label(), "commands");
+
+            let approvals = CommandPaletteOverlay::new("Approvals", vec![]);
+            assert_eq!(approvals.context_label(), "approvals");
+        }
+
+        #[test]
+        fn overlay_palettes_actions_are_close_or_key_mapped() {
+            let thread_id = ThreadId::new();
+            let approvals_palette = {
+                let mut state = UiState::new(false);
+                state.overlays.push(Overlay::Approvals(ApprovalsOverlay {
+                    thread_id,
+                    approvals: vec![],
+                    all_approvals: vec![],
+                    selected: 0,
+                    remember: false,
+                    filter: ApprovalsFilter::All,
+                    subagent_pending_summary: None,
+                }));
+                build_overlay_palette(&state).expect("approvals palette")
+            };
+            let processes_palette = {
+                let mut state = UiState::new(false);
+                state.overlays.push(Overlay::Processes(ProcessesOverlay {
+                    thread_id,
+                    processes: vec![],
+                    selected: 0,
+                }));
+                build_overlay_palette(&state).expect("processes palette")
+            };
+            let artifacts_palette = {
+                let mut state = UiState::new(false);
+                state.overlays.push(Overlay::Artifacts(ArtifactsOverlay {
+                    thread_id,
+                    artifacts: vec![],
+                    selected: 0,
+                    versions_for: None,
+                    versions: vec![],
+                    selected_version: 0,
+                    version_cache: HashMap::new(),
+                    selected_version_cache: HashMap::new(),
+                }));
+                build_overlay_palette(&state).expect("artifacts palette")
+            };
+
+            for palette in [approvals_palette, processes_palette, artifacts_palette] {
+                for item in palette.items {
+                    match item.action {
+                        PaletteCommand::ClosePalette => {}
+                        action => assert!(
+                            overlay_palette_command_key(&action).is_some(),
+                            "palette '{}' has unmapped action '{}'",
+                            palette.title,
+                            item.label
+                        ),
+                    }
+                }
+            }
+        }
+
+        #[test]
+        fn overlay_palette_mapped_keys_drive_local_overlay_state_changes() -> anyhow::Result<()> {
+            let mk_approval = |action: &str| ApprovalItem {
+                request: omne_app_server_protocol::ApprovalRequestInfo {
+                    approval_id: ApprovalId::new(),
+                    turn_id: None,
+                    action: action.to_string(),
+                    action_id: Some(omne_app_server_protocol::ThreadApprovalActionId::ProcessStart),
+                    params: serde_json::json!({}),
+                    summary: None,
+                    requested_at: "2026-01-01T00:00:00Z".to_string(),
+                },
+                decision: None,
+            };
+            let mut approvals = ApprovalsOverlay {
+                thread_id: ThreadId::new(),
+                approvals: vec![mk_approval("process/start"), mk_approval("process/kill")],
+                all_approvals: vec![mk_approval("process/start"), mk_approval("process/kill")],
+                selected: 0,
+                remember: false,
+                filter: ApprovalsFilter::All,
+                subagent_pending_summary: None,
+            };
+
+            let select_next_key =
+                overlay_palette_command_key(&PaletteCommand::ApprovalsSelectNext).expect("key");
+            match handle_local_approvals_key(&mut approvals, select_next_key.code) {
+                ApprovalsLocalKeyResult::Handled(_) => {}
+                ApprovalsLocalKeyResult::Unhandled => panic!("expected handled key"),
+            }
+            assert_eq!(approvals.selected, 1);
+
+            let remember_key = overlay_palette_command_key(
+                &PaletteCommand::ApprovalsToggleRemember,
+            )
+            .expect("key");
+            match handle_local_approvals_key(&mut approvals, remember_key.code) {
+                ApprovalsLocalKeyResult::Handled(_) => {}
+                ApprovalsLocalKeyResult::Unhandled => panic!("expected handled key"),
+            }
+            assert!(approvals.remember);
+
+            let mut processes = ProcessesOverlay {
+                thread_id: ThreadId::new(),
+                processes: vec![
+                    ProcessInfo {
+                        process_id: ProcessId::new(),
+                        thread_id: ThreadId::new(),
+                        turn_id: None,
+                        argv: vec!["sleep".to_string(), "1".to_string()],
+                        cwd: "/tmp".to_string(),
+                        started_at: "2026-01-01T00:00:00Z".to_string(),
+                        status: ProcessStatus::Running,
+                        exit_code: None,
+                        stdout_path: "/tmp/stdout.log".to_string(),
+                        stderr_path: "/tmp/stderr.log".to_string(),
+                        last_update_at: "2026-01-01T00:00:00Z".to_string(),
+                    },
+                    ProcessInfo {
+                        process_id: ProcessId::new(),
+                        thread_id: ThreadId::new(),
+                        turn_id: None,
+                        argv: vec!["echo".to_string(), "ok".to_string()],
+                        cwd: "/tmp".to_string(),
+                        started_at: "2026-01-01T00:00:01Z".to_string(),
+                        status: ProcessStatus::Running,
+                        exit_code: None,
+                        stdout_path: "/tmp/stdout2.log".to_string(),
+                        stderr_path: "/tmp/stderr2.log".to_string(),
+                        last_update_at: "2026-01-01T00:00:01Z".to_string(),
+                    },
+                ],
+                selected: 0,
+            };
+            let process_next_key =
+                overlay_palette_command_key(&PaletteCommand::ProcessesSelectNext).expect("key");
+            match handle_local_processes_key(&mut processes, process_next_key.code) {
+                ProcessesLocalKeyResult::Handled => {}
+                ProcessesLocalKeyResult::Unhandled => panic!("expected handled key"),
+            }
+            assert_eq!(processes.selected, 1);
+
+            let artifact_id = ArtifactId::from_str("11111111-0000-0000-0000-000000000001")?;
+            let mut artifacts = ArtifactsOverlay {
+                thread_id: ThreadId::new(),
+                artifacts: vec![ArtifactMetadata {
+                    artifact_id,
+                    artifact_type: "report".to_string(),
+                    summary: "summary".to_string(),
+                    preview: None,
+                    created_at: OffsetDateTime::UNIX_EPOCH,
+                    updated_at: OffsetDateTime::UNIX_EPOCH,
+                    version: 4,
+                    content_path: "/tmp/a.md".to_string(),
+                    size_bytes: 100,
+                    provenance: None,
+                }],
+                selected: 0,
+                versions_for: Some(artifact_id),
+                versions: vec![4, 3, 2],
+                selected_version: 1,
+                version_cache: HashMap::from([(artifact_id, vec![4, 3, 2])]),
+                selected_version_cache: HashMap::from([(artifact_id, 1)]),
+            };
+
+            let next_version_key =
+                overlay_palette_command_key(&PaletteCommand::ArtifactsNextVersion).expect("key");
+            match handle_local_artifacts_key(&mut artifacts, next_version_key.code) {
+                ArtifactsLocalKeyResult::Handled(_) => {}
+                ArtifactsLocalKeyResult::Unhandled => panic!("expected handled key"),
+            }
+            assert_eq!(artifacts.selected_version, 0);
+
+            let prev_version_key =
+                overlay_palette_command_key(&PaletteCommand::ArtifactsPrevVersion).expect("key");
+            match handle_local_artifacts_key(&mut artifacts, prev_version_key.code) {
+                ArtifactsLocalKeyResult::Handled(_) => {}
+                ArtifactsLocalKeyResult::Unhandled => panic!("expected handled key"),
+            }
+            assert_eq!(artifacts.selected_version, 1);
+
+            Ok(())
+        }
+
+        #[test]
+        fn toggle_overlay_command_palette_opens_with_context_status_and_closes() {
+            let mut state = UiState::new(false);
+            state.overlays.push(Overlay::Approvals(ApprovalsOverlay {
+                thread_id: ThreadId::new(),
+                approvals: vec![],
+                all_approvals: vec![],
+                selected: 0,
+                remember: false,
+                filter: ApprovalsFilter::All,
+                subagent_pending_summary: None,
+            }));
+
+            assert!(state.toggle_overlay_command_palette());
+            let opened = state.overlays.last().expect("palette opened");
+            match opened {
+                Overlay::CommandPalette(view) => assert_eq!(view.title, "approvals"),
+                _ => panic!("expected command palette overlay"),
+            }
+            assert_eq!(
+                state.status.as_deref(),
+                Some("overlay commands: approvals")
+            );
+            assert!(state.status_expires_at.is_some());
+
+            assert!(state.toggle_overlay_command_palette());
+            let closed = state.overlays.last().expect("approvals remains");
+            match closed {
+                Overlay::Approvals(_) => {}
+                _ => panic!("expected approvals overlay after close"),
+            }
+        }
+
+        #[test]
+        fn toggle_overlay_command_palette_ignores_non_overlay_types() {
+            let mut state = UiState::new(false);
+            state.overlays.push(Overlay::Text(TextOverlay {
+                title: "Help".to_string(),
+                text: "body".to_string(),
+                scroll: 0,
+            }));
+            assert!(!state.toggle_overlay_command_palette());
+            let top = state.overlays.last().expect("text overlay");
+            match top {
+                Overlay::Text(view) => assert_eq!(view.title, "Help"),
+                _ => panic!("expected text overlay"),
+            }
+            assert_eq!(
+                state.status.as_deref(),
+                Some("overlay commands unavailable")
+            );
+            assert!(state.status_expires_at.is_some());
+        }
+
+        #[test]
+        fn temporary_status_expires_after_ttl() {
+            let mut state = UiState::new(false);
+            state.set_temporary_status("overlay commands unavailable".to_string(), Duration::ZERO);
+            assert_eq!(
+                state.status.as_deref(),
+                Some("overlay commands unavailable")
+            );
+
+            assert!(state.expire_status_if_needed(Instant::now()));
+            assert!(state.status.is_none());
+        }
+
+        #[test]
+        fn regular_status_does_not_expire_without_ttl() {
+            let mut state = UiState::new(false);
+            state.set_status("refreshed".to_string());
+            assert_eq!(state.status.as_deref(), Some("refreshed"));
+
+            assert!(!state.expire_status_if_needed(
+                Instant::now() + Duration::from_secs(10)
+            ));
+            assert_eq!(state.status.as_deref(), Some("refreshed"));
+        }
+
+        fn select_overlay_palette_command_by_query(
+            view: &mut CommandPaletteOverlay,
+            query: &str,
+        ) -> PaletteCommand {
+            for ch in query.chars() {
+                assert!(handle_key_command_palette(
+                    KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE),
+                    view
+                )
+                .is_none());
+            }
+            handle_key_command_palette(
+                KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+                view,
+            )
+            .expect("selected action")
+        }
+
+        #[test]
+        fn overlay_palette_key_flow_applies_selected_command_to_underlying_approvals() {
+            let make_approval = |action: &str| ApprovalItem {
+                request: omne_app_server_protocol::ApprovalRequestInfo {
+                    approval_id: ApprovalId::new(),
+                    turn_id: None,
+                    action: action.to_string(),
+                    action_id: Some(omne_app_server_protocol::ThreadApprovalActionId::ProcessStart),
+                    params: serde_json::json!({}),
+                    summary: None,
+                    requested_at: "2026-01-01T00:00:00Z".to_string(),
+                },
+                decision: None,
+            };
+
+            let mut state = UiState::new(false);
+            state.overlays.push(Overlay::Approvals(ApprovalsOverlay {
+                thread_id: ThreadId::new(),
+                approvals: vec![make_approval("process/start"), make_approval("process/kill")],
+                all_approvals: vec![make_approval("process/start"), make_approval("process/kill")],
+                selected: 0,
+                remember: false,
+                filter: ApprovalsFilter::All,
+                subagent_pending_summary: None,
+            }));
+
+            assert!(state.toggle_overlay_command_palette());
+
+            let command = {
+                let view = match state.overlays.last_mut() {
+                    Some(Overlay::CommandPalette(view)) => view,
+                    _ => panic!("expected command palette overlay"),
+                };
+                select_overlay_palette_command_by_query(view, "select-next")
+            };
+            assert!(matches!(command, PaletteCommand::ApprovalsSelectNext));
+
+            let mapped_key = overlay_palette_command_key(&command).expect("mapped key");
+            assert!(state.apply_overlay_palette_local_key(mapped_key));
+
+            let overlay = state.overlays.last().expect("approvals overlay");
+            match overlay {
+                Overlay::Approvals(view) => {
+                    assert_eq!(view.selected, 1);
+                    assert!(!view.remember);
+                }
+                _ => panic!("expected approvals overlay"),
+            }
+        }
+
+        #[test]
+        fn overlay_palette_key_flow_applies_selected_command_to_underlying_processes() {
+            let mut state = UiState::new(false);
+            state.overlays.push(Overlay::Processes(ProcessesOverlay {
+                thread_id: ThreadId::new(),
+                processes: vec![
+                    ProcessInfo {
+                        process_id: ProcessId::new(),
+                        thread_id: ThreadId::new(),
+                        turn_id: None,
+                        argv: vec!["sleep".to_string(), "1".to_string()],
+                        cwd: "/tmp".to_string(),
+                        started_at: "2026-01-01T00:00:00Z".to_string(),
+                        status: ProcessStatus::Running,
+                        exit_code: None,
+                        stdout_path: "/tmp/stdout.log".to_string(),
+                        stderr_path: "/tmp/stderr.log".to_string(),
+                        last_update_at: "2026-01-01T00:00:00Z".to_string(),
+                    },
+                    ProcessInfo {
+                        process_id: ProcessId::new(),
+                        thread_id: ThreadId::new(),
+                        turn_id: None,
+                        argv: vec!["echo".to_string(), "ok".to_string()],
+                        cwd: "/tmp".to_string(),
+                        started_at: "2026-01-01T00:00:01Z".to_string(),
+                        status: ProcessStatus::Running,
+                        exit_code: None,
+                        stdout_path: "/tmp/stdout2.log".to_string(),
+                        stderr_path: "/tmp/stderr2.log".to_string(),
+                        last_update_at: "2026-01-01T00:00:01Z".to_string(),
+                    },
+                ],
+                selected: 0,
+            }));
+
+            assert!(state.toggle_overlay_command_palette());
+            let command = {
+                let view = match state.overlays.last_mut() {
+                    Some(Overlay::CommandPalette(view)) => view,
+                    _ => panic!("expected command palette overlay"),
+                };
+                select_overlay_palette_command_by_query(view, "select-next")
+            };
+            assert!(matches!(command, PaletteCommand::ProcessesSelectNext));
+
+            let mapped_key = overlay_palette_command_key(&command).expect("mapped key");
+            assert!(state.apply_overlay_palette_local_key(mapped_key));
+
+            let overlay = state.overlays.last().expect("processes overlay");
+            match overlay {
+                Overlay::Processes(view) => assert_eq!(view.selected, 1),
+                _ => panic!("expected processes overlay"),
+            }
+        }
+
+        #[test]
+        fn overlay_palette_key_flow_applies_selected_command_to_underlying_artifacts() -> anyhow::Result<()> {
+            let artifact_id = ArtifactId::from_str("11111111-0000-0000-0000-000000000001")?;
+            let mut state = UiState::new(false);
+            state.overlays.push(Overlay::Artifacts(ArtifactsOverlay {
+                thread_id: ThreadId::new(),
+                artifacts: vec![ArtifactMetadata {
+                    artifact_id,
+                    artifact_type: "report".to_string(),
+                    summary: "summary".to_string(),
+                    preview: None,
+                    created_at: OffsetDateTime::UNIX_EPOCH,
+                    updated_at: OffsetDateTime::UNIX_EPOCH,
+                    version: 4,
+                    content_path: "/tmp/a.md".to_string(),
+                    size_bytes: 100,
+                    provenance: None,
+                }],
+                selected: 0,
+                versions_for: Some(artifact_id),
+                versions: vec![4, 3, 2],
+                selected_version: 1,
+                version_cache: HashMap::from([(artifact_id, vec![4, 3, 2])]),
+                selected_version_cache: HashMap::from([(artifact_id, 1)]),
+            }));
+
+            assert!(state.toggle_overlay_command_palette());
+            let command = {
+                let view = match state.overlays.last_mut() {
+                    Some(Overlay::CommandPalette(view)) => view,
+                    _ => panic!("expected command palette overlay"),
+                };
+                select_overlay_palette_command_by_query(view, "version-next")
+            };
+            assert!(matches!(command, PaletteCommand::ArtifactsNextVersion));
+
+            let mapped_key = overlay_palette_command_key(&command).expect("mapped key");
+            assert!(state.apply_overlay_palette_local_key(mapped_key));
+
+            let overlay = state.overlays.last().expect("artifacts overlay");
+            match overlay {
+                Overlay::Artifacts(view) => {
+                    assert_eq!(view.selected_version, 0);
+                    assert_eq!(view.selected_version_cache.get(&artifact_id).copied(), Some(0));
+                }
+                _ => panic!("expected artifacts overlay"),
+            }
+            Ok(())
+        }
+
+        #[test]
+        fn thread_view_renders_overlay_local_command_palette() -> anyhow::Result<()> {
+            let thread_id = ThreadId::from_str("00000000-0000-0000-0000-000000000001")?;
+            let approval = ApprovalItem {
+                request: omne_app_server_protocol::ApprovalRequestInfo {
+                    approval_id: ApprovalId::new(),
+                    turn_id: None,
+                    action: "process/start".to_string(),
+                    action_id: Some(omne_app_server_protocol::ThreadApprovalActionId::ProcessStart),
+                    params: serde_json::json!({}),
+                    summary: None,
+                    requested_at: "2026-01-01T00:00:00Z".to_string(),
+                },
+                decision: None,
+            };
+
+            let mut state = UiState::new(false);
+            state.active_thread = Some(thread_id);
+            state.overlays.push(Overlay::Approvals(ApprovalsOverlay {
+                thread_id,
+                approvals: vec![approval.clone()],
+                all_approvals: vec![approval],
+                selected: 0,
+                remember: false,
+                filter: ApprovalsFilter::All,
+                subagent_pending_summary: None,
+            }));
+
+            let palette = build_overlay_palette(&state).expect("approvals palette");
+            state.overlays.push(Overlay::CommandPalette(palette));
+
+            let actual = render_to_string(&mut state, 120, 18)?;
+            assert!(actual.contains("approvals: (type to search)"));
+            assert!(actual.contains("filter=all"));
+            Ok(())
+        }
+
+        #[test]
+        fn clear_thread_picker_filters_resets_all_attention_flags() {
+            let mut state = UiState::new(false);
+            assert!(!state.clear_thread_picker_filters());
+
+            state.only_fan_out_linkage_issue = true;
+            state.only_fan_out_auto_apply_error = true;
+            state.only_fan_in_dependency_blocked = true;
+            state.only_subagent_proxy_approval = true;
+            assert!(state.clear_thread_picker_filters());
+            assert!(!state.only_fan_out_linkage_issue);
+            assert!(!state.only_fan_out_auto_apply_error);
+            assert!(!state.only_fan_in_dependency_blocked);
+            assert!(!state.only_subagent_proxy_approval);
         }
 
         #[test]
@@ -210,6 +1097,9 @@ assistant: Streaming...
                 has_plan_ready: false,
                 has_diff_ready: false,
                 has_fan_out_linkage_issue: false,
+                has_fan_out_auto_apply_error: false,
+                has_fan_in_dependency_blocked: false,
+                pending_subagent_proxy_approvals: 0,
                 has_test_failed: false,
                 created_at: None,
                 updated_at: None,
@@ -223,6 +1113,9 @@ assistant: Streaming...
                 has_plan_ready: false,
                 has_diff_ready: false,
                 has_fan_out_linkage_issue: true,
+                has_fan_out_auto_apply_error: true,
+                has_fan_in_dependency_blocked: true,
+                pending_subagent_proxy_approvals: 2,
                 has_test_failed: false,
                 created_at: None,
                 updated_at: None,
@@ -236,9 +1129,40 @@ assistant: Streaming...
             assert_eq!(all.len(), 2);
 
             state.only_fan_out_linkage_issue = true;
-            let linkage_only = state.apply_thread_picker_filters(threads);
+            let linkage_only = state.apply_thread_picker_filters(threads.clone());
             assert_eq!(linkage_only.len(), 1);
             assert_eq!(linkage_only[0].thread_id, t2.thread_id);
+
+            state.only_fan_out_linkage_issue = false;
+            state.only_fan_out_auto_apply_error = true;
+            let auto_only = state.apply_thread_picker_filters(threads.clone());
+            assert_eq!(auto_only.len(), 1);
+            assert_eq!(auto_only[0].thread_id, t2.thread_id);
+
+            state.only_fan_out_linkage_issue = true;
+            state.only_fan_out_auto_apply_error = true;
+            let both = state.apply_thread_picker_filters(threads);
+            assert_eq!(both.len(), 1);
+            assert_eq!(both[0].thread_id, t2.thread_id);
+
+            state.only_fan_out_linkage_issue = false;
+            state.only_fan_out_auto_apply_error = false;
+            state.only_fan_in_dependency_blocked = true;
+            let fanin_only = state.apply_thread_picker_filters(vec![t1.clone(), t2.clone()]);
+            assert_eq!(fanin_only.len(), 1);
+            assert_eq!(
+                fanin_only[0].thread_id,
+                ThreadId::from_str("00000000-0000-0000-0000-000000000002")?
+            );
+
+            state.only_fan_in_dependency_blocked = false;
+            state.only_subagent_proxy_approval = true;
+            let subagent_only = state.apply_thread_picker_filters(vec![t1, t2]);
+            assert_eq!(subagent_only.len(), 1);
+            assert_eq!(
+                subagent_only[0].thread_id,
+                ThreadId::from_str("00000000-0000-0000-0000-000000000002")?
+            );
             Ok(())
         }
 
@@ -251,6 +1175,31 @@ assistant: Streaming...
             state.only_fan_out_linkage_issue = true;
             let on = render_to_string(&mut state, 64, 4)?;
             assert!(on.contains("threads [link]"));
+
+            state.only_fan_out_linkage_issue = false;
+            state.only_fan_out_auto_apply_error = true;
+            let auto = render_to_string(&mut state, 64, 4)?;
+            assert!(auto.contains("threads [auto]"));
+
+            state.only_fan_out_linkage_issue = true;
+            let both = render_to_string(&mut state, 64, 4)?;
+            assert!(both.contains("threads [link+auto]"));
+
+            state.only_fan_out_linkage_issue = false;
+            state.only_fan_out_auto_apply_error = false;
+            state.only_fan_in_dependency_blocked = true;
+            let fanin = render_to_string(&mut state, 64, 4)?;
+            assert!(fanin.contains("threads [fanin]"));
+
+            state.only_fan_out_linkage_issue = true;
+            let link_fanin = render_to_string(&mut state, 64, 4)?;
+            assert!(link_fanin.contains("threads [link+fanin]"));
+
+            state.only_fan_out_linkage_issue = false;
+            state.only_fan_in_dependency_blocked = false;
+            state.only_subagent_proxy_approval = true;
+            let subagent = render_to_string(&mut state, 64, 4)?;
+            assert!(subagent.contains("threads [subagent]"));
             Ok(())
         }
 
@@ -263,6 +1212,31 @@ assistant: Streaming...
             state.only_fan_out_linkage_issue = true;
             let on = render_to_string(&mut state, 64, 12)?;
             assert!(on.contains("threads f=link (Ctrl-K=commands)"));
+
+            state.only_fan_out_linkage_issue = false;
+            state.only_fan_out_auto_apply_error = true;
+            let auto = render_to_string(&mut state, 64, 12)?;
+            assert!(auto.contains("threads f=auto (Ctrl-K=commands)"));
+
+            state.only_fan_out_linkage_issue = true;
+            let both = render_to_string(&mut state, 64, 12)?;
+            assert!(both.contains("threads f=link+auto (Ctrl-K=commands)"));
+
+            state.only_fan_out_linkage_issue = false;
+            state.only_fan_out_auto_apply_error = false;
+            state.only_fan_in_dependency_blocked = true;
+            let fanin = render_to_string(&mut state, 64, 12)?;
+            assert!(fanin.contains("threads f=fanin (Ctrl-K=commands)"));
+
+            state.only_fan_out_linkage_issue = true;
+            let link_fanin = render_to_string(&mut state, 64, 12)?;
+            assert!(link_fanin.contains("threads f=link+fanin (Ctrl-K=commands)"));
+
+            state.only_fan_out_linkage_issue = false;
+            state.only_fan_in_dependency_blocked = false;
+            state.only_subagent_proxy_approval = true;
+            let subagent = render_to_string(&mut state, 64, 12)?;
+            assert!(subagent.contains("threads f=subagent (Ctrl-K=commands)"));
             Ok(())
         }
 
@@ -368,6 +1342,63 @@ assistant: Streaming...
             assert_eq!(view.versions_for, Some(artifact_a));
             assert_eq!(view.selected_version, 2);
             assert_eq!(view.versions, vec![4, 3, 2]);
+            Ok(())
+        }
+
+        #[test]
+        fn handle_local_artifacts_key_supports_version_navigation_and_latest_reset() -> anyhow::Result<()>
+        {
+            let thread_id = ThreadId::from_str("00000000-0000-0000-0000-000000000001")?;
+            let artifact_id = ArtifactId::from_str("11111111-0000-0000-0000-000000000001")?;
+            let mut view = ArtifactsOverlay {
+                thread_id,
+                artifacts: vec![ArtifactMetadata {
+                    artifact_id,
+                    artifact_type: "report".to_string(),
+                    summary: "a".to_string(),
+                    preview: None,
+                    created_at: OffsetDateTime::UNIX_EPOCH,
+                    updated_at: OffsetDateTime::UNIX_EPOCH,
+                    version: 4,
+                    content_path: "/tmp/a.md".to_string(),
+                    size_bytes: 100,
+                    provenance: None,
+                }],
+                selected: 0,
+                versions_for: Some(artifact_id),
+                versions: vec![4, 3, 2],
+                selected_version: 0,
+                version_cache: HashMap::from([(artifact_id, vec![4, 3, 2])]),
+                selected_version_cache: HashMap::from([(artifact_id, 0)]),
+            };
+
+            match handle_local_artifacts_key(&mut view, KeyCode::Char('[')) {
+                ArtifactsLocalKeyResult::Handled(_) => {}
+                ArtifactsLocalKeyResult::Unhandled => panic!("expected handled key"),
+            }
+            assert_eq!(view.selected_version, 1);
+            assert_eq!(view.selected_version_cache.get(&artifact_id), Some(&1));
+
+            match handle_local_artifacts_key(&mut view, KeyCode::Char(']')) {
+                ArtifactsLocalKeyResult::Handled(_) => {}
+                ArtifactsLocalKeyResult::Unhandled => panic!("expected handled key"),
+            }
+            assert_eq!(view.selected_version, 0);
+            assert_eq!(view.selected_version_cache.get(&artifact_id), Some(&0));
+
+            view.selected_version = 2;
+            view.selected_version_cache.insert(artifact_id, 2);
+            let status = match handle_local_artifacts_key(&mut view, KeyCode::Char('0')) {
+                ArtifactsLocalKeyResult::Handled(status) => status,
+                ArtifactsLocalKeyResult::Unhandled => panic!("expected handled key"),
+            };
+            assert_eq!(view.selected_version, 0);
+            assert_eq!(view.selected_version_cache.get(&artifact_id), Some(&0));
+            assert!(
+                status
+                    .as_deref()
+                    .is_some_and(|msg| msg.contains("artifact version reset to latest: 4"))
+            );
             Ok(())
         }
 
@@ -542,37 +1573,62 @@ assistant: Streaming...
                 fan_in_summary: Some(omne_app_server_protocol::ArtifactFanInSummaryStructuredData {
                     schema_version: "fan_in_summary.v1".to_string(),
                     thread_id: "thread-1".to_string(),
-                    task_count: 1,
+                    task_count: 2,
                     scheduling: omne_app_server_protocol::ArtifactFanInSummaryScheduling {
                         env_max_concurrent_subagents: 4,
                         effective_concurrency_limit: 2,
                         priority_aging_rounds: 3,
                     },
-                    tasks: vec![omne_app_server_protocol::ArtifactFanInSummaryTask {
-                        task_id: "task_a".to_string(),
-                        title: "do work".to_string(),
-                        thread_id: None,
-                        turn_id: None,
-                        status: "NeedUserInput".to_string(),
-                        reason: Some("awaiting approval".to_string()),
-                        dependency_blocked: false,
-                        result_artifact_id: None,
-                        result_artifact_error: None,
-                        result_artifact_error_id: None,
-                        pending_approval: Some(
-                            omne_app_server_protocol::ArtifactFanInSummaryPendingApproval {
-                                approval_id: "approval-1".to_string(),
-                                action: "artifact/read".to_string(),
-                                summary: None,
-                                approve_cmd: Some(
-                                    "omne approval decide thread-1 approval-1 --approve".to_string(),
-                                ),
-                                deny_cmd: Some(
-                                    "omne approval decide thread-1 approval-1 --deny".to_string(),
-                                ),
-                            },
-                        ),
-                    }],
+                    tasks: vec![
+                        omne_app_server_protocol::ArtifactFanInSummaryTask {
+                            task_id: "task_a".to_string(),
+                            title: "do work".to_string(),
+                            thread_id: None,
+                            turn_id: None,
+                            status: "NeedUserInput".to_string(),
+                            reason: Some("awaiting approval".to_string()),
+                            dependency_blocked: false,
+                            dependency_blocker_task_id: None,
+                            dependency_blocker_status: None,
+                            result_artifact_id: None,
+                            result_artifact_error: None,
+                            result_artifact_error_id: None,
+                            result_artifact_diagnostics: None,
+                            pending_approval: Some(
+                                omne_app_server_protocol::ArtifactFanInSummaryPendingApproval {
+                                    approval_id: "approval-1".to_string(),
+                                    action: "artifact/read".to_string(),
+                                    summary: None,
+                                    approve_cmd: Some(
+                                        "omne approval decide thread-1 approval-1 --approve"
+                                            .to_string(),
+                                    ),
+                                    deny_cmd: Some(
+                                        "omne approval decide thread-1 approval-1 --deny"
+                                            .to_string(),
+                                    ),
+                                },
+                            ),
+                        },
+                        omne_app_server_protocol::ArtifactFanInSummaryTask {
+                            task_id: "task_b".to_string(),
+                            title: "follow-up".to_string(),
+                            thread_id: None,
+                            turn_id: None,
+                            status: "Failed".to_string(),
+                            reason: Some(
+                                "blocked by dependency: task_a status=NeedUserInput".to_string(),
+                            ),
+                            dependency_blocked: true,
+                            dependency_blocker_task_id: Some("task_a".to_string()),
+                            dependency_blocker_status: Some("NeedUserInput".to_string()),
+                            result_artifact_id: None,
+                            result_artifact_error: None,
+                            result_artifact_error_id: None,
+                            result_artifact_diagnostics: None,
+                            pending_approval: None,
+                        },
+                    ],
                 }),
                 fan_out_linkage_issue: None,
                 fan_out_linkage_issue_clear: None,
@@ -581,9 +1637,12 @@ assistant: Streaming...
             let text = build_artifact_read_text(&resp);
             assert!(text.contains("# Fan-in Summary (structured)"));
             assert!(text.contains("schema_version: fan_in_summary.v1"));
+            assert!(text.contains("dependency_blocked: 1"));
             assert!(text.contains("pending_approval: action=artifact/read approval_id=approval-1"));
             assert!(text.contains("approve_cmd: omne approval decide thread-1 approval-1 --approve"));
             assert!(text.contains("deny_cmd: omne approval decide thread-1 approval-1 --deny"));
+            assert!(text.contains("dependency_blocker_task_id: task_a"));
+            assert!(text.contains("dependency_blocker_status: NeedUserInput"));
             Ok(())
         }
 
@@ -766,6 +1825,51 @@ assistant: Streaming...
                             ),
                         },
                     ),
+                    isolated_write_auto_apply: Some(
+                        omne_app_server_protocol::ArtifactFanOutResultIsolatedWriteAutoApplyStructuredData {
+                            enabled: true,
+                            attempted: true,
+                            applied: true,
+                            workspace_cwd: Some("/tmp/subagent/repo".to_string()),
+                            target_workspace_cwd: Some("/tmp/parent/repo".to_string()),
+                            check_argv: vec![
+                                "git".to_string(),
+                                "-C".to_string(),
+                                "/tmp/parent/repo".to_string(),
+                                "apply".to_string(),
+                                "--check".to_string(),
+                                "--whitespace=nowarn".to_string(),
+                                "-".to_string(),
+                            ],
+                            apply_argv: vec![
+                                "git".to_string(),
+                                "-C".to_string(),
+                                "/tmp/parent/repo".to_string(),
+                                "apply".to_string(),
+                                "--whitespace=nowarn".to_string(),
+                                "-".to_string(),
+                            ],
+                            patch_artifact_id: Some("artifact-1".to_string()),
+                            patch_read_cmd: Some(
+                                "omne artifact read thread-1 artifact-1".to_string(),
+                            ),
+                            failure_stage: None,
+                            recovery_hint: None,
+                            recovery_commands: vec![
+                                omne_app_server_protocol::ArtifactFanOutResultRecoveryCommandStructuredData {
+                                    label: "read_patch_artifact".to_string(),
+                                    argv: vec![
+                                        "omne".to_string(),
+                                        "artifact".to_string(),
+                                        "read".to_string(),
+                                        "thread-1".to_string(),
+                                        "artifact-1".to_string(),
+                                    ],
+                                },
+                            ],
+                            error: None,
+                        },
+                    ),
                     status: "completed".to_string(),
                     reason: None,
                 }),
@@ -783,6 +1887,15 @@ assistant: Streaming...
             assert!(text.contains("## isolated_write_handoff"));
             assert!(text.contains("- status_argv: git -C /tmp/subagent/repo status --short --"));
             assert!(text.contains("- patch_artifact_id: artifact-1"));
+            assert!(text.contains("## isolated_write_auto_apply"));
+            assert!(text.contains("- applied: true"));
+            assert!(text.contains("- target_workspace_cwd: /tmp/parent/repo"));
+            assert!(text.contains("- patch_artifact_id: artifact-1"));
+            assert!(text.contains("- patch_read_cmd: omne artifact read thread-1 artifact-1"));
+            assert!(text.contains("- recovery_commands:"));
+            assert!(text.contains(
+                "  - read_patch_artifact: omne artifact read thread-1 artifact-1"
+            ));
             Ok(())
         }
 
@@ -805,6 +1918,7 @@ assistant: Streaming...
             let denied = omne_app_server_protocol::ArtifactDeniedResponse {
                 tool_id: ToolId::new(),
                 denied: true,
+                error_code: None,
                 remembered: None,
             };
             let value = serde_json::to_value(denied)?;
@@ -852,6 +1966,7 @@ assistant: Streaming...
                 denied: true,
                 thread_id: ThreadId::new(),
                 remembered: None,
+                error_code: None,
             };
             let value = serde_json::to_value(denied)?;
             let parsed: RpcActionOutcome<omne_app_server_protocol::ProcessSignalResponse> =
@@ -896,6 +2011,736 @@ assistant: Streaming...
         }
 
         #[test]
+        fn approval_subagent_state_color_maps_running_and_failed() {
+            let request = omne_app_server_protocol::ApprovalRequestInfo {
+                approval_id: ApprovalId::new(),
+                turn_id: None,
+                action: "subagent/proxy_approval".to_string(),
+                action_id: Some(omne_app_server_protocol::ThreadApprovalActionId::SubagentProxyApproval),
+                params: serde_json::json!({}),
+                summary: Some(omne_app_server_protocol::ThreadAttentionPendingApprovalSummary {
+                    requirement: None,
+                    argv: None,
+                    cwd: None,
+                    process_id: None,
+                    artifact_type: None,
+                    path: None,
+                    server: None,
+                    tool: Some("process/start".to_string()),
+                    hook: None,
+                    child_thread_id: Some(ThreadId::new()),
+                    child_turn_id: None,
+                    child_approval_id: Some(ApprovalId::new()),
+                    child_attention_state: Some("running".to_string()),
+                    child_last_turn_status: None,
+                    approve_cmd: None,
+                    deny_cmd: None,
+                }),
+                requested_at: "2026-01-01T00:00:00Z".to_string(),
+            };
+            assert_eq!(
+                approval_subagent_state_color(&request),
+                Some(ratatui::style::Color::Yellow)
+            );
+
+            let request_failed = omne_app_server_protocol::ApprovalRequestInfo {
+                summary: Some(omne_app_server_protocol::ThreadAttentionPendingApprovalSummary {
+                    child_attention_state: Some("FAILED".to_string()),
+                    ..request.summary.clone().expect("summary")
+                }),
+                ..request
+            };
+            assert_eq!(
+                approval_subagent_state_color(&request_failed),
+                Some(ratatui::style::Color::LightRed)
+            );
+        }
+
+        #[test]
+        fn approval_subagent_state_color_ignores_non_subagent_action() {
+            let request = omne_app_server_protocol::ApprovalRequestInfo {
+                approval_id: ApprovalId::new(),
+                turn_id: None,
+                action: "process/start".to_string(),
+                action_id: Some(omne_app_server_protocol::ThreadApprovalActionId::ProcessStart),
+                params: serde_json::json!({}),
+                summary: Some(omne_app_server_protocol::ThreadAttentionPendingApprovalSummary {
+                    requirement: None,
+                    argv: None,
+                    cwd: None,
+                    process_id: None,
+                    artifact_type: None,
+                    path: None,
+                    server: None,
+                    tool: Some("process/start".to_string()),
+                    hook: None,
+                    child_thread_id: Some(ThreadId::new()),
+                    child_turn_id: None,
+                    child_approval_id: Some(ApprovalId::new()),
+                    child_attention_state: Some("FAILED".to_string()),
+                    child_last_turn_status: None,
+                    approve_cmd: None,
+                    deny_cmd: None,
+                }),
+                requested_at: "2026-01-01T00:00:00Z".to_string(),
+            };
+            assert_eq!(approval_subagent_state_color(&request), None);
+        }
+
+        #[test]
+        fn sort_approvals_for_overlay_prioritizes_subagent_attention_state() {
+            let mk = |action: &str,
+                      action_id: omne_app_server_protocol::ThreadApprovalActionId,
+                      state: Option<&str>,
+                      requested_at: &str| {
+                ApprovalItem {
+                    request: omne_app_server_protocol::ApprovalRequestInfo {
+                        approval_id: ApprovalId::new(),
+                        turn_id: None,
+                        action: action.to_string(),
+                        action_id: Some(action_id),
+                        params: serde_json::json!({}),
+                        summary: Some(omne_app_server_protocol::ThreadAttentionPendingApprovalSummary {
+                            requirement: None,
+                            argv: None,
+                            cwd: None,
+                            process_id: None,
+                            artifact_type: None,
+                            path: None,
+                            server: None,
+                            tool: Some("process/start".to_string()),
+                            hook: None,
+                            child_thread_id: Some(ThreadId::new()),
+                            child_turn_id: None,
+                            child_approval_id: Some(ApprovalId::new()),
+                            child_attention_state: state.map(ToString::to_string),
+                            child_last_turn_status: None,
+                            approve_cmd: None,
+                            deny_cmd: None,
+                        }),
+                        requested_at: requested_at.to_string(),
+                    },
+                    decision: None,
+                }
+            };
+
+            let mut items = vec![
+                mk(
+                    "process/start",
+                    omne_app_server_protocol::ThreadApprovalActionId::ProcessStart,
+                    Some("failed"),
+                    "2026-01-01T00:00:00Z",
+                ),
+                mk(
+                    "subagent/proxy_approval",
+                    omne_app_server_protocol::ThreadApprovalActionId::SubagentProxyApproval,
+                    Some("running"),
+                    "2026-01-02T00:00:00Z",
+                ),
+                mk(
+                    "subagent/proxy_approval",
+                    omne_app_server_protocol::ThreadApprovalActionId::SubagentProxyApproval,
+                    Some("FAILED"),
+                    "2026-01-03T00:00:00Z",
+                ),
+                mk(
+                    "subagent/proxy_approval",
+                    omne_app_server_protocol::ThreadApprovalActionId::SubagentProxyApproval,
+                    Some("idle"),
+                    "2026-01-04T00:00:00Z",
+                ),
+            ];
+
+            sort_approvals_for_overlay(items.as_mut_slice());
+            let ordered = items
+                .iter()
+                .map(|it| {
+                    (
+                        it.request.action.clone(),
+                        it.request
+                            .summary
+                            .as_ref()
+                            .and_then(|s| s.child_attention_state.clone()),
+                    )
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                ordered,
+                vec![
+                    ("subagent/proxy_approval".to_string(), Some("FAILED".to_string())),
+                    ("subagent/proxy_approval".to_string(), Some("running".to_string())),
+                    ("subagent/proxy_approval".to_string(), Some("idle".to_string())),
+                    ("process/start".to_string(), Some("failed".to_string())),
+                ]
+            );
+        }
+
+        #[test]
+        fn sort_approvals_for_overlay_keeps_requested_at_within_same_priority() {
+            let mut items = vec![
+                ApprovalItem {
+                    request: omne_app_server_protocol::ApprovalRequestInfo {
+                        approval_id: ApprovalId::new(),
+                        turn_id: None,
+                        action: "subagent/proxy_approval".to_string(),
+                        action_id: Some(
+                            omne_app_server_protocol::ThreadApprovalActionId::SubagentProxyApproval,
+                        ),
+                        params: serde_json::json!({}),
+                        summary: Some(omne_app_server_protocol::ThreadAttentionPendingApprovalSummary {
+                            requirement: None,
+                            argv: None,
+                            cwd: None,
+                            process_id: None,
+                            artifact_type: None,
+                            path: None,
+                            server: None,
+                            tool: None,
+                            hook: None,
+                            child_thread_id: Some(ThreadId::new()),
+                            child_turn_id: None,
+                            child_approval_id: Some(ApprovalId::new()),
+                            child_attention_state: Some("running".to_string()),
+                            child_last_turn_status: None,
+                            approve_cmd: None,
+                            deny_cmd: None,
+                        }),
+                        requested_at: "2026-01-03T00:00:00Z".to_string(),
+                    },
+                    decision: None,
+                },
+                ApprovalItem {
+                    request: omne_app_server_protocol::ApprovalRequestInfo {
+                        approval_id: ApprovalId::new(),
+                        turn_id: None,
+                        action: "subagent/proxy_approval".to_string(),
+                        action_id: Some(
+                            omne_app_server_protocol::ThreadApprovalActionId::SubagentProxyApproval,
+                        ),
+                        params: serde_json::json!({}),
+                        summary: Some(omne_app_server_protocol::ThreadAttentionPendingApprovalSummary {
+                            requirement: None,
+                            argv: None,
+                            cwd: None,
+                            process_id: None,
+                            artifact_type: None,
+                            path: None,
+                            server: None,
+                            tool: None,
+                            hook: None,
+                            child_thread_id: Some(ThreadId::new()),
+                            child_turn_id: None,
+                            child_approval_id: Some(ApprovalId::new()),
+                            child_attention_state: Some("running".to_string()),
+                            child_last_turn_status: None,
+                            approve_cmd: None,
+                            deny_cmd: None,
+                        }),
+                        requested_at: "2026-01-01T00:00:00Z".to_string(),
+                    },
+                    decision: None,
+                },
+            ];
+
+            sort_approvals_for_overlay(items.as_mut_slice());
+            assert!(items[0].request.requested_at < items[1].request.requested_at);
+        }
+
+        #[test]
+        fn next_failed_subagent_approval_index_wraps_to_next_match() {
+            let mk = |action: &str,
+                      action_id: omne_app_server_protocol::ThreadApprovalActionId,
+                      state: Option<&str>| {
+                ApprovalItem {
+                    request: omne_app_server_protocol::ApprovalRequestInfo {
+                        approval_id: ApprovalId::new(),
+                        turn_id: None,
+                        action: action.to_string(),
+                        action_id: Some(action_id),
+                        params: serde_json::json!({}),
+                        summary: Some(
+                            omne_app_server_protocol::ThreadAttentionPendingApprovalSummary {
+                                requirement: None,
+                                argv: None,
+                                cwd: None,
+                                process_id: None,
+                                artifact_type: None,
+                                path: None,
+                                server: None,
+                                tool: None,
+                                hook: None,
+                                child_thread_id: Some(ThreadId::new()),
+                                child_turn_id: None,
+                                child_approval_id: Some(ApprovalId::new()),
+                                child_attention_state: state.map(ToString::to_string),
+                                child_last_turn_status: None,
+                                approve_cmd: None,
+                                deny_cmd: None,
+                            },
+                        ),
+                        requested_at: "2026-01-01T00:00:00Z".to_string(),
+                    },
+                    decision: None,
+                }
+            };
+
+            let items = vec![
+                mk(
+                    "subagent/proxy_approval",
+                    omne_app_server_protocol::ThreadApprovalActionId::SubagentProxyApproval,
+                    Some("running"),
+                ),
+                mk(
+                    "process/start",
+                    omne_app_server_protocol::ThreadApprovalActionId::ProcessStart,
+                    Some("failed"),
+                ),
+                mk(
+                    "subagent/proxy_approval",
+                    omne_app_server_protocol::ThreadApprovalActionId::SubagentProxyApproval,
+                    Some("FAILED"),
+                ),
+            ];
+
+            assert_eq!(
+                next_failed_subagent_approval_index(items.as_slice(), 0),
+                Some(2)
+            );
+            assert_eq!(
+                next_failed_subagent_approval_index(items.as_slice(), 2),
+                Some(2)
+            );
+        }
+
+        #[test]
+        fn next_failed_subagent_approval_index_returns_none_without_match() {
+            let items = vec![ApprovalItem {
+                request: omne_app_server_protocol::ApprovalRequestInfo {
+                    approval_id: ApprovalId::new(),
+                    turn_id: None,
+                    action: "subagent/proxy_approval".to_string(),
+                    action_id: Some(
+                        omne_app_server_protocol::ThreadApprovalActionId::SubagentProxyApproval,
+                    ),
+                    params: serde_json::json!({}),
+                    summary: Some(omne_app_server_protocol::ThreadAttentionPendingApprovalSummary {
+                        requirement: None,
+                        argv: None,
+                        cwd: None,
+                        process_id: None,
+                        artifact_type: None,
+                        path: None,
+                        server: None,
+                        tool: None,
+                        hook: None,
+                        child_thread_id: Some(ThreadId::new()),
+                        child_turn_id: None,
+                        child_approval_id: Some(ApprovalId::new()),
+                        child_attention_state: Some("running".to_string()),
+                        child_last_turn_status: None,
+                        approve_cmd: None,
+                        deny_cmd: None,
+                    }),
+                    requested_at: "2026-01-01T00:00:00Z".to_string(),
+                },
+                decision: None,
+            }];
+
+            assert_eq!(
+                next_failed_subagent_approval_index(items.as_slice(), 0),
+                None
+            );
+        }
+
+        #[test]
+        fn prev_failed_subagent_approval_index_wraps_to_previous_match() {
+            let mk = |action: &str,
+                      action_id: omne_app_server_protocol::ThreadApprovalActionId,
+                      state: Option<&str>| {
+                ApprovalItem {
+                    request: omne_app_server_protocol::ApprovalRequestInfo {
+                        approval_id: ApprovalId::new(),
+                        turn_id: None,
+                        action: action.to_string(),
+                        action_id: Some(action_id),
+                        params: serde_json::json!({}),
+                        summary: Some(
+                            omne_app_server_protocol::ThreadAttentionPendingApprovalSummary {
+                                requirement: None,
+                                argv: None,
+                                cwd: None,
+                                process_id: None,
+                                artifact_type: None,
+                                path: None,
+                                server: None,
+                                tool: None,
+                                hook: None,
+                                child_thread_id: Some(ThreadId::new()),
+                                child_turn_id: None,
+                                child_approval_id: Some(ApprovalId::new()),
+                                child_attention_state: state.map(ToString::to_string),
+                                child_last_turn_status: None,
+                                approve_cmd: None,
+                                deny_cmd: None,
+                            },
+                        ),
+                        requested_at: "2026-01-01T00:00:00Z".to_string(),
+                    },
+                    decision: None,
+                }
+            };
+
+            let items = vec![
+                mk(
+                    "subagent/proxy_approval",
+                    omne_app_server_protocol::ThreadApprovalActionId::SubagentProxyApproval,
+                    Some("FAILED"),
+                ),
+                mk(
+                    "subagent/proxy_approval",
+                    omne_app_server_protocol::ThreadApprovalActionId::SubagentProxyApproval,
+                    Some("running"),
+                ),
+                mk(
+                    "subagent/proxy_approval",
+                    omne_app_server_protocol::ThreadApprovalActionId::SubagentProxyApproval,
+                    Some("error"),
+                ),
+            ];
+
+            assert_eq!(
+                prev_failed_subagent_approval_index(items.as_slice(), 1),
+                Some(0)
+            );
+            assert_eq!(
+                prev_failed_subagent_approval_index(items.as_slice(), 0),
+                Some(2)
+            );
+        }
+
+        #[test]
+        fn prev_failed_subagent_approval_index_returns_none_without_match() {
+            let items = vec![ApprovalItem {
+                request: omne_app_server_protocol::ApprovalRequestInfo {
+                    approval_id: ApprovalId::new(),
+                    turn_id: None,
+                    action: "subagent/proxy_approval".to_string(),
+                    action_id: Some(
+                        omne_app_server_protocol::ThreadApprovalActionId::SubagentProxyApproval,
+                    ),
+                    params: serde_json::json!({}),
+                    summary: Some(omne_app_server_protocol::ThreadAttentionPendingApprovalSummary {
+                        requirement: None,
+                        argv: None,
+                        cwd: None,
+                        process_id: None,
+                        artifact_type: None,
+                        path: None,
+                        server: None,
+                        tool: None,
+                        hook: None,
+                        child_thread_id: Some(ThreadId::new()),
+                        child_turn_id: None,
+                        child_approval_id: Some(ApprovalId::new()),
+                        child_attention_state: Some("running".to_string()),
+                        child_last_turn_status: None,
+                        approve_cmd: None,
+                        deny_cmd: None,
+                    }),
+                    requested_at: "2026-01-01T00:00:00Z".to_string(),
+                },
+                decision: None,
+            }];
+
+            assert_eq!(
+                prev_failed_subagent_approval_index(items.as_slice(), 0),
+                None
+            );
+        }
+
+        #[test]
+        fn failed_subagent_approval_count_counts_only_failed_subagent_items() {
+            let mk = |action: &str,
+                      action_id: omne_app_server_protocol::ThreadApprovalActionId,
+                      state: Option<&str>| {
+                ApprovalItem {
+                    request: omne_app_server_protocol::ApprovalRequestInfo {
+                        approval_id: ApprovalId::new(),
+                        turn_id: None,
+                        action: action.to_string(),
+                        action_id: Some(action_id),
+                        params: serde_json::json!({}),
+                        summary: Some(
+                            omne_app_server_protocol::ThreadAttentionPendingApprovalSummary {
+                                requirement: None,
+                                argv: None,
+                                cwd: None,
+                                process_id: None,
+                                artifact_type: None,
+                                path: None,
+                                server: None,
+                                tool: None,
+                                hook: None,
+                                child_thread_id: Some(ThreadId::new()),
+                                child_turn_id: None,
+                                child_approval_id: Some(ApprovalId::new()),
+                                child_attention_state: state.map(ToString::to_string),
+                                child_last_turn_status: None,
+                                approve_cmd: None,
+                                deny_cmd: None,
+                            },
+                        ),
+                        requested_at: "2026-01-01T00:00:00Z".to_string(),
+                    },
+                    decision: None,
+                }
+            };
+
+            let items = vec![
+                mk(
+                    "subagent/proxy_approval",
+                    omne_app_server_protocol::ThreadApprovalActionId::SubagentProxyApproval,
+                    Some("FAILED"),
+                ),
+                mk(
+                    "subagent/proxy_approval",
+                    omne_app_server_protocol::ThreadApprovalActionId::SubagentProxyApproval,
+                    Some("running"),
+                ),
+                mk(
+                    "process/start",
+                    omne_app_server_protocol::ThreadApprovalActionId::ProcessStart,
+                    Some("failed"),
+                ),
+            ];
+            assert_eq!(failed_subagent_approval_count(items.as_slice()), 1);
+        }
+
+        #[test]
+        fn approval_filter_label_and_cycle_cover_all_variants() {
+            assert_eq!(approval_filter_label(ApprovalsFilter::All), "all");
+            assert_eq!(approval_filter_label(ApprovalsFilter::FailedSubagent), "failed");
+            assert_eq!(approval_filter_label(ApprovalsFilter::RunningSubagent), "running");
+
+            assert_eq!(
+                next_approvals_filter(ApprovalsFilter::All),
+                ApprovalsFilter::FailedSubagent
+            );
+            assert_eq!(
+                next_approvals_filter(ApprovalsFilter::FailedSubagent),
+                ApprovalsFilter::RunningSubagent
+            );
+            assert_eq!(
+                next_approvals_filter(ApprovalsFilter::RunningSubagent),
+                ApprovalsFilter::All
+            );
+        }
+
+        #[test]
+        fn rebuild_filtered_approvals_keeps_selection_by_approval_id() {
+            let failed_id = ApprovalId::new();
+            let running_id = ApprovalId::new();
+            let mk = |approval_id: ApprovalId, state: &str| ApprovalItem {
+                request: omne_app_server_protocol::ApprovalRequestInfo {
+                    approval_id,
+                    turn_id: None,
+                    action: "subagent/proxy_approval".to_string(),
+                    action_id: Some(
+                        omne_app_server_protocol::ThreadApprovalActionId::SubagentProxyApproval,
+                    ),
+                    params: serde_json::json!({}),
+                    summary: Some(omne_app_server_protocol::ThreadAttentionPendingApprovalSummary {
+                        requirement: None,
+                        argv: None,
+                        cwd: None,
+                        process_id: None,
+                        artifact_type: None,
+                        path: None,
+                        server: None,
+                        tool: None,
+                        hook: None,
+                        child_thread_id: Some(ThreadId::new()),
+                        child_turn_id: None,
+                        child_approval_id: Some(ApprovalId::new()),
+                        child_attention_state: Some(state.to_string()),
+                        child_last_turn_status: None,
+                        approve_cmd: None,
+                        deny_cmd: None,
+                    }),
+                    requested_at: "2026-01-01T00:00:00Z".to_string(),
+                },
+                decision: None,
+            };
+
+            let mut overlay = ApprovalsOverlay {
+                thread_id: ThreadId::new(),
+                approvals: vec![],
+                all_approvals: vec![mk(running_id, "running"), mk(failed_id, "failed")],
+                selected: 0,
+                remember: false,
+                filter: ApprovalsFilter::FailedSubagent,
+                subagent_pending_summary: None,
+            };
+
+            rebuild_filtered_approvals(&mut overlay, Some(failed_id));
+            assert_eq!(overlay.approvals.len(), 1);
+            assert_eq!(overlay.approvals[0].request.approval_id, failed_id);
+            assert_eq!(overlay.selected, 0);
+        }
+
+        #[test]
+        fn handle_local_approvals_key_supports_failed_navigation_and_filter_cycle() {
+            let failed_id = ApprovalId::new();
+            let failed_id_2 = ApprovalId::new();
+            let running_id = ApprovalId::new();
+            let running_id_2 = ApprovalId::new();
+            let mk = |approval_id: ApprovalId, state: &str| ApprovalItem {
+                request: omne_app_server_protocol::ApprovalRequestInfo {
+                    approval_id,
+                    turn_id: None,
+                    action: "subagent/proxy_approval".to_string(),
+                    action_id: Some(
+                        omne_app_server_protocol::ThreadApprovalActionId::SubagentProxyApproval,
+                    ),
+                    params: serde_json::json!({}),
+                    summary: Some(omne_app_server_protocol::ThreadAttentionPendingApprovalSummary {
+                        requirement: None,
+                        argv: None,
+                        cwd: None,
+                        process_id: None,
+                        artifact_type: None,
+                        path: None,
+                        server: None,
+                        tool: None,
+                        hook: None,
+                        child_thread_id: Some(ThreadId::new()),
+                        child_turn_id: None,
+                        child_approval_id: Some(ApprovalId::new()),
+                        child_attention_state: Some(state.to_string()),
+                        child_last_turn_status: None,
+                        approve_cmd: None,
+                        deny_cmd: None,
+                    }),
+                    requested_at: "2026-01-01T00:00:00Z".to_string(),
+                },
+                decision: None,
+            };
+
+            let mut overlay = new_approvals_overlay(
+                ThreadId::new(),
+                vec![
+                    mk(running_id, "running"),
+                    mk(failed_id, "failed"),
+                    mk(running_id_2, "running"),
+                    mk(failed_id_2, "error"),
+                ],
+                0,
+                None,
+            );
+
+            let status = match handle_local_approvals_key(&mut overlay, KeyCode::Char('f')) {
+                ApprovalsLocalKeyResult::Handled(status) => status,
+                ApprovalsLocalKeyResult::Unhandled => panic!("expected handled key"),
+            };
+            assert_eq!(overlay.approvals[overlay.selected].request.approval_id, failed_id);
+            assert!(
+                status
+                    .as_deref()
+                    .is_some_and(|msg| msg.contains(&failed_id.to_string()))
+            );
+
+            let status = match handle_local_approvals_key(&mut overlay, KeyCode::Char('F')) {
+                ApprovalsLocalKeyResult::Handled(status) => status,
+                ApprovalsLocalKeyResult::Unhandled => panic!("expected handled key"),
+            };
+            assert_eq!(
+                overlay.approvals[overlay.selected].request.approval_id,
+                failed_id_2
+            );
+            assert!(
+                status
+                    .as_deref()
+                    .is_some_and(|msg| msg.contains(&failed_id_2.to_string()))
+            );
+
+            let status = match handle_local_approvals_key(&mut overlay, KeyCode::Char('t')) {
+                ApprovalsLocalKeyResult::Handled(status) => status,
+                ApprovalsLocalKeyResult::Unhandled => panic!("expected handled key"),
+            };
+            assert_eq!(overlay.filter, ApprovalsFilter::FailedSubagent);
+            assert_eq!(overlay.approvals.len(), 2);
+            assert!(
+                status
+                    .as_deref()
+                    .is_some_and(|msg| msg.contains("approvals filter=failed"))
+            );
+
+            let status = match handle_local_approvals_key(&mut overlay, KeyCode::Char('m')) {
+                ApprovalsLocalKeyResult::Handled(status) => status,
+                ApprovalsLocalKeyResult::Unhandled => panic!("expected handled key"),
+            };
+            assert!(overlay.remember);
+            assert!(
+                status
+                    .as_deref()
+                    .is_some_and(|msg| msg.contains("remember=true"))
+            );
+        }
+
+        #[test]
+        fn handle_local_processes_key_supports_selection_navigation() {
+            let process_a = ProcessInfo {
+                process_id: ProcessId::new(),
+                thread_id: ThreadId::new(),
+                turn_id: None,
+                argv: vec!["sleep".to_string(), "1".to_string()],
+                cwd: "/tmp".to_string(),
+                started_at: "2026-01-01T00:00:00Z".to_string(),
+                status: ProcessStatus::Running,
+                exit_code: None,
+                stdout_path: "/tmp/stdout.log".to_string(),
+                stderr_path: "/tmp/stderr.log".to_string(),
+                last_update_at: "2026-01-01T00:00:00Z".to_string(),
+            };
+            let process_b = ProcessInfo {
+                process_id: ProcessId::new(),
+                thread_id: ThreadId::new(),
+                turn_id: None,
+                argv: vec!["echo".to_string(), "ok".to_string()],
+                cwd: "/tmp".to_string(),
+                started_at: "2026-01-01T00:00:01Z".to_string(),
+                status: ProcessStatus::Running,
+                exit_code: None,
+                stdout_path: "/tmp/stdout2.log".to_string(),
+                stderr_path: "/tmp/stderr2.log".to_string(),
+                last_update_at: "2026-01-01T00:00:01Z".to_string(),
+            };
+            let mut overlay = ProcessesOverlay {
+                thread_id: ThreadId::new(),
+                processes: vec![process_a, process_b],
+                selected: 0,
+            };
+
+            match handle_local_processes_key(&mut overlay, KeyCode::Down) {
+                ProcessesLocalKeyResult::Handled => {}
+                ProcessesLocalKeyResult::Unhandled => panic!("expected handled key"),
+            }
+            assert_eq!(overlay.selected, 1);
+
+            match handle_local_processes_key(&mut overlay, KeyCode::Down) {
+                ProcessesLocalKeyResult::Handled => {}
+                ProcessesLocalKeyResult::Unhandled => panic!("expected handled key"),
+            }
+            assert_eq!(overlay.selected, 1);
+
+            match handle_local_processes_key(&mut overlay, KeyCode::Up) {
+                ProcessesLocalKeyResult::Handled => {}
+                ProcessesLocalKeyResult::Unhandled => panic!("expected handled key"),
+            }
+            assert_eq!(overlay.selected, 0);
+        }
+
+        #[test]
         fn approval_summary_hint_uses_path_when_present() {
             let summary = omne_app_server_protocol::ThreadAttentionPendingApprovalSummary {
                 requirement: None,
@@ -910,6 +2755,8 @@ assistant: Streaming...
                 child_thread_id: None,
                 child_turn_id: None,
                 child_approval_id: None,
+                child_attention_state: None,
+                child_last_turn_status: None,
                 approve_cmd: None,
                 deny_cmd: None,
             };
@@ -936,6 +2783,8 @@ assistant: Streaming...
                 child_thread_id: Some(child_thread_id),
                 child_turn_id: Some(child_turn_id),
                 child_approval_id: Some(child_approval_id),
+                child_attention_state: None,
+                child_last_turn_status: None,
                 approve_cmd: None,
                 deny_cmd: None,
             };
@@ -963,6 +2812,8 @@ assistant: Streaming...
                 child_thread_id: Some(ThreadId::new()),
                 child_turn_id: Some(TurnId::new()),
                 child_approval_id: Some(ApprovalId::new()),
+                child_attention_state: None,
+                child_last_turn_status: None,
                 approve_cmd: None,
                 deny_cmd: None,
             };
@@ -985,6 +2836,8 @@ assistant: Streaming...
                 child_thread_id: None,
                 child_turn_id: None,
                 child_approval_id: None,
+                child_attention_state: None,
+                child_last_turn_status: None,
                 approve_cmd: Some("omne approval decide t1 a1 --approve".to_string()),
                 deny_cmd: Some("omne approval decide t1 a1 --deny".to_string()),
             };
@@ -1008,6 +2861,8 @@ assistant: Streaming...
                 child_thread_id: None,
                 child_turn_id: None,
                 child_approval_id: None,
+                child_attention_state: None,
+                child_last_turn_status: None,
                 approve_cmd: Some("omne approval decide t1 a1 --approve".to_string()),
                 deny_cmd: Some("omne approval decide t1 a1 --deny".to_string()),
             };
@@ -1031,6 +2886,8 @@ assistant: Streaming...
                 child_thread_id: Some(ThreadId::new()),
                 child_turn_id: None,
                 child_approval_id: Some(ApprovalId::new()),
+                child_attention_state: None,
+                child_last_turn_status: None,
                 approve_cmd: Some("omne approval decide t1 a1 --approve".to_string()),
                 deny_cmd: Some("omne approval decide t1 a1 --deny".to_string()),
             };
@@ -1062,5 +2919,202 @@ assistant: Streaming...
             assert!(text.contains("--approve"));
             assert!(text.contains("deny: "));
             assert!(text.contains("--deny"));
+        }
+
+        #[test]
+        fn approvals_overlay_row_shows_compact_subagent_state_hint() -> anyhow::Result<()> {
+            let thread_id = ThreadId::from_str("00000000-0000-0000-0000-000000000001")?;
+            let summary = omne_app_server_protocol::ThreadAttentionPendingApprovalSummary {
+                requirement: None,
+                argv: None,
+                cwd: None,
+                process_id: None,
+                artifact_type: None,
+                path: None,
+                server: None,
+                tool: Some("process/start".to_string()),
+                hook: None,
+                child_thread_id: Some(ThreadId::new()),
+                child_turn_id: Some(TurnId::new()),
+                child_approval_id: Some(ApprovalId::new()),
+                child_attention_state: Some("FAILED".to_string()),
+                child_last_turn_status: None,
+                approve_cmd: None,
+                deny_cmd: None,
+            };
+            let approval = ApprovalItem {
+                request: omne_app_server_protocol::ApprovalRequestInfo {
+                    approval_id: ApprovalId::new(),
+                    turn_id: None,
+                    action: "subagent/proxy_approval".to_string(),
+                    action_id: Some(
+                        omne_app_server_protocol::ThreadApprovalActionId::SubagentProxyApproval,
+                    ),
+                    params: serde_json::json!({}),
+                    summary: Some(summary),
+                    requested_at: "2026-01-01T00:00:00Z".to_string(),
+                },
+                decision: None,
+            };
+
+            let mut state = UiState::new(false);
+            state.overlays.push(Overlay::Approvals(ApprovalsOverlay {
+                thread_id,
+                approvals: vec![approval.clone()],
+                all_approvals: vec![approval],
+                selected: 0,
+                remember: false,
+                filter: ApprovalsFilter::All,
+                subagent_pending_summary: None,
+            }));
+
+            let actual = render_to_string(&mut state, 300, 20)?;
+            assert!(actual.contains("subagent/proxy_approval (failed |"));
+            assert!(!actual.contains("subagent/proxy_approval (child_attention_state="));
+            Ok(())
+        }
+
+        #[test]
+        fn approvals_overlay_title_includes_subagent_pending_summary() -> anyhow::Result<()> {
+            let thread_id = ThreadId::from_str("00000000-0000-0000-0000-000000000001")?;
+            let approval = ApprovalItem {
+                request: omne_app_server_protocol::ApprovalRequestInfo {
+                    approval_id: ApprovalId::new(),
+                    turn_id: None,
+                    action: "subagent/proxy_approval".to_string(),
+                    action_id: Some(
+                        omne_app_server_protocol::ThreadApprovalActionId::SubagentProxyApproval,
+                    ),
+                    params: serde_json::json!({}),
+                    summary: None,
+                    requested_at: "2026-01-01T00:00:00Z".to_string(),
+                },
+                decision: None,
+            };
+
+            let mut state = UiState::new(false);
+            state.overlays.push(Overlay::Approvals(ApprovalsOverlay {
+                thread_id,
+                approvals: vec![approval.clone()],
+                all_approvals: vec![approval],
+                selected: 0,
+                remember: false,
+                filter: ApprovalsFilter::All,
+                subagent_pending_summary: Some(SubagentPendingSummary {
+                    total: 3,
+                    states: std::collections::BTreeMap::from([
+                        ("running".to_string(), 2usize),
+                        ("failed".to_string(), 1usize),
+                    ]),
+                }),
+            }));
+
+            let actual = render_to_string(&mut state, 180, 20)?;
+            assert!(actual.contains("sub=3("));
+            assert!(actual.contains("running:2"));
+            assert!(actual.contains("failed:1"));
+            Ok(())
+        }
+
+        #[test]
+        fn approvals_overlay_title_includes_failed_count() -> anyhow::Result<()> {
+            let thread_id = ThreadId::from_str("00000000-0000-0000-0000-000000000001")?;
+            let approval = ApprovalItem {
+                request: omne_app_server_protocol::ApprovalRequestInfo {
+                    approval_id: ApprovalId::new(),
+                    turn_id: None,
+                    action: "subagent/proxy_approval".to_string(),
+                    action_id: Some(
+                        omne_app_server_protocol::ThreadApprovalActionId::SubagentProxyApproval,
+                    ),
+                    params: serde_json::json!({}),
+                    summary: Some(omne_app_server_protocol::ThreadAttentionPendingApprovalSummary {
+                        requirement: None,
+                        argv: None,
+                        cwd: None,
+                        process_id: None,
+                        artifact_type: None,
+                        path: None,
+                        server: None,
+                        tool: None,
+                        hook: None,
+                        child_thread_id: Some(ThreadId::new()),
+                        child_turn_id: None,
+                        child_approval_id: Some(ApprovalId::new()),
+                        child_attention_state: Some("failed".to_string()),
+                        child_last_turn_status: None,
+                        approve_cmd: None,
+                        deny_cmd: None,
+                    }),
+                    requested_at: "2026-01-01T00:00:00Z".to_string(),
+                },
+                decision: None,
+            };
+
+            let mut state = UiState::new(false);
+            state.overlays.push(Overlay::Approvals(ApprovalsOverlay {
+                thread_id,
+                approvals: vec![approval.clone()],
+                all_approvals: vec![approval],
+                selected: 0,
+                remember: false,
+                filter: ApprovalsFilter::All,
+                subagent_pending_summary: None,
+            }));
+
+            let actual = render_to_string(&mut state, 240, 20)?;
+            assert!(actual.contains("failed=1"));
+            Ok(())
+        }
+
+        #[test]
+        fn approvals_overlay_title_includes_filter_label() -> anyhow::Result<()> {
+            let thread_id = ThreadId::from_str("00000000-0000-0000-0000-000000000001")?;
+            let approval = ApprovalItem {
+                request: omne_app_server_protocol::ApprovalRequestInfo {
+                    approval_id: ApprovalId::new(),
+                    turn_id: None,
+                    action: "subagent/proxy_approval".to_string(),
+                    action_id: Some(
+                        omne_app_server_protocol::ThreadApprovalActionId::SubagentProxyApproval,
+                    ),
+                    params: serde_json::json!({}),
+                    summary: Some(omne_app_server_protocol::ThreadAttentionPendingApprovalSummary {
+                        requirement: None,
+                        argv: None,
+                        cwd: None,
+                        process_id: None,
+                        artifact_type: None,
+                        path: None,
+                        server: None,
+                        tool: None,
+                        hook: None,
+                        child_thread_id: Some(ThreadId::new()),
+                        child_turn_id: None,
+                        child_approval_id: Some(ApprovalId::new()),
+                        child_attention_state: Some("failed".to_string()),
+                        child_last_turn_status: None,
+                        approve_cmd: None,
+                        deny_cmd: None,
+                    }),
+                    requested_at: "2026-01-01T00:00:00Z".to_string(),
+                },
+                decision: None,
+            };
+
+            let mut state = UiState::new(false);
+            state.overlays.push(Overlay::Approvals(ApprovalsOverlay {
+                thread_id,
+                approvals: vec![approval.clone()],
+                all_approvals: vec![approval],
+                selected: 0,
+                remember: false,
+                filter: ApprovalsFilter::FailedSubagent,
+                subagent_pending_summary: None,
+            }));
+
+            let actual = render_to_string(&mut state, 260, 20)?;
+            assert!(actual.contains("filter=failed"));
+            Ok(())
         }
     }

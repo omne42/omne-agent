@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "McpExecPolicyLoadDeniedResponse",
+  "type": "object",
+  "required": [
+    "details",
+    "error",
+    "mode",
+    "tool_id"
+  ],
+  "properties": {
+    "denied": {
+      "default": false,
+      "type": "boolean"
+    },
+    "details": {
+      "type": "string"
+    },
+    "error": {
+      "type": "string"
+    },
+    "mode": {
+      "type": "string"
+    },
+    "tool_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

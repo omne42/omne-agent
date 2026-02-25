@@ -17,21 +17,24 @@ ditto-llm = { path = "../../../ditto-llm" }
 notify-kit = { path = "../../../notify-kit/crates/notify-kit" }
 omne-mcp-kit = { package = "mcp-kit", path = "../../../mcp-kit/crates/mcp-kit" }
 omne-jsonrpc = { package = "mcp-jsonrpc", path = "../../../mcp-kit/crates/jsonrpc" }
-safe-fs-tools = { path = "../../../safe-fs-tools" }
 omne-artifact-store = { path = "../artifact-store" }
 omne-core = { path = "../core" }
 omne-eventlog = { path = "../eventlog" }
 omne-execpolicy = { path = "../execpolicy" }
+omne-fs-runtime = { path = "../fs-runtime" }
+omne-fs-policy = { path = "../fs-policy" }
 omne-process-runtime = { path = "../process-runtime" }
+omne-repo-scan-runtime = { path = "../repo-scan-runtime" }
+omne-repo-symbols-runtime = { path = "../repo-symbols-runtime" }
 omne-app-server-protocol = { path = "../app-server-protocol" }
+omne-checkpoint-runtime = { path = "../checkpoint-runtime" }
+omne-checkpoint-spec = { path = "../checkpoint-spec" }
 omne-protocol = { path = "../agent-protocol" }
-omne-tool-gate = { path = "../tool-gate" }
+omne-workflow-spec = { path = "../workflow-spec" }
 regex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
-tree-sitter.workspace = true
-tree-sitter-rust.workspace = true
 time.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
@@ -40,6 +43,8 @@ thiserror.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 walkdir.workspace = true
+chacha20poly1305 = "0.10"
+sha2 = "0.10"
 
 [dev-dependencies]
 reqwest.workspace = true

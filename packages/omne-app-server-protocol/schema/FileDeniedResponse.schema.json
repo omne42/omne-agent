@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "FileDeniedResponse",
+  "type": "object",
+  "required": [
+    "denied",
+    "tool_id"
+  ],
+  "properties": {
+    "denied": {
+      "type": "boolean"
+    },
+    "remembered": {
+      "default": null,
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "tool_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

@@ -40,13 +40,24 @@ pub struct KeywordRule {
     pub reason: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct RouteIntent<'a> {
+    pub role: Option<&'a str>,
+    pub input: &'a str,
+    pub global_default_model: &'a str,
+    pub forced: bool,
+    pub context_tokens_estimate: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ModelRouteDecision {
+pub struct RoutePlan {
     pub selected_model: String,
     pub rule_source: ModelRoutingRuleSource,
     pub reason: Option<String>,
     pub rule_id: Option<String>,
 }
+
+pub type ModelRouteDecision = RoutePlan;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -236,17 +247,10 @@ pub async fn load_router_config(thread_root: &Path) -> anyhow::Result<Option<Loa
     load_router_config_impl(thread_root, env_router_file.as_deref()).await
 }
 
-pub fn route_model(
-    router: Option<&RouterConfig>,
-    role: Option<&str>,
-    input: &str,
-    global_default_model: &str,
-    forced: bool,
-    context_tokens_estimate: u64,
-) -> ModelRouteDecision {
-    if forced {
-        return ModelRouteDecision {
-            selected_model: global_default_model.to_string(),
+pub fn plan_route(router: Option<&RouterConfig>, intent: RouteIntent<'_>) -> RoutePlan {
+    if intent.forced {
+        return RoutePlan {
+            selected_model: intent.global_default_model.to_string(),
             rule_source: ModelRoutingRuleSource::Subagent,
             reason: Some("model forced by thread config".to_string()),
             rule_id: None,
@@ -254,8 +258,8 @@ pub fn route_model(
     }
 
     let Some(router) = router else {
-        return ModelRouteDecision {
-            selected_model: global_default_model.to_string(),
+        return RoutePlan {
+            selected_model: intent.global_default_model.to_string(),
             rule_source: ModelRoutingRuleSource::GlobalDefault,
             reason: None,
             rule_id: None,
@@ -263,7 +267,7 @@ pub fn route_model(
     };
 
     if let Some(project_override) = &router.project_override {
-        return ModelRouteDecision {
+        return RoutePlan {
             selected_model: project_override.model.clone(),
             rule_source: ModelRoutingRuleSource::ProjectOverride,
             reason: project_override.reason.clone(),
@@ -271,7 +275,7 @@ pub fn route_model(
         };
     }
 
-    let input = input.trim();
+    let input = intent.input.trim();
     if !router.keyword_rules.is_empty() {
         let input_lower = input.to_lowercase();
         for rule in &router.keyword_rules {
@@ -282,7 +286,7 @@ pub fn route_model(
                     .any(|keyword| input_lower.contains(keyword));
             let context_ok = rule
                 .min_context_tokens
-                .is_none_or(|min| context_tokens_estimate >= min);
+                .is_none_or(|min| intent.context_tokens_estimate >= min);
             if keywords_ok && context_ok {
                 let mut reason_parts = Vec::<String>::new();
                 if let Some(reason) = rule.reason.clone() {
@@ -290,7 +294,8 @@ pub fn route_model(
                 }
                 if let Some(min) = rule.min_context_tokens {
                     reason_parts.push(format!(
-                        "context_tokens_estimate={context_tokens_estimate} >= min_context_tokens={min}"
+                        "context_tokens_estimate={} >= min_context_tokens={min}",
+                        intent.context_tokens_estimate
                     ));
                 }
                 let reason = if reason_parts.is_empty() {
@@ -298,7 +303,7 @@ pub fn route_model(
                 } else {
                     Some(reason_parts.join("; "))
                 };
-                return ModelRouteDecision {
+                return RoutePlan {
                     selected_model: rule.model.clone(),
                     rule_source: ModelRoutingRuleSource::KeywordRule,
                     reason,
@@ -308,12 +313,12 @@ pub fn route_model(
         }
     }
 
-    if let Some(role) = role {
+    if let Some(role) = intent.role {
         let role = role.trim().to_lowercase();
         if !role.is_empty()
             && let Some(model) = router.role_defaults.get(&role)
         {
-            return ModelRouteDecision {
+            return RoutePlan {
                 selected_model: model.clone(),
                 rule_source: ModelRoutingRuleSource::RoleDefault,
                 reason: Some(format!("role default: {role}")),
@@ -322,12 +327,32 @@ pub fn route_model(
         }
     }
 
-    ModelRouteDecision {
-        selected_model: global_default_model.to_string(),
+    RoutePlan {
+        selected_model: intent.global_default_model.to_string(),
         rule_source: ModelRoutingRuleSource::GlobalDefault,
         reason: None,
         rule_id: None,
     }
+}
+
+pub fn route_model(
+    router: Option<&RouterConfig>,
+    role: Option<&str>,
+    input: &str,
+    global_default_model: &str,
+    forced: bool,
+    context_tokens_estimate: u64,
+) -> ModelRouteDecision {
+    plan_route(
+        router,
+        RouteIntent {
+            role,
+            input,
+            global_default_model,
+            forced,
+            context_tokens_estimate,
+        },
+    )
 }
 
 #[cfg(test)]

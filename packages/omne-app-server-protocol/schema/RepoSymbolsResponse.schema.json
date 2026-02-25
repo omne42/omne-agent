@@ -1,0 +1,216 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RepoSymbolsResponse",
+  "type": "object",
+  "required": [
+    "artifact_id",
+    "content_path",
+    "created",
+    "files_failed_parse",
+    "files_parsed",
+    "files_scanned",
+    "files_skipped_binary",
+    "files_skipped_too_large",
+    "metadata",
+    "metadata_path",
+    "root",
+    "symbols",
+    "tool_id",
+    "truncated_files",
+    "truncated_symbols"
+  ],
+  "properties": {
+    "artifact_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "content_path": {
+      "type": "string"
+    },
+    "created": {
+      "type": "boolean"
+    },
+    "files_failed_parse": {
+      "type": "integer",
+      "format": "uint",
+      "minimum": 0.0
+    },
+    "files_parsed": {
+      "type": "integer",
+      "format": "uint",
+      "minimum": 0.0
+    },
+    "files_scanned": {
+      "type": "integer",
+      "format": "uint",
+      "minimum": 0.0
+    },
+    "files_skipped_binary": {
+      "type": "integer",
+      "format": "uint",
+      "minimum": 0.0
+    },
+    "files_skipped_too_large": {
+      "type": "integer",
+      "format": "uint",
+      "minimum": 0.0
+    },
+    "metadata": {
+      "$ref": "#/definitions/ArtifactMetadata"
+    },
+    "metadata_path": {
+      "type": "string"
+    },
+    "root": {
+      "type": "string"
+    },
+    "symbols": {
+      "type": "integer",
+      "format": "uint",
+      "minimum": 0.0
+    },
+    "tool_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "truncated_files": {
+      "type": "boolean"
+    },
+    "truncated_symbols": {
+      "type": "boolean"
+    }
+  },
+  "definitions": {
+    "ArtifactMetadata": {
+      "type": "object",
+      "required": [
+        "artifact_id",
+        "artifact_type",
+        "content_path",
+        "created_at",
+        "size_bytes",
+        "summary",
+        "updated_at",
+        "version"
+      ],
+      "properties": {
+        "artifact_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "artifact_type": {
+          "type": "string"
+        },
+        "content_path": {
+          "type": "string"
+        },
+        "created_at": {
+          "type": "string"
+        },
+        "preview": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ArtifactPreview"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "provenance": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ArtifactProvenance"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "size_bytes": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "summary": {
+          "type": "string"
+        },
+        "updated_at": {
+          "type": "string"
+        },
+        "version": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        }
+      }
+    },
+    "ArtifactPreview": {
+      "type": "object",
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "$ref": "#/definitions/ArtifactPreviewKind"
+        },
+        "language": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "ArtifactPreviewKind": {
+      "type": "string",
+      "enum": [
+        "markdown",
+        "diff_unified",
+        "patch_unified",
+        "code",
+        "html",
+        "log"
+      ]
+    },
+    "ArtifactProvenance": {
+      "type": "object",
+      "required": [
+        "thread_id"
+      ],
+      "properties": {
+        "process_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "tool_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "turn_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      }
+    }
+  }
+}

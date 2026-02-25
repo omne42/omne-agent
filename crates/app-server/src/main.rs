@@ -10,6 +10,7 @@ include!("main/app.rs");
 include!("main/thread_observe.rs");
 include!("main/thread_manage.rs");
 include!("main/approval.rs");
+include!("main/mode_gate.rs");
 include!("main/file_read_glob_grep.rs");
 include!("main/repo_index_search.rs");
 include!("main/mcp.rs");
@@ -20,6 +21,9 @@ include!("main/artifact.rs");
 include!("main/hooks_dispatch.rs");
 include!("main/process_control.rs");
 include!("main/process_stream.rs");
+
+#[cfg(test)]
+include!("main/test_support.rs");
 
 #[cfg(test)]
 include!("main/artifact_history_tests.rs");

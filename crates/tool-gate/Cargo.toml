@@ -1,9 +1,0 @@
-[package]
-name = "omne-tool-gate"
-edition.workspace = true
-rust-version.workspace = true
-version.workspace = true
-
-[dependencies]
-omne-core = { path = "../core" }
-serde_json.workspace = true

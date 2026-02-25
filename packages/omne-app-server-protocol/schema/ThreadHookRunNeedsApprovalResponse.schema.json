@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ThreadHookRunNeedsApprovalResponse",
+  "type": "object",
+  "required": [
+    "approval_id",
+    "hook",
+    "needs_approval",
+    "thread_id"
+  ],
+  "properties": {
+    "approval_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "hook": {
+      "type": "string"
+    },
+    "needs_approval": {
+      "type": "boolean"
+    },
+    "thread_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

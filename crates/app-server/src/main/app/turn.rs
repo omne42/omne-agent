@@ -13,11 +13,24 @@ async fn handle_turn_request(
                         params.input,
                         params.context_refs,
                         params.attachments,
+                        params.directives,
                         params.priority.unwrap_or_default(),
                     )
                     .await
                 {
-                    Ok(turn_id) => JsonRpcResponse::ok(id, serde_json::json!({ "turn_id": turn_id })),
+                    Ok(turn_id) => {
+                        match serde_json::to_value(omne_app_server_protocol::TurnStartResponse {
+                            turn_id,
+                        }) {
+                            Ok(response) => JsonRpcResponse::ok(id, response),
+                            Err(err) => JsonRpcResponse::err(
+                                id,
+                                JSONRPC_INTERNAL_ERROR,
+                                err.to_string(),
+                                None,
+                            ),
+                        }
+                    }
                     Err(err) => JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None),
                 },
                 Err(err) => JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None),
@@ -51,7 +64,17 @@ async fn handle_turn_request(
                                 )
                                 .await;
                             });
-                            JsonRpcResponse::ok(id, serde_json::json!({ "ok": true }))
+                            match serde_json::to_value(
+                                omne_app_server_protocol::TurnInterruptResponse { ok: true },
+                            ) {
+                                Ok(response) => JsonRpcResponse::ok(id, response),
+                                Err(err) => JsonRpcResponse::err(
+                                    id,
+                                    JSONRPC_INTERNAL_ERROR,
+                                    err.to_string(),
+                                    None,
+                                ),
+                            }
                         }
                         Err(err) => JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None),
                     }
@@ -60,9 +83,6 @@ async fn handle_turn_request(
             },
             Err(err) => invalid_params(id, err),
         },
-        _ => {
-            let _ = params;
-            method_not_found(id, method)
-        }
+        _ => method_not_found(id, method),
     }
 }

@@ -26,9 +26,6 @@ async fn handle_repo_request(
             },
             Err(err) => invalid_params(id, err),
         },
-        _ => {
-            let _ = params;
-            method_not_found(id, method)
-        }
+        _ => method_not_found(id, method),
     }
 }

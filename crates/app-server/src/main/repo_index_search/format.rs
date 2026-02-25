@@ -1,16 +1,16 @@
 fn format_repo_search_artifact(
-    root: FileRoot,
+    root: &str,
     query: &str,
     is_regex: bool,
     include_glob: Option<&str>,
-    outcome: &RepoGrepOutcome,
+    outcome: &omne_repo_scan_runtime::RepoGrepOutcome,
 ) -> String {
     let mut out = String::new();
     out.push_str("# Repo Search\n\n");
     out.push_str("## Query\n");
-    out.push_str(&format!("- root: `{}`\n", root.as_str()));
+    out.push_str(&format!("- root: `{root}`\n"));
     out.push_str(&format!("- query: `{}`\n", query.trim()));
-    out.push_str(&format!("- is_regex: `{}`\n", is_regex));
+    out.push_str(&format!("- is_regex: `{is_regex}`\n"));
     if let Some(glob) = include_glob {
         out.push_str(&format!("- include_glob: `{glob}`\n"));
     } else {
@@ -41,23 +41,23 @@ fn format_repo_search_artifact(
         ));
     }
     if outcome.truncated {
-        out.push_str("… (truncated)\n");
+        out.push_str("... (truncated)\n");
     }
     out.push_str("```\n");
     out
 }
 
 fn format_repo_index_artifact(
-    root: FileRoot,
+    root: &str,
     include_glob: Option<&str>,
     max_files: usize,
-    outcome: &RepoIndexOutcome,
+    outcome: &omne_repo_scan_runtime::RepoIndexOutcome,
 ) -> String {
     let mut out = String::new();
     out.push_str("# Repo Index\n\n");
 
     out.push_str("## Config\n");
-    out.push_str(&format!("- root: `{}`\n", root.as_str()));
+    out.push_str(&format!("- root: `{root}`\n"));
     if let Some(glob) = include_glob {
         out.push_str(&format!("- include_glob: `{glob}`\n"));
     } else {
@@ -84,25 +84,25 @@ fn format_repo_index_artifact(
         out.push('\n');
     }
     if outcome.truncated {
-        out.push_str("… (truncated)\n");
+        out.push_str("... (truncated)\n");
     }
     out.push_str("```\n");
     out
 }
 
 fn format_repo_symbols_artifact(
-    root: FileRoot,
+    root: &str,
     include_glob: &str,
     max_files: usize,
     max_bytes_per_file: u64,
     max_symbols: usize,
-    outcome: &RepoSymbolsOutcome,
+    outcome: &omne_repo_symbols_runtime::RepoSymbolsOutcome,
 ) -> String {
     let mut out = String::new();
     out.push_str("# Repo Symbols (Rust)\n\n");
 
     out.push_str("## Config\n");
-    out.push_str(&format!("- root: `{}`\n", root.as_str()));
+    out.push_str(&format!("- root: `{root}`\n"));
     out.push_str(&format!("- include_glob: `{include_glob}`\n"));
     out.push_str(&format!("- max_files: `{max_files}`\n"));
     out.push_str(&format!("- max_bytes_per_file: `{max_bytes_per_file}`\n"));
@@ -125,13 +125,21 @@ fn format_repo_symbols_artifact(
     }
 
     out.push_str("\n## Symbols\n");
-    let mut by_path = std::collections::BTreeMap::<&str, Vec<&RepoSymbol>>::new();
+    let mut by_path =
+        std::collections::BTreeMap::<&str, Vec<&omne_repo_symbols_runtime::RepoSymbol>>::new();
     for sym in &outcome.symbols {
         by_path.entry(sym.path.as_str()).or_default().push(sym);
     }
 
     for (path, mut symbols) in by_path {
-        symbols.sort_by_key(|sym| (sym.start_line, sym.end_line, sym.kind, sym.name.as_str()));
+        symbols.sort_by_key(|sym| {
+            (
+                sym.start_line,
+                sym.end_line,
+                sym.kind.as_str(),
+                sym.name.as_str(),
+            )
+        });
         out.push_str(&format!("\n### `{path}`\n\n"));
         for sym in symbols {
             out.push_str(&format!(
@@ -147,3 +155,4 @@ fn format_repo_symbols_artifact(
 
     out
 }
+

@@ -3,6 +3,19 @@
   "private": true,
   "version": "0.0.0",
   "description": "OmneAgent Node launcher (thin wrapper around Rust binaries).",
+  "scripts": {
+    "check": "node --check ./bin/omne.js && node --check ./lib/launcher.js && node --check ./scripts/assemble-vendor.mjs && node --check ./scripts/build-vendor-bundle.mjs && node --check ./scripts/verify-vendor-bundle.mjs && node --check ./scripts/update-release-index.mjs && node --check ./scripts/release-vendor-bundle.mjs && node --check ./scripts/release-host-vendor-bundle.mjs && node --check ./scripts/release-local-vendor-bundle.mjs && node --check ./scripts/release-matrix-vendor-bundle.mjs && node --check ./scripts/validate-tag-release-artifacts.mjs && node --check ./scripts/package-tag-release-assets.mjs && node --check ./scripts/verify-tag-release-tarballs.mjs",
+    "test": "node --test ./tests/*.test.cjs",
+    "vendor:assemble": "node ./scripts/assemble-vendor.mjs",
+    "vendor:bundle": "node ./scripts/build-vendor-bundle.mjs",
+    "vendor:verify": "node ./scripts/verify-vendor-bundle.mjs",
+    "vendor:index": "node ./scripts/update-release-index.mjs",
+    "vendor:release": "node ./scripts/release-vendor-bundle.mjs",
+    "vendor:release:host": "node ./scripts/release-host-vendor-bundle.mjs",
+    "vendor:release:local": "node ./scripts/release-local-vendor-bundle.mjs",
+    "vendor:release:matrix": "node ./scripts/release-matrix-vendor-bundle.mjs",
+    "vendor:release:verify-tarballs": "node ./scripts/verify-tag-release-tarballs.mjs"
+  },
   "bin": {
     "omne": "./bin/omne.js"
   },
@@ -10,4 +23,3 @@
     "node": ">=18"
   }
 }
-

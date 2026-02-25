@@ -35,7 +35,7 @@ MCP 属于“执行外部二进制 + 任意 side-effect”的高风险能力，v
 - `OMNE_ENABLE_MCP=true` 才允许启用 MCP client（**未启用时不读取配置文件**）。
 - 未启用时：
   - 不读取配置文件（即使存在）。
-  - `mcp/*` 调用一律返回错误（fail-closed），且不得启动任何外部进程。
+  - `mcp/*` 调用一律 fail-closed 拒绝（`denied=true`），并返回 `error_code="mcp_disabled"`；且不得启动任何外部进程。
 
 ### 1.2 配置文件位置与发现顺序（建议写死）
 
@@ -115,6 +115,7 @@ fail-closed（写死）：
   - mode：v1 建议默认对 `mcp/*` 采取 `prompt`（或直接 `deny`），避免默认放权。
   - approval：启用 MCP 时强烈建议 `ApprovalPolicy=manual`。
   - `prompt_strict`（已实现；见 `docs/approvals.md`）：v0.2.x 中 `mcp/call` 默认写入 `approval.requirement="prompt_strict"`，并且不可被 `remember` 自动复用。
+  - 被拒绝时返回稳定 `error_code`，便于客户端自动分类（例如 `allowed_tools_denied`、`mode_denied`、`sandbox_policy_denied`、`sandbox_network_denied`、`execpolicy_denied`、`execpolicy_load_denied`、`approval_denied`）。
 
 v0.2.x 实现口径（最小）：
 
@@ -193,6 +194,15 @@ omne mcp serve
 - `omne.process.inspect`
 - `omne.process.tail`
 - `omne.process.follow`
+
+参数补充（当前实现）：
+
+- `omne.thread.events` 支持可选 `kinds: string[]`，用于按事件类型过滤（例如 `["attention_marker_set","attention_marker_cleared"]`）。
+- `omne.thread.events` 的 MCP `inputSchema` 现已给出 `kinds.items.enum`（与 Rust 协议层共享同一枚举源），便于客户端在调用前校验。
+- `omne.thread.events.kinds` 中若包含未知事件类型，服务端会返回 `invalid params`，并在错误数据里附带 `supported_kinds`。
+- CLI 侧 `omne thread events --kind <type>` 也使用同一份事件类型枚举源做参数校验，非法值会在本地直接报错。
+- `omne.thread.attention` 响应包含 marker 布尔摘要：`has_plan_ready` / `has_diff_ready` / `has_fan_out_linkage_issue` / `has_test_failed`；并返回 `attention_markers.*` 详情（当 marker 存在时）。
+- `omne.thread.list_meta` 每个 thread 行同样包含上述 `has_*` 布尔摘要；当 `include_attention_markers=true` 时还会返回 `attention_markers` 对象。
 
 ---
 

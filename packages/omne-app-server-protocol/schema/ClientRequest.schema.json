@@ -1,0 +1,3558 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ClientRequest",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "initialize"
+          ]
+        },
+        "params": {
+          "type": "null"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "initialized"
+          ]
+        },
+        "params": {
+          "type": "null"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "thread/start"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadStartParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "thread/resume"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadResumeParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "thread/fork"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadForkParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "thread/archive"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadArchiveParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "thread/unarchive"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadUnarchiveParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "thread/pause"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadPauseParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "thread/unpause"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadUnpauseParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "thread/delete"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadDeleteParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "thread/clear_artifacts"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadClearArtifactsParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "thread/list"
+          ]
+        },
+        "params": {
+          "type": "null"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "thread/list_meta"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadListMetaParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "thread/loaded"
+          ]
+        },
+        "params": {
+          "type": "null"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "thread/events"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadEventsParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "thread/subscribe"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadSubscribeParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "thread/state"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadStateParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "thread/attention"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadAttentionParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "thread/disk_usage"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadDiskUsageParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "thread/disk_report"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadDiskReportParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "thread/diff"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadDiffParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "thread/patch"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadPatchParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "thread/checkpoint/create"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadCheckpointCreateParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "thread/checkpoint/list"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadCheckpointListParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "thread/checkpoint/restore"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadCheckpointRestoreParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "thread/hook_run"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadHookRunParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "thread/configure"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadConfigureParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "thread/config/explain"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadConfigExplainParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "thread/models"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadModelsParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "turn/start"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/TurnStartParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "turn/interrupt"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/TurnInterruptParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "process/start"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/ProcessStartParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "process/list"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/ProcessListParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "process/inspect"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/ProcessInspectParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "process/kill"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/ProcessKillParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "process/interrupt"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/ProcessInterruptParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "process/tail"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/ProcessTailParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "process/follow"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/ProcessFollowParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "file/read"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/FileReadParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "file/glob"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/FileGlobParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "file/grep"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/FileGrepParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "repo/search"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/RepoSearchParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "repo/index"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/RepoIndexParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "repo/symbols"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/RepoSymbolsParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "mcp/list_servers"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/McpListServersParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "mcp/list_tools"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/McpListToolsParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "mcp/list_resources"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/McpListResourcesParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "mcp/call"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/McpCallParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "file/write"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/FileWriteParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "file/patch"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/FilePatchParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "file/edit"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/FileEditParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "file/delete"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/FileDeleteParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "fs/mkdir"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/FsMkdirParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "artifact/write"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/ArtifactWriteParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "artifact/list"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/ArtifactListParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "artifact/read"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/ArtifactReadParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "artifact/versions"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/ArtifactVersionsParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "artifact/delete"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/ArtifactDeleteParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "approval/decide"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/ApprovalDecideParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "approval/list"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/ApprovalListParams"
+        }
+      }
+    }
+  ],
+  "definitions": {
+    "ApprovalDecideParams": {
+      "type": "object",
+      "required": [
+        "approval_id",
+        "decision",
+        "thread_id"
+      ],
+      "properties": {
+        "approval_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "decision": {
+          "$ref": "#/definitions/ApprovalDecision"
+        },
+        "reason": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "remember": {
+          "default": false,
+          "type": "boolean"
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "ApprovalDecision": {
+      "type": "string",
+      "enum": [
+        "approved",
+        "denied"
+      ]
+    },
+    "ApprovalListParams": {
+      "type": "object",
+      "required": [
+        "thread_id"
+      ],
+      "properties": {
+        "include_decided": {
+          "default": false,
+          "type": "boolean"
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "ApprovalPolicy": {
+      "type": "string",
+      "enum": [
+        "auto_approve",
+        "on_request",
+        "manual",
+        "unless_trusted",
+        "auto_deny"
+      ]
+    },
+    "ArtifactDeleteParams": {
+      "type": "object",
+      "required": [
+        "artifact_id",
+        "thread_id"
+      ],
+      "properties": {
+        "approval_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "artifact_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turn_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      }
+    },
+    "ArtifactListParams": {
+      "type": "object",
+      "required": [
+        "thread_id"
+      ],
+      "properties": {
+        "approval_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turn_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      }
+    },
+    "ArtifactReadParams": {
+      "type": "object",
+      "required": [
+        "artifact_id",
+        "thread_id"
+      ],
+      "properties": {
+        "approval_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "artifact_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "max_bytes": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turn_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "version": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        }
+      }
+    },
+    "ArtifactVersionsParams": {
+      "type": "object",
+      "required": [
+        "artifact_id",
+        "thread_id"
+      ],
+      "properties": {
+        "approval_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "artifact_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turn_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      }
+    },
+    "ArtifactWriteParams": {
+      "type": "object",
+      "required": [
+        "artifact_type",
+        "summary",
+        "text",
+        "thread_id"
+      ],
+      "properties": {
+        "approval_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "artifact_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "artifact_type": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turn_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      }
+    },
+    "AttachmentSource": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "path",
+            "type"
+          ],
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "path"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "url"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "url"
+              ]
+            },
+            "url": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "ContextRef": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "path"
+          ],
+          "properties": {
+            "end_line": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0.0
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "file"
+              ]
+            },
+            "max_bytes": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0.0
+            },
+            "path": {
+              "type": "string"
+            },
+            "start_line": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0.0
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "diff"
+              ]
+            },
+            "max_bytes": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0.0
+            }
+          }
+        }
+      ]
+    },
+    "FileDeleteParams": {
+      "type": "object",
+      "required": [
+        "path",
+        "thread_id"
+      ],
+      "properties": {
+        "approval_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "path": {
+          "type": "string"
+        },
+        "recursive": {
+          "default": false,
+          "type": "boolean"
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turn_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      }
+    },
+    "FileEditOp": {
+      "type": "object",
+      "required": [
+        "new",
+        "old"
+      ],
+      "properties": {
+        "expected_replacements": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "new": {
+          "type": "string"
+        },
+        "old": {
+          "type": "string"
+        }
+      }
+    },
+    "FileEditParams": {
+      "type": "object",
+      "required": [
+        "edits",
+        "path",
+        "thread_id"
+      ],
+      "properties": {
+        "approval_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "edits": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/FileEditOp"
+          }
+        },
+        "max_bytes": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "path": {
+          "type": "string"
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turn_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      }
+    },
+    "FileGlobParams": {
+      "type": "object",
+      "required": [
+        "pattern",
+        "thread_id"
+      ],
+      "properties": {
+        "approval_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "max_results": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "pattern": {
+          "type": "string"
+        },
+        "root": {
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/definitions/FileRoot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turn_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      }
+    },
+    "FileGrepParams": {
+      "type": "object",
+      "required": [
+        "query",
+        "thread_id"
+      ],
+      "properties": {
+        "approval_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "include_glob": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "is_regex": {
+          "default": false,
+          "type": "boolean"
+        },
+        "max_bytes_per_file": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "max_files": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "max_matches": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "query": {
+          "type": "string"
+        },
+        "root": {
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/definitions/FileRoot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turn_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      }
+    },
+    "FilePatchParams": {
+      "type": "object",
+      "required": [
+        "patch",
+        "path",
+        "thread_id"
+      ],
+      "properties": {
+        "approval_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "max_bytes": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "patch": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turn_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      }
+    },
+    "FileReadParams": {
+      "type": "object",
+      "required": [
+        "path",
+        "thread_id"
+      ],
+      "properties": {
+        "approval_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "max_bytes": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "path": {
+          "type": "string"
+        },
+        "root": {
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/definitions/FileRoot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turn_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      }
+    },
+    "FileRoot": {
+      "type": "string",
+      "enum": [
+        "workspace",
+        "reference"
+      ]
+    },
+    "FileWriteParams": {
+      "type": "object",
+      "required": [
+        "path",
+        "text",
+        "thread_id"
+      ],
+      "properties": {
+        "approval_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "create_parent_dirs": {
+          "default": null,
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turn_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      }
+    },
+    "FsMkdirParams": {
+      "type": "object",
+      "required": [
+        "path",
+        "thread_id"
+      ],
+      "properties": {
+        "approval_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "path": {
+          "type": "string"
+        },
+        "recursive": {
+          "default": false,
+          "type": "boolean"
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turn_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      }
+    },
+    "McpCallParams": {
+      "type": "object",
+      "required": [
+        "server",
+        "thread_id",
+        "tool"
+      ],
+      "properties": {
+        "approval_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "arguments": {
+          "default": null
+        },
+        "server": {
+          "type": "string"
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "tool": {
+          "type": "string"
+        },
+        "turn_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      }
+    },
+    "McpListResourcesParams": {
+      "type": "object",
+      "required": [
+        "server",
+        "thread_id"
+      ],
+      "properties": {
+        "approval_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "server": {
+          "type": "string"
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turn_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      }
+    },
+    "McpListServersParams": {
+      "type": "object",
+      "required": [
+        "thread_id"
+      ],
+      "properties": {
+        "approval_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turn_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      }
+    },
+    "McpListToolsParams": {
+      "type": "object",
+      "required": [
+        "server",
+        "thread_id"
+      ],
+      "properties": {
+        "approval_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "server": {
+          "type": "string"
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turn_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      }
+    },
+    "ProcessFollowParams": {
+      "type": "object",
+      "required": [
+        "process_id",
+        "stream"
+      ],
+      "properties": {
+        "approval_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "max_bytes": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "process_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "since_offset": {
+          "default": 0,
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "stream": {
+          "$ref": "#/definitions/ProcessStream"
+        },
+        "turn_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      }
+    },
+    "ProcessInspectParams": {
+      "type": "object",
+      "required": [
+        "process_id"
+      ],
+      "properties": {
+        "approval_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "max_lines": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "process_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turn_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      }
+    },
+    "ProcessInterruptParams": {
+      "type": "object",
+      "required": [
+        "process_id"
+      ],
+      "properties": {
+        "approval_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "process_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "reason": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "turn_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      }
+    },
+    "ProcessKillParams": {
+      "type": "object",
+      "required": [
+        "process_id"
+      ],
+      "properties": {
+        "approval_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "process_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "reason": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "turn_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      }
+    },
+    "ProcessListParams": {
+      "type": "object",
+      "properties": {
+        "thread_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      }
+    },
+    "ProcessStartParams": {
+      "type": "object",
+      "required": [
+        "argv",
+        "thread_id"
+      ],
+      "properties": {
+        "approval_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "argv": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "cwd": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "timeout_ms": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "turn_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      }
+    },
+    "ProcessStream": {
+      "type": "string",
+      "enum": [
+        "stdout",
+        "stderr"
+      ]
+    },
+    "ProcessTailParams": {
+      "type": "object",
+      "required": [
+        "process_id",
+        "stream"
+      ],
+      "properties": {
+        "approval_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "max_lines": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "process_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "stream": {
+          "$ref": "#/definitions/ProcessStream"
+        },
+        "turn_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      }
+    },
+    "RepoIndexParams": {
+      "type": "object",
+      "required": [
+        "thread_id"
+      ],
+      "properties": {
+        "approval_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "include_glob": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "max_files": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "root": {
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/definitions/FileRoot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turn_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      }
+    },
+    "RepoSearchParams": {
+      "type": "object",
+      "required": [
+        "query",
+        "thread_id"
+      ],
+      "properties": {
+        "approval_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "include_glob": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "is_regex": {
+          "default": false,
+          "type": "boolean"
+        },
+        "max_bytes_per_file": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "max_files": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "max_matches": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "query": {
+          "type": "string"
+        },
+        "root": {
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/definitions/FileRoot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turn_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      }
+    },
+    "RepoSymbolsParams": {
+      "type": "object",
+      "required": [
+        "thread_id"
+      ],
+      "properties": {
+        "approval_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "include_glob": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "max_bytes_per_file": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "max_files": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "max_symbols": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "root": {
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/definitions/FileRoot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turn_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      }
+    },
+    "RequestId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "integer",
+          "format": "int64"
+        }
+      ]
+    },
+    "SandboxNetworkAccess": {
+      "type": "string",
+      "enum": [
+        "deny",
+        "allow"
+      ]
+    },
+    "SandboxPolicy": {
+      "type": "string",
+      "enum": [
+        "read_only",
+        "workspace_write",
+        "danger_full_access"
+      ]
+    },
+    "ThreadArchiveParams": {
+      "type": "object",
+      "required": [
+        "thread_id"
+      ],
+      "properties": {
+        "force": {
+          "default": false,
+          "type": "boolean"
+        },
+        "reason": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "ThreadAttentionParams": {
+      "type": "object",
+      "required": [
+        "thread_id"
+      ],
+      "properties": {
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "ThreadCheckpointCreateParams": {
+      "type": "object",
+      "required": [
+        "thread_id"
+      ],
+      "properties": {
+        "label": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "ThreadCheckpointListParams": {
+      "type": "object",
+      "required": [
+        "thread_id"
+      ],
+      "properties": {
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "ThreadCheckpointRestoreParams": {
+      "type": "object",
+      "required": [
+        "checkpoint_id",
+        "thread_id"
+      ],
+      "properties": {
+        "approval_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "checkpoint_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turn_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      }
+    },
+    "ThreadClearArtifactsParams": {
+      "type": "object",
+      "required": [
+        "thread_id"
+      ],
+      "properties": {
+        "force": {
+          "default": false,
+          "type": "boolean"
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "ThreadConfigExplainParams": {
+      "type": "object",
+      "required": [
+        "thread_id"
+      ],
+      "properties": {
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "ThreadConfigureParams": {
+      "type": "object",
+      "required": [
+        "thread_id"
+      ],
+      "properties": {
+        "allowed_tools": {
+          "default": null,
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "approval_policy": {
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ApprovalPolicy"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "execpolicy_rules": {
+          "default": null,
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "mode": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "openai_base_url": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sandbox_network_access": {
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SandboxNetworkAccess"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sandbox_policy": {
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SandboxPolicy"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sandbox_writable_roots": {
+          "default": null,
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "thinking": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "ThreadDeleteParams": {
+      "type": "object",
+      "required": [
+        "thread_id"
+      ],
+      "properties": {
+        "force": {
+          "default": false,
+          "type": "boolean"
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "ThreadDiffParams": {
+      "type": "object",
+      "required": [
+        "thread_id"
+      ],
+      "properties": {
+        "approval_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "max_bytes": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turn_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "wait_seconds": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        }
+      }
+    },
+    "ThreadDiskReportParams": {
+      "type": "object",
+      "required": [
+        "thread_id"
+      ],
+      "properties": {
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "top_files": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0.0
+        }
+      }
+    },
+    "ThreadDiskUsageParams": {
+      "type": "object",
+      "required": [
+        "thread_id"
+      ],
+      "properties": {
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "ThreadEventKindTag": {
+      "type": "string",
+      "enum": [
+        "thread_created",
+        "thread_archived",
+        "thread_unarchived",
+        "thread_paused",
+        "thread_unpaused",
+        "turn_started",
+        "model_routed",
+        "turn_interrupt_requested",
+        "turn_completed",
+        "thread_config_updated",
+        "approval_requested",
+        "approval_decided",
+        "tool_started",
+        "tool_completed",
+        "agent_step",
+        "assistant_message",
+        "process_started",
+        "process_interrupt_requested",
+        "process_kill_requested",
+        "process_exited",
+        "attention_marker_set",
+        "attention_marker_cleared",
+        "checkpoint_created",
+        "checkpoint_restored"
+      ]
+    },
+    "ThreadEventsParams": {
+      "type": "object",
+      "required": [
+        "thread_id"
+      ],
+      "properties": {
+        "kinds": {
+          "default": null,
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/definitions/ThreadEventKindTag"
+          }
+        },
+        "max_events": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "since_seq": {
+          "default": 0,
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "ThreadForkParams": {
+      "type": "object",
+      "required": [
+        "thread_id"
+      ],
+      "properties": {
+        "cwd": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "ThreadHookRunParams": {
+      "type": "object",
+      "required": [
+        "hook",
+        "thread_id"
+      ],
+      "properties": {
+        "approval_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "hook": {
+          "$ref": "#/definitions/WorkspaceHookName"
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turn_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      }
+    },
+    "ThreadListMetaParams": {
+      "type": "object",
+      "properties": {
+        "include_archived": {
+          "default": false,
+          "type": "boolean"
+        },
+        "include_attention_markers": {
+          "default": false,
+          "type": "boolean"
+        }
+      }
+    },
+    "ThreadModelsParams": {
+      "type": "object",
+      "required": [
+        "thread_id"
+      ],
+      "properties": {
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "ThreadPatchParams": {
+      "type": "object",
+      "required": [
+        "thread_id"
+      ],
+      "properties": {
+        "approval_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "max_bytes": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turn_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "wait_seconds": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        }
+      }
+    },
+    "ThreadPauseParams": {
+      "type": "object",
+      "required": [
+        "thread_id"
+      ],
+      "properties": {
+        "reason": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "ThreadResumeParams": {
+      "type": "object",
+      "required": [
+        "thread_id"
+      ],
+      "properties": {
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "ThreadStartParams": {
+      "type": "object",
+      "properties": {
+        "cwd": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "ThreadStateParams": {
+      "type": "object",
+      "required": [
+        "thread_id"
+      ],
+      "properties": {
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "ThreadSubscribeParams": {
+      "type": "object",
+      "required": [
+        "thread_id"
+      ],
+      "properties": {
+        "max_events": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "since_seq": {
+          "default": 0,
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "wait_ms": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        }
+      }
+    },
+    "ThreadUnarchiveParams": {
+      "type": "object",
+      "required": [
+        "thread_id"
+      ],
+      "properties": {
+        "reason": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "ThreadUnpauseParams": {
+      "type": "object",
+      "required": [
+        "thread_id"
+      ],
+      "properties": {
+        "reason": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "TurnAttachment": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "source"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "image"
+              ]
+            },
+            "media_type": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "source": {
+              "$ref": "#/definitions/AttachmentSource"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "media_type",
+            "source"
+          ],
+          "properties": {
+            "filename": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "file"
+              ]
+            },
+            "media_type": {
+              "type": "string"
+            },
+            "source": {
+              "$ref": "#/definitions/AttachmentSource"
+            }
+          }
+        }
+      ]
+    },
+    "TurnDirective": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "plan"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "TurnInterruptParams": {
+      "type": "object",
+      "required": [
+        "thread_id",
+        "turn_id"
+      ],
+      "properties": {
+        "reason": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turn_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "TurnPriority": {
+      "type": "string",
+      "enum": [
+        "foreground",
+        "background"
+      ]
+    },
+    "TurnStartParams": {
+      "type": "object",
+      "required": [
+        "input",
+        "thread_id"
+      ],
+      "properties": {
+        "attachments": {
+          "default": null,
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/definitions/TurnAttachment"
+          }
+        },
+        "context_refs": {
+          "default": null,
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/definitions/ContextRef"
+          }
+        },
+        "directives": {
+          "default": null,
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/definitions/TurnDirective"
+          }
+        },
+        "input": {
+          "type": "string"
+        },
+        "priority": {
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TurnPriority"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "WorkspaceHookName": {
+      "type": "string",
+      "enum": [
+        "setup",
+        "run",
+        "archive"
+      ]
+    }
+  }
+}

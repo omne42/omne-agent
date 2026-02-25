@@ -8,6 +8,19 @@
 ## [Unreleased]
 
 ### Added
+- `omne init` 默认写入最小 workflow command 模板（`.omne_data/spec/commands/plan.md`、`.omne_data/spec/commands/fanout-review.md`），用于快速启动 `omne command {list,show,run}` / `--fan-out` 路径；可通过 `--no-command-templates` 跳过，`--force` 可覆盖现有模板。
+- `omne init` 默认新增 spec 配置空模板：`.omne_data/spec/workspace.yaml`（workspace lifecycle hooks）、`.omne_data/spec/hooks.yaml`（session/tool hooks）与 `.omne_data/spec/modes.yaml`（mode catalog）；可通过 `--no-workspace-template` / `--no-hooks-template` / `--no-modes-template` 单独跳过，或 `--no-spec-templates`（等价 `--minimal`）一键全部跳过；`--force` 可覆盖现有模板。
+- `omne preset list`：新增 preset 发现/校验命令（支持文本或 `--json` 输出），扫描 `<omne_root>/spec/preset.{yaml,yml}` 与 `<omne_root>/spec/presets/*.{yaml,yml}`；解析失败条目会以错误摘要返回（不阻断其它 preset 展示）。
+- `omne preset import`：新增 `--name <preset_name>` 选择器（与 `--file` 二选一），可按 preset 名称从 `<omne_root>/spec/` 自动解析目标文件并应用配置。
+- `omne preset show`：新增 preset 查看/校验命令（`--file` 或 `--name` 二选一，支持 `--json`），用于在应用前检查单个 preset 的规范化内容。
+- `omne preset validate`：新增 preset 校验命令（默认校验全部可发现 preset；支持 `--file`/`--name`），并在存在任意校验错误时返回非 0；`--strict` 会额外把重复 `preset.name` 视为错误，便于 CI 直接 gate 解析歧义。
+- `omne command validate`：新增 workflow command 校验命令（默认校验全部 `spec/commands/*.md`；支持 `--name` 单文件）；任一校验失败返回非 0；`--strict` 会额外把重复 command name 视为错误，便于 CI gate 解析歧义。
+- `omne command validate --name <name>`：失败信息改为优先包含目标 command 名称与首个具体错误，便于快速定位（例如缺文件或 frontmatter 解析失败）。
+- `omne command validate --json`：新增稳定字段 `target`（`all` 或指定 command 名）与 `commands_dir`（扫描目录），用于 CI/脚本区分“全量校验”与“单命令校验”结果并定位数据源。
+- `omne command list --json`：新增稳定汇总字段 `ok`/`command_count`/`error_count`（并保留 `commands_dir`），便于脚本快速判读结果。
+- `omne command validate --json`：补充稳定汇总字段 `validated_count`/`error_count`，便于脚本直接消费而不必自行统计数组长度。
+- `omne command list/validate --json`：补充统一汇总字段 `item_count`（分别对应列举条目数/校验通过条目数），用于统一脚本处理逻辑。
+- `omne command list`：改为容错列举（坏 frontmatter 不阻断其余 command 展示），并在文本/JSON输出中附带 parse error 汇总，便于大仓库逐步修复。
 - 新增 Node vendoring 最小 CI 预演工作流：`.github/workflows/omne-node-vendor.yml`（Linux/macOS/Windows host matrix；`packages/omne` check/test + host binaries 构建 + `release-local-vendor-bundle` 产物上传；`workflow_dispatch` 支持 `profile/version/clean`；`v*` tag 自动以 tag 版本上传 release assets 并附 `SHA256SUMS`，发布前由 `packages/omne/scripts/validate-tag-release-artifacts.mjs` 校验 artifact 结构、per-target 唯一性、`index.json` 与 bundle 目录目标集合完全一致、`release_dir`/bundle-name 与 version/target 一致性，再由 `packages/omne/scripts/package-tag-release-assets.mjs` 仅打包当前 tag 对应版本目录（同样强制目标集合一致），并由 `packages/omne/scripts/verify-tag-release-tarballs.mjs` 校验 tarball 条目白名单与 tar 内 `index.json`/`RELEASE.json` 语义一致性，且持续清理输出目录避免旧产物混入）。
 - `omne-app-server thread/list_meta`：补齐 marker 布尔摘要字段（`has_plan_ready`/`has_diff_ready`/`has_test_failed`），与 `thread/attention` 对齐，便于 inbox/GUI 直接按标记过滤；并支持可选 `include_attention_markers=true` 返回完整 marker 详情（CLI: `omne thread list-meta --include-attention-markers`）。
 - `omne-protocol`/`omne-app-server`：新增 `ThreadEventKind::AttentionMarkerSet`，并在 `artifact/write`（`plan/diff/patch`）与测试进程失败（`ProcessExited(exit_code!=0)`）时显式落盘 `plan_ready/diff_ready/test_failed` marker；`thread/attention` 与 `thread/list_meta` 现在优先消费显式 marker 事件，对历史线程保留推断回退。
@@ -133,6 +146,7 @@
 ### Changed
 - `omne`/`omne-app-server`：`omne_root` 默认目录改为 `./.omne_data/`（可用 `--omne-root` 或 `OMNE_ROOT` 覆盖）。
 - （breaking）project spec 目录固定为 `./.omne_data/spec/`（modes/workspace hooks/skills 等），不再支持 legacy `.omne/`/`.omne/` 路径。
+- UI 范围收敛：当前阶段仅保留 Rust TUI（`omne tui`），暂停 Web GUI 路线并移除仓库内 `packages/omne-gui` 实现；相关文档口径同步更新。
 - subagent fan-out：`fan_out_result` 结构化结果统一到 `schema_version=fan_out_result.v1`，`artifact/read` 提供机器可读字段；`workspace_mode=isolated_write` 文档同步为“已支持 patch handoff（人工回填）/未支持自动 apply 与冲突处理”；并移除仓库内自动生成 patch 样例 `docs/patches/bash-exec-wrapper.patch`（相关文档改为仅引用说明），同时将 `*.gitdiff|*.diff|*.patch` 加入 `.gitignore` 以避免后续污染。
 - 更新 `docs/ditto_llm.md`：同步 ditto-llm 统一 SDK 层已落地（LanguageModel/EmbeddingModel + OpenAI/Anthropic/Google + streaming/tools/embeddings）。
 - 更新 `docs/ditto_llm_todos.md`：标记已完成的 ditto-llm TODO，并作为后续推进清单。

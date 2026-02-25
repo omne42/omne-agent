@@ -15,6 +15,7 @@ include!("lib/turn.rs");
 include!("lib/process.rs");
 include!("lib/file_read_glob_grep.rs");
 include!("lib/repo_index_search.rs");
+include!("lib/mcp.rs");
 include!("lib/file_write_patch.rs");
 include!("lib/file_edit_delete.rs");
 include!("lib/fs.rs");

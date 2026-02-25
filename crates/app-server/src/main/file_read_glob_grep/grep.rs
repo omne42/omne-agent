@@ -5,18 +5,6 @@ struct GrepMatch {
     line: String,
 }
 
-fn truncate_line(line: &str, max_chars: usize) -> String {
-    let mut out = String::new();
-    for (idx, ch) in line.chars().enumerate() {
-        if idx >= max_chars {
-            out.push('…');
-            break;
-        }
-        out.push(ch);
-    }
-    out
-}
-
 async fn handle_file_grep(server: &Server, params: FileGrepParams) -> anyhow::Result<Value> {
     let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
 
@@ -47,7 +35,7 @@ async fn handle_file_grep(server: &Server, params: FileGrepParams) -> anyhow::Re
             state.allowed_tools.clone(),
         )
     };
-    if let Some(result) = enforce_thread_allowed_tools(
+    if let Some(_result) = enforce_thread_allowed_tools(
         &thread_rt,
         tool_id,
         params.turn_id,
@@ -57,80 +45,50 @@ async fn handle_file_grep(server: &Server, params: FileGrepParams) -> anyhow::Re
     )
     .await?
     {
-        return Ok(result);
+        return file_allowed_tools_denied_response(tool_id, "file/grep", &allowed_tools);
     }
     let catalog = omne_core::modes::ModeCatalog::load(&thread_root).await;
     let mode = match catalog.mode(&mode_name) {
         Some(mode) => mode,
         None => {
             let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
-            let decision = omne_core::modes::Decision::Deny;
+            let result = file_unknown_mode_denied_response(
+                tool_id,
+                &mode_name,
+                available,
+                catalog.load_error.clone(),
+            )?;
 
-            thread_rt
-                .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                    tool_id,
-                    turn_id: params.turn_id,
-                    tool: "file/grep".to_string(),
-                    params: Some(approval_params.clone()),
-                })
-                .await?;
-            thread_rt
-                .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                    tool_id,
-                    status: omne_protocol::ToolStatus::Denied,
-                    error: Some("unknown mode".to_string()),
-                    result: Some(serde_json::json!({
-                        "mode": mode_name,
-                        "decision": decision,
-                        "available": available,
-                        "load_error": catalog.load_error.clone(),
-                    })),
-                })
-                .await?;
-            return Ok(serde_json::json!({
-                "tool_id": tool_id,
-                "denied": true,
-                "mode": mode_name,
-                "decision": decision,
-                "available": available,
-                "load_error": catalog.load_error.clone(),
-            }));
+            emit_file_tool_denied(
+                &thread_rt,
+                tool_id,
+                params.turn_id,
+                "file/grep",
+                &approval_params,
+                "unknown mode".to_string(),
+                result.clone(),
+            )
+            .await?;
+            return Ok(result);
         }
     };
-    let base_decision = mode.permissions.read;
-    let effective_decision = match mode.tool_overrides.get("file/grep").copied() {
-        Some(override_decision) => base_decision.combine(override_decision),
-        None => base_decision,
-    };
-    if effective_decision == omne_core::modes::Decision::Deny {
-        thread_rt
-            .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                tool_id,
-                turn_id: params.turn_id,
-                tool: "file/grep".to_string(),
-                params: Some(approval_params.clone()),
-            })
-            .await?;
-        thread_rt
-            .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                tool_id,
-                status: omne_protocol::ToolStatus::Denied,
-                error: Some("mode denies file/grep".to_string()),
-                result: Some(serde_json::json!({
-                    "mode": mode_name,
-                    "decision": effective_decision,
-                })),
-            })
-            .await?;
-        return Ok(serde_json::json!({
-            "tool_id": tool_id,
-            "denied": true,
-            "mode": mode_name,
-            "decision": effective_decision,
-        }));
+    let mode_decision = resolve_mode_decision_audit(mode, "file/grep", mode.permissions.read);
+    if mode_decision.decision == omne_core::modes::Decision::Deny {
+        let result = file_mode_denied_response(tool_id, &mode_name, mode_decision)?;
+        emit_file_tool_denied(
+            &thread_rt,
+            tool_id,
+            params.turn_id,
+            "file/grep",
+            &approval_params,
+            "mode denies file/grep".to_string(),
+            result.clone(),
+        )
+        .await?;
+        return Ok(result);
     }
 
-    if effective_decision == omne_core::modes::Decision::Prompt {
+    if mode_decision.decision == omne_core::modes::Decision::Prompt {
         match gate_approval(
             server,
             &thread_rt,
@@ -147,35 +105,21 @@ async fn handle_file_grep(server: &Server, params: FileGrepParams) -> anyhow::Re
         {
             ApprovalGate::Approved => {}
             ApprovalGate::Denied { remembered } => {
-                thread_rt
-                    .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                        tool_id,
-                        turn_id: params.turn_id,
-                        tool: "file/grep".to_string(),
-                        params: Some(approval_params.clone()),
-                    })
-                    .await?;
-                    thread_rt
-                        .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                            tool_id,
-                            status: omne_protocol::ToolStatus::Denied,
-                            error: Some(approval_denied_error(remembered).to_string()),
-                            result: Some(serde_json::json!({
-                                "approval_policy": approval_policy,
-                            })),
-                        })
-                        .await?;
-                return Ok(serde_json::json!({
-                    "tool_id": tool_id,
-                    "denied": true,
-                    "remembered": remembered,
-                }));
+                let result = file_denied_response(tool_id, Some(remembered))?;
+                emit_file_tool_denied(
+                    &thread_rt,
+                    tool_id,
+                    params.turn_id,
+                    "file/grep",
+                    &approval_params,
+                    approval_denied_error(remembered).to_string(),
+                    result.clone(),
+                )
+                .await?;
+                return Ok(result);
             }
             ApprovalGate::NeedsApproval { approval_id } => {
-                return Ok(serde_json::json!({
-                    "needs_approval": true,
-                    "approval_id": approval_id,
-                }));
+                return file_needs_approval_response(approval_id);
             }
         }
     }
@@ -188,21 +132,6 @@ async fn handle_file_grep(server: &Server, params: FileGrepParams) -> anyhow::Re
             params: Some(approval_params.clone()),
         })
         .await?;
-
-    let pattern = if params.is_regex {
-        params.query.clone()
-    } else {
-        regex::escape(&params.query)
-    };
-    let re = Regex::new(&pattern).with_context(|| format!("invalid regex: {}", params.query))?;
-    let include_matcher = match params.include_glob.as_deref() {
-        Some(glob) => Some(
-            Glob::new(glob)
-                .with_context(|| format!("invalid glob pattern: {glob}"))?
-                .compile_matcher(),
-        ),
-        None => None,
-    };
 
     let root = match file_root {
         FileRoot::Workspace => thread_root.clone(),
@@ -224,89 +153,39 @@ async fn handle_file_grep(server: &Server, params: FileGrepParams) -> anyhow::Re
             }
         },
     };
-    let outcome = tokio::task::spawn_blocking(
-        move || -> anyhow::Result<(Vec<GrepMatch>, bool, usize, usize, usize)> {
-            let mut matches = Vec::new();
-            let mut truncated = false;
-            let mut files_scanned = 0usize;
-            let mut files_skipped_too_large = 0usize;
-            let mut files_skipped_binary = 0usize;
-
-            for entry in WalkDir::new(&root)
-                .follow_links(false)
-                .into_iter()
-                .filter_entry(should_walk_entry)
-            {
-                let entry = entry?;
-                if !entry.file_type().is_file() {
-                    continue;
-                }
-                if files_scanned >= max_files {
-                    break;
-                }
-                let rel = entry.path().strip_prefix(&root).unwrap_or(entry.path());
-                if rel_path_is_secret(rel) {
-                    continue;
-                }
-                if let Some(ref matcher) = include_matcher {
-                    if !matcher.is_match(rel) {
-                        continue;
-                    }
-                }
-
-                files_scanned += 1;
-
-                let meta = entry.metadata()?;
-                if meta.len() > max_bytes_per_file {
-                    files_skipped_too_large += 1;
-                    continue;
-                }
-
-                let bytes = match std::fs::read(entry.path()) {
-                    Ok(bytes) => bytes,
-                    Err(_) => continue,
-                };
-                if bytes.contains(&0) {
-                    files_skipped_binary += 1;
-                    continue;
-                }
-
-                let text = String::from_utf8_lossy(&bytes);
-                for (idx, line) in text.lines().enumerate() {
-                    if !re.is_match(line) {
-                        continue;
-                    }
-
-                    matches.push(GrepMatch {
-                        path: rel.to_string_lossy().to_string(),
-                        line_number: (idx + 1) as u64,
-                        line: truncate_line(line, 4000),
-                    });
-                    if matches.len() >= max_matches {
-                        truncated = true;
-                        break;
-                    }
-                }
-
-                if truncated {
-                    break;
-                }
-            }
-
-            Ok((
-                matches,
-                truncated,
-                files_scanned,
-                files_skipped_too_large,
-                files_skipped_binary,
-            ))
-        },
-    )
+    let query_for_task = params.query.clone();
+    let is_regex = params.is_regex;
+    let include_glob_for_task = params.include_glob.clone();
+    let outcome = tokio::task::spawn_blocking(move || {
+        omne_repo_scan_runtime::search_repo(omne_repo_scan_runtime::RepoGrepRequest {
+            root,
+            query: query_for_task,
+            is_regex,
+            include_glob: include_glob_for_task,
+            max_matches,
+            max_bytes_per_file,
+            max_files,
+        })
+    })
     .await
     .context("join grep task")?;
 
     match outcome {
-        Ok((matches, truncated, files_scanned, files_skipped_too_large, files_skipped_binary)) => {
+        Ok(omne_repo_scan_runtime::RepoGrepOutcome {
+            matches,
+            truncated,
+            files_scanned,
+            files_skipped_too_large,
+            files_skipped_binary,
+        }) => {
+            let matches = matches
+                .into_iter()
+                .map(|m| GrepMatch {
+                    path: m.path,
+                    line_number: m.line_number,
+                    line: m.line,
+                })
+                .collect::<Vec<_>>();
             thread_rt
                 .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,

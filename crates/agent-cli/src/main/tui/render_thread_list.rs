@@ -1,13 +1,21 @@
     fn draw_thread_list(f: &mut ratatui::Frame, state: &UiState, area: ratatui::layout::Rect) {
         const MAX_TITLE_WIDTH: usize = 24;
         const MAX_CWD_WIDTH: usize = 24;
+        const MAX_ATTN_WIDTH: usize = 7;
 
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(1), Constraint::Min(1)])
             .split(area);
 
-        let header = "threads (↑↓ Enter=open n=new r=refresh q/Ctrl-C=quit)";
+        let filter = thread_picker_filter_label(
+            state.only_fan_out_linkage_issue,
+            state.only_fan_out_auto_apply_error,
+            state.only_fan_in_dependency_blocked,
+            state.only_subagent_proxy_approval,
+        );
+        let archived = if state.include_archived { "on" } else { "off" };
+        let header = format!("threads [{filter}] archived={archived} (↑↓ Enter n h l a b s c r q)");
         f.render_widget(
             Paragraph::new(header).style(Style::default().fg(Color::Gray)),
             chunks[0],
@@ -15,11 +23,14 @@
 
         let mut rows = Vec::with_capacity(state.threads.len());
         let mut max_updated_width = UnicodeWidthStr::width("Updated");
+        let mut max_attn_width = UnicodeWidthStr::width("Attn");
         let mut max_title_width = UnicodeWidthStr::width("Title");
         let mut max_cwd_width = UnicodeWidthStr::width("CWD");
 
         for thread in &state.threads {
             let updated = format_updated_label(thread);
+            let attn_badge = attention_badge(thread);
+            let attn = right_elide(attn_badge.as_str(), MAX_ATTN_WIDTH);
             let title = thread
                 .title
                 .as_deref()
@@ -42,15 +53,17 @@
                 .unwrap_or_else(|| "-".to_string());
 
             max_updated_width = max_updated_width.max(UnicodeWidthStr::width(updated.as_str()));
+            max_attn_width = max_attn_width.max(UnicodeWidthStr::width(attn.as_str()));
             max_title_width = max_title_width.max(UnicodeWidthStr::width(title.as_str()));
             max_cwd_width = max_cwd_width.max(UnicodeWidthStr::width(cwd.as_str()));
 
-            rows.push((updated, title, cwd, message));
+            rows.push((updated, attn, title, cwd, message));
         }
 
         let column_header = format!(
-            "{}  {}  {}  Message",
+            "{}  {}  {}  {}  Message",
             pad_to_width("Updated", max_updated_width),
+            pad_to_width("Attn", max_attn_width),
             pad_to_width("Title", max_title_width),
             pad_to_width("CWD", max_cwd_width),
         );
@@ -72,10 +85,11 @@
 
         let items = rows
             .into_iter()
-            .map(|(updated, title, cwd, message)| {
+            .map(|(updated, attn, title, cwd, message)| {
                 let line = format!(
-                    "{}  {}  {}  {}",
+                    "{}  {}  {}  {}  {}",
                     pad_to_width(&updated, max_updated_width),
+                    pad_to_width(&attn, max_attn_width),
                     pad_to_width(&title, max_title_width),
                     pad_to_width(&cwd, max_cwd_width),
                     message
@@ -100,4 +114,49 @@
         let mut state = ratatui::widgets::ListState::default();
         state.select(selected);
         state
+    }
+
+    fn attention_badge(meta: &ThreadMeta) -> String {
+        if meta.has_fan_out_auto_apply_error {
+            return "auto!".to_string();
+        }
+        if meta.has_fan_out_linkage_issue {
+            return "link!".to_string();
+        }
+        if meta.has_fan_in_dependency_blocked {
+            return "fanin!".to_string();
+        }
+        if meta.pending_subagent_proxy_approvals > 0 {
+            return subagent_pending_badge(meta.pending_subagent_proxy_approvals);
+        }
+        if meta.has_test_failed {
+            return "test!".to_string();
+        }
+        if meta.has_diff_ready {
+            return "diff".to_string();
+        }
+        if meta.has_plan_ready {
+            return "plan".to_string();
+        }
+        match meta.attention_state.as_str() {
+            "need_approval" => "approve".to_string(),
+            "stuck" => "stuck".to_string(),
+            "running" => "run".to_string(),
+            "failed" => "failed".to_string(),
+            "done" => "done".to_string(),
+            "idle" => "idle".to_string(),
+            "paused" => "paused".to_string(),
+            "interrupted" => "intr".to_string(),
+            "cancelled" => "cancel".to_string(),
+            "archived" => "arch".to_string(),
+            _ => "-".to_string(),
+        }
+    }
+
+    fn subagent_pending_badge(count: usize) -> String {
+        if count > 999 {
+            "sub999+".to_string()
+        } else {
+            format!("sub{count}")
+        }
     }

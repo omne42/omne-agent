@@ -1,4 +1,7 @@
-async fn handle_thread_delete(server: &Server, params: ThreadDeleteParams) -> anyhow::Result<Value> {
+async fn handle_thread_delete(
+    server: &Server,
+    params: ThreadDeleteParams,
+) -> anyhow::Result<omne_app_server_protocol::ThreadDeleteResponse> {
     let thread_dir = server.thread_store.thread_dir(params.thread_id);
 
     let mut running = Vec::<ProcessId>::new();
@@ -57,9 +60,9 @@ async fn handle_thread_delete(server: &Server, params: ThreadDeleteParams) -> an
         Err(err) => return Err(err).with_context(|| format!("remove {}", thread_dir.display())),
     };
 
-    Ok(serde_json::json!({
-        "thread_id": params.thread_id,
-        "deleted": deleted,
-        "thread_dir": thread_dir.display().to_string(),
-    }))
+    Ok(omne_app_server_protocol::ThreadDeleteResponse {
+        thread_id: params.thread_id,
+        deleted,
+        thread_dir: thread_dir.display().to_string(),
+    })
 }

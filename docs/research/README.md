@@ -14,6 +14,8 @@
 | CodexMonitor | `b1d3182` | 多 workspace 编排、`codex app-server` 客户端、worktree 管理、远端 daemon POC | `docs/research/codexmonitor.md` |
 | Kilo Code | `e4ced0062c` | VSCode Agent 平台的“模式/权限/工作流/技能”设计、fork 合并策略（markers） | `docs/research/kilocode.md` |
 | OpenCode | `3fd0043d1` | Project/Session/Storage/Bus/Worktree 的工程化实现、client/server、provider-agnostic | `docs/research/opencode.md` |
+| Everything Claude Code | `7daa830` | 高密度 agent 资产库（agents/commands/skills/hooks/rules）、hook 治理与资产校验流水线、持续学习闭环 | `docs/research/everything-claude-code.md` |
+| Spec Kit + OpenSpec | `6f523ed` + `d485281` | Spec 驱动开发：0->1 研发流水线 vs 1->N 变更治理；对 OmneAgent 的组合启发 | `docs/research/spec-kit-openspec.md` |
 | 1Code | `e23a469` | worktree 隔离、plan gate、worktree setup config（可复用为脚本化生命周期） | `docs/research/onecode.md` |
 | Superset | `8d17373` | 多 agent 并行调度台、`.superset/config.json` + setup/teardown、外部资源隔离（端口/DB/生命周期脚本） | `docs/research/superset.md` |
 | AionUi | `5abe63b` | CLI agent cowork、CLI/MCP 检测、预览面板与 preview 历史、WebUI 远程 | `docs/research/aion-ui.md` |

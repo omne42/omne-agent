@@ -55,6 +55,9 @@ fail-closed（只对配置解析）：
   - `process/start` 对 child env 做 scrub（实现对照：`crates/app-server/src/main/preamble.rs`）。
   - 非交互约束：不做 stdin/PTY 交互（见 `docs/v0.2.0_parity.md` 的进程模型）。
   - 非交互 env defaults（仅当未设置且 hardening 启用时注入到 child env）：`GIT_TERMINAL_PROMPT=0`、`NO_COLOR=1`、`PAGER=cat`。
+  - 支持按 env 追加 scrub 规则（默认关闭）：`OMNE_HARDENING_EXTRA_SCRUB_KEYS`（逗号分隔键名）、`OMNE_HARDENING_EXTRA_SCRUB_PATTERNS`（逗号分隔 glob，如 `*_TOKEN,*SECRET*`，大小写不敏感）。
+  - 支持按 env 启用继承 env allowlist（默认关闭）：`OMNE_HARDENING_ALLOW_ENV_KEYS`（逗号分隔键名）、`OMNE_HARDENING_ALLOW_ENV_PATTERNS`（逗号分隔 glob，大小写不敏感）。
+  - `process/start` 返回 `effective_env_summary`（脱敏）：`hardening_mode`、`scrubbed_keys`、`allowlist_dropped_keys`、`injected_defaults`、`configured_extra_scrub_keys`、`configured_extra_scrub_patterns`、`configured_allowed_env_keys`、`configured_allowed_env_patterns`。
 - 事件落盘与 artifact 写入前脱敏（见 `docs/redaction.md`）。
 
 ---
@@ -65,10 +68,10 @@ fail-closed（只对配置解析）：
 
 增强项（best-effort）：
 
-- 扩展环境清理清单（动态链接器/调试/注入相关变量），并把最终生效结果写入启动日志。
-- 如系统支持，启用更严格的 ptrace 限制（例如 Yama；取决于部署环境）。
+- [x] 扩展环境清理清单（动态链接器/调试/注入相关变量）：启动时清理 `LD_PRELOAD/LD_LIBRARY_PATH/LD_AUDIT/LD_DEBUG/DYLD_*`，并把实际清理结果写入启动日志。
+- [x] 如系统支持，启用更严格的 ptrace 限制（例如 Yama；取决于部署环境）：通过 `OMNE_HARDENING_LINUX_YAMA_PTRACE_SCOPE=0..3` 显式开启（默认关闭），best-effort 写入 `/proc/sys/kernel/yama/ptrace_scope`。
 - 统一非交互环境默认：
-  - `CI=1`（可选；注意可能改变某些工具输出）
+  - [x] `CI=1`（可选；注意可能改变某些工具输出）：通过 `OMNE_HARDENING_SET_CI=true` 显式开启，默认关闭。
 
 验收（未来实现时）：
 
@@ -83,14 +86,15 @@ fail-closed（只对配置解析）：
 增强项（在 `process/start` 内统一施加，best-effort）：
 
 - env scrub 更系统化：
-  - 允许通过配置追加 scrub keys/patterns（例如 `*_TOKEN/*KEY*/*SECRET*` 的已知键集合），但默认应关闭并且必须可审计（否则容易“无意中删掉凭据导致命令莫名失败”）。
-  - 对 “允许透传的白名单” 明确化（宁可少透传），并把最终生效结果写入 `effective_env_summary`（脱敏后）。
-- 资源边界（可选）：
-  - 对 child process 设置 wall-clock timeout（与 `process/kill` 语义配合）
+  - [x] 允许通过配置追加 scrub keys/patterns（例如 `*_TOKEN/*KEY*/*SECRET*` 的已知键集合），默认关闭且可审计。
+  - [x] 对“允许透传的白名单”明确化（默认关闭）：`OMNE_HARDENING_ALLOW_ENV_KEYS/OMNE_HARDENING_ALLOW_ENV_PATTERNS`，并把生效结果写入 `effective_env_summary`（脱敏后）。
+- 资源边界：
+  - [x] 支持 `process/start.timeout_ms`（毫秒，可选）作为 child process wall-clock timeout；超时后沿用 `process/kill` 语义（`ProcessKillRequested` + `ProcessExited.reason` 可审计）。
 
-验收（未来实现时）：
+当前最小验收（已实现）：
 
-- `process/start` 返回值里能看到 `effective_env_summary`（脱敏后的“删了哪些 key/覆盖了哪些 key”，只用于审计）。
+- `process/start` 返回值里可见 `effective_env_summary`（脱敏后的“删了哪些 key/注入了哪些默认值”，只用于审计）。
+- `process/start` 接收可选 `timeout_ms`（`>=1`），并在返回值回显该字段；超时后会触发 kill 事件链路。
 
 ---
 

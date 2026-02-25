@@ -1,0 +1,47 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "FileUnknownModeDeniedResponse",
+  "type": "object",
+  "required": [
+    "available",
+    "decision",
+    "denied",
+    "mode",
+    "tool_id"
+  ],
+  "properties": {
+    "available": {
+      "type": "string"
+    },
+    "decision": {
+      "$ref": "#/definitions/FileModeDecision"
+    },
+    "denied": {
+      "type": "boolean"
+    },
+    "load_error": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "mode": {
+      "type": "string"
+    },
+    "tool_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  },
+  "definitions": {
+    "FileModeDecision": {
+      "type": "string",
+      "enum": [
+        "allow",
+        "prompt",
+        "deny"
+      ]
+    }
+  }
+}

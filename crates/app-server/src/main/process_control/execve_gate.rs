@@ -32,7 +32,14 @@ struct ExecveGateContext {
 async fn spawn_execve_gate(ctx: ExecveGateContext, socket_path: PathBuf) -> anyhow::Result<ExecveGateHandle> {
     use std::os::unix::fs::PermissionsExt;
 
-    let _ = tokio::fs::remove_file(&socket_path).await;
+    match tokio::fs::remove_file(&socket_path).await {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => {
+            return Err(err)
+                .with_context(|| format!("remove stale execve gate socket {}", socket_path.display()));
+        }
+    }
     let listener = tokio::net::UnixListener::bind(&socket_path)
         .with_context(|| format!("bind execve gate socket {}", socket_path.display()))?;
     tokio::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600))
@@ -62,8 +69,16 @@ async fn spawn_execve_gate(ctx: ExecveGateContext, socket_path: PathBuf) -> anyh
 #[cfg(unix)]
 async fn shutdown_execve_gate(gate: ExecveGateHandle) {
     gate.cancel.cancel();
-    let _ = gate.task.await;
-    let _ = tokio::fs::remove_file(&gate.socket_path).await;
+    if let Err(err) = gate.task.await {
+        tracing::warn!(path = %gate.socket_path.display(), error = %err, "execve gate task join failed");
+    }
+    match tokio::fs::remove_file(&gate.socket_path).await {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => {
+            tracing::warn!(path = %gate.socket_path.display(), error = %err, "failed to remove execve gate socket");
+        }
+    }
 }
 
 #[cfg(not(unix))]
@@ -389,7 +404,13 @@ async fn handle_execve_gate_decide(
         anyhow::bail!("argv must not be empty");
     }
 
-    let (approval_policy, sandbox_policy, sandbox_network_access, mode_name) = {
+    let (
+        approval_policy,
+        sandbox_policy,
+        sandbox_network_access,
+        mode_name,
+        thread_execpolicy_rules,
+    ) = {
         let handle = ctx.thread_rt.handle.lock().await;
         let state = handle.state();
         (
@@ -397,6 +418,7 @@ async fn handle_execve_gate_decide(
             state.sandbox_policy,
             state.sandbox_network_access,
             state.mode.clone(),
+            state.execpolicy_rules.clone(),
         )
     };
 
@@ -431,15 +453,40 @@ async fn handle_execve_gate_decide(
         }
     };
 
-    let exec_matches = if mode.command_execpolicy_rules.is_empty() {
-        ctx.exec_policy
-            .matches_for_command(&args.argv, Some(&execpolicy_allow_fallback))
-    } else {
-        let mode_exec_policy =
-            load_mode_exec_policy(&ctx.thread_root, &mode.command_execpolicy_rules).await?;
-        let combined = merge_exec_policies(&ctx.exec_policy, &mode_exec_policy);
-        combined.matches_for_command(&args.argv, Some(&execpolicy_allow_fallback))
-    };
+    let mut effective_exec_policy = ctx.exec_policy.clone();
+    if !mode.command_execpolicy_rules.is_empty() {
+        let mode_exec_policy = match load_mode_exec_policy(&ctx.thread_root, &mode.command_execpolicy_rules).await
+        {
+            Ok(policy) => policy,
+            Err(err) => {
+                return Ok(serde_json::json!({
+                    "decision": "deny",
+                    "reason": "failed to load mode execpolicy rules",
+                    "mode": mode_name,
+                    "rules": mode.command_execpolicy_rules.clone(),
+                    "details": err.to_string(),
+                }));
+            }
+        };
+        effective_exec_policy = merge_exec_policies(&effective_exec_policy, &mode_exec_policy);
+    }
+    if !thread_execpolicy_rules.is_empty() {
+        let thread_exec_policy = match load_mode_exec_policy(&ctx.thread_root, &thread_execpolicy_rules).await {
+            Ok(policy) => policy,
+            Err(err) => {
+                return Ok(serde_json::json!({
+                    "decision": "deny",
+                    "reason": "failed to load thread execpolicy rules",
+                    "mode": mode_name,
+                    "rules": thread_execpolicy_rules.clone(),
+                    "details": err.to_string(),
+                }));
+            }
+        };
+        effective_exec_policy = merge_exec_policies(&effective_exec_policy, &thread_exec_policy);
+    }
+    let exec_matches = effective_exec_policy
+        .matches_for_command(&args.argv, Some(&execpolicy_allow_fallback));
     let exec_decision = exec_matches.iter().map(ExecRuleMatch::decision).max();
 
     let effective_exec_decision = match exec_decision {
@@ -488,7 +535,7 @@ async fn handle_execve_gate_decide(
 
     match gate_approval_with_deps(
         &ctx.thread_store,
-        &ctx.exec_policy,
+        &effective_exec_policy,
         &ctx.thread_rt,
         ctx.thread_id,
         ctx.turn_id,

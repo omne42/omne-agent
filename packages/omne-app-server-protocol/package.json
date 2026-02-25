@@ -1,0 +1,27 @@
+{
+  "name": "@omne/omne-app-server-protocol",
+  "version": "0.0.0",
+  "private": false,
+  "type": "module",
+  "description": "TypeScript protocol types and JSON Schema generated from omne-app-server Rust source of truth.",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./schema/*": "./schema/*.schema.json"
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "generated",
+    "schema",
+    "README.md"
+  ],
+  "scripts": {
+    "sync": "node ./scripts/sync.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

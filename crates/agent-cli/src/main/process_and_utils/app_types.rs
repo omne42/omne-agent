@@ -3,59 +3,28 @@ struct App {
     notifications: Option<tokio::sync::mpsc::Receiver<omne_jsonrpc::Notification>>,
 }
 
-struct RepoSearchRequest {
-    thread_id: ThreadId,
-    query: String,
-    is_regex: bool,
-    include_glob: Option<String>,
-    max_matches: Option<usize>,
-    max_bytes_per_file: Option<u64>,
-    max_files: Option<usize>,
-    root: Option<String>,
-    approval_id: Option<ApprovalId>,
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(untagged)]
+enum McpListServersOrFailedResponse {
+    List(omne_app_server_protocol::McpListServersResponse),
+    Failed(omne_app_server_protocol::McpFailedResponse),
 }
 
-struct RepoIndexRequest {
-    thread_id: ThreadId,
-    include_glob: Option<String>,
-    max_files: Option<usize>,
-    root: Option<String>,
-    approval_id: Option<ApprovalId>,
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(untagged)]
+enum McpActionOrFailedResponse {
+    Action(omne_app_server_protocol::McpActionResponse),
+    Failed(omne_app_server_protocol::McpFailedResponse),
 }
 
-struct RepoSymbolsRequest {
-    thread_id: ThreadId,
-    include_glob: Option<String>,
-    max_files: Option<usize>,
-    max_bytes_per_file: Option<u64>,
-    max_symbols: Option<usize>,
-    root: Option<String>,
-    approval_id: Option<ApprovalId>,
-}
+type ThreadConfigExplainResponse = omne_app_server_protocol::ThreadConfigExplainResponse;
 
-struct McpListServersRequest {
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct ThreadSpawnResponse {
     thread_id: ThreadId,
-    approval_id: Option<ApprovalId>,
-}
-
-struct McpListToolsRequest {
-    thread_id: ThreadId,
-    server: String,
-    approval_id: Option<ApprovalId>,
-}
-
-struct McpListResourcesRequest {
-    thread_id: ThreadId,
-    server: String,
-    approval_id: Option<ApprovalId>,
-}
-
-struct McpCallRequest {
-    thread_id: ThreadId,
-    server: String,
-    tool: String,
-    arguments: Option<Value>,
-    approval_id: Option<ApprovalId>,
+    turn_id: TurnId,
+    log_path: String,
+    last_seq: u64,
 }
 
 fn split_special_directives(
@@ -64,9 +33,11 @@ fn split_special_directives(
     String,
     Vec<omne_protocol::ContextRef>,
     Vec<omne_protocol::TurnAttachment>,
+    Vec<omne_protocol::TurnDirective>,
 )> {
     let mut refs = Vec::<omne_protocol::ContextRef>::new();
     let mut attachments = Vec::<omne_protocol::TurnAttachment>::new();
+    let mut directives = Vec::<omne_protocol::TurnDirective>::new();
     let lines = input.lines().collect::<Vec<_>>();
 
     let mut idx = 0usize;
@@ -157,14 +128,30 @@ fn split_special_directives(
             continue;
         }
 
+        if trimmed.starts_with("/plan") && trimmed != "/plan" {
+            anyhow::bail!("/plan does not accept arguments");
+        }
+        if trimmed == "/plan" {
+            if directives
+                .iter()
+                .any(|directive| matches!(directive, omne_protocol::TurnDirective::Plan))
+            {
+                anyhow::bail!("duplicate directive: /plan");
+            }
+            directives.push(omne_protocol::TurnDirective::Plan);
+            did_parse = true;
+            idx += 1;
+            continue;
+        }
+
         break;
     }
 
     if !did_parse {
-        return Ok((input.to_string(), refs, attachments));
+        return Ok((input.to_string(), refs, attachments, directives));
     }
 
-    Ok((lines[idx..].join("\n"), refs, attachments))
+    Ok((lines[idx..].join("\n"), refs, attachments, directives))
 }
 
 fn parse_file_ref_spec(spec: &str) -> anyhow::Result<(String, Option<u64>, Option<u64>)> {
@@ -212,4 +199,3 @@ fn parse_file_ref_spec(spec: &str) -> anyhow::Result<(String, Option<u64>, Optio
 
     Ok((path, start_line, end_line))
 }
-

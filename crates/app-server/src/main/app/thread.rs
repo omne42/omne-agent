@@ -1,3 +1,655 @@
+#[derive(Debug, Deserialize)]
+struct ThreadStreamParamsRaw {
+    thread_id: ThreadId,
+    #[serde(default)]
+    since_seq: u64,
+    #[serde(default)]
+    max_events: Option<usize>,
+    #[serde(default)]
+    kinds: Option<Vec<String>>,
+    #[serde(default)]
+    wait_ms: Option<u64>,
+}
+
+struct ThreadEventBatch {
+    events: Vec<omne_protocol::ThreadEvent>,
+    last_seq: u64,
+    thread_last_seq: u64,
+    has_more: bool,
+}
+
+struct ParsedThreadStreamParams {
+    thread_id: ThreadId,
+    since_seq: u64,
+    max_events: Option<usize>,
+    kinds: Option<Vec<omne_protocol::ThreadEventKindTag>>,
+    wait_ms: Option<u64>,
+}
+
+fn normalize_thread_event_kinds_param(
+    id: serde_json::Value,
+    kinds: Option<Vec<String>>,
+    method: &'static str,
+) -> Result<Option<Vec<omne_protocol::ThreadEventKindTag>>, JsonRpcResponse> {
+    let Some(kinds) = kinds else {
+        return Ok(None);
+    };
+    match omne_protocol::normalize_thread_event_kind_filter(&kinds) {
+        Ok(requested) => {
+            let mut values = requested.into_iter().collect::<Vec<_>>();
+            values.sort_by_key(|kind| kind.as_str());
+            Ok(Some(values))
+        }
+        Err(invalid) => Err(JsonRpcResponse::err(
+            id,
+            JSONRPC_INVALID_PARAMS,
+            "invalid params",
+            Some(serde_json::json!({
+                "error": format!(
+                    "unsupported {method} kinds: {}",
+                    invalid.join(", ")
+                ),
+                "supported_kinds": omne_protocol::THREAD_EVENT_KIND_TAGS,
+            })),
+        )),
+    }
+}
+
+fn parse_thread_stream_params(
+    id: serde_json::Value,
+    params: serde_json::Value,
+    method: &'static str,
+) -> Result<ParsedThreadStreamParams, JsonRpcResponse> {
+    let raw = match serde_json::from_value::<ThreadStreamParamsRaw>(params) {
+        Ok(raw) => raw,
+        Err(err) => return Err(invalid_params(id, err)),
+    };
+    let kinds = normalize_thread_event_kinds_param(id, raw.kinds, method)?;
+    Ok(ParsedThreadStreamParams {
+        thread_id: raw.thread_id,
+        since_seq: raw.since_seq,
+        max_events: raw.max_events,
+        kinds,
+        wait_ms: raw.wait_ms,
+    })
+}
+
+fn filter_and_paginate_thread_events(
+    mut events: Vec<omne_protocol::ThreadEvent>,
+    since: EventSeq,
+    kinds: Option<&[omne_protocol::ThreadEventKindTag]>,
+    max_events: Option<usize>,
+) -> ThreadEventBatch {
+    let thread_last_seq = events.last().map(|e| e.seq.0).unwrap_or(since.0);
+
+    if let Some(kinds) = kinds
+        && !kinds.is_empty()
+    {
+        let requested = kinds
+            .iter()
+            .copied()
+            .collect::<std::collections::HashSet<_>>();
+        events.retain(|event| requested.contains(&event.kind.tag_enum()));
+    }
+
+    let mut has_more = false;
+    if let Some(max_events) = max_events {
+        let max_events = max_events.clamp(1, 50_000);
+        if events.len() > max_events {
+            events.truncate(max_events);
+            has_more = true;
+        }
+    }
+
+    let last_seq = events.last().map(|e| e.seq.0).unwrap_or(since.0);
+    ThreadEventBatch {
+        events,
+        last_seq,
+        thread_last_seq,
+        has_more,
+    }
+}
+
+fn build_thread_events_response(
+    batch: ThreadEventBatch,
+) -> omne_app_server_protocol::ThreadEventsResponse {
+    omne_app_server_protocol::ThreadEventsResponse {
+        events: batch.events,
+        last_seq: batch.last_seq,
+        thread_last_seq: batch.thread_last_seq,
+        has_more: batch.has_more,
+    }
+}
+
+fn build_thread_subscribe_response(
+    batch: ThreadEventBatch,
+    timed_out: bool,
+) -> omne_app_server_protocol::ThreadSubscribeResponse {
+    omne_app_server_protocol::ThreadSubscribeResponse {
+        events: batch.events,
+        last_seq: batch.last_seq,
+        thread_last_seq: batch.thread_last_seq,
+        has_more: batch.has_more,
+        timed_out,
+    }
+}
+
+fn jsonrpc_internal_error_data(err: &anyhow::Error) -> Option<serde_json::Value> {
+    thread_configure_error_code(err)
+        .map(|error_code| serde_json::json!({ "error_code": error_code }))
+}
+
+fn jsonrpc_internal_error(id: &serde_json::Value, err: impl Into<anyhow::Error>) -> JsonRpcResponse {
+    let err = err.into();
+    JsonRpcResponse::err(
+        id.clone(),
+        JSONRPC_INTERNAL_ERROR,
+        err.to_string(),
+        jsonrpc_internal_error_data(&err),
+    )
+}
+
+fn jsonrpc_ok_serialized(
+    id: &serde_json::Value,
+    payload: impl serde::Serialize,
+) -> JsonRpcResponse {
+    match serde_json::to_value(payload) {
+        Ok(response) => JsonRpcResponse::ok(id.clone(), response),
+        Err(err) => jsonrpc_internal_error(id, err),
+    }
+}
+
+fn jsonrpc_ok_or_internal<T: serde::Serialize>(
+    id: &serde_json::Value,
+    result: anyhow::Result<T>,
+) -> JsonRpcResponse {
+    match result {
+        Ok(payload) => jsonrpc_ok_serialized(id, payload),
+        Err(err) => jsonrpc_internal_error(id, err),
+    }
+}
+
+fn parse_jsonrpc_params<T: serde::de::DeserializeOwned>(
+    id: &serde_json::Value,
+    params: serde_json::Value,
+) -> Result<T, JsonRpcResponse> {
+    serde_json::from_value(params).map_err(|err| invalid_params(id.clone(), err))
+}
+
+async fn dispatch_jsonrpc_request<P, R, F, Fut>(
+    id: &serde_json::Value,
+    params: serde_json::Value,
+    handler: F,
+) -> JsonRpcResponse
+where
+    P: serde::de::DeserializeOwned,
+    R: serde::Serialize,
+    F: FnOnce(P) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<R>>,
+{
+    match parse_jsonrpc_params::<P>(id, params) {
+        Ok(params) => jsonrpc_ok_or_internal(id, handler(params).await),
+        Err(response) => response,
+    }
+}
+
+async fn read_thread_events_since_or_not_found(
+    server: &Server,
+    thread_id: ThreadId,
+    since: EventSeq,
+) -> anyhow::Result<Vec<omne_protocol::ThreadEvent>> {
+    server
+        .thread_store
+        .read_events_since(thread_id, since)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("thread not found: {thread_id}"))
+}
+
+fn parse_thread_events_params(
+    id: serde_json::Value,
+    params: serde_json::Value,
+) -> Result<ThreadEventsParams, JsonRpcResponse> {
+    let parsed = parse_thread_stream_params(id, params, "thread/events")?;
+
+    Ok(ThreadEventsParams {
+        thread_id: parsed.thread_id,
+        since_seq: parsed.since_seq,
+        max_events: parsed.max_events,
+        kinds: parsed.kinds,
+    })
+}
+
+fn parse_thread_subscribe_params(
+    id: serde_json::Value,
+    params: serde_json::Value,
+) -> Result<ThreadSubscribeParams, JsonRpcResponse> {
+    let parsed = parse_thread_stream_params(id, params, "thread/subscribe")?;
+
+    Ok(ThreadSubscribeParams {
+        thread_id: parsed.thread_id,
+        since_seq: parsed.since_seq,
+        max_events: parsed.max_events,
+        kinds: parsed.kinds,
+        wait_ms: parsed.wait_ms,
+    })
+}
+
+fn usage_ratio(numerator: u64, denominator: u64) -> Option<f64> {
+    if denominator == 0 {
+        None
+    } else {
+        Some(numerator as f64 / denominator as f64)
+    }
+}
+
+fn configured_total_token_budget_limit() -> Option<u64> {
+    std::env::var("OMNE_AGENT_MAX_TOTAL_TOKENS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+}
+
+fn token_budget_snapshot(
+    total_tokens_used: u64,
+    token_budget_limit: Option<u64>,
+) -> (Option<u64>, Option<f64>, Option<bool>) {
+    let Some(limit) = token_budget_limit else {
+        return (None, None, None);
+    };
+    let remaining = Some(limit.saturating_sub(total_tokens_used));
+    let utilization = usage_ratio(total_tokens_used, limit);
+    let exceeded = Some(total_tokens_used > limit);
+    (remaining, utilization, exceeded)
+}
+
+fn thread_usage_token_budget_warning_snapshot(
+    total_tokens_used: u64,
+    token_budget_limit: Option<u64>,
+    warning_threshold_ratio: f64,
+) -> Option<bool> {
+    token_budget_limit.map(|_| {
+        token_budget_warning_active(
+            total_tokens_used,
+            token_budget_limit,
+            warning_threshold_ratio,
+        )
+    })
+}
+
+fn thread_token_budget_snapshot_with_limit(
+    total_tokens_used: u64,
+    token_budget_limit: Option<u64>,
+    warning_threshold_ratio: f64,
+) -> (
+    Option<u64>,
+    Option<u64>,
+    Option<f64>,
+    Option<bool>,
+    Option<bool>,
+) {
+    let (token_budget_remaining, token_budget_utilization, token_budget_exceeded) =
+        token_budget_snapshot(total_tokens_used, token_budget_limit);
+    let token_budget_warning_active = thread_usage_token_budget_warning_snapshot(
+        total_tokens_used,
+        token_budget_limit,
+        warning_threshold_ratio,
+    );
+    (
+        token_budget_limit,
+        token_budget_remaining,
+        token_budget_utilization,
+        token_budget_exceeded,
+        token_budget_warning_active,
+    )
+}
+
+fn thread_token_budget_snapshot(
+    total_tokens_used: u64,
+    warning_threshold_ratio: f64,
+) -> (
+    Option<u64>,
+    Option<u64>,
+    Option<f64>,
+    Option<bool>,
+    Option<bool>,
+) {
+    thread_token_budget_snapshot_with_limit(
+        total_tokens_used,
+        configured_total_token_budget_limit(),
+        warning_threshold_ratio,
+    )
+}
+
+fn build_thread_usage_response(
+    thread_id: ThreadId,
+    last_seq: u64,
+    total_tokens_used: u64,
+    input_tokens_used: u64,
+    output_tokens_used: u64,
+    cache_input_tokens_used: u64,
+    cache_creation_input_tokens_used: u64,
+    token_budget_limit: Option<u64>,
+    warning_threshold_ratio: f64,
+) -> omne_app_server_protocol::ThreadUsageResponse {
+    let non_cache_input_tokens_used = input_tokens_used.saturating_sub(cache_input_tokens_used);
+    let (
+        token_budget_limit,
+        token_budget_remaining,
+        token_budget_utilization,
+        token_budget_exceeded,
+        token_budget_warning_active,
+    ) = thread_token_budget_snapshot_with_limit(
+        total_tokens_used,
+        token_budget_limit,
+        warning_threshold_ratio,
+    );
+
+    omne_app_server_protocol::ThreadUsageResponse {
+        thread_id,
+        last_seq,
+        total_tokens_used,
+        input_tokens_used,
+        output_tokens_used,
+        cache_input_tokens_used,
+        cache_creation_input_tokens_used,
+        non_cache_input_tokens_used,
+        cache_input_ratio: usage_ratio(cache_input_tokens_used, input_tokens_used),
+        output_ratio: usage_ratio(output_tokens_used, total_tokens_used),
+        token_budget_limit,
+        token_budget_remaining,
+        token_budget_utilization,
+        token_budget_exceeded,
+        token_budget_warning_active,
+    }
+}
+
+async fn handle_thread_start(
+    server: &Server,
+    params: ThreadStartParams,
+) -> anyhow::Result<omne_app_server_protocol::ThreadStartResponse> {
+    let cwd = params
+        .cwd
+        .map(PathBuf::from)
+        .unwrap_or_else(|| server.cwd.clone());
+    let handle = server.thread_store.create_thread(cwd).await?;
+    let thread_id = handle.thread_id();
+    let log_path = handle.log_path().display().to_string();
+    let last_seq = handle.last_seq().0;
+    let rt = Arc::new(ThreadRuntime::new(handle, server.notify_tx.clone()));
+    server.threads.lock().await.insert(thread_id, rt);
+    let auto_hook = run_auto_workspace_hook(server, thread_id, WorkspaceHookName::Setup).await;
+    Ok(omne_app_server_protocol::ThreadStartResponse {
+        thread_id,
+        log_path,
+        last_seq,
+        auto_hook,
+    })
+}
+
+async fn handle_thread_resume(
+    server: &Server,
+    params: ThreadResumeParams,
+) -> anyhow::Result<omne_app_server_protocol::ThreadHandleResponse> {
+    let rt = server.get_or_load_thread(params.thread_id).await?;
+    let handle = rt.handle.lock().await;
+    Ok(omne_app_server_protocol::ThreadHandleResponse {
+        thread_id: handle.thread_id(),
+        log_path: handle.log_path().display().to_string(),
+        last_seq: handle.last_seq().0,
+    })
+}
+
+async fn handle_thread_loaded(
+    server: &Server,
+) -> anyhow::Result<omne_app_server_protocol::ThreadListResponse> {
+    let mut threads = server
+        .threads
+        .lock()
+        .await
+        .keys()
+        .copied()
+        .collect::<Vec<_>>();
+    threads.sort_unstable();
+    Ok(omne_app_server_protocol::ThreadListResponse { threads })
+}
+
+async fn handle_thread_list(
+    server: &Server,
+) -> anyhow::Result<omne_app_server_protocol::ThreadListResponse> {
+    server
+        .thread_store
+        .list_threads()
+        .await
+        .map(|threads| omne_app_server_protocol::ThreadListResponse { threads })
+}
+
+async fn handle_thread_state(
+    server: &Server,
+    params: ThreadStateParams,
+) -> anyhow::Result<omne_app_server_protocol::ThreadStateResponse> {
+    let rt = server.get_or_load_thread(params.thread_id).await?;
+    let handle = rt.handle.lock().await;
+    let state = handle.state();
+    let archived_at = state.archived_at.and_then(|ts| ts.format(&Rfc3339).ok());
+    let paused_at = state.paused_at.and_then(|ts| ts.format(&Rfc3339).ok());
+    let (
+        token_budget_limit,
+        token_budget_remaining,
+        token_budget_utilization,
+        token_budget_exceeded,
+        token_budget_warning_active,
+    ) = thread_token_budget_snapshot(
+        state.total_tokens_used,
+        token_budget_warning_threshold_ratio(),
+    );
+    Ok(omne_app_server_protocol::ThreadStateResponse {
+        thread_id: handle.thread_id(),
+        cwd: state.cwd.clone(),
+        archived: state.archived,
+        archived_at,
+        archived_reason: state.archived_reason.clone(),
+        paused: state.paused,
+        paused_at,
+        paused_reason: state.paused_reason.clone(),
+        approval_policy: state.approval_policy,
+        sandbox_policy: state.sandbox_policy,
+        sandbox_writable_roots: state.sandbox_writable_roots.clone(),
+        sandbox_network_access: state.sandbox_network_access,
+        mode: state.mode.clone(),
+        model: state.model.clone(),
+        openai_base_url: state.openai_base_url.clone(),
+        allowed_tools: state.allowed_tools.clone(),
+        last_seq: handle.last_seq().0,
+        active_turn_id: state.active_turn_id,
+        active_turn_interrupt_requested: state.active_turn_interrupt_requested,
+        last_turn_id: state.last_turn_id,
+        last_turn_status: state.last_turn_status,
+        last_turn_reason: state.last_turn_reason.clone(),
+        token_budget_limit,
+        token_budget_remaining,
+        token_budget_utilization,
+        token_budget_exceeded,
+        token_budget_warning_active,
+        total_tokens_used: state.total_tokens_used,
+        input_tokens_used: state.input_tokens_used,
+        output_tokens_used: state.output_tokens_used,
+        cache_input_tokens_used: state.cache_input_tokens_used,
+        cache_creation_input_tokens_used: state.cache_creation_input_tokens_used,
+    })
+}
+
+async fn handle_thread_usage(
+    server: &Server,
+    params: ThreadUsageParams,
+) -> anyhow::Result<omne_app_server_protocol::ThreadUsageResponse> {
+    let rt = server.get_or_load_thread(params.thread_id).await?;
+    let handle = rt.handle.lock().await;
+    let state = handle.state();
+    let token_budget_limit = configured_total_token_budget_limit();
+    Ok(build_thread_usage_response(
+        handle.thread_id(),
+        handle.last_seq().0,
+        state.total_tokens_used,
+        state.input_tokens_used,
+        state.output_tokens_used,
+        state.cache_input_tokens_used,
+        state.cache_creation_input_tokens_used,
+        token_budget_limit,
+        token_budget_warning_threshold_ratio(),
+    ))
+}
+
+async fn handle_thread_events_request(
+    server: &Arc<Server>,
+    id: &serde_json::Value,
+    params: serde_json::Value,
+) -> JsonRpcResponse {
+    let params = match parse_thread_events_params(id.clone(), params) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
+    let since = EventSeq(params.since_seq);
+    let result = read_thread_events_since_or_not_found(server, params.thread_id, since)
+        .await
+        .map(|events| {
+            filter_and_paginate_thread_events(
+                events,
+                since,
+                params.kinds.as_deref(),
+                params.max_events,
+            )
+        })
+        .map(build_thread_events_response);
+    jsonrpc_ok_or_internal(id, result)
+}
+
+async fn handle_thread_subscribe_request(
+    server: &Arc<Server>,
+    id: &serde_json::Value,
+    params: serde_json::Value,
+) -> JsonRpcResponse {
+    let params = match parse_thread_subscribe_params(id.clone(), params) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
+    jsonrpc_ok_or_internal(id, handle_thread_subscribe(server, params).await)
+}
+
+#[cfg(test)]
+mod thread_usage_budget_tests {
+    use super::*;
+
+    #[test]
+    fn token_budget_snapshot_disabled_returns_none_fields() {
+        let (remaining, utilization, exceeded) = token_budget_snapshot(123, None);
+        assert_eq!(remaining, None);
+        assert_eq!(utilization, None);
+        assert_eq!(exceeded, None);
+    }
+
+    #[test]
+    fn token_budget_snapshot_under_limit_has_remaining_and_not_exceeded() {
+        let (remaining, utilization, exceeded) = token_budget_snapshot(120, Some(200));
+        assert_eq!(remaining, Some(80));
+        assert_eq!(utilization, Some(0.6));
+        assert_eq!(exceeded, Some(false));
+    }
+
+    #[test]
+    fn token_budget_snapshot_over_limit_saturates_remaining_and_marks_exceeded() {
+        let (remaining, utilization, exceeded) = token_budget_snapshot(250, Some(200));
+        assert_eq!(remaining, Some(0));
+        assert_eq!(utilization, Some(1.25));
+        assert_eq!(exceeded, Some(true));
+    }
+
+    #[test]
+    fn token_budget_snapshot_at_limit_keeps_zero_remaining_without_exceeded() {
+        let (remaining, utilization, exceeded) = token_budget_snapshot(200, Some(200));
+        assert_eq!(remaining, Some(0));
+        assert_eq!(utilization, Some(1.0));
+        assert_eq!(exceeded, Some(false));
+    }
+
+    #[test]
+    fn thread_usage_token_budget_warning_snapshot_disabled_returns_none() {
+        assert_eq!(
+            thread_usage_token_budget_warning_snapshot(100, None, 0.9),
+            None
+        );
+    }
+
+    #[test]
+    fn thread_usage_token_budget_warning_snapshot_threshold_and_exceeded_behavior() {
+        assert_eq!(
+            thread_usage_token_budget_warning_snapshot(90, Some(100), 0.9),
+            Some(true)
+        );
+        assert_eq!(
+            thread_usage_token_budget_warning_snapshot(89, Some(100), 0.9),
+            Some(false)
+        );
+        assert_eq!(
+            thread_usage_token_budget_warning_snapshot(101, Some(100), 0.9),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn build_thread_usage_response_marks_warning_at_threshold() {
+        let response =
+            build_thread_usage_response(ThreadId::new(), 7, 90, 70, 20, 35, 5, Some(100), 0.9);
+        assert_eq!(response.last_seq, 7);
+        assert_eq!(response.non_cache_input_tokens_used, 35);
+        assert_eq!(response.token_budget_remaining, Some(10));
+        assert_eq!(response.token_budget_utilization, Some(0.9));
+        assert_eq!(response.token_budget_exceeded, Some(false));
+        assert_eq!(response.token_budget_warning_active, Some(true));
+    }
+
+    #[test]
+    fn build_thread_usage_response_disables_warning_when_exceeded() {
+        let response =
+            build_thread_usage_response(ThreadId::new(), 9, 101, 80, 21, 20, 3, Some(100), 0.9);
+        assert_eq!(response.token_budget_remaining, Some(0));
+        assert_eq!(response.token_budget_exceeded, Some(true));
+        assert_eq!(response.token_budget_warning_active, Some(false));
+        assert_eq!(response.token_budget_utilization, Some(1.01));
+    }
+
+    #[test]
+    fn build_thread_usage_response_without_budget_keeps_budget_fields_empty() {
+        let response = build_thread_usage_response(ThreadId::new(), 1, 50, 40, 10, 5, 0, None, 0.9);
+        assert_eq!(response.token_budget_limit, None);
+        assert_eq!(response.token_budget_remaining, None);
+        assert_eq!(response.token_budget_utilization, None);
+        assert_eq!(response.token_budget_exceeded, None);
+        assert_eq!(response.token_budget_warning_active, None);
+    }
+
+    #[test]
+    fn thread_token_budget_snapshot_with_limit_reports_limit_and_warning() {
+        let (limit, remaining, utilization, exceeded, warning_active) =
+            thread_token_budget_snapshot_with_limit(90, Some(100), 0.9);
+        assert_eq!(limit, Some(100));
+        assert_eq!(remaining, Some(10));
+        assert_eq!(utilization, Some(0.9));
+        assert_eq!(exceeded, Some(false));
+        assert_eq!(warning_active, Some(true));
+    }
+
+    #[test]
+    fn thread_token_budget_snapshot_with_limit_reports_none_fields_when_unset() {
+        let (limit, remaining, utilization, exceeded, warning_active) =
+            thread_token_budget_snapshot_with_limit(90, None, 0.9);
+        assert_eq!(limit, None);
+        assert_eq!(remaining, None);
+        assert_eq!(utilization, None);
+        assert_eq!(exceeded, None);
+        assert_eq!(warning_active, None);
+    }
+}
+
 async fn handle_thread_request(
     server: &Arc<Server>,
     id: serde_json::Value,
@@ -5,305 +657,164 @@ async fn handle_thread_request(
     params: serde_json::Value,
 ) -> JsonRpcResponse {
     match method {
-        "thread/start" => match serde_json::from_value::<ThreadStartParams>(params) {
-            Ok(params) => {
-                let cwd = params
-                    .cwd
-                    .map(PathBuf::from)
-                    .unwrap_or_else(|| server.cwd.clone());
-                match server.thread_store.create_thread(cwd).await {
-                    Ok(handle) => {
-                        let thread_id = handle.thread_id();
-                        let log_path = handle.log_path().display().to_string();
-                        let last_seq = handle.last_seq().0;
-                        let rt = Arc::new(ThreadRuntime::new(handle, server.notify_tx.clone()));
-                        server.threads.lock().await.insert(thread_id, rt);
-
-                        JsonRpcResponse::ok(
-                            id,
-                            serde_json::json!({
-                                "thread_id": thread_id,
-                                "log_path": log_path,
-                                "last_seq": last_seq,
-                            }),
-                        )
-                    }
-                    Err(err) => JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None),
-                }
-            }
-            Err(err) => invalid_params(id, err),
-        },
-        "thread/resume" => match serde_json::from_value::<ThreadResumeParams>(params) {
-            Ok(params) => match server.get_or_load_thread(params.thread_id).await {
-                Ok(rt) => {
-                    let handle = rt.handle.lock().await;
-                    JsonRpcResponse::ok(
-                        id,
-                        serde_json::json!({
-                            "thread_id": handle.thread_id(),
-                            "log_path": handle.log_path().display().to_string(),
-                            "last_seq": handle.last_seq().0,
-                        }),
-                    )
-                }
-                Err(err) => JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None),
-            },
-            Err(err) => invalid_params(id, err),
-        },
-        "thread/fork" => match serde_json::from_value::<ThreadForkParams>(params) {
-            Ok(params) => match handle_thread_fork(server, params).await {
-                Ok(result) => JsonRpcResponse::ok(id, result),
-                Err(err) => JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None),
-            },
-            Err(err) => invalid_params(id, err),
-        },
-        "thread/archive" => match serde_json::from_value::<ThreadArchiveParams>(params) {
-            Ok(params) => match handle_thread_archive(server, params).await {
-                Ok(result) => JsonRpcResponse::ok(id, result),
-                Err(err) => JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None),
-            },
-            Err(err) => invalid_params(id, err),
-        },
-        "thread/unarchive" => match serde_json::from_value::<ThreadUnarchiveParams>(params) {
-            Ok(params) => match handle_thread_unarchive(server, params).await {
-                Ok(result) => JsonRpcResponse::ok(id, result),
-                Err(err) => JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None),
-            },
-            Err(err) => invalid_params(id, err),
-        },
-        "thread/pause" => match serde_json::from_value::<ThreadPauseParams>(params) {
-            Ok(params) => match handle_thread_pause(server, params).await {
-                Ok(result) => JsonRpcResponse::ok(id, result),
-                Err(err) => JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None),
-            },
-            Err(err) => invalid_params(id, err),
-        },
-        "thread/unpause" => match serde_json::from_value::<ThreadUnpauseParams>(params) {
-            Ok(params) => match handle_thread_unpause(server, params).await {
-                Ok(result) => JsonRpcResponse::ok(id, result),
-                Err(err) => JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None),
-            },
-            Err(err) => invalid_params(id, err),
-        },
-        "thread/delete" => match serde_json::from_value::<ThreadDeleteParams>(params) {
-            Ok(params) => match handle_thread_delete(server, params).await {
-                Ok(result) => JsonRpcResponse::ok(id, result),
-                Err(err) => JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None),
-            },
-            Err(err) => invalid_params(id, err),
-        },
-        "thread/clear_artifacts" => match serde_json::from_value::<ThreadClearArtifactsParams>(params) {
-            Ok(params) => match handle_thread_clear_artifacts(server, params).await {
-                Ok(result) => JsonRpcResponse::ok(id, result),
-                Err(err) => JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None),
-            },
-            Err(err) => invalid_params(id, err),
-        },
+        "thread/start" => {
+            dispatch_jsonrpc_request(&id, params, |params: ThreadStartParams| {
+                handle_thread_start(server, params)
+            })
+            .await
+        }
+        "thread/resume" => {
+            dispatch_jsonrpc_request(&id, params, |params: ThreadResumeParams| {
+                handle_thread_resume(server, params)
+            })
+            .await
+        }
+        "thread/fork" => {
+            dispatch_jsonrpc_request(&id, params, |params: ThreadForkParams| {
+                handle_thread_fork(server, params)
+            })
+            .await
+        }
+        "thread/archive" => {
+            dispatch_jsonrpc_request(&id, params, |params: ThreadArchiveParams| {
+                handle_thread_archive(server, params)
+            })
+            .await
+        }
+        "thread/unarchive" => {
+            dispatch_jsonrpc_request(&id, params, |params: ThreadUnarchiveParams| {
+                handle_thread_unarchive(server, params)
+            })
+            .await
+        }
+        "thread/pause" => {
+            dispatch_jsonrpc_request(&id, params, |params: ThreadPauseParams| {
+                handle_thread_pause(server, params)
+            })
+            .await
+        }
+        "thread/unpause" => {
+            dispatch_jsonrpc_request(&id, params, |params: ThreadUnpauseParams| {
+                handle_thread_unpause(server, params)
+            })
+            .await
+        }
+        "thread/delete" => {
+            dispatch_jsonrpc_request(&id, params, |params: ThreadDeleteParams| {
+                handle_thread_delete(server, params)
+            })
+            .await
+        }
+        "thread/clear_artifacts" => {
+            dispatch_jsonrpc_request(&id, params, |params: ThreadClearArtifactsParams| {
+                handle_thread_clear_artifacts(server, params)
+            })
+            .await
+        }
         "thread/list" => {
-            let _ = params;
-            match server.thread_store.list_threads().await {
-                Ok(threads) => JsonRpcResponse::ok(id, serde_json::json!({ "threads": threads })),
-                Err(err) => JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None),
-            }
+            dispatch_jsonrpc_request(&id, params, |_: Option<ThreadListParams>| {
+                handle_thread_list(server)
+            })
+            .await
         }
-        "thread/list_meta" => match serde_json::from_value::<ThreadListMetaParams>(params) {
-            Ok(params) => match handle_thread_list_meta(server, params).await {
-                Ok(result) => JsonRpcResponse::ok(id, result),
-                Err(err) => JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None),
-            },
-            Err(err) => invalid_params(id, err),
-        },
+        "thread/list_meta" => {
+            dispatch_jsonrpc_request(&id, params, |params: ThreadListMetaParams| {
+                handle_thread_list_meta(server, params)
+            })
+            .await
+        }
         "thread/loaded" => {
-            let _ = params;
-            let mut threads = server
-                .threads
-                .lock()
-                .await
-                .keys()
-                .copied()
-                .collect::<Vec<_>>();
-            threads.sort_unstable();
-            JsonRpcResponse::ok(id, serde_json::json!({ "threads": threads }))
+            dispatch_jsonrpc_request(&id, params, |_: Option<ThreadLoadedParams>| {
+                handle_thread_loaded(server)
+            })
+            .await
         }
-        "thread/events" => match serde_json::from_value::<ThreadEventsParams>(params) {
-            Ok(params) => {
-                let since = EventSeq(params.since_seq);
-                match server
-                    .thread_store
-                    .read_events_since(params.thread_id, since)
-                    .await
-                {
-                    Ok(Some(mut events)) => {
-                        let thread_last_seq = events.last().map(|e| e.seq.0).unwrap_or(since.0);
-                        let mut has_more = false;
-                        if let Some(max_events) = params.max_events {
-                            let max_events = max_events.clamp(1, 50_000);
-                            if events.len() > max_events {
-                                events.truncate(max_events);
-                                has_more = true;
-                            }
-                        }
-
-                        let last_seq = events.last().map(|e| e.seq.0).unwrap_or(since.0);
-                        JsonRpcResponse::ok(
-                            id,
-                            serde_json::json!({
-                                "events": events,
-                                "last_seq": last_seq,
-                                "thread_last_seq": thread_last_seq,
-                                "has_more": has_more,
-                            }),
-                        )
-                    }
-                    Ok(None) => JsonRpcResponse::err(
-                        id,
-                        JSONRPC_INTERNAL_ERROR,
-                        format!("thread not found: {}", params.thread_id),
-                        None,
-                    ),
-                    Err(err) => JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None),
-                }
-            }
-            Err(err) => invalid_params(id, err),
-        },
-        "thread/subscribe" => match serde_json::from_value::<ThreadSubscribeParams>(params) {
-            Ok(params) => match handle_thread_subscribe(server, params).await {
-                Ok(result) => JsonRpcResponse::ok(id, result),
-                Err(err) => JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None),
-            },
-            Err(err) => invalid_params(id, err),
-        },
-        "thread/state" => match serde_json::from_value::<ThreadStateParams>(params) {
-            Ok(params) => match server.get_or_load_thread(params.thread_id).await {
-                Ok(rt) => {
-                    let handle = rt.handle.lock().await;
-                    let state = handle.state();
-                    let archived_at = state.archived_at.and_then(|ts| ts.format(&Rfc3339).ok());
-                    let paused_at = state.paused_at.and_then(|ts| ts.format(&Rfc3339).ok());
-                    JsonRpcResponse::ok(
-                        id,
-                        serde_json::json!({
-                            "thread_id": handle.thread_id(),
-                            "cwd": state.cwd,
-                            "archived": state.archived,
-                            "archived_at": archived_at,
-                            "archived_reason": state.archived_reason,
-                            "paused": state.paused,
-                            "paused_at": paused_at,
-                            "paused_reason": state.paused_reason,
-                            "approval_policy": state.approval_policy,
-                            "sandbox_policy": state.sandbox_policy,
-                            "sandbox_writable_roots": state.sandbox_writable_roots,
-                            "sandbox_network_access": state.sandbox_network_access,
-                            "mode": state.mode,
-                            "model": state.model,
-                            "openai_base_url": state.openai_base_url,
-                            "allowed_tools": state.allowed_tools,
-                            "last_seq": handle.last_seq().0,
-                            "active_turn_id": state.active_turn_id,
-                            "active_turn_interrupt_requested": state.active_turn_interrupt_requested,
-                            "last_turn_id": state.last_turn_id,
-                            "last_turn_status": state.last_turn_status,
-                            "last_turn_reason": state.last_turn_reason,
-                            "total_tokens_used": state.total_tokens_used,
-                        }),
-                    )
-                }
-                Err(err) => JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None),
-            },
-            Err(err) => invalid_params(id, err),
-        },
-        "thread/attention" => match serde_json::from_value::<ThreadAttentionParams>(params) {
-            Ok(params) => match handle_thread_attention(server, params).await {
-                Ok(result) => JsonRpcResponse::ok(id, result),
-                Err(err) => JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None),
-            },
-            Err(err) => invalid_params(id, err),
-        },
-        "thread/disk_usage" => match serde_json::from_value::<ThreadDiskUsageParams>(params) {
-            Ok(params) => match handle_thread_disk_usage(server, params).await {
-                Ok(result) => JsonRpcResponse::ok(id, result),
-                Err(err) => JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None),
-            },
-            Err(err) => invalid_params(id, err),
-        },
-        "thread/disk_report" => match serde_json::from_value::<ThreadDiskReportParams>(params) {
-            Ok(params) => match handle_thread_disk_report(server, params).await {
-                Ok(result) => JsonRpcResponse::ok(id, result),
-                Err(err) => JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None),
-            },
-            Err(err) => invalid_params(id, err),
-        },
-        "thread/diff" => match serde_json::from_value::<ThreadDiffParams>(params) {
-            Ok(params) => match handle_thread_diff(server, params).await {
-                Ok(result) => JsonRpcResponse::ok(id, result),
-                Err(err) => JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None),
-            },
-            Err(err) => invalid_params(id, err),
-        },
-        "thread/patch" => match serde_json::from_value::<ThreadPatchParams>(params) {
-            Ok(params) => match handle_thread_patch(server, params).await {
-                Ok(result) => JsonRpcResponse::ok(id, result),
-                Err(err) => JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None),
-            },
-            Err(err) => invalid_params(id, err),
-        },
-        "thread/checkpoint/create" => match serde_json::from_value::<ThreadCheckpointCreateParams>(params)
-        {
-            Ok(params) => match handle_thread_checkpoint_create(server, params).await {
-                Ok(result) => JsonRpcResponse::ok(id, result),
-                Err(err) => JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None),
-            },
-            Err(err) => invalid_params(id, err),
-        },
-        "thread/checkpoint/list" => match serde_json::from_value::<ThreadCheckpointListParams>(params)
-        {
-            Ok(params) => match handle_thread_checkpoint_list(server, params).await {
-                Ok(result) => JsonRpcResponse::ok(id, result),
-                Err(err) => JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None),
-            },
-            Err(err) => invalid_params(id, err),
-        },
-        "thread/checkpoint/restore" => match serde_json::from_value::<ThreadCheckpointRestoreParams>(
-            params,
-        ) {
-            Ok(params) => match handle_thread_checkpoint_restore(server, params).await {
-                Ok(result) => JsonRpcResponse::ok(id, result),
-                Err(err) => JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None),
-            },
-            Err(err) => invalid_params(id, err),
-        },
-        "thread/hook_run" => match serde_json::from_value::<ThreadHookRunParams>(params) {
-            Ok(params) => match handle_thread_hook_run(server, params).await {
-                Ok(result) => JsonRpcResponse::ok(id, result),
-                Err(err) => JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None),
-            },
-            Err(err) => invalid_params(id, err),
-        },
-        "thread/configure" => match serde_json::from_value::<ThreadConfigureParams>(params) {
-            Ok(params) => match handle_thread_configure(server, params).await {
-                Ok(result) => JsonRpcResponse::ok(id, result),
-                Err(err) => JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None),
-            },
-            Err(err) => invalid_params(id, err),
-        },
-        "thread/config/explain" => match serde_json::from_value::<ThreadConfigExplainParams>(params) {
-            Ok(params) => match handle_thread_config_explain(server, params).await {
-                Ok(result) => JsonRpcResponse::ok(id, result),
-                Err(err) => JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None),
-            },
-            Err(err) => invalid_params(id, err),
-        },
-        "thread/models" => match serde_json::from_value::<ThreadModelsParams>(params) {
-            Ok(params) => match handle_thread_models(server, params).await {
-                Ok(result) => JsonRpcResponse::ok(id, result),
-                Err(err) => JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None),
-            },
-            Err(err) => invalid_params(id, err),
-        },
-        _ => {
-            let _ = params;
-            method_not_found(id, method)
+        "thread/events" => handle_thread_events_request(server, &id, params).await,
+        "thread/subscribe" => handle_thread_subscribe_request(server, &id, params).await,
+        "thread/state" => {
+            dispatch_jsonrpc_request(&id, params, |params: ThreadStateParams| {
+                handle_thread_state(server, params)
+            })
+            .await
         }
+        "thread/usage" => {
+            dispatch_jsonrpc_request(&id, params, |params: ThreadUsageParams| {
+                handle_thread_usage(server, params)
+            })
+            .await
+        }
+        "thread/attention" => {
+            dispatch_jsonrpc_request(&id, params, |params: ThreadAttentionParams| {
+                handle_thread_attention(server, params)
+            })
+            .await
+        }
+        "thread/disk_usage" => {
+            dispatch_jsonrpc_request(&id, params, |params: ThreadDiskUsageParams| {
+                handle_thread_disk_usage(server, params)
+            })
+            .await
+        }
+        "thread/disk_report" => {
+            dispatch_jsonrpc_request(&id, params, |params: ThreadDiskReportParams| {
+                handle_thread_disk_report(server, params)
+            })
+            .await
+        }
+        "thread/diff" => {
+            dispatch_jsonrpc_request(&id, params, |params: ThreadDiffParams| {
+                handle_thread_diff(server, params)
+            })
+            .await
+        }
+        "thread/patch" => {
+            dispatch_jsonrpc_request(&id, params, |params: ThreadPatchParams| {
+                handle_thread_patch(server, params)
+            })
+            .await
+        }
+        "thread/checkpoint/create" => {
+            dispatch_jsonrpc_request(&id, params, |params: ThreadCheckpointCreateParams| {
+                handle_thread_checkpoint_create(server, params)
+            })
+            .await
+        }
+        "thread/checkpoint/list" => {
+            dispatch_jsonrpc_request(&id, params, |params: ThreadCheckpointListParams| {
+                handle_thread_checkpoint_list(server, params)
+            })
+            .await
+        }
+        "thread/checkpoint/restore" => {
+            dispatch_jsonrpc_request(&id, params, |params: ThreadCheckpointRestoreParams| {
+                handle_thread_checkpoint_restore(server, params)
+            })
+            .await
+        }
+        "thread/hook_run" => {
+            dispatch_jsonrpc_request(&id, params, |params: ThreadHookRunParams| {
+                handle_thread_hook_run(server, params)
+            })
+            .await
+        }
+        "thread/configure" => {
+            dispatch_jsonrpc_request(&id, params, |params: ThreadConfigureParams| {
+                handle_thread_configure(server, params)
+            })
+            .await
+        }
+        "thread/config/explain" => {
+            dispatch_jsonrpc_request(&id, params, |params: ThreadConfigExplainParams| {
+                handle_thread_config_explain(server, params)
+            })
+            .await
+        }
+        "thread/models" => {
+            dispatch_jsonrpc_request(&id, params, |params: ThreadModelsParams| {
+                handle_thread_models(server, params)
+            })
+            .await
+        }
+        _ => method_not_found(id, method),
     }
 }

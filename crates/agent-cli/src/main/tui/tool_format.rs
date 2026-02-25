@@ -1,33 +1,3 @@
-    fn parse_needs_approval(value: &Value) -> Option<(ThreadId, ApprovalId)> {
-        if !value
-            .get("needs_approval")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false)
-        {
-            return None;
-        }
-        let thread_id = serde_json::from_value::<ThreadId>(value.get("thread_id")?.clone()).ok()?;
-        let approval_id =
-            serde_json::from_value::<ApprovalId>(value.get("approval_id")?.clone()).ok()?;
-        Some((thread_id, approval_id))
-    }
-
-    fn is_denied(value: &Value) -> bool {
-        value.get("denied").and_then(|v| v.as_bool()).unwrap_or(false)
-    }
-
-    fn summarize_json(value: &Value) -> String {
-        let rendered = serde_json::to_string(value).unwrap_or_else(|_| value.to_string());
-        let rendered = rendered.trim().to_string();
-        let mut chars = rendered.chars();
-        let prefix: String = chars.by_ref().take(280).collect();
-        if chars.next().is_some() {
-            format!("{prefix}…")
-        } else {
-            prefix
-        }
-    }
-
     fn summarize_tool_kv(value: &Value) -> String {
         const MAX_ITEMS: usize = 6;
         match value {
@@ -108,6 +78,7 @@
             "process/kill" => format_process_kill(params),
             "process/interrupt" => format_process_interrupt(params),
             "artifact/list" => Some("artifact list".to_string()),
+            "artifact/versions" => format_artifact_versions(params),
             "artifact/read" => format_artifact_read(params),
             "artifact/write" => format_artifact_write(params),
             "artifact/delete" => format_artifact_delete(params),
@@ -296,7 +267,16 @@
 
     fn format_artifact_read(params: Option<&Value>) -> Option<String> {
         let artifact_id = param_str(params, "artifact_id")?;
-        Some(format!("artifact read {artifact_id}"))
+        let mut line = format!("artifact read {artifact_id}");
+        if let Some(version) = param_u64(params, "version") {
+            line.push_str(&format!(" v{version}"));
+        }
+        Some(line)
+    }
+
+    fn format_artifact_versions(params: Option<&Value>) -> Option<String> {
+        let artifact_id = param_str(params, "artifact_id")?;
+        Some(format!("artifact versions {artifact_id}"))
     }
 
     fn format_artifact_write(params: Option<&Value>) -> Option<String> {
@@ -347,6 +327,10 @@
         params.and_then(|value| value.get(key)).and_then(Value::as_bool)
     }
 
+    fn param_u64(params: Option<&Value>, key: &str) -> Option<u64> {
+        params.and_then(|value| value.get(key)).and_then(Value::as_u64)
+    }
+
     fn root_tag(root: Option<&str>) -> Option<&'static str> {
         if matches!(root, Some("reference")) {
             Some("ref")
@@ -362,4 +346,3 @@
             path.to_string()
         }
     }
-

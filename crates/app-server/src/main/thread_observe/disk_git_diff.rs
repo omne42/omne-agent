@@ -78,7 +78,7 @@ fn scan_thread_disk_usage(
 async fn handle_thread_disk_usage(
     server: &Server,
     params: ThreadDiskUsageParams,
-) -> anyhow::Result<Value> {
+) -> anyhow::Result<omne_app_server_protocol::ThreadDiskUsageResponse> {
     let thread_dir = server.thread_store.thread_dir(params.thread_id);
     let events_log_path = server.thread_store.events_log_path(params.thread_id);
 
@@ -99,15 +99,15 @@ async fn handle_thread_disk_usage(
     .await
     .context("join disk usage task")??;
 
-    Ok(serde_json::json!({
-        "thread_id": params.thread_id,
-        "thread_dir": thread_dir.display().to_string(),
-        "events_log_path": events_log_path.display().to_string(),
-        "events_log_bytes": usage.events_log_bytes,
-        "artifacts_bytes": usage.artifacts_bytes,
-        "total_bytes": usage.total_bytes,
-        "file_count": usage.file_count,
-    }))
+    Ok(omne_app_server_protocol::ThreadDiskUsageResponse {
+        thread_id: params.thread_id,
+        thread_dir: thread_dir.display().to_string(),
+        events_log_path: events_log_path.display().to_string(),
+        events_log_bytes: usage.events_log_bytes,
+        artifacts_bytes: usage.artifacts_bytes,
+        total_bytes: usage.total_bytes,
+        file_count: usage.file_count,
+    })
 }
 
 fn build_thread_disk_report_markdown(
@@ -152,7 +152,7 @@ fn build_thread_disk_report_markdown(
 async fn handle_thread_disk_report(
     server: &Server,
     params: ThreadDiskReportParams,
-) -> anyhow::Result<Value> {
+) -> anyhow::Result<omne_app_server_protocol::ThreadDiskReportResponse> {
     let thread_dir = server.thread_store.thread_dir(params.thread_id);
     let events_log_path = server.thread_store.events_log_path(params.thread_id);
 
@@ -197,17 +197,21 @@ async fn handle_thread_disk_report(
         },
     )
     .await?;
+    let artifact = serde_json::from_value::<omne_app_server_protocol::ArtifactWriteResponse>(
+        artifact,
+    )
+    .context("parse artifact/write response for thread disk report")?;
 
-    Ok(serde_json::json!({
-        "thread_id": params.thread_id,
-        "disk_usage": {
-            "events_log_bytes": usage.events_log_bytes,
-            "artifacts_bytes": usage.artifacts_bytes,
-            "total_bytes": usage.total_bytes,
-            "file_count": usage.file_count,
+    Ok(omne_app_server_protocol::ThreadDiskReportResponse {
+        thread_id: params.thread_id,
+        disk_usage: omne_app_server_protocol::ThreadDiskUsageSummary {
+            events_log_bytes: usage.events_log_bytes,
+            artifacts_bytes: usage.artifacts_bytes,
+            total_bytes: usage.total_bytes,
+            file_count: usage.file_count,
         },
-        "artifact": artifact,
-    }))
+        artifact,
+    })
 }
 
 const DEFAULT_THREAD_DIFF_MAX_BYTES: u64 = 4 * 1024 * 1024;
@@ -229,10 +233,57 @@ struct ThreadGitSnapshotSpec {
     summary_dirty: &'static str,
 }
 
+fn thread_git_snapshot_denied_error_code(
+    detail: &omne_app_server_protocol::ThreadGitSnapshotDeniedDetail,
+) -> Option<String> {
+    match detail {
+        omne_app_server_protocol::ThreadGitSnapshotDeniedDetail::Process(detail) => match detail {
+            omne_app_server_protocol::ThreadProcessDeniedDetail::Denied(detail) => {
+                detail.error_code.clone()
+            }
+            omne_app_server_protocol::ThreadProcessDeniedDetail::AllowedToolsDenied(detail) => {
+                detail.error_code.clone()
+            }
+            omne_app_server_protocol::ThreadProcessDeniedDetail::ModeDenied(detail) => {
+                detail.error_code.clone()
+            }
+            omne_app_server_protocol::ThreadProcessDeniedDetail::UnknownModeDenied(detail) => {
+                detail.error_code.clone()
+            }
+            omne_app_server_protocol::ThreadProcessDeniedDetail::SandboxPolicyDenied(detail) => {
+                detail.error_code.clone()
+            }
+            omne_app_server_protocol::ThreadProcessDeniedDetail::SandboxNetworkDenied(detail) => {
+                detail.error_code.clone()
+            }
+            omne_app_server_protocol::ThreadProcessDeniedDetail::ExecPolicyDenied(detail) => {
+                detail.error_code.clone()
+            }
+            omne_app_server_protocol::ThreadProcessDeniedDetail::ExecPolicyLoadDenied(detail) => {
+                detail.error_code.clone()
+            }
+        },
+        omne_app_server_protocol::ThreadGitSnapshotDeniedDetail::Artifact(detail) => match detail {
+            omne_app_server_protocol::ThreadArtifactDeniedDetail::Denied(detail) => {
+                detail.error_code.clone()
+            }
+            omne_app_server_protocol::ThreadArtifactDeniedDetail::AllowedToolsDenied(detail) => {
+                detail.error_code.clone()
+            }
+            omne_app_server_protocol::ThreadArtifactDeniedDetail::ModeDenied(detail) => {
+                detail.error_code.clone()
+            }
+            omne_app_server_protocol::ThreadArtifactDeniedDetail::UnknownModeDenied(detail) => {
+                detail.error_code.clone()
+            }
+        },
+    }
+}
+
 async fn handle_thread_git_snapshot(
     server: &Server,
     spec: ThreadGitSnapshotSpec,
-) -> anyhow::Result<Value> {
+) -> anyhow::Result<omne_app_server_protocol::ThreadGitSnapshotRpcResponse> {
     let max_bytes = spec
         .max_bytes
         .unwrap_or(DEFAULT_THREAD_DIFF_MAX_BYTES)
@@ -250,16 +301,51 @@ async fn handle_thread_git_snapshot(
             approval_id: spec.approval_id,
             argv: spec.argv,
             cwd: None,
+            timeout_ms: None,
         },
     )
     .await?;
 
+    if process
+        .get("needs_approval")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        let parsed = serde_json::from_value::<omne_app_server_protocol::ProcessNeedsApprovalResponse>(
+            process,
+        )
+        .context("parse process needs_approval response for thread git snapshot")?;
+        let response = omne_app_server_protocol::ThreadGitSnapshotNeedsApprovalResponse {
+            needs_approval: true,
+            thread_id: spec.thread_id,
+            approval_id: parsed.approval_id,
+        };
+        return Ok(omne_app_server_protocol::ThreadGitSnapshotRpcResponse::NeedsApproval(response));
+    }
+    if process
+        .get("denied")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        let detail =
+            serde_json::from_value::<omne_app_server_protocol::ThreadProcessDeniedDetail>(process)
+                .context("parse process denied detail for thread git snapshot")?;
+        let detail =
+            omne_app_server_protocol::ThreadGitSnapshotDeniedDetail::Process(detail);
+        let response = omne_app_server_protocol::ThreadGitSnapshotDeniedResponse {
+            denied: true,
+            thread_id: spec.thread_id,
+            error_code: thread_git_snapshot_denied_error_code(&detail),
+            detail,
+        };
+        return Ok(omne_app_server_protocol::ThreadGitSnapshotRpcResponse::Denied(response));
+    }
     if !process.get("process_id").is_some_and(|v| v.is_string()) {
-        return Ok(process);
+        anyhow::bail!("unexpected thread git snapshot process/start response shape");
     }
 
-    let process_id: ProcessId = serde_json::from_value(process["process_id"].clone())
-        .context("parse process_id")?;
+    let process_id: ProcessId =
+        serde_json::from_value(process["process_id"].clone()).context("parse process_id")?;
     let stdout_path = process["stdout_path"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing stdout_path"))?
@@ -291,23 +377,21 @@ async fn handle_thread_git_snapshot(
     let info = match waited {
         Ok(info) => info?,
         Err(_) => {
-            return Ok(serde_json::json!({
-                "thread_id": spec.thread_id,
-                "process_id": process_id,
-                "stdout_path": stdout_path,
-                "stderr_path": stderr_path,
-                "timed_out": true,
-                "wait_seconds": wait_seconds,
-            }));
+            let response = omne_app_server_protocol::ThreadGitSnapshotTimedOutResponse {
+                thread_id: spec.thread_id,
+                process_id,
+                stdout_path,
+                stderr_path,
+                timed_out: true,
+                wait_seconds,
+            };
+            return Ok(omne_app_server_protocol::ThreadGitSnapshotRpcResponse::TimedOut(response));
         }
     };
 
     if info.exit_code != Some(0) {
-        let (stderr_bytes, stderr_truncated) = read_rotating_log_prefix(
-            Path::new(&stderr_path),
-            THREAD_DIFF_MAX_STDERR_BYTES,
-        )
-        .await?;
+        let (stderr_bytes, stderr_truncated) =
+            read_rotating_log_prefix(Path::new(&stderr_path), THREAD_DIFF_MAX_STDERR_BYTES).await?;
         let stderr_text = String::from_utf8_lossy(&stderr_bytes).trim().to_string();
         let stderr_suffix = if stderr_truncated { " (truncated)" } else { "" };
         anyhow::bail!(
@@ -320,7 +404,8 @@ async fn handle_thread_git_snapshot(
         );
     }
 
-    let (diff_bytes, truncated) = read_rotating_log_prefix(Path::new(&stdout_path), max_bytes).await?;
+    let (diff_bytes, truncated) =
+        read_rotating_log_prefix(Path::new(&stdout_path), max_bytes).await?;
     let diff_text = String::from_utf8_lossy(&diff_bytes).to_string();
 
     let mut summary = if diff_text.trim().is_empty() {
@@ -346,23 +431,65 @@ async fn handle_thread_git_snapshot(
     )
     .await?;
 
-    if artifact.get("needs_approval").is_some() || artifact.get("denied").is_some() {
-        return Ok(artifact);
+    if artifact
+        .get("needs_approval")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        let parsed =
+            serde_json::from_value::<omne_app_server_protocol::ArtifactNeedsApprovalResponse>(
+                artifact,
+            )
+            .context("parse artifact needs_approval response for thread git snapshot")?;
+        let response = omne_app_server_protocol::ThreadGitSnapshotNeedsApprovalResponse {
+            needs_approval: true,
+            thread_id: spec.thread_id,
+            approval_id: parsed.approval_id,
+        };
+        return Ok(omne_app_server_protocol::ThreadGitSnapshotRpcResponse::NeedsApproval(response));
     }
+    if artifact
+        .get("denied")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        let detail =
+            serde_json::from_value::<omne_app_server_protocol::ThreadArtifactDeniedDetail>(artifact)
+                .context("parse artifact denied detail for thread git snapshot")?;
+        let detail =
+            omne_app_server_protocol::ThreadGitSnapshotDeniedDetail::Artifact(detail);
+        let response = omne_app_server_protocol::ThreadGitSnapshotDeniedResponse {
+            denied: true,
+            thread_id: spec.thread_id,
+            error_code: thread_git_snapshot_denied_error_code(&detail),
+            detail,
+        };
+        return Ok(omne_app_server_protocol::ThreadGitSnapshotRpcResponse::Denied(response));
+    }
+    let artifact = serde_json::from_value::<omne_app_server_protocol::ArtifactWriteResponse>(
+        artifact,
+    )
+    .context("parse artifact/write response for thread git snapshot")?;
 
-    Ok(serde_json::json!({
-        "thread_id": spec.thread_id,
-        "process_id": process_id,
-        "stdout_path": stdout_path,
-        "stderr_path": stderr_path,
-        "exit_code": info.exit_code,
-        "truncated": truncated,
-        "max_bytes": max_bytes,
-        "artifact": artifact,
-    }))
+    let response = omne_app_server_protocol::ThreadGitSnapshotResponse {
+        thread_id: spec.thread_id,
+        process_id,
+        stdout_path,
+        stderr_path,
+        exit_code: info.exit_code,
+        truncated,
+        max_bytes,
+        artifact,
+    };
+    Ok(omne_app_server_protocol::ThreadGitSnapshotRpcResponse::Ok(
+        response,
+    ))
 }
 
-async fn handle_thread_diff(server: &Server, params: ThreadDiffParams) -> anyhow::Result<Value> {
+async fn handle_thread_diff(
+    server: &Server,
+    params: ThreadDiffParams,
+) -> anyhow::Result<omne_app_server_protocol::ThreadGitSnapshotRpcResponse> {
     handle_thread_git_snapshot(
         server,
         ThreadGitSnapshotSpec {
@@ -387,7 +514,10 @@ async fn handle_thread_diff(server: &Server, params: ThreadDiffParams) -> anyhow
     .await
 }
 
-async fn handle_thread_patch(server: &Server, params: ThreadPatchParams) -> anyhow::Result<Value> {
+async fn handle_thread_patch(
+    server: &Server,
+    params: ThreadPatchParams,
+) -> anyhow::Result<omne_app_server_protocol::ThreadGitSnapshotRpcResponse> {
     handle_thread_git_snapshot(
         server,
         ThreadGitSnapshotSpec {
@@ -414,7 +544,10 @@ async fn handle_thread_patch(server: &Server, params: ThreadPatchParams) -> anyh
     .await
 }
 
-async fn read_rotating_log_prefix(base_path: &Path, max_bytes: u64) -> anyhow::Result<(Vec<u8>, bool)> {
+async fn read_rotating_log_prefix(
+    base_path: &Path,
+    max_bytes: u64,
+) -> anyhow::Result<(Vec<u8>, bool)> {
     let files = list_rotating_log_files(base_path).await?;
     if files.is_empty() {
         return Ok((Vec::new(), false));
@@ -658,6 +791,7 @@ mod stuck_report_tests {
                 input: "test".to_string(),
                 context_refs: None,
                 attachments: None,
+                directives: None,
                 priority: omne_protocol::TurnPriority::Foreground,
             })
             .await?;
@@ -695,6 +829,22 @@ mod stuck_report_tests {
             .await?;
 
         thread_rt
+            .append_event(omne_protocol::ThreadEventKind::AssistantMessage {
+                turn_id: Some(turn_id),
+                text: "usage snapshot".to_string(),
+                model: Some("gpt-5".to_string()),
+                response_id: Some("resp_1".to_string()),
+                token_usage: Some(serde_json::json!({
+                    "total_tokens": 100,
+                    "input_tokens": 80,
+                    "output_tokens": 20,
+                    "cache_input_tokens": 40,
+                    "cache_creation_input_tokens": 10
+                })),
+            })
+            .await?;
+
+        thread_rt
             .append_event(omne_protocol::ThreadEventKind::TurnCompleted {
                 turn_id,
                 status: TurnStatus::Stuck,
@@ -702,13 +852,8 @@ mod stuck_report_tests {
             })
             .await?;
 
-        maybe_write_stuck_report(
-            &server,
-            thread_id,
-            turn_id,
-            Some("budget exceeded: steps"),
-        )
-        .await?;
+        maybe_write_stuck_report(&server, thread_id, turn_id, Some("budget exceeded: steps"))
+            .await?;
 
         let value = handle_artifact_list(
             &server,
@@ -732,6 +877,29 @@ mod stuck_report_tests {
             })
             .collect::<Vec<_>>();
         assert_eq!(stuck.len(), 1);
+
+        let read = handle_artifact_read(
+            &server,
+            ArtifactReadParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                artifact_id: stuck[0].artifact_id,
+                version: None,
+                max_bytes: None,
+            },
+        )
+        .await?;
+        let read: omne_app_server_protocol::ArtifactReadResponse = serde_json::from_value(read)?;
+        assert!(read.text.contains("## Token usage snapshot"));
+        assert!(read.text.contains("- total_tokens_used: 100"));
+        assert!(read.text.contains("- input_tokens_used: 80"));
+        assert!(read.text.contains("- output_tokens_used: 20"));
+        assert!(read.text.contains("- cache_input_tokens_used: 40"));
+        assert!(read.text.contains("- cache_creation_input_tokens_used: 10"));
+        assert!(read.text.contains("- non_cache_input_tokens_used: 40"));
+        assert!(read.text.contains("- cache_input_ratio: 50.00%"));
+        assert!(read.text.contains("- output_ratio: 20.00%"));
         Ok(())
     }
 }

@@ -5,5 +5,6 @@ include!("process_and_utils/process_follow.rs");
 include!("process_and_utils/event_render.rs");
 include!("process_and_utils/app_types.rs");
 include!("process_and_utils/app_impl.rs");
+include!("process_and_utils/rpc_parse.rs");
 include!("process_and_utils/utils.rs");
 include!("process_and_utils/tests.rs");

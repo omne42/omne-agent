@@ -1,0 +1,8 @@
+[package]
+name = "omne-fs-policy"
+edition.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+walkdir.workspace = true

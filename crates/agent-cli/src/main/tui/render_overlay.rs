@@ -4,13 +4,13 @@
                 draw_command_palette_overlay(f, f.area(), view);
             }
             _ => {
-                let area = centered_rect(90, 80, f.area());
-                f.render_widget(Clear, area);
+                let centered = centered_rect(90, 80, f.area());
+                f.render_widget(Clear, centered);
                 match overlay {
-                    Overlay::Approvals(view) => draw_approvals_overlay(f, area, view),
-                    Overlay::Processes(view) => draw_processes_overlay(f, area, view),
-                    Overlay::Artifacts(view) => draw_artifacts_overlay(f, area, view),
-                    Overlay::Text(view) => draw_text_overlay(f, area, view),
+                    Overlay::Approvals(view) => draw_approvals_overlay(f, centered, view),
+                    Overlay::Processes(view) => draw_processes_overlay(f, centered, view),
+                    Overlay::Artifacts(view) => draw_artifacts_overlay(f, centered, view),
+                    Overlay::Text(view) => draw_text_overlay(f, centered, view),
                     Overlay::CommandPalette(_) => {}
                 }
             }
@@ -50,11 +50,25 @@
         area: ratatui::layout::Rect,
         view: &ApprovalsOverlay,
     ) {
+        let failed_hint = {
+            let failed = failed_subagent_approval_count(view.all_approvals.as_slice());
+            if failed == 0 {
+                String::new()
+            } else {
+                format!(" failed={failed}")
+            }
+        };
+        let filter_hint = format!(" filter={}", approval_filter_label(view.filter));
+        let subagent_hint = view
+            .subagent_pending_summary
+            .as_ref()
+            .map(format_subagent_pending_overlay_hint)
+            .unwrap_or_default();
         let block = Block::default()
             .borders(Borders::ALL)
             .title(format!(
-                "Approvals (↑↓ select y=approve n=deny m=remember r=refresh Esc=close) remember={}",
-                view.remember
+                "Approvals (↑↓ select t=filter f/F=next/prev-failed y=approve n=deny m=remember r=refresh Esc=close) remember={}{}{}{}",
+                view.remember, filter_hint, failed_hint, subagent_hint
             ));
         let inner = block.inner(area);
         f.render_widget(block, area);
@@ -68,12 +82,38 @@
             .approvals
             .iter()
             .map(|item| {
+                let action = approval_action_label(&item.request);
+                let subagent_state_hint = approval_subagent_state_hint(&item.request);
+                let action = if let Some(summary) = item.request.summary.as_ref() {
+                    let mut hints = Vec::<String>::new();
+                    if let Some(state) = subagent_state_hint {
+                        hints.push(state);
+                    } else if let Some(subagent_link) = approval_subagent_link(summary) {
+                        hints.push(subagent_link);
+                    }
+                    if let Some(hint) = approval_summary_hint(summary) {
+                        if !super::is_subagent_summary_hint(&hint) {
+                            hints.push(hint);
+                        }
+                    }
+                    if hints.is_empty() {
+                        action
+                    } else {
+                        format!("{action} ({})", hints.join(" | "))
+                    }
+                } else {
+                    action
+                };
                 let line = format!(
                     "{} {}",
                     item.request.approval_id,
-                    item.request.action.trim()
+                    action.trim()
                 );
-                ListItem::new(line)
+                let mut row = ListItem::new(line);
+                if let Some(color) = approval_subagent_state_color(&item.request) {
+                    row = row.style(Style::default().fg(color));
+                }
+                row
             })
             .collect::<Vec<_>>();
 
@@ -97,6 +137,20 @@
             .block(Block::default().borders(Borders::ALL).title("Details"))
             .wrap(Wrap { trim: false });
         f.render_widget(paragraph, chunks[1]);
+    }
+
+    fn format_subagent_pending_overlay_hint(summary: &SubagentPendingSummary) -> String {
+        let mut states = summary
+            .states
+            .iter()
+            .take(3)
+            .map(|(state, count)| format!("{state}:{count}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        if summary.states.len() > 3 {
+            states.push_str(",...");
+        }
+        format!(" sub={}({states})", summary.total)
     }
 
     fn draw_processes_overlay(
@@ -183,7 +237,7 @@
         let block =
             Block::default()
                 .borders(Borders::ALL)
-                .title("Artifacts (↑↓ select Enter=read r=refresh Esc=close)");
+                .title("Artifacts (↑↓ select v=versions R=reload ←→ version 0=latest Enter=read r=refresh Esc=close)");
         let inner = block.inner(area);
         f.render_widget(block, area);
 
@@ -220,7 +274,7 @@
         let details = view
             .artifacts
             .get(view.selected)
-            .map(build_artifact_details)
+            .map(|meta| build_artifact_details(view, meta))
             .unwrap_or_else(|| "no artifacts".to_string());
         let paragraph = Paragraph::new(details)
             .block(Block::default().borders(Borders::ALL).title("Details"))
@@ -228,12 +282,47 @@
         f.render_widget(paragraph, chunks[1]);
     }
 
-    fn build_artifact_details(meta: &ArtifactMetadata) -> String {
+    fn build_artifact_details(view: &ArtifactsOverlay, meta: &ArtifactMetadata) -> String {
         let mut out = String::new();
         out.push_str(&format!("artifact_id: {}\n", meta.artifact_id));
         out.push_str(&format!("artifact_type: {}\n", meta.artifact_type));
         out.push_str(&format!("summary: {}\n", meta.summary));
-        out.push_str(&format!("version: {}\n", meta.version));
+        out.push_str(&format!("latest_version: {}\n", meta.version));
+        let selected_version = if view.versions_for == Some(meta.artifact_id) {
+            view.versions
+                .get(view.selected_version)
+                .copied()
+                .unwrap_or(meta.version)
+        } else {
+            meta.version
+        };
+        out.push_str(&format!("selected_version: {}\n", selected_version));
+        if view.versions_for == Some(meta.artifact_id) {
+            if view.versions.is_empty() {
+                out.push_str("available_versions: (none loaded)\n");
+            } else {
+                let versions = view
+                    .versions
+                    .iter()
+                    .map(u32::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                out.push_str(&format!("available_versions: {versions}\n"));
+                if selected_version == meta.version {
+                    out.push_str("selected_state: latest\n");
+                } else {
+                    out.push_str("selected_state: historical\n");
+                }
+                let possible_pruned = count_missing_versions(view.versions.as_slice());
+                if possible_pruned > 0 {
+                    out.push_str(&format!(
+                        "possible_pruned_versions: {possible_pruned}\n"
+                    ));
+                }
+            }
+        } else {
+            out.push_str("available_versions: press v to load\n");
+        }
         out.push_str(&format!("size_bytes: {}\n", meta.size_bytes));
         out.push_str(&format!(
             "updated_at_unix: {}\n",
@@ -243,13 +332,62 @@
         out
     }
 
+    fn count_missing_versions(versions_desc: &[u32]) -> usize {
+        if versions_desc.is_empty() {
+            return 0;
+        }
+        let latest = versions_desc.first().copied().unwrap_or(0);
+        let oldest = versions_desc.iter().copied().min().unwrap_or(latest);
+        if latest <= oldest {
+            return 0;
+        }
+        let expected_total = (latest - oldest + 1) as usize;
+        expected_total.saturating_sub(versions_desc.len())
+    }
+
     fn build_approval_details(item: &ApprovalItem) -> String {
         let mut out = String::new();
         out.push_str(&format!("approval_id: {}\n", item.request.approval_id));
         out.push_str(&format!("requested_at: {}\n", item.request.requested_at));
         out.push_str(&format!("action: {}\n", item.request.action));
+        out.push_str(&format!(
+            "action_label: {}\n",
+            approval_action_label(&item.request)
+        ));
+        if let Some(action_id) = item.request.action_id {
+            if let Ok(raw) = serde_json::to_string(&action_id) {
+                out.push_str(&format!("action_id: {}\n", raw.trim_matches('"')));
+            }
+        }
         if let Some(turn_id) = item.request.turn_id {
             out.push_str(&format!("turn_id: {turn_id}\n"));
+        }
+        if let Some(summary) = item.request.summary.as_ref() {
+            if let Some(subagent_link) = approval_subagent_link(summary) {
+                out.push_str(&format!("subagent_proxy: {subagent_link}\n"));
+            }
+            if let Some(approve_cmd) = approval_approve_cmd(summary) {
+                out.push_str("\nquick_command:\n");
+                out.push_str("  approve: ");
+                out.push_str(&approve_cmd);
+                out.push('\n');
+                if let Some(deny_cmd) = approval_deny_cmd(summary) {
+                    out.push_str("  deny: ");
+                    out.push_str(&deny_cmd);
+                    out.push('\n');
+                }
+            }
+            out.push_str("\nsummary:\n");
+            let lines = approval_summary_lines(summary);
+            if lines.is_empty() {
+                out.push_str("  (empty)\n");
+            } else {
+                for line in lines {
+                    out.push_str("  ");
+                    out.push_str(&line);
+                    out.push('\n');
+                }
+            }
         }
         out.push_str("\nparams:\n");
         out.push_str(

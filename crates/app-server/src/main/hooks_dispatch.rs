@@ -6,6 +6,8 @@ enum HookPoint {
     PreToolUse,
     PostToolUse,
     Stop,
+    SubagentStart,
+    SubagentStop,
 }
 
 impl HookPoint {
@@ -15,6 +17,8 @@ impl HookPoint {
             HookPoint::PreToolUse => "pre_tool_use",
             HookPoint::PostToolUse => "post_tool_use",
             HookPoint::Stop => "stop",
+            HookPoint::SubagentStart => "subagent_start",
+            HookPoint::SubagentStop => "subagent_stop",
         }
     }
 }
@@ -37,6 +41,10 @@ struct HooksConfigHooks {
     post_tool_use: Vec<HookCommandConfig>,
     #[serde(default)]
     stop: Vec<HookCommandConfig>,
+    #[serde(default)]
+    subagent_start: Vec<HookCommandConfig>,
+    #[serde(default)]
+    subagent_stop: Vec<HookCommandConfig>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -66,6 +74,7 @@ const DEFAULT_HOOK_OK_EXIT_CODES: &[i32] = &[0];
 const DEFAULT_HOOK_PROCESS_TIMEOUT_SECS: u64 = 3;
 const MAX_HOOK_PROCESS_TIMEOUT_SECS: u64 = 60;
 const MAX_HOOK_CONTEXT_CHARS: usize = 16 * 1024;
+const REDACTED_VALUE: &str = "<REDACTED>";
 
 fn hooks_process_timeout() -> Duration {
     let value = std::env::var("OMNE_HOOK_PROCESS_TIMEOUT_SECS")
@@ -118,7 +127,13 @@ async fn record_hooks_config_error(
         config_path.display(),
         err
     );
-    let _ = write_file_atomic(&path, text.as_bytes()).await;
+    if let Err(write_err) = write_file_atomic(&path, text.as_bytes()).await {
+        tracing::warn!(
+            path = %path.display(),
+            error = %write_err,
+            "failed to write hooks config error artifact"
+        );
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -142,6 +157,22 @@ struct HookInput {
     turn_status: Option<TurnStatus>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     turn_reason: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    subagent: Option<HookInputSubagent>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct HookInputSubagent {
+    parent_thread_id: ThreadId,
+    task_id: String,
+    child_thread_id: ThreadId,
+    child_turn_id: TurnId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    status: Option<TurnStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
 }
 
 fn truncate_owned_chars(mut s: String, max_chars: usize) -> String {
@@ -174,7 +205,13 @@ fn redact_and_truncate_value(value: &Value, max_string_chars: usize) -> Value {
         Value::Object(map) => Value::Object(
             map.iter()
                 .take(128)
-                .map(|(k, v)| (k.clone(), redact_and_truncate_value(v, max_string_chars)))
+                .map(|(k, v)| {
+                    if omne_core::redaction::is_sensitive_key(k) {
+                        (k.clone(), Value::String(REDACTED_VALUE.to_string()))
+                    } else {
+                        (k.clone(), redact_and_truncate_value(v, max_string_chars))
+                    }
+                })
                 .collect(),
         ),
     }
@@ -286,6 +323,7 @@ fn hook_tool_name_from_agent_tool(tool_name: &str) -> Option<&'static str> {
         "artifact_read" => "artifact/read",
         "artifact_delete" => "artifact/delete",
         "thread_state" => "thread/state",
+        "thread_usage" => "thread/usage",
         "thread_events" => "thread/events",
         "thread_diff" => "thread/diff",
         "thread_hook_run" => "thread/hook_run",
@@ -363,6 +401,8 @@ async fn run_hook_commands(
         HookPoint::PreToolUse => &cfg.hooks.pre_tool_use,
         HookPoint::PostToolUse => &cfg.hooks.post_tool_use,
         HookPoint::Stop => &cfg.hooks.stop,
+        HookPoint::SubagentStart => &cfg.hooks.subagent_start,
+        HookPoint::SubagentStop => &cfg.hooks.subagent_stop,
     };
     if commands.is_empty() {
         return Vec::new();
@@ -413,6 +453,17 @@ async fn run_hook_commands(
             tool_result: ctx.tool_result.map(|v| redact_and_truncate_value(v, 512)),
             turn_status: ctx.turn_status,
             turn_reason: ctx.turn_reason.map(|s| redact_and_truncate_string(s, 512)),
+            subagent: ctx.subagent.map(|subagent| HookInputSubagent {
+                parent_thread_id: subagent.parent_thread_id,
+                task_id: subagent.task_id.to_string(),
+                child_thread_id: subagent.child_thread_id,
+                child_turn_id: subagent.child_turn_id,
+                status: subagent.status,
+                reason: subagent
+                    .reason
+                    .map(|s| redact_and_truncate_string(s, 512))
+                    .filter(|s| !s.trim().is_empty()),
+            }),
         };
 
         if input.tool_params.as_ref().is_some_and(|v| v == &Value::Null) {
@@ -427,7 +478,14 @@ async fn run_hook_commands(
         if write_file_atomic(&input_path, &input_json).await.is_err() {
             continue;
         }
-        let _ = write_file_atomic(&output_path, b"{}").await;
+        if let Err(err) = write_file_atomic(&output_path, b"{}").await {
+            tracing::warn!(
+                path = %output_path.display(),
+                error = %err,
+                "failed to initialize hook output file"
+            );
+            continue;
+        }
 
         let tool_id = hook_id;
         let tool_params = serde_json::json!({
@@ -442,14 +500,22 @@ async fn run_hook_commands(
             Ok(rt) => rt,
             Err(_) => continue,
         };
-        let _ = thread_rt
+        if let Err(err) = thread_rt
             .append_event(ThreadEventKind::ToolStarted {
                 tool_id,
                 turn_id,
                 tool: "hook/run".to_string(),
                 params: Some(tool_params.clone()),
             })
-            .await;
+            .await
+        {
+            tracing::warn!(
+                thread_id = %thread_id,
+                tool_id = %tool_id,
+                error = %err,
+                "failed to append hook ToolStarted event"
+            );
+        }
 
         let mut env = BTreeMap::<String, String>::new();
         env.insert(
@@ -476,6 +542,7 @@ async fn run_hook_commands(
                 approval_id: None,
                 argv: command.argv.clone(),
                 cwd: None,
+                timeout_ms: None,
             },
             &env,
         )
@@ -605,6 +672,7 @@ async fn run_hook_commands(
             .and_then(Value::as_str)
             .map(|s| redact_and_truncate_string(s, MAX_HOOK_CONTEXT_CHARS))
             .filter(|s| !s.trim().is_empty());
+        let has_additional_context = additional_context.is_some();
 
         let summary = hook_output
             .as_ref()
@@ -614,19 +682,25 @@ async fn run_hook_commands(
             .filter(|s| !s.trim().is_empty());
 
         if command.emit_additional_context {
-            if let Some(text) = additional_context.clone() {
-                let _ = write_file_atomic(context_path.as_path(), text.as_bytes()).await;
+            if let Some(text) = additional_context {
+                if let Err(err) = write_file_atomic(context_path.as_path(), text.as_bytes()).await {
+                    tracing::warn!(
+                        path = %context_path.display(),
+                        error = %err,
+                        "failed to persist hook additional context"
+                    );
+                }
                 out.push(HookAdditionalContext {
                     hook_id,
                     hook_point,
                     context_path: context_path.clone(),
                     text,
-                    summary: summary.clone(),
+                    summary,
                 });
             }
         }
 
-        let _ = thread_rt
+        if let Err(err) = thread_rt
             .append_event(ThreadEventKind::ToolCompleted {
                 tool_id,
                 status: ToolStatus::Completed,
@@ -636,14 +710,22 @@ async fn run_hook_commands(
                     "exit_code": exit_code,
                     "input_path": input_path.display().to_string(),
                     "output_path": output_path.display().to_string(),
-                    "additional_context_path": if command.emit_additional_context && additional_context.is_some() {
+                    "additional_context_path": if command.emit_additional_context && has_additional_context {
                         Some(context_path.display().to_string())
                     } else {
                         None
                     },
                 })),
             })
-            .await;
+            .await
+        {
+            tracing::warn!(
+                thread_id = %thread_id,
+                tool_id = %tool_id,
+                error = %err,
+                "failed to append hook ToolCompleted event"
+            );
+        }
     }
 
     out
@@ -729,6 +811,64 @@ async fn run_stop_hooks(
     .await
 }
 
+async fn run_subagent_start_hooks(
+    server: &Server,
+    parent_thread_id: ThreadId,
+    task_id: &str,
+    child_thread_id: ThreadId,
+    child_turn_id: TurnId,
+) -> Vec<HookAdditionalContext> {
+    run_hook_commands(
+        server,
+        parent_thread_id,
+        None,
+        HookPoint::SubagentStart,
+        HookDispatchContext {
+            subagent: Some(HookSubagentContext {
+                parent_thread_id,
+                task_id,
+                child_thread_id,
+                child_turn_id,
+                status: None,
+                reason: None,
+            }),
+            ..HookDispatchContext::default()
+        },
+    )
+    .await
+}
+
+async fn run_subagent_stop_hooks(
+    server: &Server,
+    parent_thread_id: ThreadId,
+    task_id: &str,
+    child_thread_id: ThreadId,
+    child_turn_id: TurnId,
+    status: TurnStatus,
+    reason: Option<&str>,
+) -> Vec<HookAdditionalContext> {
+    run_hook_commands(
+        server,
+        parent_thread_id,
+        None,
+        HookPoint::SubagentStop,
+        HookDispatchContext {
+            turn_status: Some(status),
+            turn_reason: reason,
+            subagent: Some(HookSubagentContext {
+                parent_thread_id,
+                task_id,
+                child_thread_id,
+                child_turn_id,
+                status: Some(status),
+                reason,
+            }),
+            ..HookDispatchContext::default()
+        },
+    )
+    .await
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 struct HookDispatchContext<'a> {
     tool: Option<&'a str>,
@@ -736,4 +876,1230 @@ struct HookDispatchContext<'a> {
     tool_result: Option<&'a Value>,
     turn_status: Option<TurnStatus>,
     turn_reason: Option<&'a str>,
+    subagent: Option<HookSubagentContext<'a>>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct HookSubagentContext<'a> {
+    parent_thread_id: ThreadId,
+    task_id: &'a str,
+    child_thread_id: ThreadId,
+    child_turn_id: TurnId,
+    status: Option<TurnStatus>,
+    reason: Option<&'a str>,
+}
+
+#[cfg(test)]
+mod hooks_dispatch_tests {
+    use super::*;
+    use omne_protocol::{ApprovalPolicy, SandboxPolicy};
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use tokio::sync::broadcast;
+
+    fn build_test_server(omne_root: PathBuf) -> Server {
+        let (notify_tx, _notify_rx) = broadcast::channel::<String>(16);
+        Server {
+            cwd: omne_root.clone(),
+            notify_tx,
+            thread_store: ThreadStore::new(PmPaths::new(omne_root)),
+            threads: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            processes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            mcp: Arc::new(tokio::sync::Mutex::new(McpManager::default())),
+            disk_warning: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            exec_policy: omne_execpolicy::Policy::empty(),
+        }
+    }
+
+    #[tokio::test]
+    async fn load_hooks_config_parses_valid_file() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let thread_root = tmp.path().join("repo");
+        let spec_dir = thread_root.join(".omne_data").join("spec");
+        tokio::fs::create_dir_all(&spec_dir).await?;
+        let config_path = spec_dir.join("hooks.yaml");
+        tokio::fs::write(
+            &config_path,
+            r#"
+version: 1
+hooks:
+  stop:
+    - argv: ["sh", "-c", "exit 0"]
+  subagent_start:
+    - argv: ["sh", "-c", "exit 0"]
+"#,
+        )
+        .await?;
+
+        let loaded = load_hooks_config(&thread_root).await?;
+        let (path, cfg) = loaded.ok_or_else(|| anyhow::anyhow!("hooks config not loaded"))?;
+        assert_eq!(path, config_path);
+        assert_eq!(cfg.version, 1);
+        assert_eq!(cfg.hooks.stop.len(), 1);
+        assert_eq!(cfg.hooks.stop[0].argv, vec!["sh", "-c", "exit 0"]);
+        assert_eq!(cfg.hooks.subagent_start.len(), 1);
+        assert_eq!(cfg.hooks.subagent_start[0].argv, vec!["sh", "-c", "exit 0"]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn load_hooks_config_rejects_unsupported_version() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let thread_root = tmp.path().join("repo");
+        let spec_dir = thread_root.join(".omne_data").join("spec");
+        tokio::fs::create_dir_all(&spec_dir).await?;
+        tokio::fs::write(
+            spec_dir.join("hooks.yaml"),
+            r#"
+version: 2
+hooks: {}
+"#,
+        )
+        .await?;
+
+        let err = load_hooks_config(&thread_root)
+            .await
+            .expect_err("unsupported hooks version should fail");
+        assert!(err.to_string().contains("unsupported hooks.yaml version 2"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn record_hooks_config_error_writes_artifact() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = build_test_server(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let config_path = repo_dir.join(".omne_data").join("spec").join("hooks.yaml");
+        let err = anyhow::anyhow!("hooks parse failed");
+        record_hooks_config_error(&server, thread_id, &config_path, &err).await;
+
+        let artifact_path = hook_artifacts_dir_for_thread(&server, thread_id).join("hooks_config_error.txt");
+        let text = tokio::fs::read_to_string(&artifact_path).await?;
+        assert!(text.contains("hooks config error"));
+        assert!(text.contains(&config_path.display().to_string()));
+        assert!(text.contains("hooks parse failed"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pre_tool_use_hook_emits_additional_context_once_without_recursion() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        let spec_dir = repo_dir.join(".omne_data").join("spec");
+        tokio::fs::create_dir_all(&spec_dir).await?;
+
+        tokio::fs::write(
+            spec_dir.join("hooks.yaml"),
+            r#"
+version: 1
+hooks:
+  pre_tool_use:
+    - when_tools: ["process/start"]
+      argv:
+        [
+          "sh",
+          "-c",
+          "printf '{\"additional_context\":\"safety reminder\",\"summary\":\"prehook\"}' > \"$OMNE_HOOK_OUTPUT_PATH\"",
+        ]
+      emit_additional_context: true
+"#,
+        )
+        .await?;
+
+        let server = build_test_server(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let turn_id = TurnId::new();
+        let tool_args = serde_json::json!({
+            "argv": ["echo", "hello"],
+            "cwd": repo_dir.display().to_string(),
+        });
+
+        let contexts =
+            run_pre_tool_use_hooks(&server, thread_id, turn_id, "process/start", &tool_args).await;
+        assert_eq!(contexts.len(), 1);
+        assert_eq!(contexts[0].text, "safety reminder");
+        assert_eq!(contexts[0].summary.as_deref(), Some("prehook"));
+        assert_eq!(contexts[0].hook_point, HookPoint::PreToolUse);
+        assert!(contexts[0].context_path.exists());
+
+        let events = server
+            .thread_store
+            .read_events_since(thread_id, EventSeq::ZERO)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("missing thread events"))?;
+
+        let hook_started = events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    &event.kind,
+                    ThreadEventKind::ToolStarted { tool, .. } if tool == "hook/run"
+                )
+            })
+            .count();
+        assert_eq!(hook_started, 1);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn post_tool_use_hook_emits_additional_context_once_without_recursion() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        let spec_dir = repo_dir.join(".omne_data").join("spec");
+        tokio::fs::create_dir_all(&spec_dir).await?;
+
+        tokio::fs::write(
+            spec_dir.join("hooks.yaml"),
+            r#"
+version: 1
+hooks:
+  post_tool_use:
+    - when_tools: ["artifact/write"]
+      argv:
+        [
+          "sh",
+          "-c",
+          "printf '{\"additional_context\":\"post safety reminder\",\"summary\":\"posthook\"}' > \"$OMNE_HOOK_OUTPUT_PATH\"",
+        ]
+      emit_additional_context: true
+"#,
+        )
+        .await?;
+
+        let server = build_test_server(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let turn_id = TurnId::new();
+        let tool_args = serde_json::json!({
+            "artifact_type": "note",
+            "summary": "created by test",
+            "text": "hello",
+        });
+        let tool_result = serde_json::json!({
+            "ok": true,
+            "bytes": 5,
+        });
+
+        let contexts = run_post_tool_use_hooks(
+            &server,
+            thread_id,
+            turn_id,
+            "artifact/write",
+            &tool_args,
+            &tool_result,
+        )
+        .await;
+        assert_eq!(contexts.len(), 1);
+        assert_eq!(contexts[0].text, "post safety reminder");
+        assert_eq!(contexts[0].summary.as_deref(), Some("posthook"));
+        assert_eq!(contexts[0].hook_point, HookPoint::PostToolUse);
+        assert!(contexts[0].context_path.exists());
+
+        let events = server
+            .thread_store
+            .read_events_since(thread_id, EventSeq::ZERO)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("missing thread events"))?;
+
+        let hook_started = events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    &event.kind,
+                    ThreadEventKind::ToolStarted { tool, .. } if tool == "hook/run"
+                )
+            })
+            .count();
+        assert_eq!(hook_started, 1);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn stop_hook_filters_commands_by_turn_status() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        let spec_dir = repo_dir.join(".omne_data").join("spec");
+        tokio::fs::create_dir_all(&spec_dir).await?;
+
+        tokio::fs::write(
+            spec_dir.join("hooks.yaml"),
+            r#"
+version: 1
+hooks:
+  stop:
+    - when_turn_status: ["failed"]
+      argv:
+        [
+          "sh",
+          "-c",
+          "printf '{\"additional_context\":\"failed reminder\",\"summary\":\"failed-hook\"}' > \"$OMNE_HOOK_OUTPUT_PATH\"",
+        ]
+      emit_additional_context: true
+    - when_turn_status: ["completed"]
+      argv:
+        [
+          "sh",
+          "-c",
+          "printf '{\"additional_context\":\"completed reminder\",\"summary\":\"completed-hook\"}' > \"$OMNE_HOOK_OUTPUT_PATH\"",
+        ]
+      emit_additional_context: true
+"#,
+        )
+        .await?;
+
+        let server = build_test_server(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let turn_id = TurnId::new();
+        let completed_contexts = run_stop_hooks(
+            &server,
+            thread_id,
+            turn_id,
+            TurnStatus::Completed,
+            Some("done"),
+        )
+        .await;
+        assert_eq!(completed_contexts.len(), 1);
+        assert_eq!(completed_contexts[0].text, "completed reminder");
+        assert_eq!(
+            completed_contexts[0].summary.as_deref(),
+            Some("completed-hook")
+        );
+        assert_eq!(completed_contexts[0].hook_point, HookPoint::Stop);
+
+        let failed_contexts =
+            run_stop_hooks(&server, thread_id, turn_id, TurnStatus::Failed, Some("failed")).await;
+        assert_eq!(failed_contexts.len(), 1);
+        assert_eq!(failed_contexts[0].text, "failed reminder");
+        assert_eq!(failed_contexts[0].summary.as_deref(), Some("failed-hook"));
+        assert_eq!(failed_contexts[0].hook_point, HookPoint::Stop);
+
+        let events = server
+            .thread_store
+            .read_events_since(thread_id, EventSeq::ZERO)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("missing thread events"))?;
+
+        let hook_started = events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    &event.kind,
+                    ThreadEventKind::ToolStarted { tool, .. } if tool == "hook/run"
+                )
+            })
+            .count();
+        assert_eq!(hook_started, 2);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn stop_hook_skips_non_matching_turn_status() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        let spec_dir = repo_dir.join(".omne_data").join("spec");
+        tokio::fs::create_dir_all(&spec_dir).await?;
+
+        tokio::fs::write(
+            spec_dir.join("hooks.yaml"),
+            r#"
+version: 1
+hooks:
+  stop:
+    - when_turn_status: ["failed"]
+      argv:
+        [
+          "sh",
+          "-c",
+          "printf '{\"additional_context\":\"failed reminder\"}' > \"$OMNE_HOOK_OUTPUT_PATH\"",
+        ]
+      emit_additional_context: true
+"#,
+        )
+        .await?;
+
+        let server = build_test_server(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let turn_id = TurnId::new();
+        let contexts = run_stop_hooks(
+            &server,
+            thread_id,
+            turn_id,
+            TurnStatus::Completed,
+            Some("done"),
+        )
+        .await;
+        assert!(contexts.is_empty());
+
+        let events = server
+            .thread_store
+            .read_events_since(thread_id, EventSeq::ZERO)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("missing thread events"))?;
+
+        let hook_started = events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    &event.kind,
+                    ThreadEventKind::ToolStarted { tool, .. } if tool == "hook/run"
+                )
+            })
+            .count();
+        assert_eq!(hook_started, 0);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn post_tool_use_hook_input_artifact_contains_redacted_tool_result() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        let spec_dir = repo_dir.join(".omne_data").join("spec");
+        tokio::fs::create_dir_all(&spec_dir).await?;
+
+        tokio::fs::write(
+            spec_dir.join("hooks.yaml"),
+            r#"
+version: 1
+hooks:
+  post_tool_use:
+    - when_tools: ["artifact/write"]
+      argv:
+        [
+          "sh",
+          "-c",
+          "printf '{}' > \"$OMNE_HOOK_OUTPUT_PATH\"",
+        ]
+      emit_additional_context: false
+"#,
+        )
+        .await?;
+
+        let server = build_test_server(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let turn_id = TurnId::new();
+        let tool_args = serde_json::json!({
+            "artifact_type": "note",
+            "summary": "safe summary",
+            "text": "hello",
+        });
+        let tool_result = serde_json::json!({
+            "authorization": "Bearer super-secret-token",
+            "nested": {
+                "api_key": "sk-live-secret",
+            },
+            "ok": true,
+        });
+
+        let contexts = run_post_tool_use_hooks(
+            &server,
+            thread_id,
+            turn_id,
+            "artifact/write",
+            &tool_args,
+            &tool_result,
+        )
+        .await;
+        assert!(contexts.is_empty());
+
+        let events = server
+            .thread_store
+            .read_events_since(thread_id, EventSeq::ZERO)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("missing thread events"))?;
+
+        let completed = events.iter().find_map(|event| match &event.kind {
+            ThreadEventKind::ToolCompleted {
+                status: ToolStatus::Completed,
+                result: Some(result),
+                ..
+            } => Some(result.clone()),
+            _ => None,
+        });
+        let completed =
+            completed.ok_or_else(|| anyhow::anyhow!("missing hook ToolCompleted event"))?;
+
+        let input_path = completed
+            .get("input_path")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("missing input_path in hook result"))?;
+        let input_bytes = tokio::fs::read(input_path).await?;
+        let hook_input: Value = serde_json::from_slice(&input_bytes)?;
+
+        assert_eq!(
+            hook_input.get("hook_point").and_then(Value::as_str),
+            Some("post_tool_use")
+        );
+        assert_eq!(
+            hook_input.get("tool").and_then(Value::as_str),
+            Some("artifact/write")
+        );
+        assert_eq!(
+            hook_input
+                .get("tool_result")
+                .and_then(|v| v.get("authorization"))
+                .and_then(Value::as_str),
+            Some("<REDACTED>")
+        );
+        assert_eq!(
+            hook_input
+                .get("tool_result")
+                .and_then(|v| v.get("nested"))
+                .and_then(|v| v.get("api_key"))
+                .and_then(Value::as_str),
+            Some("<REDACTED>")
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn hook_additional_context_is_truncated_to_max_chars() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        let spec_dir = repo_dir.join(".omne_data").join("spec");
+        tokio::fs::create_dir_all(&spec_dir).await?;
+
+        let oversized_text = "x".repeat(MAX_HOOK_CONTEXT_CHARS + 1024);
+        let payload = serde_json::json!({
+            "additional_context": oversized_text,
+            "summary": "oversized",
+        });
+        let payload_path = repo_dir.join("hook_output_payload.json");
+        tokio::fs::write(&payload_path, serde_json::to_vec(&payload)?).await?;
+
+        tokio::fs::write(
+            spec_dir.join("hooks.yaml"),
+            format!(
+                r#"
+version: 1
+hooks:
+  pre_tool_use:
+    - when_tools: ["process/start"]
+      argv:
+        [
+          "sh",
+          "-c",
+          "cp '{}' \"$OMNE_HOOK_OUTPUT_PATH\"",
+        ]
+      emit_additional_context: true
+"#,
+                payload_path.display()
+            ),
+        )
+        .await?;
+
+        let server = build_test_server(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let turn_id = TurnId::new();
+        let tool_args = serde_json::json!({
+            "argv": ["echo", "hello"],
+            "cwd": repo_dir.display().to_string(),
+        });
+
+        let contexts =
+            run_pre_tool_use_hooks(&server, thread_id, turn_id, "process/start", &tool_args).await;
+        assert_eq!(contexts.len(), 1);
+        assert_eq!(contexts[0].summary.as_deref(), Some("oversized"));
+        assert_eq!(contexts[0].hook_point, HookPoint::PreToolUse);
+        assert!(contexts[0].context_path.exists());
+        assert_eq!(contexts[0].text.chars().count(), MAX_HOOK_CONTEXT_CHARS + 1);
+        assert!(contexts[0].text.ends_with('…'));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn hook_process_start_needs_approval_is_recorded_as_skipped() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        let spec_dir = repo_dir.join(".omne_data").join("spec");
+        tokio::fs::create_dir_all(&spec_dir).await?;
+
+        tokio::fs::write(
+            spec_dir.join("hooks.yaml"),
+            r#"
+version: 1
+hooks:
+  pre_tool_use:
+    - when_tools: ["process/start"]
+      argv: ["sh", "-c", "exit 0"]
+      emit_additional_context: true
+"#,
+        )
+        .await?;
+
+        let server = build_test_server(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        handle_thread_configure(
+            &server,
+            ThreadConfigureParams {
+                thread_id,
+                approval_policy: Some(ApprovalPolicy::Manual),
+                sandbox_policy: None,
+                sandbox_writable_roots: None,
+                sandbox_network_access: None,
+                mode: None,
+                model: None,
+                thinking: None,
+                openai_base_url: None,
+                allowed_tools: None,
+                execpolicy_rules: None,
+            },
+        )
+        .await?;
+
+        let turn_id = TurnId::new();
+        let tool_args = serde_json::json!({
+            "argv": ["echo", "hello"],
+            "cwd": repo_dir.display().to_string(),
+        });
+
+        let contexts =
+            run_pre_tool_use_hooks(&server, thread_id, turn_id, "process/start", &tool_args).await;
+        assert!(contexts.is_empty());
+
+        let events = server
+            .thread_store
+            .read_events_since(thread_id, EventSeq::ZERO)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("missing thread events"))?;
+
+        let hook_tool_id = events
+            .iter()
+            .find_map(|event| match &event.kind {
+                ThreadEventKind::ToolStarted { tool_id, tool, .. } if tool == "hook/run" => {
+                    Some(*tool_id)
+                }
+                _ => None,
+            })
+            .ok_or_else(|| anyhow::anyhow!("missing hook ToolStarted event"))?;
+
+        let completed = events.iter().find_map(|event| match &event.kind {
+            ThreadEventKind::ToolCompleted {
+                tool_id,
+                status,
+                error,
+                result,
+                ..
+            } if *tool_id == hook_tool_id => Some((status, error.as_deref(), result.clone())),
+            _ => None,
+        });
+        let completed =
+            completed.ok_or_else(|| anyhow::anyhow!("missing hook ToolCompleted event"))?;
+        assert_eq!(*completed.0, ToolStatus::Denied);
+        assert_eq!(completed.1, Some("hook process/start needs approval; skipped"));
+        let result = completed
+            .2
+            .ok_or_else(|| anyhow::anyhow!("missing hook ToolCompleted result"))?;
+        assert_eq!(
+            result.get("needs_approval").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert!(result.get("approval_id").is_some());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn hook_process_start_denied_is_recorded() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        let spec_dir = repo_dir.join(".omne_data").join("spec");
+        tokio::fs::create_dir_all(&spec_dir).await?;
+
+        tokio::fs::write(
+            spec_dir.join("hooks.yaml"),
+            r#"
+version: 1
+hooks:
+  pre_tool_use:
+    - when_tools: ["process/start"]
+      argv: ["sh", "-c", "exit 0"]
+      emit_additional_context: true
+"#,
+        )
+        .await?;
+
+        let server = build_test_server(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        handle_thread_configure(
+            &server,
+            ThreadConfigureParams {
+                thread_id,
+                approval_policy: Some(ApprovalPolicy::AutoApprove),
+                sandbox_policy: Some(SandboxPolicy::ReadOnly),
+                sandbox_writable_roots: None,
+                sandbox_network_access: None,
+                mode: None,
+                model: None,
+                thinking: None,
+                openai_base_url: None,
+                allowed_tools: None,
+                execpolicy_rules: None,
+            },
+        )
+        .await?;
+
+        let turn_id = TurnId::new();
+        let tool_args = serde_json::json!({
+            "argv": ["echo", "hello"],
+            "cwd": repo_dir.display().to_string(),
+        });
+
+        let contexts =
+            run_pre_tool_use_hooks(&server, thread_id, turn_id, "process/start", &tool_args).await;
+        assert!(contexts.is_empty());
+
+        let events = server
+            .thread_store
+            .read_events_since(thread_id, EventSeq::ZERO)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("missing thread events"))?;
+
+        let hook_tool_id = events
+            .iter()
+            .find_map(|event| match &event.kind {
+                ThreadEventKind::ToolStarted { tool_id, tool, .. } if tool == "hook/run" => {
+                    Some(*tool_id)
+                }
+                _ => None,
+            })
+            .ok_or_else(|| anyhow::anyhow!("missing hook ToolStarted event"))?;
+
+        let completed = events.iter().find_map(|event| match &event.kind {
+            ThreadEventKind::ToolCompleted {
+                tool_id,
+                status,
+                error,
+                result,
+                ..
+            } if *tool_id == hook_tool_id => Some((status, error.as_deref(), result.clone())),
+            _ => None,
+        });
+        let completed =
+            completed.ok_or_else(|| anyhow::anyhow!("missing hook ToolCompleted event"))?;
+        assert_eq!(*completed.0, ToolStatus::Denied);
+        assert_eq!(completed.1, Some("hook process/start denied"));
+        let result = completed
+            .2
+            .ok_or_else(|| anyhow::anyhow!("missing hook ToolCompleted result"))?;
+        assert_eq!(result.get("denied").and_then(Value::as_bool), Some(true));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn hook_process_timeout_is_recorded_as_failed() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        let spec_dir = repo_dir.join(".omne_data").join("spec");
+        tokio::fs::create_dir_all(&spec_dir).await?;
+
+        tokio::fs::write(
+            spec_dir.join("hooks.yaml"),
+            r#"
+version: 1
+hooks:
+  pre_tool_use:
+    - when_tools: ["process/start"]
+      argv: ["sh", "-c", "sleep 4"]
+      emit_additional_context: true
+"#,
+        )
+        .await?;
+
+        let server = build_test_server(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let turn_id = TurnId::new();
+        let tool_args = serde_json::json!({
+            "argv": ["echo", "hello"],
+            "cwd": repo_dir.display().to_string(),
+        });
+
+        let contexts =
+            run_pre_tool_use_hooks(&server, thread_id, turn_id, "process/start", &tool_args).await;
+        assert!(contexts.is_empty());
+
+        let events = server
+            .thread_store
+            .read_events_since(thread_id, EventSeq::ZERO)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("missing thread events"))?;
+
+        let hook_tool_id = events
+            .iter()
+            .find_map(|event| match &event.kind {
+                ThreadEventKind::ToolStarted { tool_id, tool, .. } if tool == "hook/run" => {
+                    Some(*tool_id)
+                }
+                _ => None,
+            })
+            .ok_or_else(|| anyhow::anyhow!("missing hook ToolStarted event"))?;
+
+        let completed = events.iter().find_map(|event| match &event.kind {
+            ThreadEventKind::ToolCompleted {
+                tool_id,
+                status,
+                error,
+                result,
+                ..
+            } if *tool_id == hook_tool_id => Some((status, error.as_deref(), result.clone())),
+            _ => None,
+        });
+        let completed =
+            completed.ok_or_else(|| anyhow::anyhow!("missing hook ToolCompleted event"))?;
+        assert_eq!(*completed.0, ToolStatus::Failed);
+        let error = completed
+            .1
+            .ok_or_else(|| anyhow::anyhow!("missing hook timeout error"))?;
+        assert!(error.contains("hook process timed out"));
+        let result = completed
+            .2
+            .ok_or_else(|| anyhow::anyhow!("missing hook timeout result"))?;
+        assert!(result.get("process_id").is_some());
+        assert!(result.get("output").is_some());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn stop_hook_input_artifact_redacts_and_truncates_turn_reason() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        let spec_dir = repo_dir.join(".omne_data").join("spec");
+        tokio::fs::create_dir_all(&spec_dir).await?;
+
+        tokio::fs::write(
+            spec_dir.join("hooks.yaml"),
+            r#"
+version: 1
+hooks:
+  stop:
+    - when_turn_status: ["failed"]
+      argv: ["sh", "-c", "exit 0"]
+      emit_additional_context: false
+"#,
+        )
+        .await?;
+
+        let server = build_test_server(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let long_reason = format!(
+            "Bearer super-secret-token-abcdefghijklmnopqrstuvwxyz {}",
+            "x".repeat(800)
+        );
+        let turn_id = TurnId::new();
+        let contexts = run_stop_hooks(
+            &server,
+            thread_id,
+            turn_id,
+            TurnStatus::Failed,
+            Some(&long_reason),
+        )
+        .await;
+        assert!(contexts.is_empty());
+
+        let events = server
+            .thread_store
+            .read_events_since(thread_id, EventSeq::ZERO)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("missing thread events"))?;
+
+        let hook_tool_id = events
+            .iter()
+            .find_map(|event| match &event.kind {
+                ThreadEventKind::ToolStarted { tool_id, tool, .. } if tool == "hook/run" => {
+                    Some(*tool_id)
+                }
+                _ => None,
+            })
+            .ok_or_else(|| anyhow::anyhow!("missing hook ToolStarted event"))?;
+
+        let completed = events.iter().find_map(|event| match &event.kind {
+            ThreadEventKind::ToolCompleted {
+                tool_id,
+                status: ToolStatus::Completed,
+                result: Some(result),
+                ..
+            } if *tool_id == hook_tool_id => Some(result.clone()),
+            _ => None,
+        });
+        let completed =
+            completed.ok_or_else(|| anyhow::anyhow!("missing hook ToolCompleted event"))?;
+        let input_path = completed
+            .get("input_path")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("missing input_path in hook result"))?;
+
+        let input_bytes = tokio::fs::read(input_path).await?;
+        let hook_input: Value = serde_json::from_slice(&input_bytes)?;
+        let turn_reason = hook_input
+            .get("turn_reason")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("missing turn_reason in hook input"))?;
+        assert!(turn_reason.contains("Bearer <REDACTED>"));
+        assert_eq!(turn_reason.chars().count(), 513);
+        assert!(turn_reason.ends_with('…'));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn subagent_stop_hook_input_artifact_includes_subagent_context() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        let spec_dir = repo_dir.join(".omne_data").join("spec");
+        tokio::fs::create_dir_all(&spec_dir).await?;
+
+        tokio::fs::write(
+            spec_dir.join("hooks.yaml"),
+            r#"
+version: 1
+hooks:
+  subagent_stop:
+    - when_turn_status: ["failed"]
+      argv: ["sh", "-c", "exit 0"]
+      emit_additional_context: false
+"#,
+        )
+        .await?;
+
+        let server = build_test_server(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let parent_thread_id = handle.thread_id();
+        drop(handle);
+
+        let child_thread_id = ThreadId::new();
+        let child_turn_id = TurnId::new();
+        let parent_thread_id_text = parent_thread_id.to_string();
+        let child_thread_id_text = child_thread_id.to_string();
+        let child_turn_id_text = child_turn_id.to_string();
+        let reason = "Bearer secret-subagent-reason";
+        let contexts = run_subagent_stop_hooks(
+            &server,
+            parent_thread_id,
+            "task-1",
+            child_thread_id,
+            child_turn_id,
+            TurnStatus::Failed,
+            Some(reason),
+        )
+        .await;
+        assert!(contexts.is_empty());
+
+        let events = server
+            .thread_store
+            .read_events_since(parent_thread_id, EventSeq::ZERO)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("missing parent thread events"))?;
+
+        let hook_tool_id = events
+            .iter()
+            .find_map(|event| match &event.kind {
+                ThreadEventKind::ToolStarted { tool_id, tool, .. } if tool == "hook/run" => {
+                    Some(*tool_id)
+                }
+                _ => None,
+            })
+            .ok_or_else(|| anyhow::anyhow!("missing hook ToolStarted event"))?;
+
+        let completed = events.iter().find_map(|event| match &event.kind {
+            ThreadEventKind::ToolCompleted {
+                tool_id,
+                status: ToolStatus::Completed,
+                result: Some(result),
+                ..
+            } if *tool_id == hook_tool_id => Some(result.clone()),
+            _ => None,
+        });
+        let completed =
+            completed.ok_or_else(|| anyhow::anyhow!("missing hook ToolCompleted event"))?;
+        let input_path = completed
+            .get("input_path")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("missing input_path in hook result"))?;
+
+        let input_bytes = tokio::fs::read(input_path).await?;
+        let hook_input: Value = serde_json::from_slice(&input_bytes)?;
+        assert_eq!(
+            hook_input.get("hook_point").and_then(Value::as_str),
+            Some("subagent_stop")
+        );
+        assert_eq!(
+            hook_input.get("thread_id").and_then(Value::as_str),
+            Some(parent_thread_id_text.as_str())
+        );
+        assert!(hook_input.get("turn_id").is_none());
+        assert_eq!(
+            hook_input.get("turn_status").and_then(Value::as_str),
+            Some("failed")
+        );
+
+        let subagent = hook_input
+            .get("subagent")
+            .and_then(Value::as_object)
+            .ok_or_else(|| anyhow::anyhow!("missing subagent context in hook input"))?;
+        assert_eq!(
+            subagent.get("task_id").and_then(Value::as_str),
+            Some("task-1")
+        );
+        assert_eq!(
+            subagent.get("parent_thread_id").and_then(Value::as_str),
+            Some(parent_thread_id_text.as_str())
+        );
+        assert_eq!(
+            subagent.get("child_thread_id").and_then(Value::as_str),
+            Some(child_thread_id_text.as_str())
+        );
+        assert_eq!(
+            subagent.get("child_turn_id").and_then(Value::as_str),
+            Some(child_turn_id_text.as_str())
+        );
+        assert_eq!(subagent.get("status").and_then(Value::as_str), Some("failed"));
+        let redacted_reason = subagent
+            .get("reason")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("missing subagent reason in hook input"))?;
+        assert!(redacted_reason.contains("Bearer <REDACTED>"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn subagent_start_hook_input_artifact_includes_subagent_context() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        let spec_dir = repo_dir.join(".omne_data").join("spec");
+        tokio::fs::create_dir_all(&spec_dir).await?;
+
+        tokio::fs::write(
+            spec_dir.join("hooks.yaml"),
+            r#"
+version: 1
+hooks:
+  subagent_start:
+    - argv: ["sh", "-c", "exit 0"]
+      emit_additional_context: false
+"#,
+        )
+        .await?;
+
+        let server = build_test_server(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let parent_thread_id = handle.thread_id();
+        drop(handle);
+
+        let child_thread_id = ThreadId::new();
+        let child_turn_id = TurnId::new();
+        let parent_thread_id_text = parent_thread_id.to_string();
+        let child_thread_id_text = child_thread_id.to_string();
+        let child_turn_id_text = child_turn_id.to_string();
+        let contexts = run_subagent_start_hooks(
+            &server,
+            parent_thread_id,
+            "task-2",
+            child_thread_id,
+            child_turn_id,
+        )
+        .await;
+        assert!(contexts.is_empty());
+
+        let events = server
+            .thread_store
+            .read_events_since(parent_thread_id, EventSeq::ZERO)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("missing parent thread events"))?;
+
+        let hook_tool_id = events
+            .iter()
+            .find_map(|event| match &event.kind {
+                ThreadEventKind::ToolStarted { tool_id, tool, .. } if tool == "hook/run" => {
+                    Some(*tool_id)
+                }
+                _ => None,
+            })
+            .ok_or_else(|| anyhow::anyhow!("missing hook ToolStarted event"))?;
+
+        let completed = events.iter().find_map(|event| match &event.kind {
+            ThreadEventKind::ToolCompleted {
+                tool_id,
+                status: ToolStatus::Completed,
+                result: Some(result),
+                ..
+            } if *tool_id == hook_tool_id => Some(result.clone()),
+            _ => None,
+        });
+        let completed =
+            completed.ok_or_else(|| anyhow::anyhow!("missing hook ToolCompleted event"))?;
+        let input_path = completed
+            .get("input_path")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("missing input_path in hook result"))?;
+
+        let input_bytes = tokio::fs::read(input_path).await?;
+        let hook_input: Value = serde_json::from_slice(&input_bytes)?;
+        assert_eq!(
+            hook_input.get("hook_point").and_then(Value::as_str),
+            Some("subagent_start")
+        );
+        assert_eq!(
+            hook_input.get("thread_id").and_then(Value::as_str),
+            Some(parent_thread_id_text.as_str())
+        );
+        assert!(hook_input.get("turn_id").is_none());
+        assert!(hook_input.get("turn_status").is_none());
+        assert!(hook_input.get("turn_reason").is_none());
+
+        let subagent = hook_input
+            .get("subagent")
+            .and_then(Value::as_object)
+            .ok_or_else(|| anyhow::anyhow!("missing subagent context in hook input"))?;
+        assert_eq!(
+            subagent.get("task_id").and_then(Value::as_str),
+            Some("task-2")
+        );
+        assert_eq!(
+            subagent.get("parent_thread_id").and_then(Value::as_str),
+            Some(parent_thread_id_text.as_str())
+        );
+        assert_eq!(
+            subagent.get("child_thread_id").and_then(Value::as_str),
+            Some(child_thread_id_text.as_str())
+        );
+        assert_eq!(
+            subagent.get("child_turn_id").and_then(Value::as_str),
+            Some(child_turn_id_text.as_str())
+        );
+        assert!(subagent.get("status").is_none());
+        assert!(subagent.get("reason").is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pre_tool_use_hook_input_artifact_uses_sanitized_artifact_write_params()
+    -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        let spec_dir = repo_dir.join(".omne_data").join("spec");
+        tokio::fs::create_dir_all(&spec_dir).await?;
+
+        tokio::fs::write(
+            spec_dir.join("hooks.yaml"),
+            r#"
+version: 1
+hooks:
+  pre_tool_use:
+    - when_tools: ["artifact/write"]
+      argv: ["sh", "-c", "exit 0"]
+      emit_additional_context: false
+"#,
+        )
+        .await?;
+
+        let server = build_test_server(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let turn_id = TurnId::new();
+        let tool_args = serde_json::json!({
+            "artifact_type": "note",
+            "summary": "Bearer hidden-token-abcdefghijklmnopqrstuvwxyz",
+            "text": "abc",
+        });
+        let contexts =
+            run_pre_tool_use_hooks(&server, thread_id, turn_id, "artifact/write", &tool_args).await;
+        assert!(contexts.is_empty());
+
+        let events = server
+            .thread_store
+            .read_events_since(thread_id, EventSeq::ZERO)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("missing thread events"))?;
+
+        let hook_tool_id = events
+            .iter()
+            .find_map(|event| match &event.kind {
+                ThreadEventKind::ToolStarted { tool_id, tool, .. } if tool == "hook/run" => {
+                    Some(*tool_id)
+                }
+                _ => None,
+            })
+            .ok_or_else(|| anyhow::anyhow!("missing hook ToolStarted event"))?;
+
+        let completed = events.iter().find_map(|event| match &event.kind {
+            ThreadEventKind::ToolCompleted {
+                tool_id,
+                status: ToolStatus::Completed,
+                result: Some(result),
+                ..
+            } if *tool_id == hook_tool_id => Some(result.clone()),
+            _ => None,
+        });
+        let completed =
+            completed.ok_or_else(|| anyhow::anyhow!("missing hook ToolCompleted event"))?;
+        let input_path = completed
+            .get("input_path")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("missing input_path in hook result"))?;
+
+        let input_bytes = tokio::fs::read(input_path).await?;
+        let hook_input: Value = serde_json::from_slice(&input_bytes)?;
+        let tool_params = hook_input
+            .get("tool_params")
+            .ok_or_else(|| anyhow::anyhow!("missing tool_params in hook input"))?;
+
+        assert_eq!(
+            tool_params.get("artifact_type").and_then(Value::as_str),
+            Some("note")
+        );
+        assert_eq!(tool_params.get("bytes").and_then(Value::as_u64), Some(3));
+        assert!(tool_params.get("text").is_none());
+        let summary = tool_params
+            .get("summary")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("missing summary in tool_params"))?;
+        assert!(summary.contains("Bearer <REDACTED>"));
+
+        Ok(())
+    }
 }

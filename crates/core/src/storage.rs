@@ -178,6 +178,14 @@ impl FsStorage {
         }
         Ok(())
     }
+
+    async fn cleanup_tmp_file(tmp_path: &Path) {
+        if let Err(err) = tokio::fs::remove_file(tmp_path).await
+            && err.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::debug!(path = %tmp_path.display(), error = %err, "failed to remove temp file");
+        }
+    }
 }
 
 #[async_trait]
@@ -204,19 +212,19 @@ impl Storage for FsStorage {
                     Ok(()) => {}
                     Err(remove_err) if remove_err.kind() == std::io::ErrorKind::NotFound => {}
                     Err(remove_err) => {
-                        let _ = tokio::fs::remove_file(&tmp_path).await;
+                        Self::cleanup_tmp_file(&tmp_path).await;
                         return Err(remove_err)
                             .with_context(|| format!("remove old json {}", path.display()));
                     }
                 }
                 if let Err(rename_err) = tokio::fs::rename(&tmp_path, &path).await {
-                    let _ = tokio::fs::remove_file(&tmp_path).await;
+                    Self::cleanup_tmp_file(&tmp_path).await;
                     return Err(rename_err).with_context(|| {
                         format!("rename {} -> {}", tmp_path.display(), path.display())
                     });
                 }
             } else {
-                let _ = tokio::fs::remove_file(&tmp_path).await;
+                Self::cleanup_tmp_file(&tmp_path).await;
                 return Err(err).with_context(|| {
                     format!("rename {} -> {}", tmp_path.display(), path.display())
                 });
@@ -535,6 +543,27 @@ mod tests {
         assert_eq!(sessions.len(), 2);
         assert_eq!(sessions[0].id, id2);
         assert_eq!(sessions[1].id, id1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cleanup_tmp_file_ignores_missing_file() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let missing = dir.path().join("missing.tmp");
+        FsStorage::cleanup_tmp_file(&missing).await;
+        assert!(!tokio::fs::try_exists(&missing).await?);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cleanup_tmp_file_removes_existing_file() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let tmp_file = dir.path().join("existing.tmp");
+        tokio::fs::write(&tmp_file, b"temp").await?;
+        assert!(tokio::fs::try_exists(&tmp_file).await?);
+
+        FsStorage::cleanup_tmp_file(&tmp_file).await;
+        assert!(!tokio::fs::try_exists(&tmp_file).await?);
         Ok(())
     }
 }

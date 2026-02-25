@@ -1,9 +1,181 @@
 use crate::model_limits::resolve_model_limits;
 
+#[derive(Debug)]
+enum ThreadConfigureSpecError {
+    UnknownMode { mode: String, available: String },
+    UnknownAllowedTool { tool: String, known: String },
+    AllowedToolDeniedByMode { mode: String, tool: String },
+    AllowedToolDecisionMappingMissing { tool: String },
+}
+
+impl ThreadConfigureSpecError {
+    fn error_code(&self) -> &'static str {
+        match self {
+            Self::UnknownMode { .. } => "mode_unknown",
+            Self::UnknownAllowedTool { .. } => "allowed_tools_unknown_tool",
+            Self::AllowedToolDeniedByMode { .. } => "allowed_tools_mode_denied",
+            Self::AllowedToolDecisionMappingMissing { .. } => "allowed_tools_mapping_missing",
+        }
+    }
+}
+
+impl std::fmt::Display for ThreadConfigureSpecError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnknownMode { mode, available } => {
+                write!(f, "unknown mode: {mode} (available: {available})")
+            }
+            Self::UnknownAllowedTool { tool, known } => {
+                write!(f, "unknown tool in allowed_tools: {tool} (known tools: {known})")
+            }
+            Self::AllowedToolDeniedByMode { mode, tool } => {
+                write!(f, "allowed_tools tool is denied by mode: mode={mode} tool={tool}")
+            }
+            Self::AllowedToolDecisionMappingMissing { tool } => {
+                write!(f, "tool decision mapping is missing for allowed_tools entry: {tool}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ThreadConfigureSpecError {}
+
+#[derive(Debug)]
+enum ThreadConfigureInputError {
+    InvalidThinking { value: String },
+    SandboxWritableRootInvalid { root: String, message: String },
+}
+
+impl ThreadConfigureInputError {
+    fn error_code(&self) -> &'static str {
+        match self {
+            Self::InvalidThinking { .. } => "thinking_invalid",
+            Self::SandboxWritableRootInvalid { .. } => "sandbox_writable_root_invalid",
+        }
+    }
+}
+
+impl std::fmt::Display for ThreadConfigureInputError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidThinking { value } => write!(
+                f,
+                "invalid thinking: {value} (expected: small|medium|high|xhigh|unsupported)"
+            ),
+            Self::SandboxWritableRootInvalid { root, message } => write!(
+                f,
+                "invalid sandbox writable root: {root} ({message})"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ThreadConfigureInputError {}
+
+fn thread_configure_error_code(err: &anyhow::Error) -> Option<&'static str> {
+    for cause in err.chain() {
+        if let Some(spec) = cause.downcast_ref::<ThreadConfigureSpecError>() {
+            return Some(spec.error_code());
+        }
+        if let Some(input) = cause.downcast_ref::<ThreadConfigureInputError>() {
+            return Some(input.error_code());
+        }
+    }
+    None
+}
+
+fn validate_thread_configure_mode(
+    mode: &str,
+    catalog: &omne_core::modes::ModeCatalog,
+) -> anyhow::Result<()> {
+    if catalog.mode(mode).is_some() {
+        return Ok(());
+    }
+    let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
+    Err(ThreadConfigureSpecError::UnknownMode {
+        mode: mode.to_string(),
+        available,
+    }
+    .into())
+}
+
+fn normalize_thread_configure_allowed_tools(tools: Vec<String>) -> anyhow::Result<Vec<String>> {
+    let mut out = Vec::<String>::new();
+    let mut seen = std::collections::BTreeSet::<String>::new();
+    for tool in tools {
+        let trimmed = tool.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if !omne_core::allowed_tools::is_known_allowed_tool(trimmed) {
+            let known = omne_core::allowed_tools::known_allowed_tools().join(", ");
+            return Err(ThreadConfigureSpecError::UnknownAllowedTool {
+                tool: trimmed.to_string(),
+                known,
+            }
+            .into());
+        }
+        if seen.insert(trimmed.to_string()) {
+            out.push(trimmed.to_string());
+        }
+    }
+    Ok(out)
+}
+
+fn parse_thread_configure_thinking(thinking: Option<String>) -> anyhow::Result<Option<String>> {
+    let Some(value) = thinking else {
+        return Ok(None);
+    };
+    let value = value.trim().to_string();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    let lowered = value.to_ascii_lowercase();
+    if matches!(
+        lowered.as_str(),
+        "small" | "medium" | "high" | "xhigh" | "unsupported"
+    ) {
+        return Ok(Some(value));
+    }
+    Err(ThreadConfigureInputError::InvalidThinking { value }.into())
+}
+
+fn validate_thread_configure_allowed_tools_for_mode(
+    mode_name: &str,
+    tools: &[String],
+    catalog: &omne_core::modes::ModeCatalog,
+) -> anyhow::Result<()> {
+    let mode = catalog.mode(mode_name).ok_or_else(|| {
+        let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
+        anyhow::anyhow!(ThreadConfigureSpecError::UnknownMode {
+            mode: mode_name.to_string(),
+            available,
+        })
+    })?;
+
+    for tool in tools {
+        let decision = omne_core::allowed_tools::effective_mode_decision_for_tool(mode, tool)
+            .ok_or_else(|| {
+                anyhow::anyhow!(ThreadConfigureSpecError::AllowedToolDecisionMappingMissing {
+                    tool: tool.clone(),
+                })
+            })?;
+        if decision == omne_core::modes::Decision::Deny {
+            return Err(ThreadConfigureSpecError::AllowedToolDeniedByMode {
+                mode: mode_name.to_string(),
+                tool: tool.clone(),
+            }
+            .into());
+        }
+    }
+
+    Ok(())
+}
+
 async fn handle_thread_configure(
     server: &Server,
     params: ThreadConfigureParams,
-) -> anyhow::Result<Value> {
+) -> anyhow::Result<omne_app_server_protocol::ThreadConfigureResponse> {
     let (rt, thread_root) = load_thread_root(server, params.thread_id).await?;
     let (
         current_approval_policy,
@@ -15,6 +187,7 @@ async fn handle_thread_configure(
         current_thinking,
         current_openai_base_url,
         current_allowed_tools,
+        current_execpolicy_rules,
     ) = {
         let handle = rt.handle.lock().await;
         let state = handle.state();
@@ -28,6 +201,7 @@ async fn handle_thread_configure(
             state.thinking.clone(),
             state.openai_base_url.clone(),
             state.allowed_tools.clone(),
+            state.execpolicy_rules.clone(),
         )
     };
 
@@ -44,8 +218,14 @@ async fn handle_thread_configure(
             let mut out = Vec::<String>::new();
             let mut seen = std::collections::BTreeSet::<String>::new();
             for root in roots {
-                let resolved =
-                    omne_core::resolve_dir_unrestricted(&thread_root, Path::new(&root)).await?;
+                let resolved = omne_core::resolve_dir_unrestricted(&thread_root, Path::new(&root))
+                    .await
+                    .map_err(|err| {
+                        anyhow::Error::new(ThreadConfigureInputError::SandboxWritableRootInvalid {
+                            root: root.clone(),
+                            message: err.to_string(),
+                        })
+                    })?;
                 let resolved = resolved.display().to_string();
                 if seen.insert(resolved.clone()) {
                     out.push(resolved);
@@ -60,37 +240,44 @@ async fn handle_thread_configure(
         .mode
         .map(|m| m.trim().to_string())
         .filter(|m| !m.is_empty());
-    if let Some(mode) = mode.as_deref() {
-        let catalog = omne_core::modes::ModeCatalog::load(&thread_root).await;
-        if catalog.mode(mode).is_none() {
-            let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
-            anyhow::bail!("unknown mode: {mode} (available: {available})");
-        }
+    let allowed_tools_requested = matches!(params.allowed_tools, Some(Some(_)));
+    let mode_catalog = if mode.is_some() || allowed_tools_requested {
+        Some(omne_core::modes::ModeCatalog::load(&thread_root).await)
+    } else {
+        None
+    };
+    if let Some(mode_name) = mode.as_deref() {
+        let catalog = mode_catalog
+            .as_ref()
+            .expect("mode catalog must be loaded when mode is provided");
+        validate_thread_configure_mode(mode_name, catalog)?;
     }
     let model = params.model.filter(|s| !s.trim().is_empty());
-    let thinking = params
-        .thinking
-        .as_deref()
-        .map(|value| value.trim())
-        .filter(|value| !value.is_empty())
-        .map(|value| match value.to_ascii_lowercase().as_str() {
-            "small" | "medium" | "high" | "xhigh" | "unsupported" => Ok(value.to_string()),
-            other => anyhow::bail!(
-                "invalid thinking: {other} (expected: small|medium|high|xhigh|unsupported)"
-            ),
-        })
-        .transpose()?;
+    let thinking = parse_thread_configure_thinking(params.thinking)?;
     let openai_base_url = params.openai_base_url.filter(|s| !s.trim().is_empty());
     let allowed_tools = match params.allowed_tools {
         None => None,
         Some(None) => Some(None),
-        Some(Some(tools)) => Some(Some(normalize_allowed_tools(tools)?)),
+        Some(Some(tools)) => {
+            let tools = normalize_thread_configure_allowed_tools(tools)?;
+            let effective_mode_name = mode.as_deref().unwrap_or(current_mode.as_str());
+            let catalog = mode_catalog
+                .as_ref()
+                .expect("mode catalog must be loaded when allowed_tools are provided");
+            validate_thread_configure_mode(effective_mode_name, catalog)?;
+            validate_thread_configure_allowed_tools_for_mode(effective_mode_name, &tools, catalog)?;
+            Some(Some(tools))
+        }
     };
+    let execpolicy_rules = params.execpolicy_rules.map(normalize_execpolicy_rules);
     let allowed_tools_changed = match &allowed_tools {
         None => false,
         Some(None) => current_allowed_tools.is_some(),
         Some(Some(tools)) => current_allowed_tools.as_ref() != Some(tools),
     };
+    let execpolicy_rules_changed = execpolicy_rules
+        .as_ref()
+        .is_some_and(|rules| rules != &current_execpolicy_rules);
 
     let changed = approval_policy != current_approval_policy
         || params
@@ -105,7 +292,8 @@ async fn handle_thread_configure(
         || model.as_ref() != current_model.as_ref()
         || thinking.as_ref() != current_thinking.as_ref()
         || openai_base_url.as_ref() != current_openai_base_url.as_ref()
-        || allowed_tools_changed;
+        || allowed_tools_changed
+        || execpolicy_rules_changed;
 
     if changed {
         rt.append_event(omne_protocol::ThreadEventKind::ThreadConfigUpdated {
@@ -118,16 +306,17 @@ async fn handle_thread_configure(
             thinking,
             openai_base_url,
             allowed_tools,
+            execpolicy_rules,
         })
         .await?;
     }
-    Ok(serde_json::json!({ "ok": true }))
+    Ok(omne_app_server_protocol::ThreadConfigureResponse { ok: true })
 }
 
 async fn handle_thread_config_explain(
     server: &Server,
     params: ThreadConfigExplainParams,
-) -> anyhow::Result<Value> {
+) -> anyhow::Result<omne_app_server_protocol::ThreadConfigExplainResponse> {
     let events = server
         .thread_store
         .read_events_since(params.thread_id, EventSeq::ZERO)
@@ -160,6 +349,7 @@ async fn handle_thread_config_explain(
     let mut effective_thinking = default_thinking.clone();
     let mut effective_openai_base_url = default_openai_base_url.clone();
     let mut effective_allowed_tools: Option<Vec<String>> = None;
+    let mut effective_execpolicy_rules = Vec::<String>::new();
     let mut layers = vec![serde_json::json!({
         "source": "default",
         "approval_policy": effective_approval_policy,
@@ -172,6 +362,7 @@ async fn handle_thread_config_explain(
         "thinking": effective_thinking,
         "openai_base_url": effective_openai_base_url,
         "allowed_tools": effective_allowed_tools,
+        "execpolicy_rules": effective_execpolicy_rules,
     })];
 
     let env_provider = std::env::var("OMNE_OPENAI_PROVIDER")
@@ -267,6 +458,19 @@ async fn handle_thread_config_explain(
         }));
     }
 
+    if let Some(meta) =
+        latest_artifact_metadata_by_type(server, params.thread_id, "preset_applied").await?
+    {
+        layers.push(serde_json::json!({
+            "source": "preset",
+            "artifact_id": meta.artifact_id,
+            "artifact_type": meta.artifact_type,
+            "summary": meta.summary,
+            "updated_at": meta.updated_at.format(&Rfc3339)?,
+            "provenance": meta.provenance,
+        }));
+    }
+
     let mut thinking_override: Option<String> = None;
     for event in events {
         if let omne_protocol::ThreadEventKind::ThreadConfigUpdated {
@@ -279,6 +483,7 @@ async fn handle_thread_config_explain(
             thinking,
             openai_base_url,
             allowed_tools,
+            execpolicy_rules,
         } = event.kind
         {
             let ts = event.timestamp.format(&Rfc3339)?;
@@ -311,6 +516,9 @@ async fn handle_thread_config_explain(
             if let Some(allowed_tools) = allowed_tools {
                 effective_allowed_tools = allowed_tools;
             }
+            if let Some(execpolicy_rules) = execpolicy_rules {
+                effective_execpolicy_rules = execpolicy_rules;
+            }
             layers.push(serde_json::json!({
                 "source": "thread",
                 "seq": event.seq.0,
@@ -325,6 +533,7 @@ async fn handle_thread_config_explain(
                 "thinking": effective_thinking,
                 "openai_base_url": effective_openai_base_url,
                 "allowed_tools": effective_allowed_tools,
+                "execpolicy_rules": effective_execpolicy_rules,
             }));
         }
     }
@@ -370,30 +579,86 @@ async fn handle_thread_config_explain(
     };
     let limits = resolve_model_limits(&effective_model, model_config);
 
-    Ok(serde_json::json!({
-        "thread_id": params.thread_id,
-        "effective": {
-            "approval_policy": effective_approval_policy,
-            "sandbox_policy": effective_sandbox_policy,
-            "sandbox_writable_roots": effective_sandbox_writable_roots,
-            "sandbox_network_access": effective_sandbox_network_access,
-            "mode": effective_mode,
-            "model": effective_model,
-            "thinking": effective_thinking,
-            "openai_base_url": effective_openai_base_url,
-            "allowed_tools": effective_allowed_tools,
-            "model_context_window": limits.context_window,
-            "auto_compact_token_limit": limits.auto_compact_token_limit,
+    Ok(omne_app_server_protocol::ThreadConfigExplainResponse {
+        thread_id: params.thread_id,
+        effective: omne_app_server_protocol::ThreadConfigExplainEffective {
+            approval_policy: effective_approval_policy,
+            sandbox_policy: effective_sandbox_policy,
+            sandbox_writable_roots: effective_sandbox_writable_roots,
+            sandbox_network_access: effective_sandbox_network_access,
+            mode: effective_mode,
+            model: effective_model,
+            thinking: effective_thinking,
+            openai_base_url: effective_openai_base_url,
+            allowed_tools: effective_allowed_tools,
+            execpolicy_rules: effective_execpolicy_rules,
+            model_context_window: limits.context_window,
+            auto_compact_token_limit: limits.auto_compact_token_limit,
         },
-        "mode_catalog": {
-            "source": mode_catalog_source,
-            "path": mode_catalog_path,
-            "load_error": mode_catalog.load_error,
-            "modes": available_modes,
+        mode_catalog: omne_app_server_protocol::ThreadConfigExplainModeCatalog {
+            source: mode_catalog_source.to_string(),
+            path: mode_catalog_path,
+            load_error: mode_catalog.load_error,
+            modes: available_modes,
         },
-        "effective_mode_def": effective_mode_def,
-        "layers": layers,
-    }))
+        effective_mode_def,
+        layers,
+    })
+}
+
+async fn latest_artifact_metadata_by_type(
+    server: &Server,
+    thread_id: ThreadId,
+    artifact_type: &str,
+) -> anyhow::Result<Option<ArtifactMetadata>> {
+    let dir = user_artifacts_dir_for_thread(server, thread_id);
+    let mut read_dir = match tokio::fs::read_dir(&dir).await {
+        Ok(read_dir) => read_dir,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err).with_context(|| format!("read {}", dir.display())),
+    };
+
+    let mut latest: Option<ArtifactMetadata> = None;
+    while let Some(entry) = read_dir
+        .next_entry()
+        .await
+        .with_context(|| format!("read {}", dir.display()))?
+    {
+        let ty = entry
+            .file_type()
+            .await
+            .with_context(|| format!("stat {}", entry.path().display()))?;
+        if !ty.is_file() {
+            continue;
+        }
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        if !name.ends_with(".metadata.json") {
+            continue;
+        }
+
+        let meta = match read_artifact_metadata(&path).await {
+            Ok(meta) => meta,
+            Err(err) => {
+                tracing::warn!(path = %path.display(), error = %err, "skip bad artifact metadata");
+                continue;
+            }
+        };
+        if meta.artifact_type != artifact_type {
+            continue;
+        }
+        let replace = latest.as_ref().is_none_or(|current| {
+            meta.updated_at > current.updated_at
+                || (meta.updated_at == current.updated_at && meta.artifact_id > current.artifact_id)
+        });
+        if replace {
+            latest = Some(meta);
+        }
+    }
+
+    Ok(latest)
 }
 
 fn thinking_label(value: ditto_llm::ThinkingIntensity) -> &'static str {
@@ -406,50 +671,18 @@ fn thinking_label(value: ditto_llm::ThinkingIntensity) -> &'static str {
     }
 }
 
-const KNOWN_ALLOWED_TOOLS: &[&str] = &[
-    "file/read",
-    "file/glob",
-    "file/grep",
-    "file/write",
-    "file/patch",
-    "file/edit",
-    "file/delete",
-    "fs/mkdir",
-    "repo/search",
-    "repo/index",
-    "repo/symbols",
-    "mcp/list_servers",
-    "mcp/list_tools",
-    "mcp/list_resources",
-    "mcp/call",
-    "artifact/write",
-    "artifact/list",
-    "artifact/read",
-    "artifact/delete",
-    "process/start",
-    "process/list",
-    "process/inspect",
-    "process/kill",
-    "process/interrupt",
-    "process/tail",
-    "process/follow",
-];
-
-fn normalize_allowed_tools(tools: Vec<String>) -> anyhow::Result<Vec<String>> {
+fn normalize_execpolicy_rules(rules: Vec<String>) -> Vec<String> {
     let mut out = Vec::new();
     let mut seen = std::collections::BTreeSet::<String>::new();
-    for tool in tools {
-        let trimmed = tool.trim();
+    for rule in rules {
+        let trimmed = rule.trim();
         if trimmed.is_empty() {
             continue;
         }
-        if !KNOWN_ALLOWED_TOOLS.contains(&trimmed) {
-            let known = KNOWN_ALLOWED_TOOLS.join(", ");
-            anyhow::bail!("unknown tool: {trimmed} (known tools: {known})");
-        }
-        if seen.insert(trimmed.to_string()) {
-            out.push(trimmed.to_string());
+        let value = trimmed.to_string();
+        if seen.insert(value.clone()) {
+            out.push(value);
         }
     }
-    Ok(out)
+    out
 }

@@ -77,16 +77,12 @@
             };
             let config = app.thread_config_explain(thread_id).await?;
             let modes = config
-                .get("mode_catalog")
-                .and_then(|v| v.get("modes"))
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str().map(|s| s.trim().to_string()))
-                        .filter(|s| !s.is_empty())
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
+                .mode_catalog
+                .modes
+                .into_iter()
+                .map(|mode| mode.trim().to_string())
+                .filter(|mode| !mode.is_empty())
+                .collect::<Vec<_>>();
             self.mode_catalog = modes;
             self.mode_catalog_loaded = true;
             Ok(())
@@ -252,6 +248,28 @@
                         self.set_inline_palette(
                             InlinePaletteKind::SandboxNetworkAccess,
                             build_inline_sandbox_network_access_palette(),
+                        );
+                    }
+                    self.update_inline_query(context.query.trim());
+                }
+                InlinePaletteKind::AllowedTools => {
+                    if self.inline_palette.as_ref().is_none_or(|inline| {
+                        inline.kind != InlinePaletteKind::AllowedTools
+                    }) {
+                        self.set_inline_palette(
+                            InlinePaletteKind::AllowedTools,
+                            build_inline_allowed_tools_palette(),
+                        );
+                    }
+                    self.update_inline_query(context.query.trim());
+                }
+                InlinePaletteKind::ExecpolicyRules => {
+                    if self.inline_palette.as_ref().is_none_or(|inline| {
+                        inline.kind != InlinePaletteKind::ExecpolicyRules
+                    }) {
+                        self.set_inline_palette(
+                            InlinePaletteKind::ExecpolicyRules,
+                            build_inline_execpolicy_rules_palette(),
                         );
                     }
                     self.update_inline_query(context.query.trim());

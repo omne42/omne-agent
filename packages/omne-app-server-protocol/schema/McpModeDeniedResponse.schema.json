@@ -1,0 +1,44 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "McpModeDeniedResponse",
+  "type": "object",
+  "required": [
+    "decision",
+    "decision_source",
+    "mode",
+    "tool_id"
+  ],
+  "properties": {
+    "decision": {
+      "$ref": "#/definitions/McpModeDecision"
+    },
+    "decision_source": {
+      "type": "string"
+    },
+    "denied": {
+      "default": false,
+      "type": "boolean"
+    },
+    "mode": {
+      "type": "string"
+    },
+    "tool_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "tool_override_hit": {
+      "default": false,
+      "type": "boolean"
+    }
+  },
+  "definitions": {
+    "McpModeDecision": {
+      "type": "string",
+      "enum": [
+        "allow",
+        "prompt",
+        "deny"
+      ]
+    }
+  }
+}

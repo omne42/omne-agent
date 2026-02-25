@@ -2,7 +2,7 @@
 
 > 目标：把“用户想表达的控制意图/上下文引用”从纯文本里剥离出来，变成 **结构化、可审计、可回放** 的输入。
 >
-> 状态：v0.2.0 已实现最小 at 引用（`@file`/`@diff`）→ `turn/start.context_refs`，并将结构化输入落盘到 `ThreadEventKind::TurnStarted.context_refs` 以便可审计/可回放；同时实现最小 attachments（`@image`/`@pdf`）→ `turn/start.attachments` → `ThreadEventKind::TurnStarted.attachments`，用于把图片/文件作为结构化输入注入模型。slash 指令（`/plan`/`/approve` 等）仍以 CLI/RPC 为主（本文保留 TODO 占位）。
+> 状态：v0.2.0 已实现最小 at 引用（`@file`/`@diff`）→ `turn/start.context_refs`，并将结构化输入落盘到 `ThreadEventKind::TurnStarted.context_refs` 以便可审计/可回放；同时实现最小 attachments（`@image`/`@pdf`）→ `turn/start.attachments` → `ThreadEventKind::TurnStarted.attachments`，用于把图片/文件作为结构化输入注入模型。`/plan` 已实现最小结构化语义：CLI 从输入开头解析 `/plan` 到 `turn/start.directives=[{kind:\"plan\"}]`，并在 turn runtime 注入 planning guardrail 提示；`/approve` 仍以 CLI/RPC 控制面命令为主。
 
 ---
 
@@ -137,21 +137,24 @@ v0.2.0 最小建议（先钉死 4 个 at，别继续扩面）：
 
 ---
 
-## 4) `/plan`（intent）最小语义（TODO）
+## 4) `/plan`（intent）最小语义（v0.2.0 已实现最小子集）
 
 问题：`/plan` 不是“跑一个 RPC 就完事”，它是“下一轮 turn 的意图”。
 
-最小建议（TODO）：
+已实现（最小子集）：
 
-- 这需要未来启用 `turn/start` 的结构化 `directives` 字段（见 3.1）。
-- `directives.kind="plan"` 表示：本 turn 的目标是“生成 plan artifact”，并尽量避免 side effects。
-- 服务端可选做两件事（别过度设计）：
-  1. 临时将 mode 切到更保守的 `architect`（或等效规则）
-  2. 强制关闭并行与 side-effect tools（取决于 modes/allowed-tools 的落地）
+- 启用 `turn/start` 的结构化 `directives` 字段（`directives.kind="plan"`）。
+- `directives.kind="plan"` 表示：本 turn 的目标是“优先输出可执行计划，并尽量避免副作用”。
+- server runtime 会在 instructions 注入 planning guardrail（软约束，不是硬 gate）。
+- server tool dispatch 会在 `/plan` turn 下对 side-effect tools 做硬拦截，仅允许预定义 read-only tools（例如 `file_read`/`file_glob`/`file_grep`/`repo_*`/`artifact_read`/`artifact_list`/`thread_*` 的只读子集）。
+- server runtime 会在 `/plan` turn 下强制关闭并行工具调用（按串行执行工具调用）。
+- server runtime 会将本 turn 的路由角色临时视为 `architect`（仅本 turn 生效，不修改线程持久 mode）。
+- server tool dispatch 会在 `/plan` turn 下叠加 `architect` mode 判定（读取 `modes.yaml`/内置 `architect` + `tool_overrides`，`deny` 直接拦截，`prompt` 走审批流返回 `needs_approval`；`file_read`、`file_glob`、`file_grep.include_glob` 与 `repo_search/repo_index/repo_symbols` 的 `include_glob` 会额外按路径做 deny 判定：显式路径直接判定，含通配符时按静态前缀判定；`thread_state/thread_events` 仅允许读取当前执行线程；`process_inspect/process_tail/process_follow` 仅允许访问当前执行线程的 `process_id`，跨线程目标会被直接拦截）。
+- server runtime 会在 `/plan` turn 成功产出 assistant 文本后自动写入 `artifact_type="plan"`（便于审计与回放）。
 
-产物口径：
+仍未实现（后续增强）：
 
-- plan 作为 user artifact：`artifact_type="plan"`（见 `docs/artifacts.md`）。
+1. 将 `/plan` 从“只读工具 + 附加 architect 判定”继续扩展为“完整 architect 权限语义切换”（覆盖更多工具与参数级约束）
 
 ---
 
@@ -161,7 +164,11 @@ v0.2.0 最小建议（先钉死 4 个 at，别继续扩面）：
 - `omne` CLI 会从输入开头解析并剥离 `@image`/`@pdf`，转为 `turn/start.attachments`（模型不需要做文本解析）。
 - `turn/start` 接收结构化 `context_refs`（旧客户端仍可只发 `input`）。
 - `turn/start` 接收结构化 `attachments`（旧客户端仍可只发 `input`）。
+- `turn/start` 接收结构化 `directives`（当前已支持 `{kind:\"plan\"}`；旧客户端仍可只发 `input`）。
 - 结构化输入会随 `TurnStarted.context_refs`/`TurnStarted.attachments` 落盘，可回放定位。
+- 结构化指令会随 `TurnStarted.directives` 落盘，可回放定位。
+- `/plan` turn 会强制关闭并行工具调用，并对 side-effect tools 做硬拦截。
+- `/plan` turn 在有 assistant 文本输出时会自动产出 `artifact_type="plan"`。
 - `@file` 会触发一次 `file_read`，受 `mode/sandbox/approval` 约束，并将内容注入模型输入。
 - `@diff` 会触发一次 `thread_diff`（固定 argv 的 git diff → process/start + diff artifact），默认只注入 artifact 元信息，避免把整段巨量 diff 直接塞进上下文。
 - `@image`/`@pdf` 会把图片/文件作为 attachment 注入模型输入；local path 读取受 `mode/allowed_tools/sandbox` 约束，并强制 `.env` 拒绝与 size 上限。

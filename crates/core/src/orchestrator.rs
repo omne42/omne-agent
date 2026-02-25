@@ -597,11 +597,15 @@ impl Orchestrator {
         err: &anyhow::Error,
     ) -> CheckSummary {
         let artifacts_dir = session_paths.task_paths(task_id).artifacts_dir();
-        let _ = tokio::fs::create_dir_all(&artifacts_dir).await;
-        let error_log = artifacts_dir.join("error.log");
-        let error_text = format!("{err:#}\n");
-        let log_path = match tokio::fs::write(&error_log, error_text).await {
-            Ok(()) => Some(error_log),
+        let log_path = match tokio::fs::create_dir_all(&artifacts_dir).await {
+            Ok(()) => {
+                let error_log = artifacts_dir.join("error.log");
+                let error_text = format!("{err:#}\n");
+                match tokio::fs::write(&error_log, error_text).await {
+                    Ok(()) => Some(error_log),
+                    Err(_) => None,
+                }
+            }
             Err(_) => None,
         };
         CheckSummary {
@@ -621,11 +625,15 @@ impl Orchestrator {
         err: &anyhow::Error,
     ) -> MergeResult {
         let artifacts_dir = session_paths.merge_dir().join("artifacts");
-        let _ = tokio::fs::create_dir_all(&artifacts_dir).await;
-        let error_log = artifacts_dir.join("merge-error.log");
-        let error_text = format!("{err:#}\n");
-        let log_path = match tokio::fs::write(&error_log, error_text).await {
-            Ok(()) => Some(error_log),
+        let log_path = match tokio::fs::create_dir_all(&artifacts_dir).await {
+            Ok(()) => {
+                let error_log = artifacts_dir.join("merge-error.log");
+                let error_text = format!("{err:#}\n");
+                match tokio::fs::write(&error_log, error_text).await {
+                    Ok(()) => Some(error_log),
+                    Err(_) => None,
+                }
+            }
             Err(_) => None,
         };
 

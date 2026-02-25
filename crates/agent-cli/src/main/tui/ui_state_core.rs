@@ -2,6 +2,10 @@
         fn new(include_archived: bool) -> Self {
             Self {
                 include_archived,
+                only_fan_out_linkage_issue: false,
+                only_fan_out_auto_apply_error: false,
+                only_fan_in_dependency_blocked: false,
+                only_subagent_proxy_approval: false,
                 threads: Vec::new(),
                 selected_thread: 0,
                 active_thread: None,
@@ -18,8 +22,11 @@
                 tool_events: HashMap::new(),
                 streaming: None,
                 active_turn_id: None,
+                subagent_pending_summary: None,
+                subagent_pending_summary_needs_refresh: false,
                 input: String::new(),
                 status: None,
+                status_expires_at: None,
                 total_tokens_used: 0,
                 counted_usage_responses: HashSet::new(),
                 skip_token_usage_before_seq: None,
@@ -43,14 +50,43 @@
         }
 
         async fn refresh_threads(&mut self, app: &mut super::App) -> anyhow::Result<()> {
-            let value = app.thread_list_meta(self.include_archived).await?;
+            let value =
+                serde_json::to_value(app.thread_list_meta(self.include_archived, false).await?)?;
             let parsed =
                 serde_json::from_value::<ThreadListMetaResponse>(value).context("parse threads")?;
-            self.threads = parsed.threads;
+            self.threads = self.apply_thread_picker_filters(parsed.threads);
             if self.selected_thread >= self.threads.len() {
                 self.selected_thread = self.threads.len().saturating_sub(1);
             }
             Ok(())
+        }
+
+        fn apply_thread_picker_filters(&self, threads: Vec<ThreadMeta>) -> Vec<ThreadMeta> {
+            threads
+                .into_iter()
+                .filter(|thread| {
+                    (!self.only_fan_out_linkage_issue || thread.has_fan_out_linkage_issue)
+                        && (!self.only_fan_out_auto_apply_error
+                            || thread.has_fan_out_auto_apply_error)
+                        && (!self.only_fan_in_dependency_blocked
+                            || thread.has_fan_in_dependency_blocked)
+                        && (!self.only_subagent_proxy_approval
+                            || thread.pending_subagent_proxy_approvals > 0)
+                })
+                .collect::<Vec<_>>()
+        }
+
+        fn clear_thread_picker_filters(&mut self) -> bool {
+            let changed =
+                self.only_fan_out_linkage_issue
+                    || self.only_fan_out_auto_apply_error
+                    || self.only_fan_in_dependency_blocked
+                    || self.only_subagent_proxy_approval;
+            self.only_fan_out_linkage_issue = false;
+            self.only_fan_out_auto_apply_error = false;
+            self.only_fan_in_dependency_blocked = false;
+            self.only_subagent_proxy_approval = false;
+            changed
         }
 
         async fn open_thread(
@@ -59,7 +95,7 @@
             thread_id: ThreadId,
         ) -> anyhow::Result<()> {
             let resume = app.thread_resume(thread_id).await?;
-            let last_seq = resume["last_seq"].as_u64().unwrap_or(0);
+            let last_seq = resume.last_seq;
             let since_seq = last_seq.saturating_sub(2_000);
 
             let resp = app
@@ -70,14 +106,13 @@
             self.reset_thread_state(thread_id, resp.last_seq);
             if let Ok(state) = app.thread_state(thread_id).await {
                 self.thread_cwd = state
-                    .get("cwd")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty());
-                if let Some(tokens) = state.get("total_tokens_used").and_then(|v| v.as_u64()) {
-                    self.total_tokens_used = tokens;
-                    self.skip_token_usage_before_seq = Some(resp.last_seq);
-                }
+                    .cwd
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(ToString::to_string);
+                self.total_tokens_used = state.total_tokens_used;
+                self.skip_token_usage_before_seq = Some(resp.last_seq);
             }
             for event in resp.events {
                 self.apply_event(&event);
@@ -87,6 +122,8 @@
             } else {
                 self.header_needs_refresh = false;
             }
+            self.subagent_pending_summary_needs_refresh = true;
+            let _ = self.refresh_subagent_pending_summary(app, thread_id).await;
             Ok(())
         }
 
@@ -105,6 +142,8 @@
             self.tool_events.clear();
             self.streaming = None;
             self.active_turn_id = None;
+            self.subagent_pending_summary = None;
+            self.subagent_pending_summary_needs_refresh = true;
             self.total_tokens_used = 0;
             self.counted_usage_responses.clear();
             self.skip_token_usage_before_seq = None;
@@ -126,39 +165,23 @@
             thread_id: ThreadId,
         ) -> anyhow::Result<()> {
             let config = app.thread_config_explain(thread_id).await?;
+            let effective = &config.effective;
 
-            self.header.mode = config
-                .get("effective")
-                .and_then(|v| v.get("mode"))
-                .and_then(|v| v.as_str())
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty());
+            self.header.mode = Some(effective.mode.trim().to_string()).filter(|s| !s.is_empty());
 
             self.header.provider = Self::extract_openai_provider(&config);
-            self.header.model = config
-                .get("effective")
-                .and_then(|v| v.get("model"))
-                .and_then(|v| v.as_str())
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty());
-            self.header.thinking = config
-                .get("effective")
-                .and_then(|v| v.get("thinking"))
-                .and_then(|v| v.as_str())
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty());
-            self.header.model_context_window = config
-                .get("effective")
-                .and_then(|v| v.get("model_context_window"))
-                .and_then(|v| v.as_u64());
+            self.header.model = Some(effective.model.trim().to_string()).filter(|s| !s.is_empty());
+            self.header.thinking = Some(effective.thinking.trim().to_string()).filter(|s| !s.is_empty());
+            self.header.model_context_window = effective.model_context_window;
+            self.header.allowed_tools_count = effective.allowed_tools.as_ref().map(std::vec::Vec::len);
+            self.header.execpolicy_rules_count = effective.execpolicy_rules.len();
 
             self.header.mcp_enabled = env_truthy("OMNE_ENABLE_MCP");
             Ok(())
         }
 
-        fn extract_openai_provider(config: &Value) -> Option<String> {
-            let layers = config.get("layers")?.as_array()?;
-            for layer in layers.iter().rev() {
+        fn extract_openai_provider(config: &crate::ThreadConfigExplainResponse) -> Option<String> {
+            for layer in config.layers.iter().rev() {
                 let provider = layer.get("openai_provider").and_then(|v| v.as_str());
                 if let Some(provider) = provider.map(str::trim).filter(|s| !s.is_empty()) {
                     return Some(provider.to_string());
@@ -168,6 +191,9 @@
         }
 
         fn apply_event(&mut self, event: &ThreadEvent) {
+            if subagent_pending_summary_maybe_changed_by_event(event) {
+                self.subagent_pending_summary_needs_refresh = true;
+            }
             match &event.kind {
                 ThreadEventKind::TurnStarted { turn_id, input, .. } => {
                     self.cancel_turn_start();
@@ -332,6 +358,18 @@
             }
         }
 
+        async fn refresh_subagent_pending_summary(
+            &mut self,
+            app: &mut super::App,
+            thread_id: ThreadId,
+        ) -> anyhow::Result<()> {
+            let attention = app.thread_attention(thread_id).await?;
+            self.subagent_pending_summary =
+                summarize_subagent_pending_summary(attention.pending_approvals.as_slice());
+            self.subagent_pending_summary_needs_refresh = false;
+            Ok(())
+        }
+
         fn push_transcript(&mut self, entry: TranscriptEntry) {
             const MAX_TRANSCRIPT_ITEMS: usize = 5000;
             if self.transcript.len() >= MAX_TRANSCRIPT_ITEMS {
@@ -367,11 +405,48 @@
                 self.report_error(msg);
             } else {
                 self.status = Some(msg);
+                self.status_expires_at = None;
             }
+        }
+
+        fn set_temporary_status(&mut self, msg: String, ttl: Duration) {
+            if Self::is_error_message(&msg) {
+                self.report_error(msg);
+            } else {
+                self.status = Some(msg);
+                self.status_expires_at = Some(Instant::now() + ttl);
+            }
+        }
+
+        fn clear_status(&mut self) {
+            self.status = None;
+            self.status_expires_at = None;
+        }
+
+        fn dismiss_non_error_status(&mut self) {
+            if self
+                .status
+                .as_deref()
+                .is_some_and(|status| !Self::is_error_message(status))
+            {
+                self.clear_status();
+            }
+        }
+
+        fn expire_status_if_needed(&mut self, now: Instant) -> bool {
+            if self
+                .status_expires_at
+                .is_some_and(|expires_at| expires_at <= now)
+            {
+                self.clear_status();
+                return true;
+            }
+            false
         }
 
         fn report_error(&mut self, msg: String) {
             self.status = Some(msg.clone());
+            self.status_expires_at = None;
             if self.active_thread.is_some() {
                 self.push_transcript(TranscriptEntry {
                     role: TranscriptRole::Error,
@@ -386,4 +461,39 @@
             }
             self.model_fetch_pending = false;
         }
+    }
+
+    fn subagent_pending_summary_maybe_changed_by_event(event: &ThreadEvent) -> bool {
+        matches!(
+            &event.kind,
+            ThreadEventKind::ApprovalRequested { .. }
+                | ThreadEventKind::ApprovalDecided { .. }
+                | ThreadEventKind::TurnStarted { .. }
+                | ThreadEventKind::TurnCompleted { .. }
+        )
+    }
+
+    fn summarize_subagent_pending_summary(
+        approvals: &[omne_app_server_protocol::ThreadAttentionPendingApproval],
+    ) -> Option<SubagentPendingSummary> {
+        let mut total = 0usize;
+        let mut states = std::collections::BTreeMap::<String, usize>::new();
+
+        for pending in approvals {
+            if !super::is_subagent_proxy_pending_approval(pending) {
+                continue;
+            }
+            total = total.saturating_add(1);
+            let state = pending
+                .summary
+                .as_ref()
+                .and_then(|summary| summary.child_attention_state.as_deref())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| value.to_ascii_lowercase())
+                .unwrap_or_else(|| "unknown".to_string());
+            *states.entry(state).or_default() += 1;
+        }
+
+        (total > 0).then_some(SubagentPendingSummary { total, states })
     }

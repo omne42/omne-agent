@@ -25,6 +25,10 @@
                         model: None,
                         openai_base_url: None,
                         thinking: None,
+                        allowed_tools: None,
+                        clear_allowed_tools: false,
+                        execpolicy_rules: None,
+                        clear_execpolicy_rules: false,
                     })
                     .await?;
                     self.header.mode = Some(mode.clone());
@@ -48,6 +52,10 @@
                         model: Some(model.clone()),
                         openai_base_url: None,
                         thinking: None,
+                        allowed_tools: None,
+                        clear_allowed_tools: false,
+                        execpolicy_rules: None,
+                        clear_execpolicy_rules: false,
                     })
                     .await?;
                     self.header.model = Some(model.clone());
@@ -71,6 +79,10 @@
                         model: None,
                         openai_base_url: None,
                         thinking: None,
+                        allowed_tools: None,
+                        clear_allowed_tools: false,
+                        execpolicy_rules: None,
+                        clear_execpolicy_rules: false,
                     })
                     .await?;
                     self.set_status(format!(
@@ -96,6 +108,10 @@
                         model: None,
                         openai_base_url: None,
                         thinking: None,
+                        allowed_tools: None,
+                        clear_allowed_tools: false,
+                        execpolicy_rules: None,
+                        clear_execpolicy_rules: false,
                     })
                     .await?;
                     self.set_status(format!(
@@ -121,6 +137,10 @@
                         model: None,
                         openai_base_url: None,
                         thinking: None,
+                        allowed_tools: None,
+                        clear_allowed_tools: false,
+                        execpolicy_rules: None,
+                        clear_execpolicy_rules: false,
                     })
                     .await?;
                     self.set_status(format!(
@@ -129,6 +149,87 @@
                     ));
                     self.clear_inline_line();
                     self.inline_palette = None;
+                    Ok(false)
+                }
+                PaletteCommand::SetAllowedTools(tool) => {
+                    let Some(thread_id) = self.active_thread else {
+                        self.set_status("no active thread".to_string());
+                        return Ok(false);
+                    };
+                    app.thread_configure(super::ThreadConfigureArgs {
+                        thread_id,
+                        approval_policy: None,
+                        sandbox_policy: None,
+                        sandbox_writable_roots: None,
+                        sandbox_network_access: None,
+                        mode: None,
+                        model: None,
+                        openai_base_url: None,
+                        thinking: None,
+                        allowed_tools: Some(vec![tool.clone()]),
+                        clear_allowed_tools: false,
+                        execpolicy_rules: None,
+                        clear_execpolicy_rules: false,
+                    })
+                    .await?;
+                    self.set_status(format!("allowed_tools=[{tool}]"));
+                    self.clear_inline_line();
+                    self.inline_palette = None;
+                    self.header_needs_refresh = true;
+                    Ok(false)
+                }
+                PaletteCommand::ClearAllowedTools => {
+                    let Some(thread_id) = self.active_thread else {
+                        self.set_status("no active thread".to_string());
+                        return Ok(false);
+                    };
+                    app.thread_configure(super::ThreadConfigureArgs {
+                        thread_id,
+                        approval_policy: None,
+                        sandbox_policy: None,
+                        sandbox_writable_roots: None,
+                        sandbox_network_access: None,
+                        mode: None,
+                        model: None,
+                        openai_base_url: None,
+                        thinking: None,
+                        allowed_tools: None,
+                        clear_allowed_tools: true,
+                        execpolicy_rules: None,
+                        clear_execpolicy_rules: false,
+                    })
+                    .await?;
+                    self.set_status("allowed_tools=<cleared>".to_string());
+                    self.clear_inline_line();
+                    self.inline_palette = None;
+                    self.header_needs_refresh = true;
+                    Ok(false)
+                }
+                PaletteCommand::ClearExecpolicyRules => {
+                    let Some(thread_id) = self.active_thread else {
+                        self.set_status("no active thread".to_string());
+                        return Ok(false);
+                    };
+                    app.thread_configure(super::ThreadConfigureArgs {
+                        thread_id,
+                        approval_policy: None,
+                        sandbox_policy: None,
+                        sandbox_writable_roots: None,
+                        sandbox_network_access: None,
+                        mode: None,
+                        model: None,
+                        openai_base_url: None,
+                        thinking: None,
+                        allowed_tools: None,
+                        clear_allowed_tools: false,
+                        execpolicy_rules: None,
+                        clear_execpolicy_rules: true,
+                    })
+                    .await?;
+                    self.set_status("execpolicy_rules=<cleared>".to_string());
+                    self.clear_inline_line();
+                    self.inline_palette = None;
+                    self.header_needs_refresh = true;
                     Ok(false)
                 }
                 PaletteCommand::PickMode => {
@@ -161,6 +262,18 @@
                     self.update_inline_palette(app).await?;
                     Ok(false)
                 }
+                PaletteCommand::PickAllowedTools => {
+                    self.input = "/allowed-tools ".to_string();
+                    self.inline_palette = None;
+                    self.update_inline_palette(app).await?;
+                    Ok(false)
+                }
+                PaletteCommand::PickExecpolicyRules => {
+                    self.input = "/execpolicy-rules ".to_string();
+                    self.inline_palette = None;
+                    self.update_inline_palette(app).await?;
+                    Ok(false)
+                }
                 PaletteCommand::OpenRoot => {
                     self.input = "/".to_string();
                     self.inline_palette = None;
@@ -175,6 +288,124 @@
                     Ok(exit)
                 }
             }
+        }
+
+        async fn execute_inline_list_command_from_query(
+            &mut self,
+            app: &mut super::App,
+        ) -> anyhow::Result<bool> {
+            let Some(command) = parse_inline_list_command(&self.input) else {
+                return Ok(false);
+            };
+            let Some(thread_id) = self.active_thread else {
+                self.set_status("no active thread".to_string());
+                return Ok(true);
+            };
+            match command.kind {
+                InlineListCommandKind::AllowedTools => match command.setting {
+                    InlineListCommandSetting::Missing => {
+                        self.set_status(
+                            "usage: /allowed-tools <a,b> | /allowed-tools clear".to_string(),
+                        );
+                        return Ok(true);
+                    }
+                    InlineListCommandSetting::Clear => {
+                        app.thread_configure(super::ThreadConfigureArgs {
+                            thread_id,
+                            approval_policy: None,
+                            sandbox_policy: None,
+                            sandbox_writable_roots: None,
+                            sandbox_network_access: None,
+                            mode: None,
+                            model: None,
+                            openai_base_url: None,
+                            thinking: None,
+                            allowed_tools: None,
+                            clear_allowed_tools: true,
+                            execpolicy_rules: None,
+                            clear_execpolicy_rules: false,
+                        })
+                        .await?;
+                        self.set_status("allowed_tools=<cleared>".to_string());
+                    }
+                    InlineListCommandSetting::Set(values) => {
+                        app.thread_configure(super::ThreadConfigureArgs {
+                            thread_id,
+                            approval_policy: None,
+                            sandbox_policy: None,
+                            sandbox_writable_roots: None,
+                            sandbox_network_access: None,
+                            mode: None,
+                            model: None,
+                            openai_base_url: None,
+                            thinking: None,
+                            allowed_tools: Some(values.clone()),
+                            clear_allowed_tools: false,
+                            execpolicy_rules: None,
+                            clear_execpolicy_rules: false,
+                        })
+                        .await?;
+                        self.set_status(format!(
+                            "allowed_tools={}",
+                            serde_json::to_string(&values).unwrap_or_else(|_| "[...]".to_string())
+                        ));
+                    }
+                },
+                InlineListCommandKind::ExecpolicyRules => match command.setting {
+                    InlineListCommandSetting::Missing => {
+                        self.set_status(
+                            "usage: /execpolicy-rules <a,b> | /execpolicy-rules clear"
+                                .to_string(),
+                        );
+                        return Ok(true);
+                    }
+                    InlineListCommandSetting::Clear => {
+                        app.thread_configure(super::ThreadConfigureArgs {
+                            thread_id,
+                            approval_policy: None,
+                            sandbox_policy: None,
+                            sandbox_writable_roots: None,
+                            sandbox_network_access: None,
+                            mode: None,
+                            model: None,
+                            openai_base_url: None,
+                            thinking: None,
+                            allowed_tools: None,
+                            clear_allowed_tools: false,
+                            execpolicy_rules: None,
+                            clear_execpolicy_rules: true,
+                        })
+                        .await?;
+                        self.set_status("execpolicy_rules=<cleared>".to_string());
+                    }
+                    InlineListCommandSetting::Set(values) => {
+                        app.thread_configure(super::ThreadConfigureArgs {
+                            thread_id,
+                            approval_policy: None,
+                            sandbox_policy: None,
+                            sandbox_writable_roots: None,
+                            sandbox_network_access: None,
+                            mode: None,
+                            model: None,
+                            openai_base_url: None,
+                            thinking: None,
+                            allowed_tools: None,
+                            clear_allowed_tools: false,
+                            execpolicy_rules: Some(values.clone()),
+                            clear_execpolicy_rules: false,
+                        })
+                        .await?;
+                        self.set_status(format!(
+                            "execpolicy_rules={}",
+                            serde_json::to_string(&values).unwrap_or_else(|_| "[...]".to_string())
+                        ));
+                    }
+                },
+            }
+            self.clear_inline_line();
+            self.inline_palette = None;
+            self.header_needs_refresh = true;
+            Ok(true)
         }
 
         async fn cycle_thinking(&mut self, app: &mut super::App) -> anyhow::Result<()> {
@@ -203,6 +434,10 @@
                 model: None,
                 openai_base_url: None,
                 thinking: Some(next.to_string()),
+                allowed_tools: None,
+                clear_allowed_tools: false,
+                execpolicy_rules: None,
+                clear_execpolicy_rules: false,
             })
             .await?;
             self.header.thinking = Some(next.to_string());

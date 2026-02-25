@@ -1,0 +1,32 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ProcessSandboxPolicyDeniedResponse",
+  "type": "object",
+  "required": [
+    "denied",
+    "sandbox_policy",
+    "tool_id"
+  ],
+  "properties": {
+    "denied": {
+      "type": "boolean"
+    },
+    "sandbox_policy": {
+      "$ref": "#/definitions/SandboxPolicy"
+    },
+    "tool_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  },
+  "definitions": {
+    "SandboxPolicy": {
+      "type": "string",
+      "enum": [
+        "read_only",
+        "workspace_write",
+        "danger_full_access"
+      ]
+    }
+  }
+}

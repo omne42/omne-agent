@@ -1,0 +1,135 @@
+name: omne-node-vendor
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: "Rust/profile for build and vendor release"
+        required: true
+        default: "debug"
+        type: choice
+        options:
+          - debug
+          - release
+      version:
+        description: "Optional release version tag (empty => auto-generated)"
+        required: false
+        default: ""
+        type: string
+      clean:
+        description: "Clean target vendor/release directories before packaging"
+        required: true
+        default: true
+        type: boolean
+  pull_request:
+    paths:
+      - "packages/omne/**"
+      - ".github/workflows/omne-node-vendor.yml"
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+    paths:
+      - "packages/omne/**"
+      - ".github/workflows/omne-node-vendor.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  verify-and-release-host:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    runs-on: ${{ matrix.os }}
+    env:
+      CARGO_TERM_COLOR: always
+      CI: "1"
+      OMNE_PROFILE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.profile || 'debug' }}
+      OMNE_VERSION: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.version || (startsWith(github.ref, 'refs/tags/v') && github.ref_name || '') }}
+      OMNE_CLEAN: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.clean || 'true' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Node checks
+        run: npm --prefix ./packages/omne run check
+
+      - name: Node tests
+        run: npm --prefix ./packages/omne test
+
+      - name: Build host binaries (debug)
+        if: env.OMNE_PROFILE == 'debug'
+        shell: bash
+        run: cargo build -p omne -p omne-app-server
+
+      - name: Build host binaries (release)
+        if: env.OMNE_PROFILE == 'release'
+        shell: bash
+        run: cargo build -p omne -p omne-app-server --release
+
+      - name: Build host vendor release bundle
+        shell: bash
+        run: |
+          args=(./packages/omne/scripts/release-local-vendor-bundle.mjs --target-dir ./target --profile "$OMNE_PROFILE")
+          if [[ -n "$OMNE_VERSION" ]]; then
+            args+=(--version "$OMNE_VERSION")
+          fi
+          if [[ "$OMNE_CLEAN" == "true" ]]; then
+            args+=(--clean)
+          fi
+          node "${args[@]}"
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: omne-vendor-releases-${{ matrix.os }}
+          path: packages/omne/dist/releases
+          if-no-files-found: error
+
+  publish-tag-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: verify-and-release-host
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TAG_VERSION: ${{ github.ref_name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: Validate downloaded artifacts structure
+        run: node ./packages/omne/scripts/validate-tag-release-artifacts.mjs --artifacts-root ./release-artifacts --tag-version "${TAG_VERSION}"
+
+      - name: Bundle uploaded artifacts
+        run: node ./packages/omne/scripts/package-tag-release-assets.mjs --artifacts-root ./release-artifacts --tag-version "${TAG_VERSION}" --out-dir ./release-bundles --payload-root ./release-payloads
+
+      - name: Verify bundled release tarballs
+        run: node ./packages/omne/scripts/verify-tag-release-tarballs.mjs --out-dir ./release-bundles --tag-version "${TAG_VERSION}"
+
+      - name: Publish GitHub Release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release-bundles/*.tar.gz
+            release-bundles/SHA256SUMS
+          generate_release_notes: true

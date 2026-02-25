@@ -119,9 +119,11 @@ pub struct Evaluation {
 
 impl Evaluation {
     fn from_matches(matched_rules: Vec<RuleMatch>) -> Self {
-        let decision = matched_rules.iter().map(RuleMatch::decision).max();
-        #[expect(clippy::expect_used)]
-        let decision = decision.expect("invariant failed: matched_rules must be non-empty");
+        let decision = matched_rules
+            .iter()
+            .map(RuleMatch::decision)
+            .max()
+            .unwrap_or(Decision::Prompt);
 
         Self {
             decision,

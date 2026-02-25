@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ProcessDeniedResponse",
+  "type": "object",
+  "required": [
+    "denied",
+    "thread_id",
+    "tool_id"
+  ],
+  "properties": {
+    "denied": {
+      "type": "boolean"
+    },
+    "remembered": {
+      "default": null,
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "thread_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "tool_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

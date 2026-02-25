@@ -8,6 +8,7 @@ mod tui {
     include!("tui/ui_state_inline_palette.rs");
     include!("tui/ui_state_inline_execute.rs");
     include!("tui/ui_state_key_handling.rs");
+    include!("tui/rpc_outcome.rs");
     include!("tui/overlays.rs");
     include!("tui/tool_format.rs");
     include!("tui/inline_context.rs");

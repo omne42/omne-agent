@@ -1,0 +1,31 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ProcessSandboxNetworkDeniedResponse",
+  "type": "object",
+  "required": [
+    "denied",
+    "sandbox_network_access",
+    "tool_id"
+  ],
+  "properties": {
+    "denied": {
+      "type": "boolean"
+    },
+    "sandbox_network_access": {
+      "$ref": "#/definitions/SandboxNetworkAccess"
+    },
+    "tool_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  },
+  "definitions": {
+    "SandboxNetworkAccess": {
+      "type": "string",
+      "enum": [
+        "deny",
+        "allow"
+      ]
+    }
+  }
+}

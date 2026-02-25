@@ -86,11 +86,7 @@
             app: &mut super::App,
             key: KeyEvent,
         ) -> anyhow::Result<bool> {
-            if let Some(status) = self.status.take() {
-                if Self::is_error_message(&status) {
-                    self.status = Some(status);
-                }
-            }
+            self.dismiss_non_error_status();
             if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
                 let mut cleared_input = false;
                 if self.active_thread.is_some() && !self.input.trim().is_empty() {
@@ -120,7 +116,9 @@
                 return Ok(true);
             }
             if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('k') {
-                if self.active_thread.is_some() {
+                if !self.overlays.is_empty() {
+                    let _ = self.toggle_overlay_command_palette();
+                } else if self.active_thread.is_some() {
                     self.insert_command_trigger();
                     self.update_inline_palette(app).await?;
                 } else {
@@ -157,12 +155,74 @@
                 KeyCode::Char('r') => {
                     self.refresh_threads(app).await?;
                 }
+                KeyCode::Char('h') => {
+                    self.include_archived = !self.include_archived;
+                    self.refresh_threads(app).await?;
+                    self.set_status(format!(
+                        "thread list: include_archived={}",
+                        if self.include_archived { "on" } else { "off" }
+                    ));
+                }
+                KeyCode::Char('l') => {
+                    self.only_fan_out_linkage_issue = !self.only_fan_out_linkage_issue;
+                    self.refresh_threads(app).await?;
+                    self.set_status(format!(
+                        "thread filter: fan_out_linkage_issue={}",
+                        if self.only_fan_out_linkage_issue {
+                            "on"
+                        } else {
+                            "off"
+                        }
+                    ));
+                }
+                KeyCode::Char('a') => {
+                    self.only_fan_out_auto_apply_error = !self.only_fan_out_auto_apply_error;
+                    self.refresh_threads(app).await?;
+                    self.set_status(format!(
+                        "thread filter: fan_out_auto_apply_error={}",
+                        if self.only_fan_out_auto_apply_error {
+                            "on"
+                        } else {
+                            "off"
+                        }
+                    ));
+                }
+                KeyCode::Char('b') => {
+                    self.only_fan_in_dependency_blocked = !self.only_fan_in_dependency_blocked;
+                    self.refresh_threads(app).await?;
+                    self.set_status(format!(
+                        "thread filter: fan_in_dependency_blocked={}",
+                        if self.only_fan_in_dependency_blocked {
+                            "on"
+                        } else {
+                            "off"
+                        }
+                    ));
+                }
+                KeyCode::Char('s') => {
+                    self.only_subagent_proxy_approval = !self.only_subagent_proxy_approval;
+                    self.refresh_threads(app).await?;
+                    self.set_status(format!(
+                        "thread filter: subagent_proxy_approval={}",
+                        if self.only_subagent_proxy_approval {
+                            "on"
+                        } else {
+                            "off"
+                        }
+                    ));
+                }
+                KeyCode::Char('c') => {
+                    let changed = self.clear_thread_picker_filters();
+                    self.refresh_threads(app).await?;
+                    self.set_status(if changed {
+                        "thread filters cleared".to_string()
+                    } else {
+                        "thread filters already clear".to_string()
+                    });
+                }
                 KeyCode::Char('n') => {
                     let started = app.thread_start(None).await?;
-                    let thread_id: ThreadId =
-                        serde_json::from_value(started["thread_id"].clone())
-                            .context("thread_id missing")?;
-                    self.open_thread(app, thread_id).await?;
+                    self.open_thread(app, started.thread_id).await?;
                 }
                 KeyCode::Up => {
                     self.selected_thread = self.selected_thread.saturating_sub(1);
@@ -288,6 +348,9 @@
                 }
                 KeyCode::Enter => {
                     if inline_active {
+                        if self.execute_inline_list_command_from_query(app).await? {
+                            return Ok(false);
+                        }
                         if let Some(command) = self.inline_selected_action() {
                             return self.execute_inline_command(app, command).await;
                         }
@@ -356,6 +419,8 @@
             self.input.clear();
             self.streaming = None;
             self.active_turn_id = None;
+            self.subagent_pending_summary = None;
+            self.subagent_pending_summary_needs_refresh = false;
             self.total_tokens_used = 0;
             self.counted_usage_responses.clear();
             self.skip_token_usage_before_seq = None;
@@ -388,6 +453,31 @@
                 .push(Overlay::CommandPalette(build_root_palette(self)));
         }
 
+        fn toggle_overlay_command_palette(&mut self) -> bool {
+            if self.overlays.is_empty() {
+                return false;
+            }
+            if matches!(self.overlays.last(), Some(Overlay::CommandPalette(_))) {
+                self.cancel_model_fetch();
+                self.overlays.pop();
+                return true;
+            }
+            if let Some(palette) = build_overlay_palette(self) {
+                let context = palette.context_label();
+                self.overlays.push(Overlay::CommandPalette(palette));
+                self.set_temporary_status(
+                    format!("overlay commands: {context}"),
+                    Duration::from_secs(2),
+                );
+                return true;
+            }
+            self.set_temporary_status(
+                "overlay commands unavailable".to_string(),
+                Duration::from_secs(2),
+            );
+            false
+        }
+
         fn replace_top_command_palette(&mut self, palette: CommandPaletteOverlay) {
             match self.overlays.last_mut() {
                 Some(Overlay::CommandPalette(view)) => {
@@ -404,8 +494,21 @@
             app: &mut super::App,
             command: PaletteCommand,
         ) -> anyhow::Result<bool> {
+            if let Some(key) = overlay_palette_command_key(&command) {
+                if self.apply_overlay_palette_local_key(key) {
+                    return Ok(false);
+                }
+                self.forward_palette_key_to_underlying_overlay(app, key).await?;
+                return Ok(false);
+            }
+
             match command {
                 PaletteCommand::Quit => return Ok(true),
+                PaletteCommand::ClosePalette => {
+                    if matches!(self.overlays.last(), Some(Overlay::CommandPalette(_))) {
+                        self.overlays.pop();
+                    }
+                }
                 PaletteCommand::Noop => {}
                 PaletteCommand::OpenRoot => {
                     self.replace_top_command_palette(build_root_palette(self));
@@ -426,9 +529,7 @@
                             return Ok(false);
                         }
                     };
-                    let thread_id: ThreadId =
-                        serde_json::from_value(started["thread_id"].clone()).context("thread_id missing")?;
-                    self.open_thread(app, thread_id).await?;
+                    self.open_thread(app, started.thread_id).await?;
                 }
                 PaletteCommand::ThreadPicker => {
                     self.return_to_thread_picker(app).await?;
@@ -439,6 +540,95 @@
                     } else {
                         self.set_status("refreshed".to_string());
                     }
+                }
+                PaletteCommand::ToggleIncludeArchived => {
+                    self.include_archived = !self.include_archived;
+                    if let Err(err) = self.refresh_threads(app).await {
+                        self.set_status(format!("refresh error: {err}"));
+                    } else {
+                        self.set_status(format!(
+                            "thread list: include_archived={}",
+                            if self.include_archived { "on" } else { "off" }
+                        ));
+                    }
+                    self.replace_top_command_palette(build_root_palette(self));
+                }
+                PaletteCommand::ToggleLinkageFilter => {
+                    self.only_fan_out_linkage_issue = !self.only_fan_out_linkage_issue;
+                    if let Err(err) = self.refresh_threads(app).await {
+                        self.set_status(format!("refresh error: {err}"));
+                    } else {
+                        self.set_status(format!(
+                            "thread filter: fan_out_linkage_issue={}",
+                            if self.only_fan_out_linkage_issue {
+                                "on"
+                            } else {
+                                "off"
+                            }
+                        ));
+                    }
+                    self.replace_top_command_palette(build_root_palette(self));
+                }
+                PaletteCommand::ToggleAutoApplyErrorFilter => {
+                    self.only_fan_out_auto_apply_error = !self.only_fan_out_auto_apply_error;
+                    if let Err(err) = self.refresh_threads(app).await {
+                        self.set_status(format!("refresh error: {err}"));
+                    } else {
+                        self.set_status(format!(
+                            "thread filter: fan_out_auto_apply_error={}",
+                            if self.only_fan_out_auto_apply_error {
+                                "on"
+                            } else {
+                                "off"
+                            }
+                        ));
+                    }
+                    self.replace_top_command_palette(build_root_palette(self));
+                }
+                PaletteCommand::ToggleFanInDependencyBlockedFilter => {
+                    self.only_fan_in_dependency_blocked = !self.only_fan_in_dependency_blocked;
+                    if let Err(err) = self.refresh_threads(app).await {
+                        self.set_status(format!("refresh error: {err}"));
+                    } else {
+                        self.set_status(format!(
+                            "thread filter: fan_in_dependency_blocked={}",
+                            if self.only_fan_in_dependency_blocked {
+                                "on"
+                            } else {
+                                "off"
+                            }
+                        ));
+                    }
+                    self.replace_top_command_palette(build_root_palette(self));
+                }
+                PaletteCommand::ToggleSubagentProxyApprovalFilter => {
+                    self.only_subagent_proxy_approval = !self.only_subagent_proxy_approval;
+                    if let Err(err) = self.refresh_threads(app).await {
+                        self.set_status(format!("refresh error: {err}"));
+                    } else {
+                        self.set_status(format!(
+                            "thread filter: subagent_proxy_approval={}",
+                            if self.only_subagent_proxy_approval {
+                                "on"
+                            } else {
+                                "off"
+                            }
+                        ));
+                    }
+                    self.replace_top_command_palette(build_root_palette(self));
+                }
+                PaletteCommand::ClearThreadFilters => {
+                    let changed = self.clear_thread_picker_filters();
+                    if let Err(err) = self.refresh_threads(app).await {
+                        self.set_status(format!("refresh error: {err}"));
+                    } else {
+                        self.set_status(if changed {
+                            "thread filters cleared".to_string()
+                        } else {
+                            "thread filters already clear".to_string()
+                        });
+                    }
+                    self.replace_top_command_palette(build_root_palette(self));
                 }
                 PaletteCommand::OpenApprovals => {
                     self.overlays.pop();
@@ -464,16 +654,7 @@
                             return Ok(false);
                         }
                     };
-                    let modes = config
-                        .get("mode_catalog")
-                        .and_then(|v| v.get("modes"))
-                        .and_then(|v| v.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|v| v.as_str().map(str::to_string))
-                                .collect::<Vec<_>>()
-                        })
-                        .unwrap_or_default();
+                    let modes = config.mode_catalog.modes;
                     self.replace_top_command_palette(build_mode_palette(
                         modes,
                         self.header.mode.as_deref(),
@@ -507,6 +688,18 @@
                 PaletteCommand::PickSandboxNetworkAccess => {
                     self.replace_top_command_palette(build_sandbox_network_access_palette());
                 }
+                PaletteCommand::PickAllowedTools => {
+                    self.overlays.pop();
+                    self.input = "/allowed-tools ".to_string();
+                    self.inline_palette = None;
+                    self.update_inline_palette(app).await?;
+                }
+                PaletteCommand::PickExecpolicyRules => {
+                    self.overlays.pop();
+                    self.input = "/execpolicy-rules ".to_string();
+                    self.inline_palette = None;
+                    self.update_inline_palette(app).await?;
+                }
                 PaletteCommand::SetMode(mode) => {
                     let Some(thread_id) = self.active_thread else {
                         self.set_status("no active thread".to_string());
@@ -524,13 +717,19 @@
                             model: None,
                             openai_base_url: None,
                             thinking: None,
+                            allowed_tools: None,
+                            clear_allowed_tools: false,
+                            execpolicy_rules: None,
+                            clear_execpolicy_rules: false,
                         })
                         .await
                     {
                         self.set_status(format!("set mode error: {err}"));
                     } else {
                         self.set_status(format!("mode={mode}"));
-                        let _ = self.refresh_header(app, thread_id).await;
+                        if let Err(err) = self.refresh_header(app, thread_id).await {
+                            self.set_status(format!("refresh header error: {err}"));
+                        }
                     }
                 }
                 PaletteCommand::SetModel(model) => {
@@ -550,13 +749,19 @@
                             model: Some(model.clone()),
                             openai_base_url: None,
                             thinking: None,
+                            allowed_tools: None,
+                            clear_allowed_tools: false,
+                            execpolicy_rules: None,
+                            clear_execpolicy_rules: false,
                         })
                         .await
                     {
                         self.set_status(format!("set model error: {err}"));
                     } else {
                         self.set_status(format!("model={model}"));
-                        let _ = self.refresh_header(app, thread_id).await;
+                        if let Err(err) = self.refresh_header(app, thread_id).await {
+                            self.set_status(format!("refresh header error: {err}"));
+                        }
                     }
                 }
                 PaletteCommand::SetApprovalPolicy(approval_policy) => {
@@ -576,6 +781,10 @@
                             model: None,
                             openai_base_url: None,
                             thinking: None,
+                            allowed_tools: None,
+                            clear_allowed_tools: false,
+                            execpolicy_rules: None,
+                            clear_execpolicy_rules: false,
                         })
                         .await
                     {
@@ -604,6 +813,10 @@
                             model: None,
                             openai_base_url: None,
                             thinking: None,
+                            allowed_tools: None,
+                            clear_allowed_tools: false,
+                            execpolicy_rules: None,
+                            clear_execpolicy_rules: false,
                         })
                         .await
                     {
@@ -632,6 +845,10 @@
                             model: None,
                             openai_base_url: None,
                             thinking: None,
+                            allowed_tools: None,
+                            clear_allowed_tools: false,
+                            execpolicy_rules: None,
+                            clear_execpolicy_rules: false,
                         })
                         .await
                     {
@@ -643,13 +860,260 @@
                         ));
                     }
                 }
+                PaletteCommand::SetAllowedTools(tool) => {
+                    let Some(thread_id) = self.active_thread else {
+                        self.set_status("no active thread".to_string());
+                        return Ok(false);
+                    };
+                    self.overlays.pop();
+                    if let Err(err) = app
+                        .thread_configure(super::ThreadConfigureArgs {
+                            thread_id,
+                            approval_policy: None,
+                            sandbox_policy: None,
+                            sandbox_writable_roots: None,
+                            sandbox_network_access: None,
+                            mode: None,
+                            model: None,
+                            openai_base_url: None,
+                            thinking: None,
+                            allowed_tools: Some(vec![tool.clone()]),
+                            clear_allowed_tools: false,
+                            execpolicy_rules: None,
+                            clear_execpolicy_rules: false,
+                        })
+                        .await
+                    {
+                        self.set_status(format!("set allowed_tools error: {err}"));
+                    } else {
+                        self.set_status(format!("allowed_tools=[{tool}]"));
+                        self.header_needs_refresh = true;
+                    }
+                }
+                PaletteCommand::ClearAllowedTools => {
+                    let Some(thread_id) = self.active_thread else {
+                        self.set_status("no active thread".to_string());
+                        return Ok(false);
+                    };
+                    self.overlays.pop();
+                    if let Err(err) = app
+                        .thread_configure(super::ThreadConfigureArgs {
+                            thread_id,
+                            approval_policy: None,
+                            sandbox_policy: None,
+                            sandbox_writable_roots: None,
+                            sandbox_network_access: None,
+                            mode: None,
+                            model: None,
+                            openai_base_url: None,
+                            thinking: None,
+                            allowed_tools: None,
+                            clear_allowed_tools: true,
+                            execpolicy_rules: None,
+                            clear_execpolicy_rules: false,
+                        })
+                        .await
+                    {
+                        self.set_status(format!("clear allowed_tools error: {err}"));
+                    } else {
+                        self.set_status("allowed_tools=<cleared>".to_string());
+                        self.header_needs_refresh = true;
+                    }
+                }
+                PaletteCommand::ClearExecpolicyRules => {
+                    let Some(thread_id) = self.active_thread else {
+                        self.set_status("no active thread".to_string());
+                        return Ok(false);
+                    };
+                    self.overlays.pop();
+                    if let Err(err) = app
+                        .thread_configure(super::ThreadConfigureArgs {
+                            thread_id,
+                            approval_policy: None,
+                            sandbox_policy: None,
+                            sandbox_writable_roots: None,
+                            sandbox_network_access: None,
+                            mode: None,
+                            model: None,
+                            openai_base_url: None,
+                            thinking: None,
+                            allowed_tools: None,
+                            clear_allowed_tools: false,
+                            execpolicy_rules: None,
+                            clear_execpolicy_rules: true,
+                        })
+                        .await
+                    {
+                        self.set_status(format!("clear execpolicy_rules error: {err}"));
+                    } else {
+                        self.set_status("execpolicy_rules=<cleared>".to_string());
+                        self.header_needs_refresh = true;
+                    }
+                }
                 PaletteCommand::InsertSkill(_) => {}
+                PaletteCommand::ApprovalsCycleFilter
+                | PaletteCommand::ApprovalsNextFailed
+                | PaletteCommand::ApprovalsPrevFailed
+                | PaletteCommand::ApprovalsRefresh
+                | PaletteCommand::ApprovalsSelectPrev
+                | PaletteCommand::ApprovalsSelectNext
+                | PaletteCommand::ApprovalsApprove
+                | PaletteCommand::ApprovalsDeny
+                | PaletteCommand::ApprovalsToggleRemember
+                | PaletteCommand::ApprovalsOpenDetails
+                | PaletteCommand::ProcessesRefresh
+                | PaletteCommand::ProcessesSelectPrev
+                | PaletteCommand::ProcessesSelectNext
+                | PaletteCommand::ProcessesInspect
+                | PaletteCommand::ProcessesKill
+                | PaletteCommand::ProcessesInterrupt
+                | PaletteCommand::ArtifactsRefresh
+                | PaletteCommand::ArtifactsSelectPrev
+                | PaletteCommand::ArtifactsSelectNext
+                | PaletteCommand::ArtifactsRead
+                | PaletteCommand::ArtifactsLoadVersions
+                | PaletteCommand::ArtifactsReloadVersions
+                | PaletteCommand::ArtifactsPrevVersion
+                | PaletteCommand::ArtifactsNextVersion
+                | PaletteCommand::ArtifactsLatestVersion => {}
             }
 
             Ok(false)
         }
 
+        fn apply_overlay_palette_local_key(&mut self, key: KeyEvent) -> bool {
+            if matches!(self.overlays.last(), Some(Overlay::CommandPalette(_))) {
+                self.overlays.pop();
+            }
+            let mut status = None::<String>;
+            let Some(overlay) = self.overlays.last_mut() else {
+                return false;
+            };
+            let handled = match overlay {
+                Overlay::Approvals(view) => {
+                    match handle_local_approvals_key(view, key.code) {
+                        ApprovalsLocalKeyResult::Handled(local_status) => {
+                            status = local_status;
+                            true
+                        }
+                        ApprovalsLocalKeyResult::Unhandled => false,
+                    }
+                }
+                Overlay::Processes(view) => {
+                    matches!(
+                        handle_local_processes_key(view, key.code),
+                        ProcessesLocalKeyResult::Handled
+                    )
+                }
+                Overlay::Artifacts(view) => {
+                    match handle_local_artifacts_key(view, key.code) {
+                        ArtifactsLocalKeyResult::Handled(local_status) => {
+                            status = local_status;
+                            true
+                        }
+                        ArtifactsLocalKeyResult::Unhandled => false,
+                    }
+                }
+                Overlay::Text(_) | Overlay::CommandPalette(_) => false,
+            };
+            if let Some(msg) = status {
+                self.set_status(msg);
+            }
+            handled
+        }
+
+        async fn forward_palette_key_to_underlying_overlay(
+            &mut self,
+            app: &mut super::App,
+            key: KeyEvent,
+        ) -> anyhow::Result<()> {
+            if matches!(self.overlays.last(), Some(Overlay::CommandPalette(_))) {
+                self.overlays.pop();
+            }
+            if self.overlays.is_empty() {
+                return Ok(());
+            }
+
+            let mut status = None::<String>;
+            let mut set_pending_action = None::<PendingAction>;
+            let op;
+
+            {
+                let Some(overlay) = self.overlays.last_mut() else {
+                    return Ok(());
+                };
+                match overlay {
+                    Overlay::Approvals(view) => {
+                        if let ApprovalsLocalKeyResult::Handled(local_status) =
+                            handle_local_approvals_key(view, key.code)
+                        {
+                            status = local_status;
+                        }
+                        op = OverlayOp::None;
+                    }
+                    Overlay::Processes(view) => {
+                        (op, status, set_pending_action) =
+                            handle_key_processes_overlay(app, key, view).await?;
+                    }
+                    Overlay::Artifacts(view) => {
+                        (op, status, set_pending_action) =
+                            handle_key_artifacts_overlay(app, key, view).await?;
+                    }
+                    Overlay::Text(view) => {
+                        op = handle_key_text_overlay(key, view);
+                    }
+                    Overlay::CommandPalette(_) => {
+                        op = OverlayOp::None;
+                    }
+                }
+            }
+
+            if let Some(msg) = status {
+                self.set_status(msg);
+            }
+            if let Some(pending) = set_pending_action {
+                self.pending_action = Some(pending);
+            }
+            if let OverlayOp::Push(overlay) = op {
+                self.overlays.push(overlay);
+            }
+
+            Ok(())
+        }
+
         fn transcript_page(&self) -> u16 {
             self.transcript_viewport_height.saturating_sub(1).max(1)
         }
+    }
+
+    fn overlay_palette_command_key(command: &PaletteCommand) -> Option<KeyEvent> {
+        let code = match command {
+            PaletteCommand::ApprovalsCycleFilter => KeyCode::Char('t'),
+            PaletteCommand::ApprovalsNextFailed => KeyCode::Char('f'),
+            PaletteCommand::ApprovalsPrevFailed => KeyCode::Char('F'),
+            PaletteCommand::ApprovalsRefresh => KeyCode::Char('r'),
+            PaletteCommand::ApprovalsSelectPrev => KeyCode::Up,
+            PaletteCommand::ApprovalsSelectNext => KeyCode::Down,
+            PaletteCommand::ApprovalsApprove => KeyCode::Char('y'),
+            PaletteCommand::ApprovalsDeny => KeyCode::Char('n'),
+            PaletteCommand::ApprovalsToggleRemember => KeyCode::Char('m'),
+            PaletteCommand::ApprovalsOpenDetails => KeyCode::Enter,
+            PaletteCommand::ProcessesRefresh => KeyCode::Char('r'),
+            PaletteCommand::ProcessesSelectPrev => KeyCode::Up,
+            PaletteCommand::ProcessesSelectNext => KeyCode::Down,
+            PaletteCommand::ProcessesInspect => KeyCode::Enter,
+            PaletteCommand::ProcessesKill => KeyCode::Char('k'),
+            PaletteCommand::ProcessesInterrupt => KeyCode::Char('x'),
+            PaletteCommand::ArtifactsRefresh => KeyCode::Char('r'),
+            PaletteCommand::ArtifactsSelectPrev => KeyCode::Up,
+            PaletteCommand::ArtifactsSelectNext => KeyCode::Down,
+            PaletteCommand::ArtifactsRead => KeyCode::Enter,
+            PaletteCommand::ArtifactsLoadVersions => KeyCode::Char('v'),
+            PaletteCommand::ArtifactsReloadVersions => KeyCode::Char('R'),
+            PaletteCommand::ArtifactsPrevVersion => KeyCode::Char('['),
+            PaletteCommand::ArtifactsNextVersion => KeyCode::Char(']'),
+            PaletteCommand::ArtifactsLatestVersion => KeyCode::Char('0'),
+            _ => return None,
+        };
+        Some(KeyEvent::new(code, KeyModifiers::NONE))
     }

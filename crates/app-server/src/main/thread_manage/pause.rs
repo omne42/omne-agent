@@ -1,4 +1,7 @@
-async fn handle_thread_pause(server: &Server, params: ThreadPauseParams) -> anyhow::Result<Value> {
+async fn handle_thread_pause(
+    server: &Server,
+    params: ThreadPauseParams,
+) -> anyhow::Result<omne_app_server_protocol::ThreadPauseResponse> {
     let thread_rt = server.get_or_load_thread(params.thread_id).await?;
 
     let (already_paused, archived, active_turn_id) = {
@@ -12,11 +15,12 @@ async fn handle_thread_pause(server: &Server, params: ThreadPauseParams) -> anyh
     }
 
     if already_paused {
-        return Ok(serde_json::json!({
-            "thread_id": params.thread_id,
-            "paused": true,
-            "already_paused": true,
-        }));
+        return Ok(omne_app_server_protocol::ThreadPauseResponse {
+            thread_id: params.thread_id,
+            paused: true,
+            already_paused: true,
+            interrupted_turn_id: None,
+        });
     }
 
     let reason = params
@@ -55,15 +59,18 @@ async fn handle_thread_pause(server: &Server, params: ThreadPauseParams) -> anyh
         })
         .await?;
 
-    Ok(serde_json::json!({
-        "thread_id": params.thread_id,
-        "paused": true,
-        "already_paused": false,
-        "interrupted_turn_id": active_turn_id,
-    }))
+    Ok(omne_app_server_protocol::ThreadPauseResponse {
+        thread_id: params.thread_id,
+        paused: true,
+        already_paused: false,
+        interrupted_turn_id: active_turn_id,
+    })
 }
 
-async fn handle_thread_unpause(server: &Server, params: ThreadUnpauseParams) -> anyhow::Result<Value> {
+async fn handle_thread_unpause(
+    server: &Server,
+    params: ThreadUnpauseParams,
+) -> anyhow::Result<omne_app_server_protocol::ThreadUnpauseResponse> {
     let thread_rt = server.get_or_load_thread(params.thread_id).await?;
 
     let already_unpaused = {
@@ -72,11 +79,11 @@ async fn handle_thread_unpause(server: &Server, params: ThreadUnpauseParams) -> 
     };
 
     if already_unpaused {
-        return Ok(serde_json::json!({
-            "thread_id": params.thread_id,
-            "paused": false,
-            "already_unpaused": true,
-        }));
+        return Ok(omne_app_server_protocol::ThreadUnpauseResponse {
+            thread_id: params.thread_id,
+            paused: false,
+            already_unpaused: true,
+        });
     }
 
     thread_rt
@@ -85,9 +92,9 @@ async fn handle_thread_unpause(server: &Server, params: ThreadUnpauseParams) -> 
         })
         .await?;
 
-    Ok(serde_json::json!({
-        "thread_id": params.thread_id,
-        "paused": false,
-        "already_unpaused": false,
-    }))
+    Ok(omne_app_server_protocol::ThreadUnpauseResponse {
+        thread_id: params.thread_id,
+        paused: false,
+        already_unpaused: false,
+    })
 }

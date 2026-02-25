@@ -7,6 +7,62 @@
 > 想进入“重新设计/重新开发”（Agent-first）看：`docs/development_process.md`。
 > vNext 实现计划与里程碑看：`docs/implementation_plan.md`。
 
+## v0.2 快速闭环（Rust-only）
+
+最小初始化（只建运行时目录，不生成 spec 模板）：
+
+```bash
+cargo run -p omne -- init --minimal
+```
+
+启动一个 thread（无需 GUI）：
+
+```bash
+cargo run -p omne -- thread start --cwd . --json
+```
+
+发送一条消息（`ask`）：
+
+```bash
+# 方式 A（推荐）：用 jq 提取 thread_id
+THREAD_ID=$(cargo run -p omne -- thread start --cwd . --json | jq -r '.thread_id')
+cargo run -p omne -- ask --thread-id "$THREAD_ID" "Summarize current repo status."
+```
+
+```bash
+# 方式 B：手动从上一条 JSON 输出里复制 thread_id
+cargo run -p omne -- ask --thread-id <thread_id> "Summarize current repo status."
+```
+
+非交互执行（`exec`，适合 CI/脚本）：
+
+```bash
+cargo run -p omne -- exec --thread-id "$THREAD_ID" --json --on-approval fail "Run a quick plan."
+```
+
+Inbox / Watch 调试（summary cache/source）：
+
+```bash
+# inbox 轮询时输出 summary cache 统计（fan_out/fan_in/fan_in_diag/subagent）
+cargo run -p omne -- inbox --watch --details --debug-summary-cache
+
+# watch 单线程时输出 summary refresh/source
+cargo run -p omne -- watch "$THREAD_ID" --details --debug-summary-cache
+```
+
+兼容开关（环境变量）：
+
+```bash
+OMNE_INBOX_SUMMARY_CACHE_DEBUG=1 cargo run -p omne -- inbox --watch --details
+OMNE_WATCH_SUMMARY_CACHE_DEBUG=1 cargo run -p omne -- watch "$THREAD_ID" --details
+```
+
+如果你要直接体验 workflow/commands（会需要默认模板），改用：
+
+```bash
+cargo run -p omne -- init
+```
+
 ## 需求草案（早期记录）
 
 我希望实现这样的功能（仅 Rust）：
@@ -50,6 +106,12 @@ feature，仅占位即可。
 
 ```bash
 cargo run -p omne -- init
+```
+
+最小初始化（只建运行时目录，不生成 `spec/commands|workspace|hooks|modes` 模板）：
+
+```bash
+cargo run -p omne -- init --minimal
 ```
 
 注入一个仓库（本地路径或远端 URL）：

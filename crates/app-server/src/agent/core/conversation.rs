@@ -170,6 +170,35 @@ async fn load_turn_attachments(
     Ok(Vec::new())
 }
 
+async fn load_turn_directives(
+    server: &super::Server,
+    thread_id: ThreadId,
+    turn_id: TurnId,
+) -> anyhow::Result<Vec<omne_protocol::TurnDirective>> {
+    let events = server
+        .thread_store
+        .read_events_since(thread_id, EventSeq::ZERO)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("thread not found: {thread_id}"))?;
+
+    for event in events.iter().rev() {
+        let ThreadEventKind::TurnStarted {
+            turn_id: ev_turn_id,
+            directives,
+            ..
+        } = &event.kind
+        else {
+            continue;
+        };
+        if *ev_turn_id != turn_id {
+            continue;
+        }
+        return Ok(directives.clone().unwrap_or_default());
+    }
+
+    Ok(Vec::new())
+}
+
 fn infer_image_media_type(path: &str) -> Option<&'static str> {
     let ext = Path::new(path)
         .extension()
@@ -737,8 +766,9 @@ fn format_event_for_context(kind: &ThreadEventKind) -> Option<String> {
             thinking,
             openai_base_url,
             allowed_tools,
+            execpolicy_rules,
         } => Some(format!(
-            "[thread/config] approval_policy={approval_policy:?} sandbox_policy={} sandbox_writable_roots={} sandbox_network_access={} mode={} model={} thinking={} openai_base_url={} allowed_tools={}",
+            "[thread/config] approval_policy={approval_policy:?} sandbox_policy={} sandbox_writable_roots={} sandbox_network_access={} mode={} model={} thinking={} openai_base_url={} allowed_tools={} execpolicy_rules={}",
             sandbox_policy
                 .as_ref()
                 .map(|v| format!("{v:?}"))
@@ -760,6 +790,10 @@ fn format_event_for_context(kind: &ThreadEventKind) -> Option<String> {
                 Some(None) => "null".to_string(),
                 Some(Some(tools)) => json_one_line(&serde_json::json!(tools), 2000),
             },
+            execpolicy_rules
+                .as_ref()
+                .map(|rules| json_one_line(&serde_json::json!(rules), 2000))
+                .unwrap_or_else(|| "<unchanged>".to_string()),
         )),
         ThreadEventKind::ApprovalRequested {
             approval_id,
@@ -895,4 +929,3 @@ fn extract_assistant_text(items: &[OpenAiItem]) -> String {
     }
     out
 }
-

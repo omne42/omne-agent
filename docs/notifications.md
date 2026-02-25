@@ -28,6 +28,18 @@ Attention 的派生语义与状态集合见：
 
 - 从事件流推导状态变化（例如 `ApprovalRequested` → `need_approval`，`TurnCompleted{Stuck}` → `stuck`）。
 - 只有当状态变为 `need_approval|failed|stuck` 才会发通知（默认 sound bell）。
+- `--details` 模式下，会在每批非空事件后追加 fan-out auto-apply、fan-in 依赖阻塞与 fan-in 结果诊断摘要（若存在），便于在 watch 流里直接定位阻塞来源。
+- `--json --details` 下会在事件 JSON 行之后追加结构化摘要行：`kind=watch_detail_summary`（`summary_type=fan_out_auto_apply|fan_in_dependency_blocker|fan_in_result_diagnostics`）。
+- `fan_in_dependency_blocker` 的 JSON payload 包含 `dependency_blocked_count`、`task_count`、`dependency_blocked_ratio`，方便告警侧直接聚合展示。
+- `--details` 摘要默认做去重：若摘要内容未变化，不会在后续批次重复输出（文本与 JSON 一致）；仅输出有变化的 `summary_type`。
+- `--json --details` 的摘要行会额外带 `changed_fields`，表示本次相对上一快照发生变化的字段集合。
+- 当某个摘要从“存在”变为“消失”时，会输出一次 `cleared`：
+  - 文本：`summary: <summary_type>: cleared`
+  - JSON：`{"kind":"watch_detail_summary","summary_type":"...","cleared":true,"changed_fields":["cleared"],...}`
+- 当 `AttentionMarkerSet{marker=fan_out_linkage_issue|fan_out_auto_apply_error}` 进入时，会按 `failed` 语义参与提醒。
+- 会额外轮询该 thread 的 `thread/attention`，对 `has_fan_out_linkage_issue` / `has_fan_out_auto_apply_error` / `has_fan_in_dependency_blocked` / `has_fan_in_result_diagnostics` 与 `stale_processes` 的 `false -> true` 上升沿各提醒一次（节流同上）。
+- 会额外轮询该 thread 的 `thread/attention`，对 `token_budget_exceeded` 的 `false -> true` 上升沿提醒一次（`state=token_budget_exceeded`）。
+- 当启用 token budget 且利用率达到阈值时，也会在 `false -> true` 上升沿提醒一次（`state=token_budget_warning`，阈值见下方 `OMNE_NOTIFY_TOKEN_BUDGET_UTILIZATION_THRESHOLD_PCT`）。
 - 默认抑制首次 bell（避免刚 attach 就响）。
 - 支持 `--debounce-ms`：相同状态在窗口内只响一次。
 
@@ -42,6 +54,12 @@ Attention 的派生语义与状态集合见：
 `omne inbox --watch --bell` 轮询所有 thread meta：
 
 - 只对 `need_approval|failed|stuck` 发通知（默认 sound bell）。
+- 当 `has_fan_out_linkage_issue` 从 `false -> true` 时也会发一次 `attention_state` 通知（`state=fan_out_linkage_issue`）。
+- 当 `has_fan_out_auto_apply_error` 从 `false -> true` 时也会发一次 `attention_state` 通知（`state=fan_out_auto_apply_error`）。
+- 当 `has_fan_in_dependency_blocked` 从 `false -> true` 时也会发一次 `attention_state` 通知（`state=fan_in_dependency_blocked`）。
+- 当 `has_fan_in_result_diagnostics` 从 `false -> true` 时也会发一次 `attention_state` 通知（`state=fan_in_result_diagnostics`）。
+- 当 `token_budget_exceeded` 从 `false -> true` 时也会发一次 `attention_state` 通知（`state=token_budget_exceeded`）。
+- 当 token budget 利用率达到阈值（默认 90%）并从 `false -> true` 时会发一次 `attention_state` 通知（`state=token_budget_warning`）。
 - 按 `(thread_id, attention_state)` 去重/节流：相同 thread 的相同状态在 `debounce_window` 内只提醒一次；状态变化才再次提醒。
 - 会在 stderr 输出一行 `attention: <thread_id> -> <state>`，并响铃（方便脚本抓取）。
 
@@ -62,6 +80,8 @@ Attention 的派生语义与状态集合见：
 - `OMNE_NOTIFY_SLACK_WEBHOOK_URL`：Slack Incoming Webhook URL
 - `OMNE_NOTIFY_TIMEOUT_MS`：sink 超时毫秒（默认 `5000`）
 - `OMNE_NOTIFY_EVENTS`：可选事件 kind 白名单（逗号分隔；例如 `attention_state,stale_process`）
+- `OMNE_NOTIFY_TOKEN_BUDGET_UTILIZATION_THRESHOLD_PCT`：token budget 预警阈值（百分比，`0 < value <= 100`，默认 `90`；用于 `watch/inbox --bell` 与 `omne-app-server` 的 `token_budget_warning`）
+- `OMNE_NOTIFY_TOKEN_BUDGET_WARNING_DEBOUNCE_MS`：`omne-app-server` 的 token budget 预警去抖窗口（毫秒，默认 `30000`；仅影响 `token_budget_warning`）
 
 默认行为：
 
@@ -76,7 +96,12 @@ Attention 的派生语义与状态集合见：
 
 - `ApprovalRequested` → `attention_state=need_approval`
 - `TurnCompleted{Failed|Stuck}` → `attention_state=failed|stuck`
+  - 其中 `TurnCompleted{Stuck}` 且 `reason` 含 `token budget exceeded:` 时，映射为 `attention_state=token_budget_exceeded`
+- 当启用 token budget 且利用率跨过阈值（`false -> true` 上升沿）时，发 `attention_state=token_budget_warning`
+  - 该提醒受 `OMNE_NOTIFY_TOKEN_BUDGET_WARNING_DEBOUNCE_MS` 去抖控制（默认 30s）
 - `ProcessExited{exit_code!=0}` → `attention_state=failed`
+- `AttentionMarkerSet{marker=fan_out_auto_apply_error}` → `attention_state=fan_out_auto_apply_error`
+- `AttentionMarkerSet{marker=fan_out_linkage_issue}` → `attention_state=fan_out_linkage_issue`
 
 注意：
 

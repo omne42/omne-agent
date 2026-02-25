@@ -2,7 +2,7 @@
 
 > 目标：当 agent 走偏（坏改动/误操作/循环）时，用户能把 workspace 回到一个“稳定点”，并继续推进，而不是只能重开线程。
 >
-> 状态：v0.2.0 已实现 **P0（目录快照）**：`thread/checkpoint/{create,list,restore}` + CLI `omne checkpoint {create,list,restore}`。
+> 状态：v0.2.0 已实现 **P0（目录快照）**：`thread/checkpoint/{create,list,restore}` + CLI `omne checkpoint {create,list,restore}`；restore 失败会生成 `rollback_report` 并回填 `report_artifact_id`。
 
 ---
 
@@ -41,7 +41,7 @@
   - 追加事件 `CheckpointRestored{status=ok}`。
 - `checkpoint/restore` 失败时：
   - 追加事件 `CheckpointRestored{status=failed, reason=...}`（append-only）
-  - 建议生成 `artifact_type="rollback_report"`（脱敏）并能从事件/产物定位到该报告。
+  - 生成 `artifact_type="rollback_report"`（脱敏）并能从事件的 `report_artifact_id` 定位到该报告。
 
 ---
 
@@ -139,7 +139,8 @@ restore 是破坏性操作，最小约束建议写死：
 - 成功：workspace 文件树与 checkpoint 一致，并追加事件 `CheckpointRestored{status="ok"}`。
 - 失败：
   - 追加事件 `CheckpointRestored{status="failed", reason}`（append-only）
-  - `rollback_report`（markdown，脱敏；见 `docs/redaction.md`）在 v0.2.0 P0 **未实现**（P1 TODO）。
+  - 生成 `rollback_report`（markdown，脱敏；见 `docs/redaction.md`），并在事件中写入 `report_artifact_id`。
+  - JSON-RPC 返回 `denied=true` 时会附带稳定 `error_code`（例如 `sandbox_policy_denied`、`mode_unknown`、`mode_denied`、`approval_denied`、`sandbox_writable_roots_unsupported`）。
 
 ### 5.3 `rollback_report`（失败报告模板，建议写死）
 
@@ -204,7 +205,7 @@ restore 的审批流程（示例）：
 omne checkpoint restore <thread_id> <checkpoint_id>
 
 # 2) 人工决定
-omne approval decide --thread-id <thread_id> --approval-id <approval_id> --approve
+omne approval decide <thread_id> <approval_id> --approve
 
 # 3) 带 approval_id 重试，执行实际 restore
 omne checkpoint restore <thread_id> <checkpoint_id> --approval-id <approval_id>
@@ -218,4 +219,4 @@ omne checkpoint restore <thread_id> <checkpoint_id> --approval-id <approval_id>
 - restore 成功后，workspace 文件树回到 checkpoint 对应状态，且产生 `CheckpointRestored{status=ok}`。
 - restore 失败时：
   - `CheckpointRestored{status=failed, reason=...}` 必须落盘
-  - `artifact_type="rollback_report"`（脱敏）在 v0.2.0 P0 未实现（P1 TODO）
+  - `artifact_type="rollback_report"`（脱敏）必须落盘，且 `CheckpointRestored.report_artifact_id` 可定位到该 artifact

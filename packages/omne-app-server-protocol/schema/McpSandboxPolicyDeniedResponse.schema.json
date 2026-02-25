@@ -1,0 +1,32 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "McpSandboxPolicyDeniedResponse",
+  "type": "object",
+  "required": [
+    "sandbox_policy",
+    "tool_id"
+  ],
+  "properties": {
+    "denied": {
+      "default": false,
+      "type": "boolean"
+    },
+    "sandbox_policy": {
+      "$ref": "#/definitions/SandboxPolicy"
+    },
+    "tool_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  },
+  "definitions": {
+    "SandboxPolicy": {
+      "type": "string",
+      "enum": [
+        "read_only",
+        "workspace_write",
+        "danger_full_access"
+      ]
+    }
+  }
+}

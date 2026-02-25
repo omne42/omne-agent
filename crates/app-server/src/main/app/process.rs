@@ -35,7 +35,23 @@ async fn handle_process_request(
                             )
                             .await
                             {
-                                Ok(Some(result)) => return JsonRpcResponse::ok(id, result),
+                                Ok(Some(_result)) => {
+                                    match process_allowed_tools_denied_response(
+                                        tool_id,
+                                        "process/list",
+                                        &allowed_tools,
+                                    ) {
+                                        Ok(result) => return JsonRpcResponse::ok(id, result),
+                                        Err(err) => {
+                                            return JsonRpcResponse::err(
+                                                id,
+                                                JSONRPC_INTERNAL_ERROR,
+                                                err.to_string(),
+                                                None,
+                                            )
+                                        }
+                                    }
+                                }
                                 Ok(None) => {}
                                 Err(err) => {
                                     return JsonRpcResponse::err(
@@ -59,7 +75,21 @@ async fn handle_process_request(
                 }
                 match handle_process_list(server, params).await {
                     Ok(processes) => {
-                        JsonRpcResponse::ok(id, serde_json::json!({ "processes": processes }))
+                        let processes = processes
+                            .into_iter()
+                            .map(into_protocol_process_info)
+                            .collect::<Vec<_>>();
+                        match serde_json::to_value(omne_app_server_protocol::ProcessListResponse {
+                            processes,
+                        }) {
+                            Ok(result) => JsonRpcResponse::ok(id, result),
+                            Err(err) => JsonRpcResponse::err(
+                                id,
+                                JSONRPC_INTERNAL_ERROR,
+                                err.to_string(),
+                                None,
+                            ),
+                        }
                     }
                     Err(err) => JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None),
                 }
@@ -101,9 +131,6 @@ async fn handle_process_request(
             },
             Err(err) => invalid_params(id, err),
         },
-        _ => {
-            let _ = params;
-            method_not_found(id, method)
-        }
+        _ => method_not_found(id, method),
     }
 }

@@ -2,56 +2,24 @@
 "use strict";
 
 const { spawn } = require("node:child_process");
-const fs = require("node:fs");
 const path = require("node:path");
-
-function detectTargetTriple() {
-  const override = process.env.OMNE_TARGET_TRIPLE;
-  if (override && override.trim() !== "") return override.trim();
-
-  const { platform, arch } = process;
-  if (platform === "darwin" && arch === "arm64") return "aarch64-apple-darwin";
-  if (platform === "darwin" && arch === "x64") return "x86_64-apple-darwin";
-  if (platform === "linux" && arch === "arm64") return "aarch64-unknown-linux-gnu";
-  if (platform === "linux" && arch === "x64") return "x86_64-unknown-linux-gnu";
-  if (platform === "win32" && arch === "arm64") return "aarch64-pc-windows-msvc";
-  if (platform === "win32" && arch === "x64") return "x86_64-pc-windows-msvc";
-
-  return null;
-}
-
-function resolveVendoredBinary(binName) {
-  const targetTriple = detectTargetTriple();
-  if (!targetTriple) return null;
-
-  const pkgRoot = path.resolve(__dirname, "..");
-  const ext = process.platform === "win32" ? ".exe" : "";
-  const candidate = path.join(pkgRoot, "vendor", targetTriple, "omne", `${binName}${ext}`);
-
-  try {
-    fs.accessSync(candidate, fs.constants.F_OK);
-    return candidate;
-  } catch {
-    return null;
-  }
-}
-
-function resolveBinary(binName, envOverrideKey) {
-  const override = process.env[envOverrideKey];
-  if (override && override.trim() !== "") return override.trim();
-
-  const vendored = resolveVendoredBinary(binName);
-  if (vendored) return vendored;
-
-  return binName;
-}
+const {
+  buildSpawnEnv,
+  resolveInvocation,
+} = require("../lib/launcher.js");
 
 function usageError(message) {
   process.stderr.write(`${message}\n`);
 }
 
-function spawnAndExit(bin, args) {
-  const child = spawn(bin, args, { stdio: "inherit", env: process.env });
+function spawnAndExit(bin, args, logicalBinName) {
+  const pkgRoot = path.resolve(__dirname, "..");
+  const childEnv = buildSpawnEnv(bin, {
+    baseEnv: process.env,
+    pkgRoot,
+    env: process.env,
+  });
+  const child = spawn(bin, args, { stdio: "inherit", env: childEnv });
 
   const forwardSignal = (signal) => {
     if (child.killed) return;
@@ -72,11 +40,11 @@ function spawnAndExit(bin, args) {
       usageError("");
       usageError("Fix options:");
       usageError(`  - Install '${bin}' on PATH`);
-      if (bin === "omne-app-server") {
+      if (logicalBinName === "omne-app-server") {
         usageError(
           "  - Or set OMNE_APP_SERVER_BIN to an absolute path (e.g. target/debug/omne-app-server)"
         );
-      } else if (bin === "omne") {
+      } else if (logicalBinName === "omne") {
         usageError("  - Or set OMNE_PM_BIN to an absolute path (e.g. target/debug/omne)");
       }
       process.exit(1);
@@ -95,18 +63,8 @@ function spawnAndExit(bin, args) {
 }
 
 function main() {
-  const argv = process.argv.slice(2);
-
-  const isAppServer = argv[0] === "app-server";
-  if (isAppServer) {
-    const bin = resolveBinary("omne-app-server", "OMNE_APP_SERVER_BIN");
-    spawnAndExit(bin, argv.slice(1));
-    return;
-  }
-
-  const bin = resolveBinary("omne", "OMNE_PM_BIN");
-  spawnAndExit(bin, argv);
+  const resolved = resolveInvocation(process.argv.slice(2), { env: process.env });
+  spawnAndExit(resolved.bin, resolved.args, resolved.logicalBinName);
 }
 
 main();
-

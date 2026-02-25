@@ -1,0 +1,12 @@
+[package]
+name = "omne-checkpoint-runtime"
+edition.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+omne-fs-policy = { path = "../fs-policy" }
+serde.workspace = true
+tokio.workspace = true
+walkdir.workspace = true

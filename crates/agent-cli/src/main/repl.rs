@@ -20,9 +20,9 @@ async fn run_repl(app: &mut App) -> anyhow::Result<()> {
 
     let cwd = std::env::current_dir()?.display().to_string();
     let thread_result = app.thread_start(Some(cwd.clone())).await?;
-    let thread_id: ThreadId = serde_json::from_value(thread_result["thread_id"].clone())
-        .context("thread_id missing in result")?;
-    let since_seq = thread_result["last_seq"].as_u64().unwrap_or(0);
+    ensure_thread_start_auto_hook_ready("repl", &thread_result)?;
+    let thread_id = thread_result.thread_id;
+    let since_seq = thread_result.last_seq;
 
     app.thread_configure(ThreadConfigureArgs {
         thread_id,
@@ -34,6 +34,10 @@ async fn run_repl(app: &mut App) -> anyhow::Result<()> {
         model: None,
         openai_base_url: None,
         thinking: None,
+        allowed_tools: None,
+        clear_allowed_tools: false,
+        execpolicy_rules: None,
+        clear_execpolicy_rules: false,
     })
     .await?;
 
@@ -46,7 +50,7 @@ async fn run_repl(app: &mut App) -> anyhow::Result<()> {
     eprintln!("type `/help` for commands");
 
     let state_json = app.thread_state(thread_id).await?;
-    let since_seq = state_json["last_seq"].as_u64().unwrap_or(since_seq);
+    let since_seq = state_json.last_seq.max(since_seq);
     let mut state = ReplState { thread_id, since_seq };
 
     loop {
@@ -213,7 +217,7 @@ async fn repl_run_turn(
                 println!();
                 std::io::stdout().flush().ok();
             }
-            let decision = prompt_approval(approval_id, action, params)?;
+            let decision = prompt_approval(state.thread_id, approval_id, action, params)?;
             app.approval_decide(
                 state.thread_id,
                 *approval_id,
@@ -242,11 +246,13 @@ async fn repl_run_command(
         "inbox" => repl_cmd_inbox(app, &tokens[1..]).await,
         "state" => {
             let v = app.thread_state(state.thread_id).await?;
+            let v = serde_json::to_value(v).context("serialize thread/state response")?;
             print_json_or_pretty(false, &v)?;
             Ok(())
         }
         "config" => {
             let v = app.thread_config_explain(state.thread_id).await?;
+            let v = serde_json::to_value(v).context("serialize thread/config/explain response")?;
             print_json_or_pretty(false, &v)?;
             Ok(())
         }
@@ -273,14 +279,15 @@ async fn repl_cmd_thread(app: &mut App, state: &mut ReplState, args: &[&str]) ->
         ["use", thread_id] => {
             let thread_id: ThreadId = (*thread_id).parse().context("parse thread_id")?;
             let result = app.thread_resume(thread_id).await?;
-            let since_seq = result["last_seq"].as_u64().unwrap_or(0);
+            let since_seq = result.last_seq;
             state.thread_id = thread_id;
             state.since_seq = since_seq;
             eprintln!("thread: {}", state.thread_id);
             Ok(())
         }
         ["list"] => {
-            let v = app.thread_list_meta(false).await?;
+            let v = app.thread_list_meta(false, false).await?;
+            let v = serde_json::to_value(v).context("serialize thread/list_meta response")?;
             print_json_or_pretty(false, &v)?;
             Ok(())
         }
@@ -307,8 +314,8 @@ async fn repl_thread_start(
             .unwrap_or_default()
     });
     let result = app.thread_start(Some(cwd.clone())).await?;
-    let thread_id: ThreadId = serde_json::from_value(result["thread_id"].clone())
-        .context("thread_id missing in result")?;
+    ensure_thread_start_auto_hook_ready("repl", &result)?;
+    let thread_id = result.thread_id;
 
     app.thread_configure(ThreadConfigureArgs {
         thread_id,
@@ -320,13 +327,17 @@ async fn repl_thread_start(
         model: None,
         openai_base_url: None,
         thinking: None,
+        allowed_tools: None,
+        clear_allowed_tools: false,
+        execpolicy_rules: None,
+        clear_execpolicy_rules: false,
     })
     .await?;
 
     let state_json = app.thread_state(thread_id).await?;
-    let since_seq = state_json["last_seq"]
-        .as_u64()
-        .unwrap_or_else(|| result["last_seq"].as_u64().unwrap_or(0));
+    let since_seq = state_json
+        .last_seq
+        .max(result.last_seq);
     state.thread_id = thread_id;
     state.since_seq = since_seq;
     eprintln!("thread: {} (cwd={cwd})", state.thread_id);
@@ -335,16 +346,32 @@ async fn repl_thread_start(
 
 async fn repl_cmd_inbox(app: &mut App, args: &[&str]) -> anyhow::Result<()> {
     let include_archived = args.contains(&"--include-archived");
+    let only_fan_out_linkage_issue = args.contains(&"--only-fan-out-linkage-issue");
+    let only_fan_out_auto_apply_error = args.contains(&"--only-fan-out-auto-apply-error");
+    let only_fan_in_dependency_blocked = args.contains(&"--only-fan-in-dependency-blocked");
+    let only_fan_in_result_diagnostics = args.contains(&"--only-fan-in-result-diagnostics");
+    let only_token_budget_exceeded = args.contains(&"--only-token-budget-exceeded");
+    let only_token_budget_warning = args.contains(&"--only-token-budget-warning");
+    let only_subagent_proxy_approval = args.contains(&"--only-subagent-proxy-approval");
     let details = args.contains(&"--details");
+    let debug_summary_cache = args.contains(&"--debug-summary-cache");
     run_inbox(
         app,
         InboxArgs {
             include_archived,
+            only_fan_out_linkage_issue,
+            only_fan_out_auto_apply_error,
+            only_fan_in_dependency_blocked,
+            only_fan_in_result_diagnostics,
+            only_token_budget_exceeded,
+            only_token_budget_warning,
+            only_subagent_proxy_approval,
             details,
             watch: false,
             poll_ms: 1_000,
             bell: false,
             debounce_ms: 30_000,
+            debug_summary_cache,
             json: false,
         },
     )
@@ -370,6 +397,10 @@ async fn repl_cmd_set(app: &mut App, state: &mut ReplState, args: &[&str]) -> an
         model: None,
         openai_base_url: None,
         thinking: None,
+        allowed_tools: None,
+        clear_allowed_tools: false,
+        execpolicy_rules: None,
+        clear_execpolicy_rules: false,
     };
 
     match key {
@@ -394,18 +425,33 @@ async fn repl_cmd_set(app: &mut App, state: &mut ReplState, args: &[&str]) -> an
         "thinking" => {
             cfg.thinking = Some(value.to_string());
         }
+        "allowed_tools" => match parse_repl_list_setting(value) {
+            ReplListSetting::Set(tools) => {
+                cfg.allowed_tools = Some(tools);
+            }
+            ReplListSetting::Clear => {
+                cfg.clear_allowed_tools = true;
+            }
+        },
+        "execpolicy_rules" => match parse_repl_execpolicy_rules(value) {
+            ReplListSetting::Set(rules) => {
+                cfg.execpolicy_rules = Some(rules);
+            }
+            ReplListSetting::Clear => {
+                cfg.clear_execpolicy_rules = true;
+            }
+        },
         _ => {
             anyhow::bail!(
-                "unknown key: {key} (try: approval_policy|sandbox_policy|sandbox_network_access|mode|model|openai_base_url|thinking)"
+                "unknown key: {key} (try: approval_policy|sandbox_policy|sandbox_network_access|mode|model|openai_base_url|thinking|allowed_tools|execpolicy_rules)"
             );
         }
     }
 
     app.thread_configure(cfg).await?;
     let v = app.thread_state(state.thread_id).await?;
-    if let Some(last_seq) = v.get("last_seq").and_then(|v| v.as_u64()) {
-        state.since_seq = last_seq;
-    }
+    state.since_seq = v.last_seq;
+    let v = serde_json::to_value(v).context("serialize thread/state response")?;
     print_json_or_pretty(false, &v)?;
     Ok(())
 }
@@ -441,10 +487,39 @@ fn parse_repl_sandbox_network_access(raw: &str) -> anyhow::Result<CliSandboxNetw
     }
 }
 
+enum ReplListSetting {
+    Set(Vec<String>),
+    Clear,
+}
+
+fn parse_repl_list_setting(raw: &str) -> ReplListSetting {
+    let trimmed = raw.trim();
+    if matches!(trimmed.to_ascii_lowercase().as_str(), "clear" | "none" | "null") {
+        return ReplListSetting::Clear;
+    }
+    let mut out = Vec::new();
+    let mut seen = std::collections::BTreeSet::<String>::new();
+    for part in trimmed.split(',') {
+        let rule = part.trim();
+        if rule.is_empty() {
+            continue;
+        }
+        let rule = rule.to_string();
+        if seen.insert(rule.clone()) {
+            out.push(rule);
+        }
+    }
+    ReplListSetting::Set(out)
+}
+
+fn parse_repl_execpolicy_rules(raw: &str) -> ReplListSetting {
+    parse_repl_list_setting(raw)
+}
+
 async fn repl_cmd_approvals(app: &mut App, state: &mut ReplState, args: &[&str]) -> anyhow::Result<()> {
     let include_decided = args.contains(&"--include-decided");
-    let v = app.approval_list(state.thread_id, include_decided).await?;
-    print_json_or_pretty(false, &v)?;
+    let parsed = app.approval_list(state.thread_id, include_decided).await?;
+    print_repl_approvals(state.thread_id, &parsed);
     Ok(())
 }
 
@@ -483,6 +558,78 @@ fn parse_reason_flag(args: &[&str]) -> Option<String> {
     None
 }
 
+fn approval_decision_label(value: ApprovalDecision) -> &'static str {
+    match value {
+        ApprovalDecision::Approved => "approved",
+        ApprovalDecision::Denied => "denied",
+    }
+}
+
+fn print_repl_approvals(
+    thread_id: ThreadId,
+    resp: &omne_app_server_protocol::ApprovalListResponse,
+) {
+    if resp.approvals.is_empty() {
+        println!("no approvals");
+        return;
+    }
+    for item in &resp.approvals {
+        println!("{}", format_repl_approval_line(thread_id, item));
+    }
+}
+
+fn format_repl_approval_line(
+    thread_id: ThreadId,
+    item: &omne_app_server_protocol::ApprovalListItem,
+) -> String {
+    let req = &item.request;
+    let action = approval_action_label_from_parts(req.action_id, Some(req.action.as_str()));
+    let mut line = format!(
+        "approval_id={} action={} requested_at={}",
+        req.approval_id, action, req.requested_at
+    );
+    if let Some(turn_id) = req.turn_id {
+        line.push_str(&format!(" turn_id={turn_id}"));
+    }
+
+    let summary = req.summary.clone().or_else(|| {
+        approval_summary_from_params_with_context(
+            Some(thread_id),
+            Some(req.approval_id),
+            Some(req.action.as_str()),
+            &req.params,
+        )
+    });
+    let mut summary_has_approve_cmd = false;
+    if let Some(summary) = summary.as_ref() {
+        if let Some(display) = approval_summary_display_from_summary(summary) {
+            summary_has_approve_cmd = display.contains("approve_cmd=");
+            line.push_str(&format!(" summary={display}"));
+        }
+        if let Some(approve_cmd) = approval_approve_cmd_from_summary(summary)
+            && !summary_has_approve_cmd
+        {
+            line.push_str(&format!(" approve_cmd={approve_cmd}"));
+        }
+        if let Some(deny_cmd) = approval_deny_cmd_from_summary(summary) {
+            line.push_str(&format!(" deny_cmd={deny_cmd}"));
+        }
+    }
+
+    if let Some(decision) = &item.decision {
+        line.push_str(&format!(
+            " decision={} decided_at={} remember={}",
+            approval_decision_label(decision.decision),
+            decision.decided_at,
+            decision.remember
+        ));
+        if let Some(reason) = decision.reason.as_deref().filter(|s| !s.trim().is_empty()) {
+            line.push_str(&format!(" reason={reason}"));
+        }
+    }
+    line
+}
+
 fn print_repl_help() {
     println!(
         r#"omne cli commands:
@@ -497,9 +644,11 @@ fn print_repl_help() {
   /state                        show current thread state (JSON)
   /config                       show config explain (JSON)
   /set <key> <value>            update thread config (and print new state)
-    keys: approval_policy | sandbox_policy | sandbox_network_access | mode | model | openai_base_url | thinking
+    keys: approval_policy | sandbox_policy | sandbox_network_access | mode | model | openai_base_url | thinking | allowed_tools | execpolicy_rules
+    allowed_tools value: comma-separated tool names, or clear|none|null
+    execpolicy_rules value: comma-separated paths, or clear|none|null
 
-  /inbox [--details] [--include-archived]
+  /inbox [--details] [--include-archived] [--only-fan-out-linkage-issue] [--only-fan-out-auto-apply-error] [--only-fan-in-dependency-blocked] [--only-fan-in-result-diagnostics] [--only-token-budget-exceeded] [--only-token-budget-warning] [--only-subagent-proxy-approval] [--debug-summary-cache]
   /approvals [--include-decided]
   /approve <approval_id> [--remember] [--reason <text>]
   /deny <approval_id> [--remember] [--reason <text>]
@@ -509,4 +658,37 @@ input:
   - use '//' to send a message starting with '/' (e.g. '// /plan ...')
 "#
     );
+}
+
+#[cfg(test)]
+mod repl_tests {
+    use super::*;
+
+    #[test]
+    fn format_repl_approval_line_adds_proxy_approve_and_deny_commands_from_context() {
+        let thread_id = ThreadId::new();
+        let approval_id = ApprovalId::new();
+        let item = omne_app_server_protocol::ApprovalListItem {
+            request: omne_app_server_protocol::ApprovalRequestInfo {
+                approval_id,
+                turn_id: None,
+                action: "subagent/proxy_approval".to_string(),
+                action_id: Some(
+                    omne_app_server_protocol::ThreadApprovalActionId::SubagentProxyApproval,
+                ),
+                params: serde_json::json!({}),
+                summary: None,
+                requested_at: "2026-01-01T00:00:00Z".to_string(),
+            },
+            decision: None,
+        };
+
+        let line = format_repl_approval_line(thread_id, &item);
+        let expected_approve = format!("omne approval decide {thread_id} {approval_id} --approve");
+        let expected_deny = format!("omne approval decide {thread_id} {approval_id} --deny");
+        assert!(line.contains("summary="));
+        assert!(line.contains(&expected_approve));
+        assert!(line.contains("deny_cmd="));
+        assert!(line.contains(&expected_deny));
+    }
 }

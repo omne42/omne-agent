@@ -1,0 +1,52 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ProcessUnknownModeDeniedResponse",
+  "type": "object",
+  "required": [
+    "available",
+    "decision",
+    "denied",
+    "mode",
+    "thread_id",
+    "tool_id"
+  ],
+  "properties": {
+    "available": {
+      "type": "string"
+    },
+    "decision": {
+      "$ref": "#/definitions/ProcessModeDecision"
+    },
+    "denied": {
+      "type": "boolean"
+    },
+    "load_error": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "mode": {
+      "type": "string"
+    },
+    "thread_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "tool_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  },
+  "definitions": {
+    "ProcessModeDecision": {
+      "type": "string",
+      "enum": [
+        "allow",
+        "prompt",
+        "deny"
+      ]
+    }
+  }
+}

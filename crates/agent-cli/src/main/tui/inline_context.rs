@@ -3,6 +3,25 @@
         query: String,
     }
 
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum InlineListCommandKind {
+        AllowedTools,
+        ExecpolicyRules,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    enum InlineListCommandSetting {
+        Missing,
+        Clear,
+        Set(Vec<String>),
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct InlineListCommand {
+        kind: InlineListCommandKind,
+        setting: InlineListCommandSetting,
+    }
+
     fn last_line_bounds(input: &str) -> (usize, &str) {
         match input.rfind('\n') {
             Some(idx) => (idx + 1, &input[idx + 1..]),
@@ -42,6 +61,8 @@
                 "approval-policy" => InlinePaletteKind::ApprovalPolicy,
                 "sandbox-policy" => InlinePaletteKind::SandboxPolicy,
                 "sandbox-network" => InlinePaletteKind::SandboxNetworkAccess,
+                "allowed-tools" => InlinePaletteKind::AllowedTools,
+                "execpolicy-rules" => InlinePaletteKind::ExecpolicyRules,
                 _ => InlinePaletteKind::Command,
             };
             let query = match kind {
@@ -88,3 +109,49 @@
         Some((line_start + token_start, line_start + line_trimmed.len()))
     }
 
+    fn parse_inline_list_command(input: &str) -> Option<InlineListCommand> {
+        let (_line_start, line) = last_line_bounds(input);
+        let line = line.trim_end();
+        if !line.starts_with('/') {
+            return None;
+        }
+
+        let body = line.trim_start_matches('/').trim_start();
+        let mut parts = body.splitn(2, char::is_whitespace);
+        let token = parts.next().unwrap_or("").trim();
+        let rest = parts.next().unwrap_or("");
+        let kind = match token {
+            "allowed-tools" => InlineListCommandKind::AllowedTools,
+            "execpolicy-rules" => InlineListCommandKind::ExecpolicyRules,
+            _ => return None,
+        };
+        let setting = parse_inline_list_command_setting(rest);
+        Some(InlineListCommand { kind, setting })
+    }
+
+    fn parse_inline_list_command_setting(raw: &str) -> InlineListCommandSetting {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return InlineListCommandSetting::Missing;
+        }
+        if matches!(trimmed.to_ascii_lowercase().as_str(), "clear" | "none" | "null") {
+            return InlineListCommandSetting::Clear;
+        }
+        let mut out = Vec::new();
+        let mut seen = std::collections::BTreeSet::<String>::new();
+        for part in trimmed.split(',') {
+            let value = part.trim();
+            if value.is_empty() {
+                continue;
+            }
+            let value = value.to_string();
+            if seen.insert(value.clone()) {
+                out.push(value);
+            }
+        }
+        if out.is_empty() {
+            InlineListCommandSetting::Missing
+        } else {
+            InlineListCommandSetting::Set(out)
+        }
+    }

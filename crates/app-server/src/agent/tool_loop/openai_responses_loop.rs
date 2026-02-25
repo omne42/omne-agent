@@ -295,7 +295,13 @@ async fn run_openai_responses_codex_parity_loop(
 
     if seeded_from_events {
         openai_history = seed_input_items;
-        let _ = append_attachments_to_last_user_message(&mut openai_history, &attachment_parts);
+        if !append_attachments_to_last_user_message(&mut openai_history, &attachment_parts) {
+            tracing::debug!(
+                thread_id = %thread_id,
+                turn_id = %turn_id,
+                "unable to append attachments to the last user message in seeded history"
+            );
+        }
         append_openai_responses_history_items(&server.thread_store, thread_id, &openai_history)
             .await?;
     } else if openai_history.is_empty() {

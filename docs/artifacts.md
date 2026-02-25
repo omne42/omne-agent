@@ -63,6 +63,7 @@ v0.2.0 user artifact 采用：
 ```bash
 omne artifact list <thread_id>
 omne artifact read <thread_id> <artifact_id>
+omne artifact read <thread_id> <artifact_id> --version <n>
 omne artifact delete <thread_id> <artifact_id>
 ```
 
@@ -120,6 +121,11 @@ app-server 默认推断规则（写入/覆盖 artifact 时填充 `preview`）：
 - `artifact_type="code"` → `preview.kind="code"`
 - `artifact_type="log"|"log_excerpt"` → `preview.kind="log"`
 - 其他 → `preview.kind="markdown"`
+
+默认 `preview.title`（当前实现）：
+
+- `artifact_type="diff"` → `preview.title="git diff --"`
+- `artifact_type="patch"` → `preview.title="git diff --binary --patch"`
 
 兼容规则（建议写死）：
 
@@ -190,7 +196,9 @@ app-server 默认推断规则（写入/覆盖 artifact 时填充 `preview`）：
 <thread_dir>/artifacts/user/<artifact_id>.md
 <thread_dir>/artifacts/user/<artifact_id>.metadata.json
 <thread_dir>/artifacts/user/history/<artifact_id>/v0001.md
+<thread_dir>/artifacts/user/history/<artifact_id>/v0001.metadata.json
 <thread_dir>/artifacts/user/history/<artifact_id>/v0002.md
+<thread_dir>/artifacts/user/history/<artifact_id>/v0002.metadata.json
 ...
 ```
 
@@ -198,33 +206,53 @@ app-server 默认推断规则（写入/覆盖 artifact 时填充 `preview`）：
 
 当 `artifact/write` 覆盖一个已存在的 `artifact_id` 且 bounded history 开启时：
 
-- 在覆盖前，把旧内容复制到 `history/<artifact_id>/v{old_version:04}.md`。
+- 在覆盖前，把旧内容复制到 `history/<artifact_id>/v{old_version:04}.md`，并快照对应 metadata 到 `v{old_version:04}.metadata.json`（保留每版 provenance）。
 - 写入成功后，仅保留最近 `N` 个历史版本（不包含当前最新版本）；超出则删除最老的。
+- 清理时会同步删除对应版本的 `v{version}.metadata.json`，并清掉无对应内容文件的孤儿 metadata sidecar。
 - `artifact/delete` 会级联删除 `history/<artifact_id>/`（避免“以为删了但旧版本还在”）。
 
 补充：
 
 - 当发生清理时，`artifact/write` 的 tool result 会包含 `history.pruned_versions`（随事件落盘，可审计）。
 
-### 4.3 清理的可审计性（别悄悄删）
+### 4.3 清理的可审计性（已实现）
 
-当发生历史版本清理时，未来可以生成一份 user artifact（TODO）：
+当发生历史版本清理时，`artifact/write` 会额外生成一份 user artifact：
 
 - `artifact_type="artifact_prune_report"`
-- `summary`：例如 `pruned artifact history: <artifact_id> (kept N)`
-- 内容：列出删除了哪些版本号与 bytes（尽量避免写入绝对路径），并走脱敏（见 `docs/redaction.md`）。
+- `summary`：`pruned artifact history: <artifact_id> (kept N)`
+- 内容：列出被清理的版本号与可用的 `size_bytes`（不写绝对路径；文本会走脱敏）。
+- 原始 `artifact/write` 的 `history` 字段会回填：
+  - `pruned_versions`（保留兼容）
+  - `pruned_version_details`
+  - `prune_report_artifact_id`
+  - `prune_report_error`（若报告写入失败）
+- `artifact/read` 读取 `artifact_type="artifact_prune_report"` 时，会额外返回机器可读字段 `prune_report`：
+  - `source_artifact_id`
+  - `retained_history_versions`
+  - `pruned_count`
+  - `pruned_version_details`
+  - 若报告文本损坏/截断，读取仍成功，`prune_report` 为 `null`（不阻断工具调用）。
 
 安全边界（建议写死）：
 
 - bounded history 仅针对 user artifacts（`artifact/*`），不影响 process logs。
 - 删除 artifact 时必须级联删除 history（避免“以为删了但旧版本还在”）。
 
-### 4.4 CLI/API（未来实现占位）
+### 4.4 CLI/API（当前实现）
 
 ```bash
 omne artifact versions <thread_id> <artifact_id>
 omne artifact read <thread_id> <artifact_id> --version 2
 ```
+
+行为说明：
+
+- `artifact versions` 返回当前可读的版本列表（`latest + retained history`，按新到旧排序）。
+- `--version` 省略时，读取当前最新版本内容（默认行为）。
+- `--version <n>` 且 `n < latest_version` 时，从 `history/` 读取对应历史内容，并优先返回该版本快照的 metadata/provenance（缺失时回退到兼容逻辑）。
+  - 诊断字段：`artifact/read` 会返回 `metadata_source`（`latest`/`history_snapshot`/`latest_fallback`）与可选 `metadata_fallback_reason`（如 `history_metadata_missing` / `history_metadata_invalid` / `history_metadata_unreadable`）。
+- `--version <n>` 且 `n > latest_version` 时，`artifact/read` 失败并返回版本不存在错误。
 
 ---
 

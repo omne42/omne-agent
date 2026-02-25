@@ -2,9 +2,9 @@
 
 > 这不是“又一个聊天框”。RTS 的关键是：你同时指挥多个 agent，但系统必须把一切变更收敛成 **可观测、可暂停、可回放、可收口** 的状态机。
 >
-> 注：本文是“目标态”。v0.2.0 MVP 的 `attention_state` 枚举以 `docs/v0.2.0_parity.md` 为准；`plan_ready/diff_ready/test_failed` 属于语义标记（markers，TODO），不应把 `attention_state` 扩成万能枚举（见 `docs/attention.md`）。
+> 注：本文是“目标态”。v0.2.0 MVP 的 `attention_state` 枚举以 `docs/v0.2.0_parity.md` 为准；`thread/attention` 已支持 `plan_ready/diff_ready/test_failed/fan_out_linkage_issue/fan_out_auto_apply_error` 的显式 marker 事件（并对历史线程回退推断）；不应把 `attention_state` 扩成万能枚举（见 `docs/attention.md`）。
 >
-> v0.2.0 现状补充：workspace hooks 已支持最小执行入口（`.omne_data/spec/workspace.yaml` + `omne thread hook-run setup|run|archive`），但还没有“自动在创建/归档时触发”的编排逻辑（见 `docs/workspace_hooks.md`）。
+> v0.2.0 现状补充：workspace hooks 已支持最小执行入口（`.omne_data/spec/workspace.yaml` + `omne thread hook-run setup|run|archive`），并已落地最小自动触发：`thread/start` 自动尝试 `setup`、`thread/archive` 自动尝试 `archive`（结果见返回体 `auto_hook`）；`run` 仍为手动触发（见 `docs/workspace_hooks.md`）。
 
 ---
 
@@ -27,7 +27,7 @@
 
 1. **创建 workspace**
    - 系统创建隔离目录（本地 `/tmp` 或 git worktree 等目录级隔离方案是实现细节；**git/workspace 不以 Docker 为前提，但不禁止 agent 自己运行 Docker**）。
-   - 自动执行 `setup` 生命周期脚本（复制 env/装依赖/启动外部资源/端口映射；v0.2.0 仅支持手动 `thread/hook_run`，自动触发 TODO）。
+   - 自动执行 `setup` 生命周期脚本（复制 env/装依赖/启动外部资源/端口映射；v0.2.0 已在 `thread/start` 落地最小自动触发，`run` 仍需手动 `thread/hook_run run`）。
 2. **Plan（先想清楚）**
    - agent 输出结构化 plan（作为 artifact 落盘）。
    - `Attention` 标记 `plan_ready`（marker），等待用户确认/修改。

@@ -1,0 +1,60 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ThreadCheckpointRestoreResponse",
+  "type": "object",
+  "required": [
+    "checkpoint_id",
+    "duration_ms",
+    "plan",
+    "restored",
+    "thread_id"
+  ],
+  "properties": {
+    "checkpoint_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "duration_ms": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0.0
+    },
+    "plan": {
+      "$ref": "#/definitions/ThreadCheckpointPlan"
+    },
+    "restored": {
+      "type": "boolean"
+    },
+    "thread_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  },
+  "definitions": {
+    "ThreadCheckpointPlan": {
+      "type": "object",
+      "required": [
+        "create",
+        "delete",
+        "modify"
+      ],
+      "properties": {
+        "create": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "delete": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "modify": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        }
+      }
+    }
+  }
+}

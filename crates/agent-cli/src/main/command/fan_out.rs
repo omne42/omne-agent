@@ -6,12 +6,7 @@ impl FanOutScheduler {
         fan_in_artifact_id: omne_protocol::ArtifactId,
         subagent_fork: bool,
     ) -> anyhow::Result<Self> {
-        let max_concurrent_subagents = parse_env_usize("OMNE_MAX_CONCURRENT_SUBAGENTS", 4, 0, 64);
-        let concurrency_limit = if max_concurrent_subagents == 0 {
-            tasks.len().max(1)
-        } else {
-            max_concurrent_subagents
-        };
+        let scheduling = fan_out_scheduling_params(tasks.len());
 
         let parent_cwd = if subagent_fork {
             None
@@ -23,10 +18,12 @@ impl FanOutScheduler {
         let scheduler = Self {
             tasks,
             fan_in_artifact_id,
-            concurrency_limit,
+            scheduling,
             subagent_fork,
             parent_cwd,
-            pending_idx: 0,
+            started_ids: BTreeSet::new(),
+            ready_wait_rounds: BTreeMap::new(),
+            task_statuses: BTreeMap::new(),
             active: Vec::new(),
             finished: Vec::new(),
             final_summary_written: false,
@@ -38,11 +35,13 @@ impl FanOutScheduler {
         write_fan_out_progress_artifact(
             app,
             parent_thread_id,
+            None,
             scheduler.fan_in_artifact_id,
             scheduler.tasks.len(),
             &scheduler.finished,
             &scheduler.active,
             scheduler.started_at,
+            scheduler.scheduling,
         )
         .await?;
 
@@ -67,13 +66,22 @@ impl FanOutScheduler {
         ordered
     }
 
-    async fn tick(&mut self, app: &mut App, parent_thread_id: ThreadId) -> anyhow::Result<()> {
-        #[derive(Debug, Deserialize)]
-        struct ForkResult {
-            thread_id: ThreadId,
-            last_seq: u64,
-        }
+    fn first_non_completed_result(&self) -> Option<&WorkflowTaskResult> {
+        self.finished
+            .iter()
+            .find(|result| !matches!(result.status, TurnStatus::Completed))
+    }
 
+    fn has_ready_pending_task(&self) -> bool {
+        pick_next_runnable_task(&self.tasks, &self.started_ids, &self.task_statuses).is_some()
+    }
+
+    async fn tick(
+        &mut self,
+        app: &mut App,
+        parent_thread_id: ThreadId,
+        parent_turn_id: Option<TurnId>,
+    ) -> anyhow::Result<()> {
         if self.tasks.is_empty() {
             return Ok(());
         }
@@ -81,43 +89,53 @@ impl FanOutScheduler {
             return Ok(());
         }
 
-        while self.active.len() < self.concurrency_limit && self.pending_idx < self.tasks.len() {
-            let task = &self.tasks[self.pending_idx];
-            self.pending_idx += 1;
+        update_ready_wait_rounds(
+            &self.tasks,
+            &self.started_ids,
+            &self.task_statuses,
+            &mut self.ready_wait_rounds,
+        );
+        while self.active.len() < self.scheduling.effective_concurrency_limit {
+            let Some(task) = pick_next_runnable_task_fair(
+                &self.tasks,
+                &self.started_ids,
+                &self.task_statuses,
+                &self.ready_wait_rounds,
+                self.scheduling.priority_aging_rounds,
+            ) else {
+                break;
+            };
+            self.started_ids.insert(task.id.clone());
+            self.ready_wait_rounds.remove(&task.id);
 
-            let spawned = if self.subagent_fork {
-                app.thread_fork(parent_thread_id).await?
+            let forked = if self.subagent_fork {
+                let forked = app.thread_fork(parent_thread_id).await?;
+                (forked.thread_id, forked.last_seq)
             } else {
                 let cwd = self
                     .parent_cwd
                     .as_deref()
                     .ok_or_else(|| anyhow::anyhow!("fan-out parent cwd missing"))?;
-                app.thread_start(Some(cwd.to_string())).await?
+                let started = app.thread_start(Some(cwd.to_string())).await?;
+                ensure_thread_start_auto_hook_ready("command/fan_out", &started)?;
+                (started.thread_id, started.last_seq)
             };
-            let forked: ForkResult = serde_json::from_value(spawned).with_context(|| {
-                if self.subagent_fork {
-                    "parse thread/fork".to_string()
-                } else {
-                    "parse thread/start".to_string()
-                }
-            })?;
+            let (forked_thread_id, forked_last_seq) = forked;
 
-            let _ = app
-                .rpc(
-                    "thread/configure",
-                    serde_json::json!({
-                        "thread_id": forked.thread_id,
-                        "approval_policy": null,
-                        "sandbox_policy": omne_protocol::SandboxPolicy::ReadOnly,
-                        "sandbox_writable_roots": null,
-                        "sandbox_network_access": null,
-                        "mode": "reviewer",
-                        "model": null,
-                        "openai_base_url": null,
-                        "allowed_tools": null,
-                    }),
-                )
-                .await?;
+            app.thread_configure_rpc(omne_app_server_protocol::ThreadConfigureParams {
+                thread_id: forked_thread_id,
+                approval_policy: None,
+                sandbox_policy: Some(omne_protocol::SandboxPolicy::ReadOnly),
+                sandbox_writable_roots: None,
+                sandbox_network_access: None,
+                mode: Some("reviewer".to_string()),
+                model: None,
+                thinking: None,
+                openai_base_url: None,
+                allowed_tools: None,
+                execpolicy_rules: None,
+            })
+            .await?;
 
             let mut input = format!(
                 "You are a read-only subagent.\nTask: {}{}\n\n",
@@ -139,7 +157,7 @@ impl FanOutScheduler {
 
             let turn_id = app
                 .turn_start(
-                    forked.thread_id,
+                    forked_thread_id,
                     input,
                     Some(omne_protocol::TurnPriority::Background),
                 )
@@ -147,9 +165,9 @@ impl FanOutScheduler {
             self.active.push(FanOutActiveTask {
                 task_id: task.id.clone(),
                 title: task.title.clone(),
-                thread_id: forked.thread_id,
+                thread_id: forked_thread_id,
                 turn_id,
-                since_seq: forked.last_seq,
+                since_seq: forked_last_seq,
                 assistant_text: None,
             });
         }
@@ -157,6 +175,7 @@ impl FanOutScheduler {
         let mut idx = 0usize;
         while idx < self.active.len() {
             let mut done: Option<(TurnStatus, Option<String>)> = None;
+            let mut approval_issue: Option<FanOutApprovalIssue> = None;
             let thread_id = self.active[idx].thread_id;
             let turn_id = self.active[idx].turn_id;
 
@@ -175,10 +194,28 @@ impl FanOutScheduler {
                         } if msg_turn_id == turn_id => {
                             self.active[idx].assistant_text = Some(text);
                         }
-                        omne_protocol::ThreadEventKind::ApprovalRequested { .. } => {
-                            anyhow::bail!(
-                                "fan-out task needs approval (thread_id={thread_id}); use `omne inbox`"
-                            );
+                        omne_protocol::ThreadEventKind::ApprovalRequested {
+                            approval_id,
+                            action,
+                            params,
+                            ..
+                        } => {
+                            let summary = approval_summary_from_params_with_context(
+                                Some(thread_id),
+                                Some(approval_id),
+                                Some(action.as_str()),
+                                &params,
+                            )
+                            .and_then(|summary| approval_summary_display_from_summary(&summary));
+                            approval_issue = Some(FanOutApprovalIssue {
+                                task_id: self.active[idx].task_id.clone(),
+                                thread_id,
+                                turn_id,
+                                approval_id,
+                                action,
+                                summary,
+                            });
+                            break;
                         }
                         omne_protocol::ThreadEventKind::TurnCompleted {
                             turn_id: completed_turn_id,
@@ -191,21 +228,74 @@ impl FanOutScheduler {
                     }
                 }
 
-                if !resp.has_more {
+                if approval_issue.is_some() || !resp.has_more {
                     break;
                 }
             }
 
+            if let Some(issue) = approval_issue {
+                let task = self.active.remove(idx);
+                self.task_statuses
+                    .insert(task.task_id.clone(), TurnStatus::Interrupted);
+                self.finished.push(pending_approval_task_result(
+                    task.task_id.clone(),
+                    task.title.clone(),
+                    task.thread_id,
+                    task.turn_id,
+                    issue.action.clone(),
+                    issue.approval_id,
+                    issue.summary.clone(),
+                ));
+                let _ = write_fan_out_approval_blocked_artifact(
+                    app,
+                    parent_thread_id,
+                    parent_turn_id,
+                    self.fan_in_artifact_id,
+                    self.tasks.len(),
+                    &self.finished,
+                    &issue,
+                    self.scheduling,
+                )
+                .await;
+                let issue_text = fan_out_approval_error_with_artifact_fallback(
+                    app,
+                    parent_thread_id,
+                    &issue,
+                    self.fan_in_artifact_id,
+                )
+                .await;
+                anyhow::bail!("{issue_text}");
+            }
+
             if let Some((status, reason)) = done {
                 let task = self.active.remove(idx);
+                self.task_statuses.insert(task.task_id.clone(), status);
+                let artifact_write = write_fan_out_result_artifacts(
+                    app,
+                    parent_thread_id,
+                    parent_turn_id,
+                    task.thread_id,
+                    &task.task_id,
+                    &task.title,
+                    task.turn_id,
+                    status,
+                    reason.as_deref(),
+                    task.assistant_text.as_deref(),
+                )
+                .await;
                 self.finished.push(WorkflowTaskResult {
                     task_id: task.task_id,
                     title: task.title,
-                    thread_id: task.thread_id,
-                    turn_id: task.turn_id,
+                    thread_id: Some(task.thread_id),
+                    turn_id: Some(task.turn_id),
+                    result_artifact_id: artifact_write.result_artifact_id,
+                    result_artifact_error: artifact_write.result_artifact_error,
+                    result_artifact_error_id: artifact_write.result_artifact_error_id,
                     status,
                     reason,
+                    dependency_blocked: false,
                     assistant_text: task.assistant_text,
+                    pending_approval: None,
                 });
                 continue;
             }
@@ -214,13 +304,33 @@ impl FanOutScheduler {
         }
 
         if !self.is_done() {
+            let blocked =
+                collect_dependency_blocked_task_ids(&self.tasks, &self.started_ids, &self.task_statuses);
+            if !blocked.is_empty() {
+                for (task_id, dep_id, dep_status) in blocked {
+                    self.started_ids.insert(task_id.clone());
+                    self.task_statuses
+                        .insert(task_id.clone(), TurnStatus::Cancelled);
+                    if let Some(task) = self.tasks.iter().find(|task| task.id == task_id) {
+                        self.finished
+                            .push(blocked_task_result(task, &dep_id, dep_status));
+                    }
+                }
+            }
+            if self.active.is_empty() && !self.has_ready_pending_task() {
+                anyhow::bail!(
+                    "fan-out dependency deadlock: no runnable task (finished={}, total={})",
+                    self.finished.len(),
+                    self.tasks.len()
+                );
+            }
             if self.last_progress_print.elapsed() >= Duration::from_secs(1) {
                 eprintln!(
                     "[fan-out] completed {}/{} (active={}, max={})",
                     self.finished.len(),
                     self.tasks.len(),
                     self.active.len(),
-                    self.concurrency_limit
+                    self.scheduling.effective_concurrency_limit
                 );
                 self.last_progress_print = Instant::now();
             }
@@ -229,11 +339,13 @@ impl FanOutScheduler {
                 let outcome = write_fan_out_progress_artifact(
                     app,
                     parent_thread_id,
+                    parent_turn_id,
                     self.fan_in_artifact_id,
                     self.tasks.len(),
                     &self.finished,
                     &self.active,
                     self.started_at,
+                    self.scheduling,
                 )
                 .await;
                 if let Err(err) = outcome {
@@ -246,11 +358,13 @@ impl FanOutScheduler {
             let outcome = write_fan_out_progress_artifact(
                 app,
                 parent_thread_id,
+                parent_turn_id,
                 self.fan_in_artifact_id,
                 self.tasks.len(),
                 &self.finished,
                 &self.active,
                 self.started_at,
+                self.scheduling,
             )
             .await;
             if let Err(err) = outcome {

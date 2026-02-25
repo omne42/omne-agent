@@ -2,7 +2,9 @@
 // Follow-up refactors can convert these into proper modules.
 
 include!("main/preamble.rs");
+include!("main/fan_out_linkage_format.rs");
 include!("main/app.rs");
+include!("main/approval_display.rs");
 include!("main/ask_exec.rs");
 include!("main/command.rs");
 include!("main/init.rs");

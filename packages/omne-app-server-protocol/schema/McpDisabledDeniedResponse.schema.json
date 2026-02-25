@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "McpDisabledDeniedResponse",
+  "type": "object",
+  "required": [
+    "env",
+    "reason",
+    "tool_id"
+  ],
+  "properties": {
+    "denied": {
+      "default": false,
+      "type": "boolean"
+    },
+    "env": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "tool_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

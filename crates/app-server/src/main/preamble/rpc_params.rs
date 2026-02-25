@@ -1,567 +1,70 @@
-#[derive(Debug, Deserialize)]
-struct ThreadStartParams {
-    #[serde(default)]
-    cwd: Option<String>,
-}
+type ThreadStartParams = omne_app_server_protocol::ThreadStartParams;
+type ThreadResumeParams = omne_app_server_protocol::ThreadResumeParams;
+type ThreadForkParams = omne_app_server_protocol::ThreadForkParams;
+type ThreadArchiveParams = omne_app_server_protocol::ThreadArchiveParams;
+type ThreadUnarchiveParams = omne_app_server_protocol::ThreadUnarchiveParams;
+type ThreadPauseParams = omne_app_server_protocol::ThreadPauseParams;
+type ThreadUnpauseParams = omne_app_server_protocol::ThreadUnpauseParams;
+type ThreadDeleteParams = omne_app_server_protocol::ThreadDeleteParams;
+type ThreadClearArtifactsParams = omne_app_server_protocol::ThreadClearArtifactsParams;
+type ThreadStateParams = omne_app_server_protocol::ThreadStateParams;
+type ThreadUsageParams = omne_app_server_protocol::ThreadUsageParams;
+type ThreadAttentionParams = omne_app_server_protocol::ThreadAttentionParams;
+type ThreadListParams = omne_app_server_protocol::ThreadListParams;
+type ThreadLoadedParams = omne_app_server_protocol::ThreadLoadedParams;
+type ThreadListMetaParams = omne_app_server_protocol::ThreadListMetaParams;
+type ThreadDiskUsageParams = omne_app_server_protocol::ThreadDiskUsageParams;
+type ThreadDiskReportParams = omne_app_server_protocol::ThreadDiskReportParams;
+type ThreadDiffParams = omne_app_server_protocol::ThreadDiffParams;
+type ThreadPatchParams = omne_app_server_protocol::ThreadPatchParams;
+type ThreadCheckpointCreateParams = omne_app_server_protocol::ThreadCheckpointCreateParams;
+type ThreadCheckpointListParams = omne_app_server_protocol::ThreadCheckpointListParams;
+type ThreadCheckpointRestoreParams = omne_app_server_protocol::ThreadCheckpointRestoreParams;
+type WorkspaceHookName = omne_app_server_protocol::WorkspaceHookName;
+type ThreadHookRunParams = omne_app_server_protocol::ThreadHookRunParams;
 
-#[derive(Debug, Deserialize)]
-struct ThreadResumeParams {
-    thread_id: ThreadId,
-}
+type ThreadConfigureParams = omne_app_server_protocol::ThreadConfigureParams;
 
-#[derive(Debug, Deserialize)]
-struct ThreadForkParams {
-    thread_id: ThreadId,
-}
+type ThreadConfigExplainParams = omne_app_server_protocol::ThreadConfigExplainParams;
+type ThreadModelsParams = omne_app_server_protocol::ThreadModelsParams;
+type ThreadEventsParams = omne_app_server_protocol::ThreadEventsParams;
 
-#[derive(Debug, Deserialize)]
-struct ThreadArchiveParams {
-    thread_id: ThreadId,
-    #[serde(default)]
-    force: bool,
-    #[serde(default)]
-    reason: Option<String>,
-}
+type ThreadSubscribeParams = omne_app_server_protocol::ThreadSubscribeParams;
 
-#[derive(Debug, Deserialize)]
-struct ThreadUnarchiveParams {
-    thread_id: ThreadId,
-    #[serde(default)]
-    reason: Option<String>,
-}
+type TurnStartParams = omne_app_server_protocol::TurnStartParams;
+type TurnInterruptParams = omne_app_server_protocol::TurnInterruptParams;
 
-#[derive(Debug, Deserialize)]
-struct ThreadPauseParams {
-    thread_id: ThreadId,
-    #[serde(default)]
-    reason: Option<String>,
-}
+type ProcessStartParams = omne_app_server_protocol::ProcessStartParams;
+type ProcessListParams = omne_app_server_protocol::ProcessListParams;
+type ProcessKillParams = omne_app_server_protocol::ProcessKillParams;
+type ProcessInterruptParams = omne_app_server_protocol::ProcessInterruptParams;
+type ProcessStream = omne_app_server_protocol::ProcessStream;
+type ProcessTailParams = omne_app_server_protocol::ProcessTailParams;
+type ProcessFollowParams = omne_app_server_protocol::ProcessFollowParams;
+type ProcessInspectParams = omne_app_server_protocol::ProcessInspectParams;
 
-#[derive(Debug, Deserialize)]
-struct ThreadUnpauseParams {
-    thread_id: ThreadId,
-    #[serde(default)]
-    reason: Option<String>,
-}
+type FileRoot = omne_app_server_protocol::FileRoot;
 
-#[derive(Debug, Deserialize)]
-struct ThreadDeleteParams {
-    thread_id: ThreadId,
-    #[serde(default)]
-    force: bool,
-}
+type FileReadParams = omne_app_server_protocol::FileReadParams;
+type FileGlobParams = omne_app_server_protocol::FileGlobParams;
+type FileGrepParams = omne_app_server_protocol::FileGrepParams;
 
-#[derive(Debug, Deserialize)]
-struct ThreadClearArtifactsParams {
-    thread_id: ThreadId,
-    #[serde(default)]
-    force: bool,
-}
+type RepoSearchParams = omne_app_server_protocol::RepoSearchParams;
+type RepoIndexParams = omne_app_server_protocol::RepoIndexParams;
+type RepoSymbolsParams = omne_app_server_protocol::RepoSymbolsParams;
 
-#[derive(Debug, Deserialize)]
-struct ThreadStateParams {
-    thread_id: ThreadId,
-}
+type FileWriteParams = omne_app_server_protocol::FileWriteParams;
+type FilePatchParams = omne_app_server_protocol::FilePatchParams;
+type FileEditParams = omne_app_server_protocol::FileEditParams;
+type FileEditOp = omne_app_server_protocol::FileEditOp;
+type FileDeleteParams = omne_app_server_protocol::FileDeleteParams;
+type FsMkdirParams = omne_app_server_protocol::FsMkdirParams;
 
-#[derive(Debug, Deserialize)]
-struct ThreadAttentionParams {
-    thread_id: ThreadId,
-}
+type ArtifactWriteParams = omne_app_server_protocol::ArtifactWriteParams;
+type ArtifactListParams = omne_app_server_protocol::ArtifactListParams;
+type ArtifactReadParams = omne_app_server_protocol::ArtifactReadParams;
+type ArtifactVersionsParams = omne_app_server_protocol::ArtifactVersionsParams;
+type ArtifactDeleteParams = omne_app_server_protocol::ArtifactDeleteParams;
 
-#[derive(Debug, Deserialize)]
-struct ThreadListMetaParams {
-    #[serde(default)]
-    include_archived: bool,
-}
-
-#[derive(Debug, Deserialize)]
-struct ThreadDiskUsageParams {
-    thread_id: ThreadId,
-}
-
-#[derive(Debug, Deserialize)]
-struct ThreadDiskReportParams {
-    thread_id: ThreadId,
-    #[serde(default)]
-    top_files: Option<usize>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ThreadDiffParams {
-    thread_id: ThreadId,
-    #[serde(default)]
-    turn_id: Option<TurnId>,
-    #[serde(default)]
-    approval_id: Option<omne_protocol::ApprovalId>,
-    #[serde(default)]
-    max_bytes: Option<u64>,
-    #[serde(default)]
-    wait_seconds: Option<u64>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ThreadPatchParams {
-    thread_id: ThreadId,
-    #[serde(default)]
-    turn_id: Option<TurnId>,
-    #[serde(default)]
-    approval_id: Option<omne_protocol::ApprovalId>,
-    #[serde(default)]
-    max_bytes: Option<u64>,
-    #[serde(default)]
-    wait_seconds: Option<u64>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ThreadCheckpointCreateParams {
-    thread_id: ThreadId,
-    #[serde(default)]
-    label: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ThreadCheckpointListParams {
-    thread_id: ThreadId,
-}
-
-#[derive(Debug, Deserialize)]
-struct ThreadCheckpointRestoreParams {
-    thread_id: ThreadId,
-    checkpoint_id: omne_protocol::CheckpointId,
-    #[serde(default)]
-    turn_id: Option<TurnId>,
-    #[serde(default)]
-    approval_id: Option<omne_protocol::ApprovalId>,
-}
-
-#[derive(Debug, Deserialize, Clone, Copy)]
-#[serde(rename_all = "snake_case")]
-enum WorkspaceHookName {
-    Setup,
-    Run,
-    Archive,
-}
-
-#[derive(Debug, Deserialize)]
-struct ThreadHookRunParams {
-    thread_id: ThreadId,
-    #[serde(default)]
-    turn_id: Option<TurnId>,
-    #[serde(default)]
-    approval_id: Option<omne_protocol::ApprovalId>,
-    hook: WorkspaceHookName,
-}
-
-#[derive(Debug, Deserialize)]
-struct ThreadConfigureParams {
-    thread_id: ThreadId,
-    #[serde(default)]
-    approval_policy: Option<omne_protocol::ApprovalPolicy>,
-    #[serde(default)]
-    sandbox_policy: Option<omne_protocol::SandboxPolicy>,
-    #[serde(default)]
-    sandbox_writable_roots: Option<Vec<String>>,
-    #[serde(default)]
-    sandbox_network_access: Option<omne_protocol::SandboxNetworkAccess>,
-    #[serde(default)]
-    mode: Option<String>,
-    #[serde(default)]
-    model: Option<String>,
-    #[serde(default)]
-    thinking: Option<String>,
-    #[serde(default)]
-    openai_base_url: Option<String>,
-    #[serde(default)]
-    allowed_tools: Option<Option<Vec<String>>>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ThreadConfigExplainParams {
-    thread_id: ThreadId,
-}
-
-#[derive(Debug, Deserialize)]
-struct ThreadModelsParams {
-    thread_id: ThreadId,
-}
-
-#[derive(Debug, Deserialize)]
-struct ThreadEventsParams {
-    thread_id: ThreadId,
-    #[serde(default)]
-    since_seq: u64,
-    #[serde(default)]
-    max_events: Option<usize>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ThreadSubscribeParams {
-    thread_id: ThreadId,
-    #[serde(default)]
-    since_seq: u64,
-    #[serde(default)]
-    max_events: Option<usize>,
-    /// Long-poll timeout in milliseconds. When set to 0, returns immediately.
-    #[serde(default)]
-    wait_ms: Option<u64>,
-}
-
-#[derive(Debug, Deserialize)]
-struct TurnStartParams {
-    thread_id: ThreadId,
-    input: String,
-    #[serde(default)]
-    context_refs: Option<Vec<omne_protocol::ContextRef>>,
-    #[serde(default)]
-    attachments: Option<Vec<omne_protocol::TurnAttachment>>,
-    #[serde(default)]
-    priority: Option<omne_protocol::TurnPriority>,
-}
-
-#[derive(Debug, Deserialize)]
-struct TurnInterruptParams {
-    thread_id: ThreadId,
-    turn_id: TurnId,
-    #[serde(default)]
-    reason: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ProcessStartParams {
-    thread_id: ThreadId,
-    #[serde(default)]
-    turn_id: Option<TurnId>,
-    #[serde(default)]
-    approval_id: Option<omne_protocol::ApprovalId>,
-    argv: Vec<String>,
-    #[serde(default)]
-    cwd: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ProcessListParams {
-    #[serde(default)]
-    thread_id: Option<ThreadId>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ProcessKillParams {
-    process_id: ProcessId,
-    #[serde(default)]
-    turn_id: Option<TurnId>,
-    #[serde(default)]
-    approval_id: Option<omne_protocol::ApprovalId>,
-    #[serde(default)]
-    reason: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ProcessInterruptParams {
-    process_id: ProcessId,
-    #[serde(default)]
-    turn_id: Option<TurnId>,
-    #[serde(default)]
-    approval_id: Option<omne_protocol::ApprovalId>,
-    #[serde(default)]
-    reason: Option<String>,
-}
-
-#[derive(Debug, Deserialize, Clone, Copy)]
-#[serde(rename_all = "snake_case")]
-enum ProcessStream {
-    Stdout,
-    Stderr,
-}
-
-#[derive(Debug, Deserialize)]
-struct ProcessTailParams {
-    process_id: ProcessId,
-    #[serde(default)]
-    turn_id: Option<TurnId>,
-    #[serde(default)]
-    approval_id: Option<omne_protocol::ApprovalId>,
-    stream: ProcessStream,
-    #[serde(default)]
-    max_lines: Option<usize>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ProcessFollowParams {
-    process_id: ProcessId,
-    #[serde(default)]
-    turn_id: Option<TurnId>,
-    #[serde(default)]
-    approval_id: Option<omne_protocol::ApprovalId>,
-    stream: ProcessStream,
-    #[serde(default)]
-    since_offset: u64,
-    #[serde(default)]
-    max_bytes: Option<u64>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ProcessInspectParams {
-    process_id: ProcessId,
-    #[serde(default)]
-    turn_id: Option<TurnId>,
-    #[serde(default)]
-    approval_id: Option<omne_protocol::ApprovalId>,
-    #[serde(default)]
-    max_lines: Option<usize>,
-}
-
-#[derive(Debug, Deserialize, Clone, Copy)]
-#[serde(rename_all = "snake_case")]
-enum FileRoot {
-    Workspace,
-    Reference,
-}
-
-impl FileRoot {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Workspace => "workspace",
-            Self::Reference => "reference",
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct FileReadParams {
-    thread_id: ThreadId,
-    #[serde(default)]
-    turn_id: Option<TurnId>,
-    #[serde(default)]
-    approval_id: Option<omne_protocol::ApprovalId>,
-    #[serde(default)]
-    root: Option<FileRoot>,
-    path: String,
-    #[serde(default)]
-    max_bytes: Option<u64>,
-}
-
-#[derive(Debug, Deserialize)]
-struct FileGlobParams {
-    thread_id: ThreadId,
-    #[serde(default)]
-    turn_id: Option<TurnId>,
-    #[serde(default)]
-    approval_id: Option<omne_protocol::ApprovalId>,
-    #[serde(default)]
-    root: Option<FileRoot>,
-    pattern: String,
-    #[serde(default)]
-    max_results: Option<usize>,
-}
-
-#[derive(Debug, Deserialize)]
-struct FileGrepParams {
-    thread_id: ThreadId,
-    #[serde(default)]
-    turn_id: Option<TurnId>,
-    #[serde(default)]
-    approval_id: Option<omne_protocol::ApprovalId>,
-    #[serde(default)]
-    root: Option<FileRoot>,
-    query: String,
-    #[serde(default)]
-    is_regex: bool,
-    #[serde(default)]
-    include_glob: Option<String>,
-    #[serde(default)]
-    max_matches: Option<usize>,
-    #[serde(default)]
-    max_bytes_per_file: Option<u64>,
-    #[serde(default)]
-    max_files: Option<usize>,
-}
-
-#[derive(Debug, Deserialize)]
-struct RepoSearchParams {
-    thread_id: ThreadId,
-    #[serde(default)]
-    turn_id: Option<TurnId>,
-    #[serde(default)]
-    approval_id: Option<omne_protocol::ApprovalId>,
-    #[serde(default)]
-    root: Option<FileRoot>,
-    query: String,
-    #[serde(default)]
-    is_regex: bool,
-    #[serde(default)]
-    include_glob: Option<String>,
-    #[serde(default)]
-    max_matches: Option<usize>,
-    #[serde(default)]
-    max_bytes_per_file: Option<u64>,
-    #[serde(default)]
-    max_files: Option<usize>,
-}
-
-#[derive(Debug, Deserialize)]
-struct RepoIndexParams {
-    thread_id: ThreadId,
-    #[serde(default)]
-    turn_id: Option<TurnId>,
-    #[serde(default)]
-    approval_id: Option<omne_protocol::ApprovalId>,
-    #[serde(default)]
-    root: Option<FileRoot>,
-    #[serde(default)]
-    include_glob: Option<String>,
-    #[serde(default)]
-    max_files: Option<usize>,
-}
-
-#[derive(Debug, Deserialize)]
-struct RepoSymbolsParams {
-    thread_id: ThreadId,
-    #[serde(default)]
-    turn_id: Option<TurnId>,
-    #[serde(default)]
-    approval_id: Option<omne_protocol::ApprovalId>,
-    #[serde(default)]
-    root: Option<FileRoot>,
-    #[serde(default)]
-    include_glob: Option<String>,
-    #[serde(default)]
-    max_files: Option<usize>,
-    #[serde(default)]
-    max_bytes_per_file: Option<u64>,
-    #[serde(default)]
-    max_symbols: Option<usize>,
-}
-
-#[derive(Debug, Deserialize)]
-struct FileWriteParams {
-    thread_id: ThreadId,
-    #[serde(default)]
-    turn_id: Option<TurnId>,
-    #[serde(default)]
-    approval_id: Option<omne_protocol::ApprovalId>,
-    path: String,
-    text: String,
-    #[serde(default)]
-    create_parent_dirs: Option<bool>,
-}
-
-#[derive(Debug, Deserialize)]
-struct FilePatchParams {
-    thread_id: ThreadId,
-    #[serde(default)]
-    turn_id: Option<TurnId>,
-    #[serde(default)]
-    approval_id: Option<omne_protocol::ApprovalId>,
-    path: String,
-    patch: String,
-    #[serde(default)]
-    max_bytes: Option<u64>,
-}
-
-#[derive(Debug, Deserialize)]
-struct FileEditParams {
-    thread_id: ThreadId,
-    #[serde(default)]
-    turn_id: Option<TurnId>,
-    #[serde(default)]
-    approval_id: Option<omne_protocol::ApprovalId>,
-    path: String,
-    edits: Vec<FileEditOp>,
-    #[serde(default)]
-    max_bytes: Option<u64>,
-}
-
-#[derive(Debug, Deserialize)]
-struct FileEditOp {
-    old: String,
-    new: String,
-    #[serde(default)]
-    expected_replacements: Option<usize>,
-}
-
-#[derive(Debug, Deserialize)]
-struct FileDeleteParams {
-    thread_id: ThreadId,
-    #[serde(default)]
-    turn_id: Option<TurnId>,
-    #[serde(default)]
-    approval_id: Option<omne_protocol::ApprovalId>,
-    path: String,
-    #[serde(default)]
-    recursive: bool,
-}
-
-#[derive(Debug, Deserialize)]
-struct FsMkdirParams {
-    thread_id: ThreadId,
-    #[serde(default)]
-    turn_id: Option<TurnId>,
-    #[serde(default)]
-    approval_id: Option<omne_protocol::ApprovalId>,
-    path: String,
-    #[serde(default)]
-    recursive: bool,
-}
-
-#[derive(Debug, Deserialize)]
-struct ArtifactWriteParams {
-    thread_id: ThreadId,
-    #[serde(default)]
-    turn_id: Option<TurnId>,
-    #[serde(default)]
-    approval_id: Option<omne_protocol::ApprovalId>,
-    #[serde(default)]
-    artifact_id: Option<ArtifactId>,
-    artifact_type: String,
-    summary: String,
-    text: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct ArtifactListParams {
-    thread_id: ThreadId,
-    #[serde(default)]
-    turn_id: Option<TurnId>,
-    #[serde(default)]
-    approval_id: Option<omne_protocol::ApprovalId>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ArtifactReadParams {
-    thread_id: ThreadId,
-    #[serde(default)]
-    turn_id: Option<TurnId>,
-    #[serde(default)]
-    approval_id: Option<omne_protocol::ApprovalId>,
-    artifact_id: ArtifactId,
-    #[serde(default)]
-    max_bytes: Option<u64>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ArtifactDeleteParams {
-    thread_id: ThreadId,
-    #[serde(default)]
-    turn_id: Option<TurnId>,
-    #[serde(default)]
-    approval_id: Option<omne_protocol::ApprovalId>,
-    artifact_id: ArtifactId,
-}
-
-#[derive(Debug, Deserialize)]
-struct ApprovalDecideParams {
-    thread_id: ThreadId,
-    approval_id: omne_protocol::ApprovalId,
-    decision: omne_protocol::ApprovalDecision,
-    #[serde(default)]
-    remember: bool,
-    #[serde(default)]
-    reason: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ApprovalListParams {
-    thread_id: ThreadId,
-    #[serde(default)]
-    include_decided: bool,
-}
+type ApprovalDecideParams = omne_app_server_protocol::ApprovalDecideParams;
+type ApprovalListParams = omne_app_server_protocol::ApprovalListParams;

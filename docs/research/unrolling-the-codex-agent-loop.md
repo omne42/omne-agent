@@ -165,4 +165,4 @@ rg -n "TrustMode|list_changed|tools" -S
   - env：`OMNE_OPENAI_RESPONSES_CODEX_PARITY`（默认 `true`）
   - 仅当 provider 使用 Responses（`capabilities.reasoning=true`）时生效
 
-⚠️ 风险提示：parity 路径会把更多“原始上下文”写进本地 history（包括 tool outputs）。目前依赖文件权限（unix 下 `0600`）来降低风险；若要做到 Codex PR #1641 的级别（加密存储 + 内存密钥 + ZDR 生命周期），需要进一步演进本地存储层。
+⚠️ 风险提示：parity 路径会把更多“原始上下文”写进本地 history（包括 tool outputs）。当前已在 `openai_responses_history.jsonl` 落盘层引入 sealed 记录（默认加密存储，密钥来自 `.omne_data/keys/openai_responses_history.key` 或显式 env 覆盖），并保留旧明文记录的自动迁移；但这仍不是 PR #1641 级别的完整 ZDR 方案（例如内存密钥生命周期、远端零留存协同），后续仍需演进。

@@ -18,10 +18,30 @@ fn parse_bool_env_value(raw: &str) -> Option<bool> {
 }
 
 fn mcp_enabled() -> bool {
+    #[cfg(test)]
+    match MCP_ENABLED_OVERRIDE.load(std::sync::atomic::Ordering::Relaxed) {
+        0 => return false,
+        1 => return true,
+        _ => {}
+    }
+
     std::env::var(OMNE_ENABLE_MCP_ENV)
         .ok()
         .and_then(|value| parse_bool_env_value(&value))
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+static MCP_ENABLED_OVERRIDE: std::sync::atomic::AtomicI8 = std::sync::atomic::AtomicI8::new(-1);
+
+#[cfg(test)]
+fn set_mcp_enabled_override_for_tests(value: Option<bool>) {
+    let encoded = match value {
+        Some(true) => 1,
+        Some(false) => 0,
+        None => -1,
+    };
+    MCP_ENABLED_OVERRIDE.store(encoded, std::sync::atomic::Ordering::Relaxed);
 }
 
 fn is_valid_mcp_server_name(name: &str) -> bool {
@@ -49,56 +69,10 @@ async fn load_mcp_config_inner(
     omne_mcp_kit::Config::load(thread_root, override_path).await
 }
 
-#[derive(Debug, Deserialize)]
-struct McpListServersParams {
-    thread_id: ThreadId,
-    #[serde(default)]
-    turn_id: Option<TurnId>,
-    #[serde(default)]
-    approval_id: Option<omne_protocol::ApprovalId>,
-}
-
-#[derive(Debug, Deserialize)]
-struct McpListToolsParams {
-    thread_id: ThreadId,
-    #[serde(default)]
-    turn_id: Option<TurnId>,
-    #[serde(default)]
-    approval_id: Option<omne_protocol::ApprovalId>,
-    server: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct McpListResourcesParams {
-    thread_id: ThreadId,
-    #[serde(default)]
-    turn_id: Option<TurnId>,
-    #[serde(default)]
-    approval_id: Option<omne_protocol::ApprovalId>,
-    server: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct McpCallParams {
-    thread_id: ThreadId,
-    #[serde(default)]
-    turn_id: Option<TurnId>,
-    #[serde(default)]
-    approval_id: Option<omne_protocol::ApprovalId>,
-    server: String,
-    tool: String,
-    #[serde(default)]
-    arguments: Option<Value>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "snake_case")]
-struct McpServerDescriptor {
-    name: String,
-    transport: McpTransport,
-    argv: Vec<String>,
-    env_keys: Vec<String>,
-}
+type McpListServersParams = omne_app_server_protocol::McpListServersParams;
+type McpListToolsParams = omne_app_server_protocol::McpListToolsParams;
+type McpListResourcesParams = omne_app_server_protocol::McpListResourcesParams;
+type McpCallParams = omne_app_server_protocol::McpCallParams;
 
 #[derive(Default)]
 struct McpManager {
@@ -169,8 +143,8 @@ async fn spawn_mcp_connection(
     cmd.current_dir(thread_root);
     cmd.stderr(std::process::Stdio::piped());
     cmd.envs(server_cfg.env().iter());
-    apply_child_process_env_defaults(&mut cmd, Some(server_cfg.env()));
-    scrub_child_process_env(&mut cmd);
+    let _effective_env_summary = apply_child_process_hardening(&mut cmd, Some(server_cfg.env()))
+        .context("apply child process hardening for mcp server")?;
     let max_bytes_per_part = process_log_max_bytes_per_part();
     cmd.kill_on_drop(true);
 
@@ -189,7 +163,7 @@ async fn spawn_mcp_connection(
     )
     .await
     .with_context(|| format!("spawn mcp server {:?} ({server_name})", server_cfg.argv()))?;
-    let _ = client.take_notifications();
+    drop(client.take_notifications());
     let mut child = client
         .take_child()
         .ok_or_else(|| anyhow::anyhow!("mcp transport does not expose a child process"))?;
@@ -252,7 +226,7 @@ async fn spawn_mcp_connection(
     let initialize_params = serde_json::json!({
         "protocolVersion": MCP_PROTOCOL_VERSION,
         "clientInfo": {
-            "name": "omne-agent",
+            "name": "omneagent",
             "version": env!("CARGO_PKG_VERSION"),
         },
         "capabilities": {},
@@ -331,7 +305,7 @@ async fn maybe_write_mcp_result_artifact(
     turn_id: Option<TurnId>,
     summary: String,
     result: &Value,
-) -> anyhow::Result<Option<Value>> {
+) -> anyhow::Result<Option<omne_app_server_protocol::ArtifactWriteResponse>> {
     let size = json_value_size_bytes(result);
     if size <= MCP_RESULT_ARTIFACT_THRESHOLD_BYTES {
         return Ok(None);
@@ -355,6 +329,11 @@ async fn maybe_write_mcp_result_artifact(
         },
     )
     .await?;
+    let artifact_response =
+        serde_json::from_value::<omne_app_server_protocol::ArtifactWriteResponse>(
+            artifact_response,
+        )
+        .context("parse artifact/write response for mcp result artifact")?;
 
     Ok(Some(artifact_response))
 }
@@ -366,6 +345,15 @@ async fn deny_mcp_disabled(
     tool: &str,
     params: Value,
 ) -> anyhow::Result<Value> {
+    let result = serde_json::to_value(omne_app_server_protocol::McpDisabledDeniedResponse {
+        tool_id,
+        denied: true,
+        reason: "mcp is disabled".to_string(),
+        env: OMNE_ENABLE_MCP_ENV.to_string(),
+        error_code: Some("mcp_disabled".to_string()),
+    })
+    .context("serialize mcp disabled denied response")?;
+
     thread_rt
         .append_event(omne_protocol::ThreadEventKind::ToolStarted {
             tool_id,
@@ -379,16 +367,8 @@ async fn deny_mcp_disabled(
             tool_id,
             status: omne_protocol::ToolStatus::Denied,
             error: Some(format!("{OMNE_ENABLE_MCP_ENV}=true is required")),
-            result: Some(serde_json::json!({
-                "reason": "mcp is disabled",
-                "env": OMNE_ENABLE_MCP_ENV,
-            })),
+            result: Some(result.clone()),
         })
         .await?;
-    Ok(serde_json::json!({
-        "tool_id": tool_id,
-        "denied": true,
-        "reason": "mcp is disabled",
-        "env": OMNE_ENABLE_MCP_ENV,
-    }))
+    Ok(result)
 }

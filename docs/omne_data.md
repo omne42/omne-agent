@@ -25,6 +25,7 @@
     data/
     repos/
     reference/
+    keys/
     locks/
     logs/
     threads/
@@ -49,6 +50,7 @@
 - `data/`：运行时数据（预留；例如 session/索引/派生视图缓存；不提交）。
 - `repos/`：运行时数据（预留；例如 bare repo cache；不提交）。
 - `reference/`：Reference repo/snapshot（只读参考；不提交；见 `docs/reference_repo.md`）。
+- `keys/`：本地加密密钥材料（例如 Responses raw history 的本地密钥文件）；运行时数据，**永远不提交**。
 - `locks/`：运行时数据（预留；例如跨进程锁；不提交）。
 - `logs/`：运行时数据（预留；不提交）。
 - `threads/`：线程/事件/产物（运行时数据；不提交）。
@@ -109,6 +111,11 @@ OMNE_OPENAI_BASE_URL=https://api.openai.com/v1
 OMNE_OPENAI_MODEL=gpt-4.1
 # 可选：逗号分隔的 fallback provider 列表（优先级高于 config.toml 的 `openai.fallback_providers`）
 OMNE_OPENAI_FALLBACK_PROVIDERS=openai-auth-command,openai-codex-apikey
+
+# 可选：Responses raw history 存储编码（默认 encrypted）
+OMNE_OPENAI_RESPONSES_HISTORY_CODEC=encrypted
+# 可选：显式覆盖 Responses raw history 密钥（建议使用 base64）
+OMNE_OPENAI_RESPONSES_HISTORY_KEY_B64=...
 ```
 
 注意：
@@ -122,5 +129,5 @@ OMNE_OPENAI_FALLBACK_PROVIDERS=openai-auth-command,openai-codex-apikey
 
 只忽略运行时/secret：
 
-- 忽略：`.omne_data/tmp/`、`.omne_data/data/`、`.omne_data/repos/`、`.omne_data/reference/`、`.omne_data/threads/`、`.omne_data/locks/`、`.omne_data/logs/`、`.omne_data/daemon.sock`、`.omne_data/config_local.toml`、`.omne_data/.env`
+- 忽略：`.omne_data/tmp/`、`.omne_data/data/`、`.omne_data/repos/`、`.omne_data/reference/`、`.omne_data/keys/`、`.omne_data/threads/`、`.omne_data/locks/`、`.omne_data/logs/`、`.omne_data/daemon.sock`、`.omne_data/config_local.toml`、`.omne_data/.env`
 - 不忽略：`.omne_data/config.toml`、`.omne_data/spec/`

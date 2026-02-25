@@ -1,0 +1,94 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ThreadCheckpointRestoreDeniedResponse",
+  "type": "object",
+  "required": [
+    "checkpoint_id",
+    "denied",
+    "thread_id"
+  ],
+  "properties": {
+    "available": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "checkpoint_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "decision": {
+      "default": null,
+      "anyOf": [
+        {
+          "$ref": "#/definitions/ThreadCheckpointDecision"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "denied": {
+      "type": "boolean"
+    },
+    "load_error": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "mode": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "sandbox_policy": {
+      "default": null,
+      "anyOf": [
+        {
+          "$ref": "#/definitions/SandboxPolicy"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "sandbox_writable_roots": {
+      "default": null,
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "string"
+      }
+    },
+    "thread_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  },
+  "definitions": {
+    "SandboxPolicy": {
+      "type": "string",
+      "enum": [
+        "read_only",
+        "workspace_write",
+        "danger_full_access"
+      ]
+    },
+    "ThreadCheckpointDecision": {
+      "type": "string",
+      "enum": [
+        "allow",
+        "prompt",
+        "deny"
+      ]
+    }
+  }
+}

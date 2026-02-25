@@ -10,7 +10,15 @@ pub struct TurnStartParams {
     pub attachments: Option<Vec<omne_protocol::TurnAttachment>>,
     #[serde(default)]
     #[ts(optional)]
+    pub directives: Option<Vec<omne_protocol::TurnDirective>>,
+    #[serde(default)]
+    #[ts(optional)]
     pub priority: Option<omne_protocol::TurnPriority>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
+pub struct TurnStartResponse {
+    pub turn_id: omne_protocol::TurnId,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
@@ -20,4 +28,9 @@ pub struct TurnInterruptParams {
     #[serde(default)]
     #[ts(optional)]
     pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
+pub struct TurnInterruptResponse {
+    pub ok: bool,
 }

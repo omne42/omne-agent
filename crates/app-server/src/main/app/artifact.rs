@@ -26,6 +26,13 @@ async fn handle_artifact_request(
             },
             Err(err) => invalid_params(id, err),
         },
+        "artifact/versions" => match serde_json::from_value::<ArtifactVersionsParams>(params) {
+            Ok(params) => match handle_artifact_versions(server, params).await {
+                Ok(result) => JsonRpcResponse::ok(id, result),
+                Err(err) => JsonRpcResponse::err(id, JSONRPC_INTERNAL_ERROR, err.to_string(), None),
+            },
+            Err(err) => invalid_params(id, err),
+        },
         "artifact/delete" => match serde_json::from_value::<ArtifactDeleteParams>(params) {
             Ok(params) => match handle_artifact_delete(server, params).await {
                 Ok(result) => JsonRpcResponse::ok(id, result),
@@ -33,10 +40,6 @@ async fn handle_artifact_request(
             },
             Err(err) => invalid_params(id, err),
         },
-        _ => {
-            let _ = params;
-            method_not_found(id, method)
-        }
+        _ => method_not_found(id, method),
     }
 }
-

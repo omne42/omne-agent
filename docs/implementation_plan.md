@@ -36,7 +36,7 @@
 ### 1.2 暂缓（明确后做）
 
 - GitHub PR / merge 自动化（先做 adapter，不要污染核心域）。
-- 桌面 GUI（先把控制协议与事件模型钉死，GUI 只是 client）。
+- Web/桌面 GUI（当前阶段暂停，不做实现；如未来恢复需单独立项）。
 - Node.js 分发/集成（npm launcher + TS types/client；v0.3.0；见 `docs/TODO.md`）。
 - 分布式多机执行（先单机并发）。
 
@@ -137,7 +137,8 @@
 Attention/Inbox（派生视图）：
 
 - v0.2.0 MVP（已实现；状态枚举见 `docs/v0.2.0_parity.md`）：`NeedApproval` / `Running` / `Failed` / `Stuck` / `Done` / `Idle` / `Paused` / `Archived`
-- 目标态扩展（TODO；不是 v0.2.0 gate）：语义标记（markers）`plan_ready`（等待用户确认）/ `diff_ready`（等待 review）/ `test_failed`（等待修复/降级）（见 `docs/attention.md` 的 marker 草案）
+- v0.2.0 增量（已实现）：`thread/attention` 已支持显式 marker 事件优先聚合：`plan_ready`/`diff_ready`（`artifact/write` 触发 `AttentionMarkerSet`）、`test_failed`（测试失败触发 `AttentionMarkerSet`，测试成功触发 `AttentionMarkerCleared`）、`fan_out_linkage_issue`（`fan_out_linkage_issue` / `fan_out_linkage_issue_clear`）与 `fan_out_auto_apply_error`（`fan_out_result.isolated_write_auto_apply.error`）
+- 兼容策略（已实现）：对历史线程保留推断回退，避免升级前数据不可见（见 `docs/attention.md`）
 
 > RTS 的关键不是“同时跑 100 个 agent”，而是用户能在 30 秒内定位：**哪个在卡、为什么卡、我该按哪个按钮**。
 
@@ -160,7 +161,7 @@ Attention/Inbox（派生视图）：
 v0.2.0 现状：
 
 - 已提供最小执行入口：`.omne_data/spec/workspace.yaml` + `thread/hook_run setup|run|archive`（见 `docs/workspace_hooks.md`）。
-- 自动触发（创建后自动 setup / archive 时自动 teardown）仍是 TODO（需要调度层编排）。
+- 自动触发已部分落地：`thread/start` 自动尝试 `setup`、`thread/archive` 自动尝试 `archive`（返回体 `auto_hook` 可观测）；`run` 仍保留手动触发（`thread/hook_run run`）。
 
 参考实现方向：
 
@@ -205,7 +206,7 @@ v0.2.0 现状：
 ### M1：事件模型 + 存储 + 回放
 
 - `Thread/Turn/Item` + file storage + `list/show/export/replay`。
-- Attention view：能列出 `NeedApproval/Failed/Stuck/...`，并附带可行动的语义标记（例如 `plan_ready/diff_ready/test_failed`；TODO）。
+- Attention view：能列出 `NeedApproval/Failed/Stuck/...`，并附带可行动的语义标记（`plan_ready/diff_ready/test_failed/fan_out_linkage_issue/fan_out_auto_apply_error` 已支持显式事件优先聚合，并保留推断回退）。
 
 ### M2：执行层（tools + approvals + sandbox）
 

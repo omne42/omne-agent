@@ -11,42 +11,42 @@ struct Pattern {
     replacement: &'static str,
 }
 
+fn build_pattern(regex: &'static str, replacement: &'static str) -> Option<Pattern> {
+    match Regex::new(regex) {
+        Ok(compiled) => Some(Pattern {
+            regex: compiled,
+            replacement,
+        }),
+        Err(err) => {
+            tracing::error!(
+                pattern = regex,
+                error = %err,
+                "invalid built-in redaction regex; skipping pattern"
+            );
+            None
+        }
+    }
+}
+
 fn patterns() -> &'static [Pattern] {
     static PATTERNS: OnceLock<Vec<Pattern>> = OnceLock::new();
     PATTERNS.get_or_init(|| {
-        vec![
-            Pattern {
-                regex: Regex::new(
-                    r"(?s)-----BEGIN [A-Z ]+ PRIVATE KEY-----.*?-----END [A-Z ]+ PRIVATE KEY-----",
-                )
-                .expect("private key regex"),
-                replacement: "<REDACTED PRIVATE KEY>",
-            },
-            Pattern {
-                regex: Regex::new(r"sk-[A-Za-z0-9]{20,}").expect("sk regex"),
-                replacement: "sk-<REDACTED>",
-            },
-            Pattern {
-                regex: Regex::new(r"ghp_[A-Za-z0-9]{20,}").expect("ghp regex"),
-                replacement: "ghp_<REDACTED>",
-            },
-            Pattern {
-                regex: Regex::new(r"github_pat_[A-Za-z0-9_]{20,}").expect("github_pat regex"),
-                replacement: "github_pat_<REDACTED>",
-            },
-            Pattern {
-                regex: Regex::new(r"AIza[0-9A-Za-z_-]{35}").expect("google api key regex"),
-                replacement: "AIza<REDACTED>",
-            },
-            Pattern {
-                regex: Regex::new(r"AKIA[0-9A-Z]{16}").expect("aws access key id regex"),
-                replacement: "AKIA<REDACTED>",
-            },
-            Pattern {
-                regex: Regex::new(r"(?i)\bbearer\s+[A-Za-z0-9._-]{20,}").expect("bearer regex"),
-                replacement: "Bearer <REDACTED>",
-            },
-        ]
+        let specs = [
+            (
+                r"(?s)-----BEGIN [A-Z ]+ PRIVATE KEY-----.*?-----END [A-Z ]+ PRIVATE KEY-----",
+                "<REDACTED PRIVATE KEY>",
+            ),
+            (r"sk-[A-Za-z0-9]{20,}", "sk-<REDACTED>"),
+            (r"ghp_[A-Za-z0-9]{20,}", "ghp_<REDACTED>"),
+            (r"github_pat_[A-Za-z0-9_]{20,}", "github_pat_<REDACTED>"),
+            (r"AIza[0-9A-Za-z_-]{35}", "AIza<REDACTED>"),
+            (r"AKIA[0-9A-Z]{16}", "AKIA<REDACTED>"),
+            (r"(?i)\bbearer\s+[A-Za-z0-9._-]{20,}", "Bearer <REDACTED>"),
+        ];
+        specs
+            .into_iter()
+            .filter_map(|(regex, replacement)| build_pattern(regex, replacement))
+            .collect()
     })
 }
 
@@ -58,7 +58,7 @@ pub fn redact_text(input: &str) -> String {
     out
 }
 
-fn is_sensitive_key(key: &str) -> bool {
+pub fn is_sensitive_key(key: &str) -> bool {
     let k = key.trim().trim_start_matches('-').to_ascii_lowercase();
     [
         "api_key",
@@ -96,6 +96,45 @@ fn redact_json_value(value: &mut Value) {
                     *v = Value::String(REDACTED.to_string());
                 } else {
                     redact_json_value(v);
+                }
+            }
+        }
+    }
+}
+
+fn is_usage_counter_key(key: &str) -> bool {
+    matches!(
+        key.trim().to_ascii_lowercase().as_str(),
+        "total_tokens"
+            | "input_tokens"
+            | "output_tokens"
+            | "cache_input_tokens"
+            | "cache_creation_input_tokens"
+    )
+}
+
+fn redact_token_usage_value(value: &mut Value) {
+    match value {
+        Value::Null | Value::Bool(_) | Value::Number(_) => {}
+        Value::String(s) => {
+            *s = redact_text(s);
+        }
+        Value::Array(items) => {
+            for item in items {
+                redact_token_usage_value(item);
+            }
+        }
+        Value::Object(map) => {
+            for (k, v) in map.iter_mut() {
+                if is_usage_counter_key(k) {
+                    match v {
+                        Value::Null | Value::Number(_) => {}
+                        _ => redact_json_value(v),
+                    }
+                } else if is_sensitive_key(k) {
+                    *v = Value::String(REDACTED.to_string());
+                } else {
+                    redact_token_usage_value(v);
                 }
             }
         }
@@ -232,6 +271,7 @@ pub(crate) fn redact_thread_event_kind(kind: &mut ThreadEventKind) {
             openai_base_url,
             sandbox_writable_roots,
             allowed_tools,
+            execpolicy_rules,
             ..
         } => {
             if let Some(model) = model {
@@ -248,6 +288,11 @@ pub(crate) fn redact_thread_event_kind(kind: &mut ThreadEventKind) {
             if let Some(Some(tools)) = allowed_tools {
                 for tool in tools {
                     *tool = redact_text(tool);
+                }
+            }
+            if let Some(rules) = execpolicy_rules {
+                for rule in rules {
+                    *rule = redact_text(rule);
                 }
             }
         }
@@ -296,7 +341,7 @@ pub(crate) fn redact_thread_event_kind(kind: &mut ThreadEventKind) {
                 result.output = redact_text(&result.output);
             }
             if let Some(token_usage) = token_usage.as_mut() {
-                redact_json_value(token_usage);
+                redact_token_usage_value(token_usage);
             }
         }
         ThreadEventKind::AssistantMessage { text, .. } => {
@@ -317,6 +362,23 @@ pub(crate) fn redact_thread_event_kind(kind: &mut ThreadEventKind) {
             }
         }
         ThreadEventKind::ProcessExited { reason, .. } => {
+            if let Some(reason) = reason {
+                *reason = redact_text(reason);
+            }
+        }
+        ThreadEventKind::AttentionMarkerSet {
+            artifact_type,
+            command,
+            ..
+        } => {
+            if let Some(artifact_type) = artifact_type {
+                *artifact_type = redact_text(artifact_type);
+            }
+            if let Some(command) = command {
+                *command = redact_text(command);
+            }
+        }
+        ThreadEventKind::AttentionMarkerCleared { reason, .. } => {
             if let Some(reason) = reason {
                 *reason = redact_text(reason);
             }
@@ -342,6 +404,7 @@ pub(crate) fn redact_thread_event_kind(kind: &mut ThreadEventKind) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use omne_protocol::TurnId;
 
     #[test]
     fn redacts_known_token_shapes() {
@@ -350,5 +413,70 @@ mod tests {
         assert!(!redacted.contains("sk-1234567890abcdefghijklmnop"));
         assert!(redacted.contains("sk-<REDACTED>"));
         assert!(redacted.contains("Bearer <REDACTED>"));
+    }
+
+    #[test]
+    fn sensitive_key_detection_covers_common_aliases() {
+        assert!(is_sensitive_key("authorization"));
+        assert!(is_sensitive_key("--api_key"));
+        assert!(is_sensitive_key("x-refresh-token"));
+        assert!(is_sensitive_key("session_cookie"));
+        assert!(!is_sensitive_key("summary"));
+        assert!(!is_sensitive_key("artifact_type"));
+    }
+
+    #[test]
+    fn agent_step_usage_keeps_token_counters() {
+        let mut kind = ThreadEventKind::AgentStep {
+            turn_id: TurnId::new(),
+            step: 1,
+            model: "gpt-5".to_string(),
+            response_id: "resp_1".to_string(),
+            text: Some("ok".to_string()),
+            tool_calls: Vec::new(),
+            tool_results: Vec::new(),
+            token_usage: Some(serde_json::json!({
+                "total_tokens": 120,
+                "input_tokens": 90,
+                "output_tokens": 30,
+                "cache_input_tokens": 55,
+                "cache_creation_input_tokens": 8,
+                "api_token": "shhh",
+                "nested": {
+                    "token": "secret"
+                }
+            })),
+            warnings_count: None,
+        };
+
+        redact_thread_event_kind(&mut kind);
+
+        let ThreadEventKind::AgentStep { token_usage, .. } = kind else {
+            unreachable!("expected AgentStep");
+        };
+        let usage = token_usage.expect("token_usage should exist");
+        assert_eq!(usage.get("total_tokens").and_then(Value::as_u64), Some(120));
+        assert_eq!(
+            usage.get("cache_input_tokens").and_then(Value::as_u64),
+            Some(55)
+        );
+        assert_eq!(
+            usage
+                .get("cache_creation_input_tokens")
+                .and_then(Value::as_u64),
+            Some(8)
+        );
+        assert_eq!(
+            usage.get("api_token").and_then(Value::as_str),
+            Some("<REDACTED>")
+        );
+        assert_eq!(
+            usage
+                .get("nested")
+                .and_then(Value::as_object)
+                .and_then(|nested| nested.get("token"))
+                .and_then(Value::as_str),
+            Some("<REDACTED>")
+        );
     }
 }

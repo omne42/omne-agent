@@ -63,11 +63,50 @@
 ```bash
 omne thread list-meta
 omne thread list-meta --json
+omne thread list-meta --include-attention-markers --json
 ```
 
 用途：
 
 - 快速列出所有 threads 的 `attention_state`（适合 inbox 轮询）。
+- 当需要 marker 详情（而不只是布尔摘要）时，可用 `--include-attention-markers` 返回 `attention_markers` 对象（结构与 `thread/attention` 对齐）。
+- `omne thread list-meta` 的纯文本输出 `markers=...` 现会包含 `fan_in_dependency_blocked` / `fan_in_result_diagnostics` / `subagent_proxy_approval` 与 `token_budget_exceeded` / `token_budget_warning`（对应字段为 true 时）。
+- 同一行在 `count>0` 时会输出 `subagent_pending=<count>`，用于快速查看待处理 `subagent/proxy_approval` 数量。
+
+配套 inbox 视图（CLI）：
+
+```bash
+omne inbox
+omne inbox --details
+omne inbox --only-fan-out-linkage-issue
+omne inbox --only-fan-out-auto-apply-error
+omne inbox --only-fan-in-dependency-blocked
+omne inbox --only-fan-in-result-diagnostics
+omne inbox --only-token-budget-exceeded
+omne inbox --only-token-budget-warning
+omne inbox --only-subagent-proxy-approval
+```
+
+- `--only-fan-out-linkage-issue`：仅保留 `has_fan_out_linkage_issue=true` 的 thread，便于聚焦 fan-out 关联异常。
+- `--only-fan-out-auto-apply-error`：仅保留 `has_fan_out_auto_apply_error=true` 的 thread，便于聚焦 fan-out 自动回写失败。
+- `--only-fan-in-dependency-blocked`：仅保留存在 fan-in 依赖阻塞摘要的 thread，便于聚焦依赖链阻塞。
+- `--only-fan-in-result-diagnostics`：仅保留存在 fan-in 结果诊断摘要的 thread，便于聚焦 fan-in 结果匹配/扫描异常。
+- `--only-token-budget-exceeded`：仅保留 token budget 已超限（`token_budget_exceeded=true`）的 thread，便于优先处理硬阻塞。
+- `--only-token-budget-warning`：仅保留 token budget 预警激活的 thread（`token_budget_utilization` 达阈值且未 exceeded），阈值与 bell 口径一致（默认 90%，可由 `OMNE_NOTIFY_TOKEN_BUDGET_UTILIZATION_THRESHOLD_PCT` 覆盖）。
+- `--only-subagent-proxy-approval`：仅保留存在待处理 `subagent/proxy_approval` 的父 thread（由 `thread/list_meta.pending_subagent_proxy_approvals>0` 派生）。
+- `--details`：除了 attention 详情，还会追加 fan-out 自动回写摘要、fan-in 依赖阻塞摘要，以及 fan-in 结果诊断摘要（若存在 `dependency_blocked/dependency_blocker_*`，并包含阻塞计数）。
+  - `markers` 行会额外显示 `token_budget_exceeded` / `token_budget_warning`（后者阈值与 bell 口径一致）。
+  - 当启用 token budget 时，会额外显示 `token_budget` 快照行（`remaining/limit/utilization/exceeded`）。
+  - `--json` 行会包含布尔字段 `token_budget_warning_active`（由 `thread/list_meta` 下发；阈值口径与 bell 一致）。
+  - 若存在 subagent 代理审批，还会追加 `subagent_pending` 行（`total` + `states` 分布），便于快速判断子线程整体进度。
+  - `--json --details` 下，每个 thread 行会额外包含 `subagent_pending` 对象（`total` + `states`），可直接供看板/告警消费。
+  - watch 模式下摘要按“内容变化”输出，未变化不会重复刷屏；仅变化的摘要类型会输出（含 `subagent_pending`）。
+  - 摘要从存在变为不存在时会输出一次 `cleared` 信号，方便下游消费。
+  - JSON 摘要会包含 `dependency_blocked_ratio` 与 `changed_fields`，可直接用于看板/告警展示。
+  - 调试开关：
+    - `omne watch <thread_id> --debug-summary-cache`（或 `OMNE_WATCH_SUMMARY_CACHE_DEBUG=1`）：输出 `watch_summary_refresh`，包含 `auto_apply/fan_in/fan_in_diag/subagent` 的 refresh/source；`--json` 下会输出 `kind=watch_summary_refresh_debug` 的结构化 JSON 行。
+    - `omne inbox --watch --details --debug-summary-cache`（或 `OMNE_INBOX_SUMMARY_CACHE_DEBUG=1`）：输出 `inbox_summary_cache`，包含 `fan_out/fan_in/fan_in_diag/subagent` 的 cache/attention/fetch/skip 统计。
+    - `omne inbox --watch --details --json --debug-summary-cache` 时，JSON 输出会额外带 `summary_cache_stats` 对象（结构化统计，与 stderr 文本统计字段一致）。
 
 ### 2.2 `thread/attention`（单 thread 详情）
 
@@ -80,59 +119,104 @@ omne thread attention <thread_id> --json
 
 - `attention_state`
 - `pending_approvals`（可用于定位阻塞点）
+  - 当 action 为 `subagent/proxy_approval` 时，`pending_approvals[].summary` 会尽力补充
+    - `child_attention_state`
+    - `child_last_turn_status`
+    便于在父 thread 直接判断子 thread 当前是否仍在运行/已完成/失败，而无需手动切换查询子 thread。
 - `running_processes` / `failed_processes`
+- `stale_processes`（后台进程“无输出但仍运行”的接管信号）
 - `last_turn_status/last_turn_reason`
+- `token_budget_limit/token_budget_remaining/token_budget_utilization/token_budget_exceeded/token_budget_warning_active`（启用 `OMNE_AGENT_MAX_TOTAL_TOKENS` 时）
 
 ---
 
-## 3) TODO：状态扩展（PlanReady/DiffReady/TestFailed）
+## 3) 已实现：状态扩展（PlanReady/DiffReady/TestFailed/FanOutLinkageIssue/FanOutAutoApplyError）
 
-> 这是目标态扩展，**v0.2.0 未实现**（见 `docs/v0.2.0_parity.md`、`docs/rts_workflow.md`）。
+`thread/attention` 已增加 marker 输出（当前实现为“显式事件优先 + 推断回退”）：
 
-需求动机：
+- `attention_markers.plan_ready`：
+  - 来源（优先）：最新 `AttentionMarkerSet{marker=plan_ready}` 事件
+  - 清除：`AttentionMarkerCleared{marker=plan_ready}`（当前在新 turn 开始时触发）
+  - 回退来源：本 thread 最新 `artifact_type="plan"` artifact（兼容历史数据）
+  - 字段：`set_at` + `artifact_id` + `artifact_type` + `turn_id?`
+- `attention_markers.diff_ready`：
+  - 来源（优先）：最新 `AttentionMarkerSet{marker=diff_ready}` 事件
+  - 清除：`AttentionMarkerCleared{marker=diff_ready}`（当前在新 turn 开始时触发）
+  - 回退来源：本 thread 最新 `artifact_type in {"diff","patch"}` artifact（兼容历史数据）
+  - 字段同上
+- `attention_markers.test_failed`：
+  - 来源（优先）：`AttentionMarkerSet{marker=test_failed}` / `AttentionMarkerCleared{marker=test_failed}` 事件序列（后者会清除 marker）
+  - 回退来源：本 thread 最新“测试命令失败”的 `ProcessExited(exit_code!=0)`（由 `ProcessStarted.argv` 识别 `cargo test` / `pytest` / `npm test` / `go test` 等，兼容历史数据）
+  - 字段：`set_at` + `process_id` + `turn_id?` + `exit_code?` + `command?`
+- `attention_markers.fan_out_linkage_issue`：
+  - 来源（优先）：`AttentionMarkerSet{marker=fan_out_linkage_issue}` / `AttentionMarkerCleared{marker=fan_out_linkage_issue}`（前者由 `artifact_type="fan_out_linkage_issue"` 写入触发；后者由 `artifact_type="fan_out_linkage_issue_clear"` 或新 turn 开始触发）
+  - 回退来源：本 thread 最新 `artifact_type="fan_out_linkage_issue"` artifact（兼容历史数据）
+  - 字段：`set_at` + `artifact_id` + `artifact_type` + `turn_id?`
+- `attention_markers.fan_out_auto_apply_error`：
+  - 来源（优先）：`AttentionMarkerSet{marker=fan_out_auto_apply_error}` / `AttentionMarkerCleared{marker=fan_out_auto_apply_error}`（由 `artifact_type="fan_out_result"` 的结构化 payload 中 `isolated_write_auto_apply.error` 是否存在触发；新 turn 开始时也会清除）
+  - 回退来源：本 thread 最新可解析的 `artifact_type="fan_out_result"` artifact：若 `isolated_write_auto_apply.error` 非空则置位；若最新可解析结果无 error 则视为已清除（兼容历史数据）
+  - 字段：`set_at` + `artifact_id` + `artifact_type` + `turn_id?`
+- `attention_markers.token_budget_warning`：
+  - 来源：`AttentionMarkerSet{marker=token_budget_warning}` / `AttentionMarkerCleared{marker=token_budget_warning}`（由 token budget 利用率跨阈值上升沿/回落触发）
+  - 字段：`set_at` + `turn_id?`
+- `attention_markers.token_budget_exceeded`：
+  - 来源：`AttentionMarkerSet{marker=token_budget_exceeded}` / `AttentionMarkerCleared{marker=token_budget_exceeded}`（由 token budget 超限上升沿/回落触发）
+  - 字段：`set_at` + `turn_id?`
 
-- 计划草案/差异产物/测试失败是“语义状态”，不该要求用户自己解析 stdout 或 grep。
+同时，`thread/attention` 还会输出布尔摘要：
 
-最小可行方向（两条路，先别发明 DSL）：
+- `has_plan_ready`
+- `has_diff_ready`
+- `has_fan_out_linkage_issue`
+- `has_fan_out_auto_apply_error`
+- `has_fan_in_dependency_blocked`
+- `has_fan_in_result_diagnostics`
+- `has_test_failed`
 
-- **Option A（推断，不推荐）**：从 artifacts / process argv 推断（容易误判；只作为临时路线）：
-  - `plan_ready`：检测到最新 artifact `artifact_type="plan"`（或约定类型）
-  - `diff_ready`：检测到最新 artifact `artifact_type="diff"`（或约定类型）
-  - `test_failed`：检测到特定流程产生的失败进程/产物（容易误判）
-- **Option B（推荐：显式标注，派生稳定；v1 建议写死）**：
-  - 引入明确的标记（事件或 thread state 字段），Attention 只读这些标记，不靠猜。
-  - v1 推荐：新增轻量事件（占位名）：
-    - `AttentionMarkerUpdated { kind, status: "set"|"cleared", turn_id?, artifact_id?, process_id?, summary? }`
-  - 允许的 `kind`（写死，snake_case）：
-    - `plan_ready`：存在可审阅的 plan artifact（建议 `artifact_type="plan"`）
-    - `diff_ready`：存在可审阅的 diff/patch artifact（建议 `artifact_type="diff"` 或 `artifact_type="patch"`）
-    - `test_failed`：测试失败（建议同时生成 `artifact_type="test_report"` 或复用 `artifact_type="stuck_report"` 的模板思路）
-  - 校验（fail-closed）：
-    - unknown `kind`：直接报错（避免“看起来标了，实际 silently ignore”）。
-    - `artifact_id/process_id` 必须能在本 thread 内定位；否则报错。
-  - 清理语义（写死一个简单规则）：
-    - 默认在下一次 `TurnStarted` 时自动清掉 `plan_ready/diff_ready/test_failed`（因为用户已经开始推进下一步）。
-    - 允许显式 clear（例如 UI 点击“已读/已处理”）：
-      - `AttentionMarkerUpdated { kind, status: "cleared" }`
-  - 派生与输出（建议写死，避免把 `attention_state` 搞成万能枚举）：
-    - `attention_state` 保持 v0.2.0 口径与优先级（仍是 bell 的主要触发源；见 `docs/notifications.md`）。
-    - `thread/attention` 额外输出：
-      - `attention_markers={ plan_ready?, diff_ready?, test_failed? }`
-        - 每个 marker 至少包含 `set_at`（时间戳）+ `turn_id?` + `artifact_id?/process_id?`（用于定位可行动对象）。
-    - `thread/list_meta`（inbox 轮询）至少输出：
-      - `has_plan_ready/has_diff_ready/has_test_failed`（或等价的 count/marker 摘要）
+当存在 fan-out 自动回写未应用时，还会输出轻量摘要（当前实现）：
 
-验收（未来实现时）：
+- `fan_out_auto_apply`（可选）：
+  - `task_id`
+  - `status`（`error` / `attempted_not_applied` / `enabled_not_attempted` / `disabled`）
+  - `stage?` / `patch_artifact_id?` / `recovery_commands?` / `recovery_1?` / `error?`
+  - 语义：优先使用“最新可解析 fan_out_result”的结构化内容；若最新结果已 `applied=true`，该字段会消失（而不是沿用更旧未应用记录）。
 
-- `omne inbox --watch --json` 能直接看到 `has_plan_ready/has_diff_ready/has_test_failed`（或等价字段），不依赖解析 stdout。
+当存在 fan-in 依赖阻塞时，还会输出轻量摘要（当前实现）：
+
+- `fan_in_dependency_blocker`（可选）：
+  - `task_id`
+  - `status`
+  - `dependency_blocked_count` / `task_count` / `dependency_blocked_ratio`
+  - `blocker_task_id?` / `blocker_status?` / `reason?`
+  - 语义：优先使用“最新可解析 fan_in_summary”的结构化内容；若最新摘要已清除阻塞，该字段会消失（而不是沿用更旧阻塞记录）。
+
+当存在 fan-in 结果诊断时，还会输出轻量摘要（当前实现）：
+
+- `fan_in_result_diagnostics`（可选）：
+  - `task_count`
+  - `diagnostics_tasks`
+  - `diagnostics_matched_completion_total`
+  - `diagnostics_pending_matching_tool_ids_total`
+  - `diagnostics_scan_last_seq_max`
+  - 语义：优先使用“最新可解析 fan_in_summary”的结构化内容；若最新摘要不存在诊断信息，该字段会消失。
+
+注意：
+
+- `plan_ready/diff_ready/test_failed/fan_out_linkage_issue/fan_out_auto_apply_error/token_budget_warning/token_budget_exceeded` 已支持显式事件化（`AttentionMarkerSet`）；其中前五者与 `token_budget_*` 都支持显式清除（`AttentionMarkerCleared`，`token_budget_*` 由预算状态回落自动清除）；`thread/attention` 会优先使用显式事件，并对历史数据回退推断。
+- 当前布尔摘要在 `thread/attention` 与 `thread/list_meta` 均可用（便于 inbox 直接按 marker 过滤）。
+- `thread/list_meta` 与 `thread/attention` 均会在存在时携带 `fan_out_auto_apply` 轻量摘要，便于 inbox/watch 直接展示而不必逐线程读取 artifact。
+- `thread/list_meta` 与 `thread/attention` 均会在阻塞存在时携带 `fan_in_dependency_blocker` 轻量摘要，便于 inbox/watch 直接展示而不必逐线程读取 artifact。
+- `fan_out_auto_apply_error` 目前会把 `attention_state` 提升为 `failed`（便于统一失败语义），同时保留专用 marker/布尔字段用于精准筛选。
+- `thread/list_meta` 与 `thread/attention` 现已携带 token budget 快照字段，供 `watch/inbox --bell` 做 `token_budget_exceeded` 与 `token_budget_warning`（高利用率）提醒（详见 `docs/notifications.md`）。
+- `thread/usage` / `thread/state` / `thread/attention` / `thread/list_meta` 四个接口现已使用同一套服务端预算快照口径：
+  - `token_budget_limit` 为空时，`remaining/utilization/exceeded/warning_active` 全部为空；
+  - `token_budget_exceeded=true` 时，`token_budget_warning_active` 必为 `false`（不会同时为 true）。
 
 ---
 
-## 4) TODO：`stale_processes`（后台进程无输出提醒）
+## 4) 已实现：`stale_processes`（后台进程无输出提醒）
 
-> 规格草案见 `docs/notifications.md`，这里把它落到 Attention 的字段化口径上。
-
-建议扩展（TODO）：
+> 具体算法与通知口径见 `docs/notifications.md`，这里给 Attention 侧的字段语义。
 
 - `thread/attention` 输出新增字段：
   - `stale_processes=[{process_id, idle_seconds, last_update_at, stdout_path, stderr_path}]`

@@ -20,10 +20,17 @@
 
         if let Some(overlay) = state.overlays.last() {
             match overlay {
-                Overlay::CommandPalette(_) if state.active_thread.is_none() => {
-                    draw_overlay(f, overlay);
+                Overlay::CommandPalette(_) => {
+                    let has_underlay_overlay = state
+                        .overlays
+                        .iter()
+                        .rev()
+                        .nth(1)
+                        .is_some_and(|item| !matches!(item, Overlay::CommandPalette(_)));
+                    if state.active_thread.is_none() || has_underlay_overlay {
+                        draw_overlay(f, overlay);
+                    }
                 }
-                Overlay::CommandPalette(_) => {}
                 _ => draw_overlay(f, overlay),
             }
         }
@@ -66,16 +73,38 @@
                 let model = state.header.model.as_deref().unwrap_or("-");
                 let thinking = state.header.thinking.as_deref().unwrap_or("-");
                 let mcp = if state.header.mcp_enabled { "on" } else { "off" };
+                let allowed = state
+                    .header
+                    .allowed_tools_count
+                    .map(|count| count.to_string())
+                    .unwrap_or_else(|| "*".to_string());
+                let exec_rules = state.header.execpolicy_rules_count;
+                let gate = format!("{allowed}/{exec_rules}");
+                let subagent = state
+                    .subagent_pending_summary
+                    .as_ref()
+                    .map(|summary| format_subagent_pending_footer(summary, width))
+                    .unwrap_or_default();
 
                 if width < 80 {
-                    format!("{context_left}  th={short} mode={mode} model={model} (Ctrl-K)")
+                    format!(
+                        "{context_left}  th={short} m={mode} md={model} g={gate}{subagent} (Ctrl-K)"
+                    )
                 } else {
                     format!(
-                        "{context_left}  thread={short} agent={mode} provider={provider} model={model} thinking={thinking} mcp={mcp} (Ctrl-K=commands)"
+                        "{context_left}  thread={short} agent={mode} provider={provider} model={model} thinking={thinking} mcp={mcp} gate={gate}{subagent} (Ctrl-K=commands)"
                     )
                 }
             }
-            None => format!("{context_left}  threads (Ctrl-K=commands)"),
+            None => {
+                let filter = thread_picker_filter_label(
+                    state.only_fan_out_linkage_issue,
+                    state.only_fan_out_auto_apply_error,
+                    state.only_fan_in_dependency_blocked,
+                    state.only_subagent_proxy_approval,
+                );
+                format!("{context_left}  threads f={filter} (Ctrl-K=commands)")
+            }
         };
 
         let style = Style::default().fg(Color::Gray);
@@ -99,6 +128,23 @@
     fn draw_footer(f: &mut ratatui::Frame, state: &UiState, area: ratatui::layout::Rect) {
         let paragraph = Paragraph::new(build_footer_line(state, area.width));
         f.render_widget(paragraph, area);
+    }
+
+    fn format_subagent_pending_footer(summary: &SubagentPendingSummary, width: u16) -> String {
+        if width < 110 {
+            return format!(" sub={}", summary.total);
+        }
+        let mut states = summary
+            .states
+            .iter()
+            .take(3)
+            .map(|(state, count)| format!("{state}:{count}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        if summary.states.len() > 3 {
+            states.push_str(",...");
+        }
+        format!(" sub={}({states})", summary.total)
     }
 
     fn parse_rfc3339_timestamp(value: &str) -> Option<OffsetDateTime> {
@@ -192,4 +238,3 @@
         }
         out
     }
-

@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ProcessTailResponse",
+  "type": "object",
+  "required": [
+    "text",
+    "tool_id"
+  ],
+  "properties": {
+    "text": {
+      "type": "string"
+    },
+    "tool_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

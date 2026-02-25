@@ -1,0 +1,77 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ThreadHookRunResponse",
+  "type": "object",
+  "required": [
+    "hook",
+    "ok"
+  ],
+  "properties": {
+    "argv": {
+      "default": null,
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "string"
+      }
+    },
+    "config_path": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "hook": {
+      "type": "string"
+    },
+    "ok": {
+      "type": "boolean"
+    },
+    "process_id": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
+    "reason": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "searched": {
+      "default": null,
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "string"
+      }
+    },
+    "skipped": {
+      "default": false,
+      "type": "boolean"
+    },
+    "stderr_path": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "stdout_path": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  }
+}

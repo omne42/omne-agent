@@ -8,7 +8,7 @@
 
 ## 1) 术语
 
-- **Mode**：一个命名角色（例如 `architect/coder/reviewer/builder`），定义该角色允许使用的能力边界。
+- **Mode**：一个命名角色（例如 `architect/coder/reviewer/builder/debugger/merger`），定义该角色允许使用的能力边界。
 - **Role（角色）**：人类语义上的职责（Architect/Coder/Reviewer/Builder…）；在系统里以 `mode=<name>` 落盘并生效。
 - **Capability（能力组）**：对工具能力的稳定抽象（例如 `read/edit/command/process/artifact/browser`；`browser` 字段 v0.2.0 已预留，但 web tools 仍是未来扩展）。
 - **Decision**：权限判定结果：`allow | prompt | deny`
@@ -39,6 +39,12 @@
 - **Canonical**：`./.omne_data/spec/modes.yaml`
 - **Fallback**：`./.omne_data/spec/modes.yml`
 
+初始化提示：
+
+- `omne init` 默认会创建 `./.omne_data/spec/modes.yaml` 的最小空模板（`version: 1` + `modes: {}` + 示例注释）。
+- 若不希望自动生成，可使用 `omne init --no-modes-template`。
+- 若希望一次跳过所有 spec 模板（commands/workspace/hooks/modes），可使用 `omne init --no-spec-templates`（等价 `--minimal`）。
+
 ### 2.2 发现顺序（高 → 低）
 
 1. CLI 显式参数（未来实现，例如 `omne thread config set --modes <path>` 或 `omne --modes <path>`）
@@ -55,6 +61,8 @@
 > - 支持绝对路径。
 > - 相对路径按 **thread cwd（workspace root）** 解析（不是按当前进程 cwd）。
 > - v0.2.0 默认按需从磁盘加载 modes 文件：修改后会在下一次相关调用（例如 `thread/configure` 校验或工具执行）生效，无需重启。
+> - `thread/configure` 若因参数/权限校验失败而拒绝，会在 JSON-RPC error 的 `data.error_code` 返回稳定分类（如 `mode_unknown`、`allowed_tools_unknown_tool`、`allowed_tools_mode_denied`、`thinking_invalid`、`sandbox_writable_root_invalid`）。
+> - `artifact/*`、`repo/*`、`file/*`、`process/*`、`mcp/*`、`thread/*`（如 `thread/diff`、`thread/hook_run`、`thread/checkpoint/restore`）的拒绝响应（`denied=true`）也会附带稳定 `error_code`（如 `allowed_tools_denied`、`mode_denied`、`mode_unknown`、`sandbox_policy_denied`、`sandbox_network_denied`、`execpolicy_denied`、`execpolicy_load_denied`、`approval_denied`）。
 
 ---
 
@@ -69,7 +77,7 @@
 - **mode gate**：按能力组/路径规则/per-tool override 做第一层硬裁决（`deny/prompt/allow`）。
 - **sandbox**：路径与可写根等硬边界（例如 `read-only/workspace-write`）。
 - **execpolicy**：命令前缀规则（allow/prompt/forbidden）。
-- execpolicy 规范与用法见：`docs/execpolicy.md`（v0.2.0 支持 global `--execpolicy-rules` + per-mode `command.execpolicy_rules`）。
+- execpolicy 规范与用法见：`docs/execpolicy.md`（v0.2.0 支持 global `--execpolicy-rules` + per-mode `command.execpolicy_rules` + per-thread `thread/configure.execpolicy_rules`）。
 - **approval handling**：当需要审批时（来源可能是 mode 或 execpolicy），由 `ApprovalPolicy` 决定停/自动决策。
 
 合并规则：任一层 `deny` 即 deny；否则任一层 `prompt` 即 prompt；否则 allow。
@@ -108,12 +116,12 @@ v0.2.0 MVP 已支持字段：
 - `process: { inspect: {decision}, kill: {decision}, interact: {decision} }`
 - `artifact: { decision }`
 - `browser: { decision }`（字段已支持；`web/*` 工具属于未来扩展）
-- `subagent: { spawn: { decision, allowed_modes?: [string] } }`：fan-out / 子 agent 权限边界（对应 `agent_spawn`）
+- `subagent: { spawn: { decision, allowed_modes?: [string], max_threads?: number } }`：fan-out / 子 agent 权限边界（对应 `agent_spawn`；`max_threads` 取值范围 `0..=64`，其中 `0` 视为不限制）
 - `tool_overrides?: [{ tool: string, decision: Decision }]`（少数例外；避免把规则写成一坨）
 
-未来扩展（TODO；v0.2.0 未实现）：
+备注（已实现）：
 
-- `execpolicy_rules`：per-thread execpolicy 覆盖（TODO 草案见 `docs/execpolicy.md`）
+- per-thread execpolicy 覆盖通过 `thread/configure.execpolicy_rules` 落盘到 `ThreadConfigUpdated`（详见 `docs/execpolicy.md`）。
 
 约束：
 
@@ -170,6 +178,8 @@ v0.2.0 内置最小模式（作为没有 project config 时的兜底）：
 - `coder`：实现变更；`edit/command` 默认 `prompt`，依赖 execpolicy 细化白名单。
 - `reviewer`：只读；`edit=deny`；只允许安全的检查类命令（execpolicy）。
 - `builder`：跑 fmt/check/test/clippy 等 gates；`edit=deny`；命令受 execpolicy 严格限制。
+- `debugger`：定位失败原因；允许受审批约束的 edit/command，用于诊断与修复闭环。
+- `merger`：收口与整合变更；允许受审批约束的 edit/command，用于合并与最终整理。
 
 ---
 

@@ -1,0 +1,76 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ProcessInfo",
+  "type": "object",
+  "required": [
+    "argv",
+    "cwd",
+    "last_update_at",
+    "process_id",
+    "started_at",
+    "status",
+    "stderr_path",
+    "stdout_path",
+    "thread_id"
+  ],
+  "properties": {
+    "argv": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "cwd": {
+      "type": "string"
+    },
+    "exit_code": {
+      "default": null,
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "int32"
+    },
+    "last_update_at": {
+      "type": "string"
+    },
+    "process_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "started_at": {
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/definitions/ProcessStatus"
+    },
+    "stderr_path": {
+      "type": "string"
+    },
+    "stdout_path": {
+      "type": "string"
+    },
+    "thread_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "turn_id": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    }
+  },
+  "definitions": {
+    "ProcessStatus": {
+      "type": "string",
+      "enum": [
+        "running",
+        "exited",
+        "abandoned"
+      ]
+    }
+  }
+}

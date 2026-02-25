@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "McpFailedResponse",
+  "type": "object",
+  "required": [
+    "error",
+    "server",
+    "tool_id"
+  ],
+  "properties": {
+    "error": {
+      "type": "string"
+    },
+    "failed": {
+      "default": false,
+      "type": "boolean"
+    },
+    "server": {
+      "type": "string"
+    },
+    "tool_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

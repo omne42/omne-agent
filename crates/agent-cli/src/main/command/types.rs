@@ -36,6 +36,7 @@ struct WorkflowInputDecl {
 struct WorkflowFile {
     frontmatter: WorkflowFileFrontmatterV1,
     body: String,
+    modes_load_error: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -43,27 +44,78 @@ struct WorkflowTask {
     id: String,
     title: String,
     body: String,
+    depends_on: Vec<String>,
+    priority: WorkflowTaskPriority,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WorkflowTaskPriority {
+    High,
+    Normal,
+    Low,
+}
+
+impl WorkflowTaskPriority {
+    fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "high" => Some(Self::High),
+            "normal" => Some(Self::Normal),
+            "low" => Some(Self::Low),
+            _ => None,
+        }
+    }
+
+    fn rank(self) -> usize {
+        match self {
+            Self::High => 0,
+            Self::Normal => 1,
+            Self::Low => 2,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
 struct WorkflowTaskResult {
     task_id: String,
     title: String,
-    thread_id: ThreadId,
-    turn_id: TurnId,
+    thread_id: Option<ThreadId>,
+    turn_id: Option<TurnId>,
+    result_artifact_id: Option<ArtifactId>,
+    result_artifact_error: Option<String>,
+    result_artifact_error_id: Option<ArtifactId>,
     status: TurnStatus,
     reason: Option<String>,
+    dependency_blocked: bool,
     assistant_text: Option<String>,
+    pending_approval: Option<WorkflowPendingApproval>,
+}
+
+#[derive(Debug, Clone)]
+struct WorkflowPendingApproval {
+    approval_id: ApprovalId,
+    action: String,
+    summary: Option<String>,
+    approve_cmd: Option<String>,
+    deny_cmd: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct FanOutSchedulingParams {
+    env_max_concurrent_subagents: usize,
+    effective_concurrency_limit: usize,
+    priority_aging_rounds: usize,
 }
 
 #[derive(Debug)]
 struct FanOutScheduler {
     tasks: Vec<WorkflowTask>,
     fan_in_artifact_id: omne_protocol::ArtifactId,
-    concurrency_limit: usize,
+    scheduling: FanOutSchedulingParams,
     subagent_fork: bool,
     parent_cwd: Option<String>,
-    pending_idx: usize,
+    started_ids: BTreeSet<String>,
+    ready_wait_rounds: BTreeMap<String, usize>,
+    task_statuses: BTreeMap<String, TurnStatus>,
     active: Vec<FanOutActiveTask>,
     finished: Vec<WorkflowTaskResult>,
     final_summary_written: bool,
@@ -81,4 +133,3 @@ struct FanOutActiveTask {
     since_seq: u64,
     assistant_text: Option<String>,
 }
-

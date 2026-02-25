@@ -139,6 +139,8 @@ struct ProcessStartArgs {
     argv: Vec<String>,
     #[serde(default)]
     cwd: Option<String>,
+    #[serde(default)]
+    timeout_ms: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -184,6 +186,8 @@ struct ArtifactWriteArgs {
 struct ArtifactReadArgs {
     artifact_id: String,
     #[serde(default)]
+    version: Option<u32>,
+    #[serde(default)]
     max_bytes: Option<u64>,
 }
 
@@ -194,6 +198,11 @@ struct ArtifactDeleteArgs {
 
 #[derive(Debug, Deserialize)]
 struct ThreadStateArgs {
+    thread_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ThreadUsageArgs {
     thread_id: String,
 }
 
@@ -233,6 +242,24 @@ enum AgentSpawnMode {
     New,
 }
 
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum AgentSpawnTaskPriority {
+    High,
+    Normal,
+    Low,
+}
+
+impl AgentSpawnTaskPriority {
+    fn rank(self) -> usize {
+        match self {
+            Self::High => 0,
+            Self::Normal => 1,
+            Self::Low => 2,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct AgentSpawnTaskArgs {
     id: String,
@@ -253,6 +280,8 @@ struct AgentSpawnTaskArgs {
     openai_base_url: Option<String>,
     #[serde(default)]
     expected_artifact_type: Option<String>,
+    #[serde(default)]
+    priority: Option<AgentSpawnTaskPriority>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -269,5 +298,7 @@ struct AgentSpawnArgs {
     openai_base_url: Option<String>,
     #[serde(default)]
     expected_artifact_type: Option<String>,
+    #[serde(default)]
+    priority: Option<AgentSpawnTaskPriority>,
     tasks: Vec<AgentSpawnTaskArgs>,
 }

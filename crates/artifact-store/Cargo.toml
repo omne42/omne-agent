@@ -10,3 +10,6 @@ omne-protocol = { path = "../agent-protocol" }
 serde_json.workspace = true
 time.workspace = true
 tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -108,7 +108,9 @@ impl EventBus {
     }
 
     pub fn emit(&self, event: RunEvent) {
-        let _ = self.sender.send(event);
+        if self.sender.send(event).is_err() {
+            // Best-effort broadcast; it is fine when there are no active subscribers.
+        }
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<RunEvent> {

@@ -239,6 +239,7 @@ fn build_tools() -> Vec<Value> {
                 "properties": {
                     "argv": { "type": "array", "items": { "type": "string" } },
                     "cwd": { "type": "string" },
+                    "timeout_ms": { "type": "integer", "minimum": 1 },
                 },
                 "required": ["argv"],
                 "additionalProperties": false,
@@ -361,6 +362,18 @@ fn build_tools() -> Vec<Value> {
             }),
         ),
         tool_function(
+            "thread_usage",
+            "Read aggregated token usage and cache ratios for a thread.",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "thread_id": { "type": "string" },
+                },
+                "required": ["thread_id"],
+                "additionalProperties": false,
+            }),
+        ),
+        tool_function(
             "thread_events",
             "Read thread events since a given seq.",
             serde_json::json!({
@@ -395,6 +408,7 @@ fn build_tools() -> Vec<Value> {
                     "spawn_mode": { "type": "string", "enum": ["fork", "new"] },
                     "mode": { "type": "string" },
                     "workspace_mode": { "type": "string", "enum": ["read_only", "isolated_write"] },
+                    "priority": { "type": "string", "enum": ["high", "normal", "low"] },
                     "model": { "type": "string" },
                     "openai_base_url": { "type": "string" },
                     "expected_artifact_type": { "type": "string" },
@@ -411,6 +425,7 @@ fn build_tools() -> Vec<Value> {
                                 "spawn_mode": { "type": "string", "enum": ["fork", "new"] },
                                 "mode": { "type": "string" },
                                 "workspace_mode": { "type": "string", "enum": ["read_only", "isolated_write"] },
+                                "priority": { "type": "string", "enum": ["high", "normal", "low"] },
                                 "model": { "type": "string" },
                                 "openai_base_url": { "type": "string" },
                                 "expected_artifact_type": { "type": "string" },

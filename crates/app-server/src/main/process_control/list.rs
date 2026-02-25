@@ -105,3 +105,27 @@ async fn handle_process_list(
     });
     Ok(out)
 }
+
+fn into_protocol_process_status(status: ProcessStatus) -> omne_app_server_protocol::ProcessStatus {
+    match status {
+        ProcessStatus::Running => omne_app_server_protocol::ProcessStatus::Running,
+        ProcessStatus::Exited => omne_app_server_protocol::ProcessStatus::Exited,
+        ProcessStatus::Abandoned => omne_app_server_protocol::ProcessStatus::Abandoned,
+    }
+}
+
+fn into_protocol_process_info(info: ProcessInfo) -> omne_app_server_protocol::ProcessInfo {
+    omne_app_server_protocol::ProcessInfo {
+        process_id: info.process_id,
+        thread_id: info.thread_id,
+        turn_id: info.turn_id,
+        argv: info.argv,
+        cwd: info.cwd,
+        started_at: info.started_at,
+        status: into_protocol_process_status(info.status),
+        exit_code: info.exit_code,
+        stdout_path: info.stdout_path,
+        stderr_path: info.stderr_path,
+        last_update_at: info.last_update_at,
+    }
+}

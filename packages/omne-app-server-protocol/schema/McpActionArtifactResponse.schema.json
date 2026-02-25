@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "McpActionArtifactResponse",
+  "type": "object",
+  "required": [
+    "artifact",
+    "bytes",
+    "process_id",
+    "truncated"
+  ],
+  "properties": {
+    "artifact": true,
+    "bytes": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0.0
+    },
+    "process_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "truncated": {
+      "type": "boolean"
+    }
+  }
+}

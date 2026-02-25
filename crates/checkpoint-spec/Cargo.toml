@@ -1,0 +1,13 @@
+[package]
+name = "omne-checkpoint-spec"
+edition.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+omne-protocol = { path = "../agent-protocol" }
+serde.workspace = true
+serde_json.workspace = true
+time.workspace = true
+tokio.workspace = true

@@ -11,6 +11,8 @@ crossterm = { version = "0.28", features = ["event-stream"] }
 futures-util.workspace = true
 notify-kit = { path = "../../../notify-kit/crates/notify-kit" }
 omne-jsonrpc = { package = "mcp-jsonrpc", path = "../../../mcp-kit/crates/jsonrpc" }
+omne-app-server-protocol = { path = "../app-server-protocol" }
+omne-core = { path = "../core" }
 omne-protocol = { path = "../agent-protocol" }
 omne-workflow-spec = { path = "../workflow-spec" }
 ratatui = { version = "0.28", default-features = false, features = ["crossterm", "unstable-rendered-line-info"] }

@@ -1,0 +1,53 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "McpListServersResponse",
+  "type": "object",
+  "required": [
+    "servers"
+  ],
+  "properties": {
+    "config_path": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "servers": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/McpServerDescriptor"
+      }
+    }
+  },
+  "definitions": {
+    "McpServerDescriptor": {
+      "type": "object",
+      "required": [
+        "argv",
+        "env_keys",
+        "name",
+        "transport"
+      ],
+      "properties": {
+        "argv": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "env_keys": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "name": {
+          "type": "string"
+        },
+        "transport": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}
