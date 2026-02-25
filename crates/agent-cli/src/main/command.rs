@@ -8,7 +8,10 @@ mod types;
 use types::*;
 include!("command/fan_out.rs");
 include!("command/workflow.rs");
-include!("command/tasks.rs");
+
+#[path = "command/tasks.rs"]
+mod tasks;
+use tasks::*;
 
 #[path = "command/utils.rs"]
 mod utils;

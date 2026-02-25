@@ -1,4 +1,6 @@
-fn parse_workflow_tasks(body: &str) -> anyhow::Result<Vec<WorkflowTask>> {
+use super::*;
+
+pub(super) fn parse_workflow_tasks(body: &str) -> anyhow::Result<Vec<WorkflowTask>> {
     let mut raw_tasks = Vec::<WorkflowTask>::new();
     let mut seen_ids = BTreeSet::<String>::new();
 
@@ -58,13 +60,13 @@ fn parse_workflow_tasks(body: &str) -> anyhow::Result<Vec<WorkflowTask>> {
     Ok(tasks)
 }
 
-struct WorkflowTaskDirectives {
-    depends_on: Vec<String>,
-    priority: WorkflowTaskPriority,
-    body: String,
+pub(super) struct WorkflowTaskDirectives {
+    pub(super) depends_on: Vec<String>,
+    pub(super) priority: WorkflowTaskPriority,
+    pub(super) body: String,
 }
 
-fn parse_task_directives(
+pub(super) fn parse_task_directives(
     task_id: &str,
     body: &str,
 ) -> anyhow::Result<WorkflowTaskDirectives> {
@@ -134,7 +136,7 @@ fn parse_task_directives(
     })
 }
 
-fn validate_workflow_task_dependencies(tasks: &[WorkflowTask]) -> anyhow::Result<()> {
+pub(super) fn validate_workflow_task_dependencies(tasks: &[WorkflowTask]) -> anyhow::Result<()> {
     let mut by_id = BTreeSet::<String>::new();
     for task in tasks {
         by_id.insert(task.id.clone());
@@ -180,7 +182,7 @@ fn validate_workflow_task_dependencies(tasks: &[WorkflowTask]) -> anyhow::Result
     Ok(())
 }
 
-fn dependency_blocker(
+pub(super) fn dependency_blocker(
     task: &WorkflowTask,
     task_statuses: &BTreeMap<String, TurnStatus>,
 ) -> Option<(String, TurnStatus)> {
@@ -195,7 +197,7 @@ fn dependency_blocker(
     None
 }
 
-fn collect_dependency_blocked_task_ids(
+pub(super) fn collect_dependency_blocked_task_ids(
     tasks: &[WorkflowTask],
     started: &BTreeSet<String>,
     task_statuses: &BTreeMap<String, TurnStatus>,
@@ -212,13 +214,13 @@ fn collect_dependency_blocked_task_ids(
     blocked
 }
 
-fn is_runnable_task(task: &WorkflowTask, task_statuses: &BTreeMap<String, TurnStatus>) -> bool {
+pub(super) fn is_runnable_task(task: &WorkflowTask, task_statuses: &BTreeMap<String, TurnStatus>) -> bool {
     task.depends_on
         .iter()
         .all(|dep| matches!(task_statuses.get(dep), Some(TurnStatus::Completed)))
 }
 
-fn update_ready_wait_rounds(
+pub(super) fn update_ready_wait_rounds(
     tasks: &[WorkflowTask],
     started: &BTreeSet<String>,
     task_statuses: &BTreeMap<String, TurnStatus>,
@@ -240,7 +242,7 @@ fn update_ready_wait_rounds(
     }
 }
 
-fn aged_priority_rank(
+pub(super) fn aged_priority_rank(
     task: &WorkflowTask,
     ready_wait_rounds: &BTreeMap<String, usize>,
     priority_aging_rounds: usize,
@@ -250,7 +252,7 @@ fn aged_priority_rank(
     base.saturating_sub(waited_rounds / priority_aging_rounds)
 }
 
-fn pick_next_runnable_task<'a>(
+pub(super) fn pick_next_runnable_task<'a>(
     tasks: &'a [WorkflowTask],
     started: &BTreeSet<String>,
     task_statuses: &BTreeMap<String, TurnStatus>,
@@ -262,7 +264,7 @@ fn pick_next_runnable_task<'a>(
         .min_by_key(|task| task.priority.rank())
 }
 
-fn pick_next_runnable_task_fair<'a>(
+pub(super) fn pick_next_runnable_task_fair<'a>(
     tasks: &'a [WorkflowTask],
     started: &BTreeSet<String>,
     task_statuses: &BTreeMap<String, TurnStatus>,
@@ -283,25 +285,25 @@ fn pick_next_runnable_task_fair<'a>(
         .map(|(_, task)| task)
 }
 
-fn display_thread_id(thread_id: Option<ThreadId>) -> String {
+pub(super) fn display_thread_id(thread_id: Option<ThreadId>) -> String {
     thread_id
         .map(|v| v.to_string())
         .unwrap_or_else(|| "-".to_string())
 }
 
-fn display_turn_id(turn_id: Option<TurnId>) -> String {
+pub(super) fn display_turn_id(turn_id: Option<TurnId>) -> String {
     turn_id
         .map(|v| v.to_string())
         .unwrap_or_else(|| "-".to_string())
 }
 
-fn display_artifact_id(artifact_id: Option<ArtifactId>) -> String {
+pub(super) fn display_artifact_id(artifact_id: Option<ArtifactId>) -> String {
     artifact_id
         .map(|v| v.to_string())
         .unwrap_or_else(|| "-".to_string())
 }
 
-fn display_artifact_error(error: Option<&str>) -> String {
+pub(super) fn display_artifact_error(error: Option<&str>) -> String {
     error
         .map(str::trim)
         .filter(|v| !v.is_empty())
@@ -309,7 +311,7 @@ fn display_artifact_error(error: Option<&str>) -> String {
         .to_string()
 }
 
-fn blocked_task_result(task: &WorkflowTask, dep_id: &str, dep_status: TurnStatus) -> WorkflowTaskResult {
+pub(super) fn blocked_task_result(task: &WorkflowTask, dep_id: &str, dep_status: TurnStatus) -> WorkflowTaskResult {
     WorkflowTaskResult {
         task_id: task.id.clone(),
         title: task.title.clone(),
@@ -328,7 +330,7 @@ fn blocked_task_result(task: &WorkflowTask, dep_id: &str, dep_status: TurnStatus
     }
 }
 
-fn dependency_blocker_fields(
+pub(super) fn dependency_blocker_fields(
     dependency_blocked: bool,
     reason: Option<&str>,
 ) -> (Option<String>, Option<String>) {
@@ -355,7 +357,7 @@ fn dependency_blocker_fields(
     )
 }
 
-fn pending_approval_task_result(
+pub(super) fn pending_approval_task_result(
     task_id: String,
     title: String,
     thread_id: ThreadId,
@@ -393,39 +395,39 @@ fn pending_approval_task_result(
 }
 
 #[derive(Debug, Clone)]
-struct FanOutApprovalIssue {
-    task_id: String,
-    thread_id: ThreadId,
-    turn_id: TurnId,
-    approval_id: ApprovalId,
-    action: String,
-    summary: Option<String>,
+pub(super) struct FanOutApprovalIssue {
+    pub(super) task_id: String,
+    pub(super) thread_id: ThreadId,
+    pub(super) turn_id: TurnId,
+    pub(super) approval_id: ApprovalId,
+    pub(super) action: String,
+    pub(super) summary: Option<String>,
 }
 
-fn fan_out_approval_command(issue: &FanOutApprovalIssue) -> String {
+pub(super) fn fan_out_approval_command(issue: &FanOutApprovalIssue) -> String {
     approval_decide_command(issue.thread_id, issue.approval_id, true)
 }
 
-fn fan_out_deny_command(issue: &FanOutApprovalIssue) -> String {
+pub(super) fn fan_out_deny_command(issue: &FanOutApprovalIssue) -> String {
     approval_decide_command(issue.thread_id, issue.approval_id, false)
 }
 
-fn approval_decide_command(thread_id: ThreadId, approval_id: ApprovalId, approve: bool) -> String {
+pub(super) fn approval_decide_command(thread_id: ThreadId, approval_id: ApprovalId, approve: bool) -> String {
     let decision_flag = if approve { "--approve" } else { "--deny" };
     format!("omne approval decide {thread_id} {approval_id} {decision_flag}")
 }
 
-fn fan_out_result_read_command(thread_id: ThreadId, artifact_id: ArtifactId) -> String {
+pub(super) fn fan_out_result_read_command(thread_id: ThreadId, artifact_id: ArtifactId) -> String {
     format!("omne artifact read {thread_id} {artifact_id}")
 }
 
-fn normalize_optional_command(raw: Option<&str>) -> Option<String> {
+pub(super) fn normalize_optional_command(raw: Option<&str>) -> Option<String> {
     raw.map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
 }
 
-fn pending_approval_commands_for_result(
+pub(super) fn pending_approval_commands_for_result(
     result: &WorkflowTaskResult,
     pending: &WorkflowPendingApproval,
 ) -> (Option<String>, Option<String>) {
@@ -444,7 +446,7 @@ fn pending_approval_commands_for_result(
     (approve_cmd, deny_cmd)
 }
 
-fn render_fan_in_summary_structured_json(
+pub(super) fn render_fan_in_summary_structured_json(
     thread_id: ThreadId,
     results: &[WorkflowTaskResult],
     scheduling: FanOutSchedulingParams,
@@ -496,13 +498,13 @@ fn render_fan_in_summary_structured_json(
     serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{\"tasks\":[]}".to_string())
 }
 
-fn normalize_task_read_commands(mut values: Vec<(String, String)>) -> Vec<(String, String)> {
+pub(super) fn normalize_task_read_commands(mut values: Vec<(String, String)>) -> Vec<(String, String)> {
     values.sort_unstable();
     values.dedup();
     values
 }
 
-fn collect_failed_task_reads(results: &[WorkflowTaskResult]) -> Vec<(String, String)> {
+pub(super) fn collect_failed_task_reads(results: &[WorkflowTaskResult]) -> Vec<(String, String)> {
     normalize_task_read_commands(
         results
         .iter()
@@ -520,7 +522,7 @@ fn collect_failed_task_reads(results: &[WorkflowTaskResult]) -> Vec<(String, Str
     )
 }
 
-fn collect_failed_task_error_reads(
+pub(super) fn collect_failed_task_error_reads(
     parent_thread_id: ThreadId,
     results: &[WorkflowTaskResult],
 ) -> Vec<(String, String)> {
@@ -541,7 +543,7 @@ fn collect_failed_task_error_reads(
     )
 }
 
-fn append_fan_out_linkage_issue_markdown(text: &mut String, linkage_issue: Option<&str>) {
+pub(super) fn append_fan_out_linkage_issue_markdown(text: &mut String, linkage_issue: Option<&str>) {
     let Some(linkage_issue) = linkage_issue
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -557,7 +559,7 @@ fn append_fan_out_linkage_issue_markdown(text: &mut String, linkage_issue: Optio
     text.push_str("\n```\n\n");
 }
 
-fn append_fan_out_scheduling_markdown(text: &mut String, scheduling: FanOutSchedulingParams) {
+pub(super) fn append_fan_out_scheduling_markdown(text: &mut String, scheduling: FanOutSchedulingParams) {
     text.push_str("## Scheduling\n\n");
     text.push_str(&format!(
         "- env_max_concurrent_subagents: `{}`\n",
@@ -573,7 +575,7 @@ fn append_fan_out_scheduling_markdown(text: &mut String, scheduling: FanOutSched
     ));
 }
 
-fn fan_out_approval_error(issue: &FanOutApprovalIssue, artifact_id: omne_protocol::ArtifactId) -> String {
+pub(super) fn fan_out_approval_error(issue: &FanOutApprovalIssue, artifact_id: omne_protocol::ArtifactId) -> String {
     let mut text = format!(
         "fan-out task needs approval: task_id={} thread_id={} turn_id={} approval_id={} action={}",
         issue.task_id, issue.thread_id, issue.turn_id, issue.approval_id, issue.action
@@ -589,7 +591,7 @@ fn fan_out_approval_error(issue: &FanOutApprovalIssue, artifact_id: omne_protoco
     text
 }
 
-fn find_pending_approval_task_from_fan_in_summary<'a>(
+pub(super) fn find_pending_approval_task_from_fan_in_summary<'a>(
     payload: &'a omne_app_server_protocol::ArtifactFanInSummaryStructuredData,
     issue: &FanOutApprovalIssue,
 ) -> Option<&'a omne_app_server_protocol::ArtifactFanInSummaryTask> {
@@ -611,7 +613,7 @@ fn find_pending_approval_task_from_fan_in_summary<'a>(
         .or_else(|| payload.tasks.iter().find(|task| task.pending_approval.is_some()))
 }
 
-fn fan_out_approval_error_from_structured_task(
+pub(super) fn fan_out_approval_error_from_structured_task(
     issue: &FanOutApprovalIssue,
     artifact_id: omne_protocol::ArtifactId,
     task: &omne_app_server_protocol::ArtifactFanInSummaryTask,
@@ -693,7 +695,7 @@ fn fan_out_approval_error_from_structured_task(
     text
 }
 
-async fn fan_out_approval_error_with_artifact_fallback(
+pub(super) async fn fan_out_approval_error_with_artifact_fallback(
     app: &mut App,
     parent_thread_id: ThreadId,
     issue: &FanOutApprovalIssue,
@@ -712,7 +714,7 @@ async fn fan_out_approval_error_with_artifact_fallback(
     maybe_structured.unwrap_or_else(|| fan_out_approval_error(issue, artifact_id))
 }
 
-fn render_fan_out_approval_blocked_markdown(
+pub(super) fn render_fan_out_approval_blocked_markdown(
     total_tasks: usize,
     finished: &[WorkflowTaskResult],
     issue: &FanOutApprovalIssue,
@@ -775,7 +777,7 @@ fn render_fan_out_approval_blocked_markdown(
     text
 }
 
-fn render_fan_out_result_markdown(
+pub(super) fn render_fan_out_result_markdown(
     task_id: &str,
     title: &str,
     turn_id: TurnId,
@@ -805,7 +807,7 @@ fn render_fan_out_result_markdown(
     text
 }
 
-async fn try_write_fan_out_result_artifact(
+pub(super) async fn try_write_fan_out_result_artifact(
     app: &mut App,
     thread_id: ThreadId,
     task_id: &str,
@@ -832,7 +834,7 @@ async fn try_write_fan_out_result_artifact(
     Ok(parsed.artifact_id)
 }
 
-fn render_fan_out_result_error_markdown(
+pub(super) fn render_fan_out_result_error_markdown(
     task_id: &str,
     title: &str,
     child_thread_id: ThreadId,
@@ -857,7 +859,7 @@ fn render_fan_out_result_error_markdown(
     text
 }
 
-async fn write_fan_out_result_error_artifact(
+pub(super) async fn write_fan_out_result_error_artifact(
     app: &mut App,
     parent_thread_id: ThreadId,
     parent_turn_id: Option<TurnId>,
@@ -896,7 +898,7 @@ async fn write_fan_out_result_error_artifact(
     }
 }
 
-fn fan_out_result_error_artifact_write_params(
+pub(super) fn fan_out_result_error_artifact_write_params(
     parent_thread_id: ThreadId,
     parent_turn_id: Option<TurnId>,
     summary: String,
@@ -913,7 +915,7 @@ fn fan_out_result_error_artifact_write_params(
     }
 }
 
-fn fan_out_linkage_issue_artifact_text(
+pub(super) fn fan_out_linkage_issue_artifact_text(
     fan_in_artifact_id: omne_protocol::ArtifactId,
     linkage_issue: &str,
 ) -> Option<String> {
@@ -945,7 +947,7 @@ fn fan_out_linkage_issue_artifact_text(
     Some(text)
 }
 
-fn fan_in_related_artifact_write_params(
+pub(super) fn fan_in_related_artifact_write_params(
     thread_id: ThreadId,
     parent_turn_id: Option<TurnId>,
     artifact_id: Option<omne_protocol::ArtifactId>,
@@ -964,7 +966,7 @@ fn fan_in_related_artifact_write_params(
     }
 }
 
-fn fan_out_linkage_issue_artifact_write_params(
+pub(super) fn fan_out_linkage_issue_artifact_write_params(
     parent_thread_id: ThreadId,
     parent_turn_id: Option<TurnId>,
     fan_in_artifact_id: omne_protocol::ArtifactId,
@@ -981,7 +983,7 @@ fn fan_out_linkage_issue_artifact_write_params(
     ))
 }
 
-fn fan_out_linkage_issue_clear_artifact_write_params(
+pub(super) fn fan_out_linkage_issue_clear_artifact_write_params(
     parent_thread_id: ThreadId,
     parent_turn_id: Option<TurnId>,
     fan_in_artifact_id: omne_protocol::ArtifactId,
@@ -1002,7 +1004,7 @@ fn fan_out_linkage_issue_clear_artifact_write_params(
     )
 }
 
-fn fan_in_summary_artifact_write_params(
+pub(super) fn fan_in_summary_artifact_write_params(
     thread_id: ThreadId,
     parent_turn_id: Option<TurnId>,
     artifact_id: omne_protocol::ArtifactId,
@@ -1018,7 +1020,7 @@ fn fan_in_summary_artifact_write_params(
     )
 }
 
-async fn try_write_fan_out_linkage_issue_artifact(
+pub(super) async fn try_write_fan_out_linkage_issue_artifact(
     app: &mut App,
     parent_thread_id: ThreadId,
     parent_turn_id: Option<TurnId>,
@@ -1044,7 +1046,7 @@ async fn try_write_fan_out_linkage_issue_artifact(
     }
 }
 
-async fn try_clear_fan_out_linkage_issue_marker(
+pub(super) async fn try_clear_fan_out_linkage_issue_marker(
     app: &mut App,
     parent_thread_id: ThreadId,
     parent_turn_id: Option<TurnId>,
@@ -1066,13 +1068,13 @@ async fn try_clear_fan_out_linkage_issue_marker(
 }
 
 #[derive(Debug, Clone)]
-struct FanOutResultArtifactWriteOutcome {
-    result_artifact_id: Option<ArtifactId>,
-    result_artifact_error: Option<String>,
-    result_artifact_error_id: Option<ArtifactId>,
+pub(super) struct FanOutResultArtifactWriteOutcome {
+    pub(super) result_artifact_id: Option<ArtifactId>,
+    pub(super) result_artifact_error: Option<String>,
+    pub(super) result_artifact_error_id: Option<ArtifactId>,
 }
 
-async fn write_fan_out_result_artifacts(
+pub(super) async fn write_fan_out_result_artifacts(
     app: &mut App,
     parent_thread_id: ThreadId,
     parent_turn_id: Option<TurnId>,
@@ -1129,7 +1131,7 @@ async fn write_fan_out_result_artifacts(
     }
 }
 
-async fn write_fan_out_approval_blocked_artifact(
+pub(super) async fn write_fan_out_approval_blocked_artifact(
     app: &mut App,
     thread_id: ThreadId,
     parent_turn_id: Option<TurnId>,
@@ -1145,7 +1147,7 @@ async fn write_fan_out_approval_blocked_artifact(
     Ok(())
 }
 
-fn parse_task_header(line: &str) -> Option<(String, String)> {
+pub(super) fn parse_task_header(line: &str) -> Option<(String, String)> {
     let trimmed = line
         .trim_end_matches(&['\r', '\n'][..])
         .trim_start();
@@ -1170,7 +1172,7 @@ fn parse_task_header(line: &str) -> Option<(String, String)> {
     Some((id.to_string(), title.to_string()))
 }
 
-async fn resolve_thread_cwd(app: &mut App, thread_id: ThreadId) -> anyhow::Result<String> {
+pub(super) async fn resolve_thread_cwd(app: &mut App, thread_id: ThreadId) -> anyhow::Result<String> {
     let state = app.thread_state(thread_id).await?;
     let cwd = state
         .cwd
@@ -1181,7 +1183,7 @@ async fn resolve_thread_cwd(app: &mut App, thread_id: ThreadId) -> anyhow::Resul
     Ok(cwd.to_string())
 }
 
-async fn write_fan_out_progress_artifact<T: std::fmt::Debug>(
+pub(super) async fn write_fan_out_progress_artifact<T: std::fmt::Debug>(
     app: &mut App,
     thread_id: ThreadId,
     parent_turn_id: Option<TurnId>,
@@ -1205,7 +1207,7 @@ async fn write_fan_out_progress_artifact<T: std::fmt::Debug>(
     Ok(())
 }
 
-fn render_fan_out_progress_markdown<T: std::fmt::Debug>(
+pub(super) fn render_fan_out_progress_markdown<T: std::fmt::Debug>(
     total_tasks: usize,
     finished: &[WorkflowTaskResult],
     active: &[T],
@@ -1263,7 +1265,7 @@ fn render_fan_out_progress_markdown<T: std::fmt::Debug>(
     text
 }
 
-async fn write_fan_in_summary_artifact(
+pub(super) async fn write_fan_in_summary_artifact(
     app: &mut App,
     thread_id: ThreadId,
     parent_turn_id: Option<TurnId>,
@@ -1279,7 +1281,7 @@ async fn write_fan_in_summary_artifact(
     Ok(parsed.content_path)
 }
 
-fn render_fan_in_summary_markdown(
+pub(super) fn render_fan_in_summary_markdown(
     thread_id: ThreadId,
     results: &[WorkflowTaskResult],
     scheduling: FanOutSchedulingParams,
