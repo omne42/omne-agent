@@ -547,10 +547,6 @@ fn merge_exec_policies(
 mod process_start_tests {
     use super::*;
 
-    fn build_test_server(omne_root: PathBuf) -> Server {
-        crate::build_test_server_shared(omne_root)
-    }
-
     async fn write_executable_sh(path: &Path, script: &str) -> anyhow::Result<()> {
         tokio::fs::write(path, script).await?;
         #[cfg(unix)]
@@ -570,7 +566,7 @@ mod process_start_tests {
         tokio::fs::create_dir_all(&repo_dir).await?;
         write_executable_sh(repo_dir.join("curl").as_path(), "#!/bin/sh\nexit 0\n").await?;
 
-        let server = build_test_server(tmp.path().join(".omne_data"));
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -603,7 +599,7 @@ mod process_start_tests {
         tokio::fs::create_dir_all(&repo_dir).await?;
         write_executable_sh(repo_dir.join("curl").as_path(), "#!/bin/sh\nexit 0\n").await?;
 
-        let server = build_test_server(tmp.path().join(".omne_data"));
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -677,7 +673,7 @@ mod process_start_tests {
         tokio::fs::create_dir_all(&repo_dir).await?;
         write_executable_sh(repo_dir.join("ok.sh").as_path(), "#!/bin/sh\nexit 0\n").await?;
 
-        let server = build_test_server(tmp.path().join(".omne_data"));
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
         let thread_id = create_test_thread_shared(&server, repo_dir).await?;
 
         let mut extra_env = std::collections::BTreeMap::new();
@@ -750,7 +746,7 @@ mod process_start_tests {
         tokio::fs::create_dir_all(&repo_dir).await?;
         write_executable_sh(repo_dir.join("ok.sh").as_path(), "#!/bin/sh\nexit 0\n").await?;
 
-        let server = build_test_server(tmp.path().join(".omne_data"));
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
         let thread_id = create_test_thread_shared(&server, repo_dir).await?;
 
         let err = handle_process_start(
@@ -777,7 +773,7 @@ mod process_start_tests {
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = build_test_server(tmp.path().join(".omne_data"));
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
         let thread_id = create_test_thread_shared(&server, repo_dir).await?;
 
         let result = handle_process_start(
@@ -880,7 +876,7 @@ modes:
         )
         .await?;
 
-        let server = build_test_server(tmp.path().join(".omne_data"));
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -929,7 +925,7 @@ modes:
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = build_test_server(tmp.path().join(".omne_data"));
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -1007,7 +1003,7 @@ prefix_rule(
         )
         .await?;
 
-        let server = build_test_server(tmp.path().join(".omne_data"));
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -1070,7 +1066,7 @@ modes:
         )
         .await?;
 
-        let server = build_test_server(tmp.path().join(".omne_data"));
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -1139,7 +1135,7 @@ prefix_rule(
         )
         .await?;
 
-        let server = build_test_server(tmp.path().join(".omne_data"));
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -1188,7 +1184,7 @@ prefix_rule(
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = build_test_server(tmp.path().join(".omne_data"));
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
