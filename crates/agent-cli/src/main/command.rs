@@ -22,4 +22,6 @@ use tasks::*;
 mod utils;
 use utils::*;
 
-include!("command/tests.rs");
+#[cfg(test)]
+#[path = "command/tests.rs"]
+mod tests;
