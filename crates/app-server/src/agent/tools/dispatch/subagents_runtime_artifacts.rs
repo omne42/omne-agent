@@ -193,7 +193,77 @@ async fn create_new_thread(server: &super::Server, cwd: &str) -> anyhow::Result<
 
 const DEFAULT_ISOLATED_MAX_FILE_BYTES: u64 = 512 * 1024 * 1024;
 const DEFAULT_ISOLATED_MAX_TOTAL_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+const ISOLATED_BACKEND_ENV: &str = "OMNE_SUBAGENT_ISOLATED_BACKEND";
 const ISOLATED_WORKTREE_FIRST_ENV: &str = "OMNE_SUBAGENT_ISOLATED_WORKTREE_FIRST";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IsolatedWorkspaceRequestedBackend {
+    Auto,
+    Worktree,
+    Copy,
+}
+
+impl IsolatedWorkspaceRequestedBackend {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Worktree => "worktree",
+            Self::Copy => "copy",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IsolatedWorkspaceBackend {
+    Worktree,
+    Copy,
+}
+
+impl IsolatedWorkspaceBackend {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Worktree => "worktree",
+            Self::Copy => "copy",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+struct IsolatedWorkspacePreparation {
+    cwd: std::path::PathBuf,
+    requested_backend: IsolatedWorkspaceRequestedBackend,
+    backend: IsolatedWorkspaceBackend,
+    fallback_reason: Option<String>,
+}
+
+fn parse_isolated_workspace_requested_backend(
+    raw_backend: Option<&str>,
+    raw_legacy_worktree_first: Option<&str>,
+) -> (IsolatedWorkspaceRequestedBackend, Option<String>) {
+    if let Some(raw_backend) = raw_backend {
+        let normalized = raw_backend.trim().to_ascii_lowercase();
+        return match normalized.as_str() {
+            "auto" => (IsolatedWorkspaceRequestedBackend::Auto, None),
+            "worktree" => (IsolatedWorkspaceRequestedBackend::Worktree, None),
+            "copy" => (IsolatedWorkspaceRequestedBackend::Copy, None),
+            _ => (
+                IsolatedWorkspaceRequestedBackend::Auto,
+                Some(format!(
+                    "invalid {} value {:?}; fallback to auto",
+                    ISOLATED_BACKEND_ENV, raw_backend
+                )),
+            ),
+        };
+    }
+
+    let worktree_first = parse_subagent_env_bool(raw_legacy_worktree_first, true);
+    if worktree_first {
+        (IsolatedWorkspaceRequestedBackend::Auto, None)
+    } else {
+        (IsolatedWorkspaceRequestedBackend::Copy, None)
+    }
+}
 
 fn sanitize_isolated_workspace_component(input: &str) -> String {
     let mut out = String::new();
@@ -270,6 +340,19 @@ async fn prepare_isolated_workspace(
     task_id: &str,
     source_root: &std::path::Path,
 ) -> anyhow::Result<std::path::PathBuf> {
+    Ok(
+        prepare_isolated_workspace_with_details(server, parent_thread_id, task_id, source_root)
+            .await?
+            .cwd,
+    )
+}
+
+async fn prepare_isolated_workspace_with_details(
+    server: &super::Server,
+    parent_thread_id: ThreadId,
+    task_id: &str,
+    source_root: &std::path::Path,
+) -> anyhow::Result<IsolatedWorkspacePreparation> {
     let max_file_bytes = parse_env_u64(
         "OMNE_SUBAGENT_ISOLATED_MAX_FILE_BYTES",
         DEFAULT_ISOLATED_MAX_FILE_BYTES,
@@ -294,11 +377,22 @@ async fn prepare_isolated_workspace(
         .join(parent_thread_id.to_string())
         .join(format!("{label}-{nonce}"))
         .join("repo");
-    let worktree_first = parse_subagent_env_bool(
+    let (requested_backend, policy_warning) = parse_isolated_workspace_requested_backend(
+        std::env::var(ISOLATED_BACKEND_ENV).ok().as_deref(),
         std::env::var(ISOLATED_WORKTREE_FIRST_ENV).ok().as_deref(),
-        true,
     );
-    if worktree_first {
+    if let Some(policy_warning) = policy_warning.as_deref() {
+        tracing::warn!(
+            task_id = %task_id,
+            parent_thread_id = %parent_thread_id,
+            warning = %policy_warning,
+            "invalid isolated workspace backend policy"
+        );
+    }
+    if matches!(
+        requested_backend,
+        IsolatedWorkspaceRequestedBackend::Auto | IsolatedWorkspaceRequestedBackend::Worktree
+    ) {
         let source_root_text = source_root.display().to_string();
         let isolated_root_text = isolated_root.display().to_string();
         if let Some(parent) = isolated_root.parent() {
@@ -313,12 +407,63 @@ async fn prepare_isolated_workspace(
         )
         .await;
         if worktree_result.is_ok() {
-            return Ok(isolated_root);
+            return Ok(IsolatedWorkspacePreparation {
+                cwd: isolated_root,
+                requested_backend,
+                backend: IsolatedWorkspaceBackend::Worktree,
+                fallback_reason: None,
+            });
+        }
+        let err = match worktree_result {
+            Ok(()) => unreachable!(),
+            Err(err) => err,
+        };
+        if matches!(
+            requested_backend,
+            IsolatedWorkspaceRequestedBackend::Worktree
+        ) {
+            return Err(err).context("isolated worktree backend is required");
         }
         let _ = tokio::fs::remove_dir_all(&isolated_root).await;
+        let fallback_reason = format!("worktree preparation failed: {err}");
+        copy_workspace_into_isolated_root(
+            &source_root,
+            &isolated_root,
+            max_file_bytes,
+            max_total_bytes,
+        )
+        .await?;
+        return Ok(IsolatedWorkspacePreparation {
+            cwd: isolated_root,
+            requested_backend,
+            backend: IsolatedWorkspaceBackend::Copy,
+            fallback_reason: Some(fallback_reason),
+        });
     }
 
-    let isolated_root_for_task = isolated_root.clone();
+    copy_workspace_into_isolated_root(
+        &source_root,
+        &isolated_root,
+        max_file_bytes,
+        max_total_bytes,
+    )
+    .await?;
+    Ok(IsolatedWorkspacePreparation {
+        cwd: isolated_root,
+        requested_backend,
+        backend: IsolatedWorkspaceBackend::Copy,
+        fallback_reason: None,
+    })
+}
+
+async fn copy_workspace_into_isolated_root(
+    source_root: &std::path::Path,
+    isolated_root: &std::path::Path,
+    max_file_bytes: u64,
+    max_total_bytes: u64,
+) -> anyhow::Result<()> {
+    let source_root = source_root.to_path_buf();
+    let isolated_root_for_task = isolated_root.to_path_buf();
     tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
         std::fs::create_dir_all(&isolated_root_for_task).with_context(|| {
             format!(
@@ -398,8 +543,7 @@ async fn prepare_isolated_workspace(
     })
     .await
     .context("join isolated workspace copy task")??;
-
-    Ok(isolated_root)
+    Ok(())
 }
 
 #[allow(dead_code)]
@@ -494,12 +638,41 @@ fn spawn_fan_out_result_writer_with_target_workspace(
                         workspace_mode,
                         AgentSpawnWorkspaceMode::IsolatedWrite
                     ) {
+                        let (requested_backend, policy_warning) =
+                            parse_isolated_workspace_requested_backend(
+                                std::env::var(ISOLATED_BACKEND_ENV).ok().as_deref(),
+                                std::env::var(ISOLATED_WORKTREE_FIRST_ENV).ok().as_deref(),
+                            );
+                        let requested_backend = requested_backend.as_str().to_string();
                         workspace_cwd.as_ref().map(|cwd| {
+                                if let Some(policy_warning) = policy_warning.as_deref() {
+                                    tracing::warn!(
+                                        thread_id = %thread_id,
+                                        turn_id = %turn_id,
+                                        task_id = %task_id,
+                                        warning = %policy_warning,
+                                        "invalid isolated workspace backend policy for fan-out handoff"
+                                    );
+                                }
+                                let backend = detect_isolated_workspace_backend(cwd)
+                                    .map(|value| value.as_str().to_string());
+                                let fallback_reason = if matches!(
+                                    requested_backend.as_str(),
+                                    "auto" | "worktree"
+                                ) && backend.as_deref() == Some("copy")
+                                {
+                                    Some("worktree backend unavailable; copy backend used".to_string())
+                                } else {
+                                    None
+                                };
                                 let mut handoff = serde_json::json!({
                                     "workspace_cwd": cwd,
                                     "status_argv": ["git", "-C", cwd, "status", "--short", "--"],
                                     "diff_argv": ["git", "-C", cwd, "diff", "--binary", "--"],
-                                    "apply_patch_hint": "capture diff output and apply in target workspace with git apply"
+                                    "apply_patch_hint": "capture diff output and apply in target workspace with git apply",
+                                    "requested_backend": requested_backend,
+                                    "backend": backend,
+                                    "fallback_reason": fallback_reason,
                                 });
                                 if let Some(patch) = isolated_write_patch.as_ref() {
                                     handoff["patch"] = patch.clone();
@@ -738,6 +911,22 @@ fn parse_subagent_env_bool(raw: Option<&str>, default: bool) -> bool {
         "0" | "false" | "no" | "off" => false,
         _ => default,
     }
+}
+
+fn detect_isolated_workspace_backend(workspace_cwd: &str) -> Option<IsolatedWorkspaceBackend> {
+    let workspace_cwd = workspace_cwd.trim();
+    if workspace_cwd.is_empty() {
+        return None;
+    }
+    let marker = std::path::Path::new(workspace_cwd).join(".git");
+    let metadata = std::fs::metadata(&marker).ok()?;
+    if metadata.is_file() {
+        return Some(IsolatedWorkspaceBackend::Worktree);
+    }
+    if metadata.is_dir() {
+        return Some(IsolatedWorkspaceBackend::Copy);
+    }
+    None
 }
 
 fn json_value_string_array(value: &Value) -> Option<Vec<String>> {

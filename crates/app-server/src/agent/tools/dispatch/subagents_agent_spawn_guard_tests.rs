@@ -3,10 +3,47 @@ mod agent_spawn_guard_tests {
     use super::*;
     use std::collections::HashSet;
     use std::path::Path;
+    use std::sync::Mutex;
     use tokio::time::{Duration, Instant};
+
+    static ISOLATED_BACKEND_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct ScopedEnvVar {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl ScopedEnvVar {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var(key).ok();
+            unsafe { std::env::set_var(key, value) };
+            Self { key, previous }
+        }
+
+        fn unset(key: &'static str) -> Self {
+            let previous = std::env::var(key).ok();
+            unsafe { std::env::remove_var(key) };
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for ScopedEnvVar {
+        fn drop(&mut self) {
+            match self.previous.take() {
+                Some(value) => unsafe { std::env::set_var(self.key, value) },
+                None => unsafe { std::env::remove_var(self.key) },
+            }
+        }
+    }
 
     #[tokio::test]
     async fn isolated_workspace_copy_skips_runtime_dirs() -> anyhow::Result<()> {
+        let _lock = ISOLATED_BACKEND_ENV_LOCK
+            .lock()
+            .map_err(|_| anyhow::anyhow!("env lock poisoned"))?;
+        let _backend = ScopedEnvVar::unset("OMNE_SUBAGENT_ISOLATED_BACKEND");
+        let _legacy = ScopedEnvVar::unset("OMNE_SUBAGENT_ISOLATED_WORKTREE_FIRST");
+
         let tmp = tempfile::tempdir()?;
         let omne_root = tmp.path().join(".omne_data");
         let repo_dir = tmp.path().join("repo");
@@ -21,12 +58,21 @@ mod agent_spawn_guard_tests {
         let parent_thread_id = handle.thread_id();
         drop(handle);
 
-        let isolated_root =
-            prepare_isolated_workspace(&server, parent_thread_id, "t1", &repo_dir).await?;
-        let isolated_root = Path::new(&isolated_root);
+        let isolated =
+            prepare_isolated_workspace_with_details(&server, parent_thread_id, "t1", &repo_dir)
+                .await?;
+        let isolated_root = Path::new(&isolated.cwd);
         assert!(isolated_root.join("hello.txt").exists());
         assert!(isolated_root.join("src/lib.rs").exists());
         assert!(!isolated_root.join(".omne_data/threads/skip.txt").exists());
+        assert_eq!(isolated.requested_backend.as_str(), "auto");
+        assert_eq!(isolated.backend.as_str(), "copy");
+        assert!(
+            isolated
+                .fallback_reason
+                .as_deref()
+                .is_some_and(|value| !value.is_empty())
+        );
         assert!(
             isolated_root.starts_with(
                 omne_root
@@ -41,6 +87,12 @@ mod agent_spawn_guard_tests {
 
     #[tokio::test]
     async fn isolated_workspace_prefers_worktree_for_git_repo() -> anyhow::Result<()> {
+        let _lock = ISOLATED_BACKEND_ENV_LOCK
+            .lock()
+            .map_err(|_| anyhow::anyhow!("env lock poisoned"))?;
+        let _backend = ScopedEnvVar::unset("OMNE_SUBAGENT_ISOLATED_BACKEND");
+        let _legacy = ScopedEnvVar::unset("OMNE_SUBAGENT_ISOLATED_WORKTREE_FIRST");
+
         let tmp = tempfile::tempdir()?;
         let omne_root = tmp.path().join(".omne_data");
         let repo_dir = tmp.path().join("repo");
@@ -57,13 +109,92 @@ mod agent_spawn_guard_tests {
         let parent_thread_id = handle.thread_id();
         drop(handle);
 
-        let isolated_root =
-            prepare_isolated_workspace(&server, parent_thread_id, "wt1", &repo_dir).await?;
+        let isolated =
+            prepare_isolated_workspace_with_details(&server, parent_thread_id, "wt1", &repo_dir)
+                .await?;
+        let isolated_root = isolated.cwd;
         let git_marker = isolated_root.join(".git");
         let metadata = tokio::fs::metadata(&git_marker).await?;
         assert!(metadata.is_file());
         let git_marker_text = tokio::fs::read_to_string(&git_marker).await?;
         assert!(git_marker_text.contains("gitdir:"));
+        assert_eq!(isolated.requested_backend.as_str(), "auto");
+        assert_eq!(isolated.backend.as_str(), "worktree");
+        assert!(isolated.fallback_reason.is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn isolated_workspace_backend_policy_copy_forces_copy_on_git_repo()
+    -> anyhow::Result<()> {
+        let _lock = ISOLATED_BACKEND_ENV_LOCK
+            .lock()
+            .map_err(|_| anyhow::anyhow!("env lock poisoned"))?;
+        let _backend = ScopedEnvVar::set("OMNE_SUBAGENT_ISOLATED_BACKEND", "copy");
+        let _legacy = ScopedEnvVar::unset("OMNE_SUBAGENT_ISOLATED_WORKTREE_FIRST");
+
+        let tmp = tempfile::tempdir()?;
+        let omne_root = tmp.path().join(".omne_data");
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+        tokio::fs::write(repo_dir.join("hello.txt"), "hello\n").await?;
+        run_git(&repo_dir, &["init"]).await?;
+        run_git(&repo_dir, &["config", "user.email", "test@example.com"]).await?;
+        run_git(&repo_dir, &["config", "user.name", "Test User"]).await?;
+        run_git(&repo_dir, &["add", "hello.txt"]).await?;
+        run_git(&repo_dir, &["commit", "-m", "init"]).await?;
+
+        let server = crate::build_test_server_shared(omne_root.clone());
+        let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let parent_thread_id = handle.thread_id();
+        drop(handle);
+
+        let isolated = prepare_isolated_workspace_with_details(
+            &server,
+            parent_thread_id,
+            "copy-mode",
+            &repo_dir,
+        )
+        .await?;
+        assert_eq!(isolated.requested_backend.as_str(), "copy");
+        assert_eq!(isolated.backend.as_str(), "copy");
+        assert!(isolated.fallback_reason.is_none());
+        let git_marker = isolated.cwd.join(".git");
+        let metadata = tokio::fs::metadata(&git_marker).await?;
+        assert!(metadata.is_dir());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn isolated_workspace_backend_policy_worktree_fails_on_non_git_repo()
+    -> anyhow::Result<()> {
+        let _lock = ISOLATED_BACKEND_ENV_LOCK
+            .lock()
+            .map_err(|_| anyhow::anyhow!("env lock poisoned"))?;
+        let _backend = ScopedEnvVar::set("OMNE_SUBAGENT_ISOLATED_BACKEND", "worktree");
+        let _legacy = ScopedEnvVar::unset("OMNE_SUBAGENT_ISOLATED_WORKTREE_FIRST");
+
+        let tmp = tempfile::tempdir()?;
+        let omne_root = tmp.path().join(".omne_data");
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+        tokio::fs::write(repo_dir.join("hello.txt"), "hello\n").await?;
+
+        let server = crate::build_test_server_shared(omne_root.clone());
+        let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let parent_thread_id = handle.thread_id();
+        drop(handle);
+
+        let err = prepare_isolated_workspace_with_details(
+            &server,
+            parent_thread_id,
+            "wt-required",
+            &repo_dir,
+        )
+        .await
+        .expect_err("worktree policy should fail for non-git repo");
+        assert!(err.to_string().contains("isolated worktree backend is required"));
 
         Ok(())
     }
@@ -1886,6 +2017,90 @@ modes:
         assert!(read.text.contains("\"status_argv\""));
         assert!(read.text.contains("\"diff_argv\""));
         assert!(read.text.contains("\"apply_patch_hint\""));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn fan_out_result_writer_includes_isolated_write_backend_observability()
+    -> anyhow::Result<()> {
+        let _lock = ISOLATED_BACKEND_ENV_LOCK
+            .lock()
+            .map_err(|_| anyhow::anyhow!("env lock poisoned"))?;
+        let _backend = ScopedEnvVar::set("OMNE_SUBAGENT_ISOLATED_BACKEND", "auto");
+        let _legacy = ScopedEnvVar::unset("OMNE_SUBAGENT_ISOLATED_WORKTREE_FIRST");
+
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+        let workspace_dir = tmp.path().join("isolated-workspace");
+        tokio::fs::create_dir_all(workspace_dir.join(".git")).await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let turn_id = TurnId::new();
+        let notify_rx = server.notify_tx.subscribe();
+        spawn_fan_out_result_writer_with_target_workspace(
+            server.clone(),
+            notify_rx,
+            thread_id,
+            turn_id,
+            "t-isolated-backend".to_string(),
+            "fan_out_result".to_string(),
+            AgentSpawnWorkspaceMode::IsolatedWrite,
+            Some(workspace_dir.display().to_string()),
+            None,
+            false,
+        );
+
+        let completion_event = omne_protocol::ThreadEvent {
+            seq: EventSeq(1),
+            timestamp: time::OffsetDateTime::now_utc(),
+            thread_id,
+            kind: omne_protocol::ThreadEventKind::TurnCompleted {
+                turn_id,
+                status: omne_protocol::TurnStatus::Completed,
+                reason: None,
+            },
+        };
+        let line = serde_json::json!({
+            "method": "turn/completed",
+            "params": completion_event,
+        })
+        .to_string();
+        let _ = server.notify_tx.send(line);
+
+        let completion = wait_for_artifact_write_completion_result(&server, thread_id).await?;
+        let artifact_id_raw = completion
+            .get("artifact_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("artifact/write completion missing artifact_id"))?;
+        let artifact_id = artifact_id_raw
+            .parse::<omne_protocol::ArtifactId>()
+            .map_err(|err| anyhow::anyhow!("parse artifact_id {artifact_id_raw}: {err}"))?;
+
+        let read = crate::handle_artifact_read(
+            &server,
+            crate::ArtifactReadParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                artifact_id,
+                version: None,
+                max_bytes: None,
+            },
+        )
+        .await?;
+        let read: omne_app_server_protocol::ArtifactReadResponse =
+            serde_json::from_value(read).context("parse artifact/read response")?;
+        assert!(read.text.contains("\"requested_backend\": \"auto\""));
+        assert!(read.text.contains("\"backend\": \"copy\""));
+        assert!(
+            read.text
+                .contains("\"fallback_reason\": \"worktree backend unavailable; copy backend used\"")
+        );
         Ok(())
     }
 
