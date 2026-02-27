@@ -193,6 +193,7 @@ async fn create_new_thread(server: &super::Server, cwd: &str) -> anyhow::Result<
 
 const DEFAULT_ISOLATED_MAX_FILE_BYTES: u64 = 512 * 1024 * 1024;
 const DEFAULT_ISOLATED_MAX_TOTAL_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+const ISOLATED_WORKTREE_FIRST_ENV: &str = "OMNE_SUBAGENT_ISOLATED_WORKTREE_FIRST";
 
 fn sanitize_isolated_workspace_component(input: &str) -> String {
     let mut out = String::new();
@@ -293,8 +294,31 @@ async fn prepare_isolated_workspace(
         .join(parent_thread_id.to_string())
         .join(format!("{label}-{nonce}"))
         .join("repo");
-    let isolated_root_for_task = isolated_root.clone();
+    let worktree_first = parse_subagent_env_bool(
+        std::env::var(ISOLATED_WORKTREE_FIRST_ENV).ok().as_deref(),
+        true,
+    );
+    if worktree_first {
+        let source_root_text = source_root.display().to_string();
+        let isolated_root_text = isolated_root.display().to_string();
+        if let Some(parent) = isolated_root.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .with_context(|| format!("create {}", parent.display()))?;
+        }
+        let worktree_result = omne_thread_git_snapshot_runtime::create_detached_worktree(
+            &source_root_text,
+            &isolated_root_text,
+            Some("HEAD"),
+        )
+        .await;
+        if worktree_result.is_ok() {
+            return Ok(isolated_root);
+        }
+        let _ = tokio::fs::remove_dir_all(&isolated_root).await;
+    }
 
+    let isolated_root_for_task = isolated_root.clone();
     tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
         std::fs::create_dir_all(&isolated_root_for_task).with_context(|| {
             format!(
@@ -699,8 +723,10 @@ fn spawn_fan_out_result_writer_with_target_workspace(
     });
 }
 
-const DEFAULT_ISOLATED_PATCH_MAX_BYTES: u64 = 2 * 1024 * 1024;
-const DEFAULT_ISOLATED_PATCH_TIMEOUT_MS: u64 = 5_000;
+const DEFAULT_ISOLATED_PATCH_MAX_BYTES: u64 =
+    omne_thread_git_snapshot_runtime::DEFAULT_ISOLATED_PATCH_MAX_BYTES;
+const DEFAULT_ISOLATED_PATCH_TIMEOUT_MS: u64 =
+    omne_thread_git_snapshot_runtime::DEFAULT_ISOLATED_PATCH_TIMEOUT_MS;
 const ISOLATED_AUTO_APPLY_PATCH_ENV: &str = "OMNE_SUBAGENT_ISOLATED_AUTO_APPLY_PATCH";
 
 fn parse_subagent_env_bool(raw: Option<&str>, default: bool) -> bool {
@@ -748,101 +774,16 @@ async fn capture_isolated_workspace_patch(cwd: &str) -> anyhow::Result<Option<(S
         120_000,
     );
 
-    // Best-effort: include untracked files in the generated patch without staging content.
-    let _ = tokio::time::timeout(
-        std::time::Duration::from_millis(timeout_ms),
-        tokio::process::Command::new("git")
-            .args(["add", "--intent-to-add", "--", "."])
-            .current_dir(cwd)
-            .output(),
-    )
-    .await;
-
-    let output = tokio::time::timeout(
-        std::time::Duration::from_millis(timeout_ms),
-        tokio::process::Command::new("git")
-            .args([
-                "--no-pager",
-                "diff",
-                "--no-ext-diff",
-                "--no-textconv",
-                "--no-color",
-                "--binary",
-                "--patch",
-            ])
-            .current_dir(cwd)
-            .output(),
-    )
-    .await
-    .map_err(|_| anyhow::anyhow!("git diff timed out after {}ms", timeout_ms))?
-    .with_context(|| format!("spawn git diff in {}", cwd))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        anyhow::bail!(
-            "git diff --binary --patch failed in {} (exit {:?}): {}",
-            cwd,
-            output.status.code(),
-            stderr
-        );
-    }
-
-    if output.stdout.is_empty() {
-        return Ok(None);
-    }
-
-    let mut bytes = output.stdout;
-    let truncated = bytes.len() > max_patch_bytes;
-    if truncated {
-        bytes.truncate(max_patch_bytes);
-    }
-    let mut text = String::from_utf8_lossy(&bytes).to_string();
-    if truncated {
-        text.push_str("\n# <...truncated...>\n");
-    }
-    Ok(Some((text, truncated)))
-}
-
-async fn run_git_apply_with_patch_stdin(
-    cwd: &str,
-    args: &[&str],
-    patch_text: &str,
-) -> anyhow::Result<()> {
-    let mut child = tokio::process::Command::new("git")
-        .args(args)
-        .current_dir(cwd)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .with_context(|| format!("spawn git {} in {}", args.join(" "), cwd))?;
-
-    if let Some(mut stdin) = child.stdin.take() {
-        use tokio::io::AsyncWriteExt;
-        stdin
-            .write_all(patch_text.as_bytes())
-            .await
-            .with_context(|| format!("write patch stdin for git {} in {}", args.join(" "), cwd))?;
-    }
-
-    let output = child
-        .wait_with_output()
-        .await
-        .with_context(|| format!("wait git {} in {}", args.join(" "), cwd))?;
-    if output.status.success() {
-        return Ok(());
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    anyhow::bail!(
-        "git {} failed in {} (exit {:?}): stdout={}, stderr={}",
-        args.join(" "),
+    let patch = omne_thread_git_snapshot_runtime::capture_workspace_patch(
         cwd,
-        output.status.code(),
-        stdout,
-        stderr
-    );
+        omne_thread_git_snapshot_runtime::PatchCaptureConfig::new(
+            max_patch_bytes,
+            std::time::Duration::from_millis(timeout_ms),
+        ),
+    )
+    .await?;
+
+    Ok(patch.map(|value| (value.text, value.truncated)))
 }
 
 async fn try_auto_apply_isolated_workspace_patch(
@@ -873,113 +814,55 @@ async fn try_auto_apply_isolated_workspace_patch(
             payload["error"] = serde_json::json!(error);
         };
 
-    if !matches!(status, omne_protocol::TurnStatus::Completed) {
-        set_failure(
-            &mut payload,
-            omne_workflow_spec::FanOutResultIsolatedWriteAutoApplyFailureStage::Precondition,
-            "retry auto-apply after the child turn reaches completed status",
-            format!("turn status is not completed: {status:?}"),
-        );
-        return Some(payload);
-    }
-
-    let Some(target_workspace_cwd) = target_workspace_cwd
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        set_failure(
-            &mut payload,
-            omne_workflow_spec::FanOutResultIsolatedWriteAutoApplyFailureStage::Precondition,
-            "ensure parent workspace cwd is available for auto-apply",
-            "target workspace cwd is missing".to_string(),
-        );
-        return Some(payload);
-    };
-
-    let patch = match capture_isolated_workspace_patch(workspace_cwd).await {
-        Ok(Some(patch)) => patch,
-        Ok(None) => {
-            set_failure(
-                &mut payload,
-                omne_workflow_spec::FanOutResultIsolatedWriteAutoApplyFailureStage::CapturePatch,
-                "collect patch manually from isolated workspace and apply it in parent workspace",
-                "isolated workspace has no patch to apply".to_string(),
-            );
-            return Some(payload);
-        }
-        Err(err) => {
-            set_failure(
-                &mut payload,
-                omne_workflow_spec::FanOutResultIsolatedWriteAutoApplyFailureStage::CapturePatch,
-                "collect patch manually from isolated workspace and apply it in parent workspace",
-                format!("capture isolated patch for auto-apply failed: {err}"),
-            );
-            return Some(payload);
-        }
-    };
-
-    if patch.1 {
-        set_failure(
-            &mut payload,
-            omne_workflow_spec::FanOutResultIsolatedWriteAutoApplyFailureStage::CapturePatch,
-            "patch is truncated; use the patch artifact or manual git diff/apply workflow",
-            "isolated patch is truncated; refusing to auto-apply".to_string(),
-        );
-        return Some(payload);
-    }
-
-    payload["attempted"] = serde_json::json!(true);
-    payload["check_argv"] = serde_json::json!([
-        "git",
-        "-C",
+    let max_patch_bytes = parse_env_u64(
+        "OMNE_SUBAGENT_ISOLATED_PATCH_MAX_BYTES",
+        DEFAULT_ISOLATED_PATCH_MAX_BYTES,
+        1_024,
+        64 * 1024 * 1024,
+    ) as usize;
+    let timeout_ms = parse_env_u64(
+        "OMNE_SUBAGENT_ISOLATED_PATCH_TIMEOUT_MS",
+        DEFAULT_ISOLATED_PATCH_TIMEOUT_MS,
+        100,
+        120_000,
+    );
+    let outcome = omne_thread_git_snapshot_runtime::auto_apply_workspace_patch(
+        workspace_cwd,
         target_workspace_cwd,
-        "apply",
-        "--check",
-        "--whitespace=nowarn",
-        "-",
-    ]);
-    payload["apply_argv"] = serde_json::json!([
-        "git",
-        "-C",
-        target_workspace_cwd,
-        "apply",
-        "--whitespace=nowarn",
-        "-",
-    ]);
-
-    if let Err(err) = run_git_apply_with_patch_stdin(
-        target_workspace_cwd,
-        &["apply", "--check", "--whitespace=nowarn", "-"],
-        &patch.0,
+        matches!(status, omne_protocol::TurnStatus::Completed),
+        omne_thread_git_snapshot_runtime::PatchCaptureConfig::new(
+            max_patch_bytes,
+            std::time::Duration::from_millis(timeout_ms),
+        ),
     )
-    .await
-    {
-        set_failure(
-            &mut payload,
-            omne_workflow_spec::FanOutResultIsolatedWriteAutoApplyFailureStage::CheckPatch,
-            "resolve apply-check conflicts in parent workspace, then apply patch manually",
-            format!("git apply --check failed: {err}"),
-        );
-        return Some(payload);
+    .await;
+
+    payload["attempted"] = serde_json::json!(outcome.attempted);
+    payload["applied"] = serde_json::json!(outcome.applied);
+    if let Some(check_argv) = outcome.check_argv {
+        payload["check_argv"] = serde_json::json!(check_argv);
+    }
+    if let Some(apply_argv) = outcome.apply_argv {
+        payload["apply_argv"] = serde_json::json!(apply_argv);
+    }
+    if let Some(failure) = outcome.failure {
+        let stage = match failure.stage {
+            omne_thread_git_snapshot_runtime::AutoApplyFailureStage::Precondition => {
+                omne_workflow_spec::FanOutResultIsolatedWriteAutoApplyFailureStage::Precondition
+            }
+            omne_thread_git_snapshot_runtime::AutoApplyFailureStage::CapturePatch => {
+                omne_workflow_spec::FanOutResultIsolatedWriteAutoApplyFailureStage::CapturePatch
+            }
+            omne_thread_git_snapshot_runtime::AutoApplyFailureStage::CheckPatch => {
+                omne_workflow_spec::FanOutResultIsolatedWriteAutoApplyFailureStage::CheckPatch
+            }
+            omne_thread_git_snapshot_runtime::AutoApplyFailureStage::ApplyPatch => {
+                omne_workflow_spec::FanOutResultIsolatedWriteAutoApplyFailureStage::ApplyPatch
+            }
+        };
+        set_failure(&mut payload, stage, failure.hint, failure.error);
     }
 
-    if let Err(err) = run_git_apply_with_patch_stdin(
-        target_workspace_cwd,
-        &["apply", "--whitespace=nowarn", "-"],
-        &patch.0,
-    )
-    .await
-    {
-        set_failure(
-            &mut payload,
-            omne_workflow_spec::FanOutResultIsolatedWriteAutoApplyFailureStage::ApplyPatch,
-            "inspect git apply output and apply patch manually if needed",
-            format!("git apply failed: {err}"),
-        );
-        return Some(payload);
-    }
-
-    payload["applied"] = serde_json::json!(true);
     Some(payload)
 }
 

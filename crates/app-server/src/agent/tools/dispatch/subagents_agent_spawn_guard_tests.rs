@@ -40,6 +40,35 @@ mod agent_spawn_guard_tests {
     }
 
     #[tokio::test]
+    async fn isolated_workspace_prefers_worktree_for_git_repo() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let omne_root = tmp.path().join(".omne_data");
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+        tokio::fs::write(repo_dir.join("hello.txt"), "hello\n").await?;
+        run_git(&repo_dir, &["init"]).await?;
+        run_git(&repo_dir, &["config", "user.email", "test@example.com"]).await?;
+        run_git(&repo_dir, &["config", "user.name", "Test User"]).await?;
+        run_git(&repo_dir, &["add", "hello.txt"]).await?;
+        run_git(&repo_dir, &["commit", "-m", "init"]).await?;
+
+        let server = crate::build_test_server_shared(omne_root.clone());
+        let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let parent_thread_id = handle.thread_id();
+        drop(handle);
+
+        let isolated_root =
+            prepare_isolated_workspace(&server, parent_thread_id, "wt1", &repo_dir).await?;
+        let git_marker = isolated_root.join(".git");
+        let metadata = tokio::fs::metadata(&git_marker).await?;
+        assert!(metadata.is_file());
+        let git_marker_text = tokio::fs::read_to_string(&git_marker).await?;
+        assert!(git_marker_text.contains("gitdir:"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn agent_spawn_denies_disallowed_child_mode() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");
