@@ -17,25 +17,25 @@
 
 ## 2. Runtime 实现
 
-- [ ] 在 `omne-thread-git-snapshot-runtime` 增加 worktree 生命周期 API：
-- [ ] 识别 detached linked worktree（避免误删普通目录）。
-- [ ] 执行 `worktree remove --force`。
-- [ ] 执行 `worktree prune` 清理元数据。
-- [ ] 补齐 runtime 单测（受管 worktree 成功、非 worktree 不误删）。
+- [x] 在 `omne-thread-git-snapshot-runtime` 增加 worktree 生命周期 API：
+- [x] 识别 detached linked worktree（避免误删普通目录）。
+- [x] 执行 `worktree remove --force`。
+- [x] 执行 `worktree prune` 清理元数据。
+- [x] 补齐 runtime 单测（受管 worktree 成功、非 worktree 不误删）。
 
 ## 3. App-server 接入
 
-- [ ] 在 `thread/archive` 路径调用 runtime 生命周期 API（best-effort，不阻断主流程）。
-- [ ] 在 `thread/delete` 路径调用 runtime 生命周期 API（best-effort，不阻断主流程）。
-- [ ] app-server 仅保留路径判定和结果映射，不新增 git 命令实现。
+- [x] 在 `thread/archive` 路径调用 runtime 生命周期 API（best-effort，不阻断主流程）。
+- [x] 在 `thread/delete` 路径调用 runtime 生命周期 API（best-effort，不阻断主流程）。
+- [x] app-server 仅保留路径判定和结果映射，不新增 git 命令实现。
 
 ## 4. 验证
 
-- [ ] `cargo fmt --all --check`
-- [ ] `cargo test -p omne-thread-git-snapshot-runtime`
-- [ ] `cargo test -p omne-app-server thread_archive_`
-- [ ] `cargo test -p omne-app-server thread_delete_`
-- [ ] `rg -n "Command::new\\(\\\"git\\\"\\)" crates/app-server/src/main/thread_manage`（应无新增命中）
+- [x] `cargo fmt --all --check`
+- [x] `cargo test -p omne-thread-git-snapshot-runtime`
+- [x] `cargo test -p omne-app-server thread_archive_`
+- [x] `cargo test -p omne-app-server thread_delete_`
+- [x] `rg -n "Command::new\\(\\\"git\\\"\\)" crates/app-server/src/main/thread_manage/archive.rs crates/app-server/src/main/thread_manage/delete.rs crates/app-server/src/main/thread_manage/worktree_lifecycle.rs || true`（应无输出）
 
 ## 5. 下一阶段衔接（第 5 阶段）
 
