@@ -1,10 +1,18 @@
 # 任务：git-domain-worktree-default
 
+## 相关文档与用途
+
+- `openspec/changes/git-domain-worktree-default/proposal.md`：说明做什么、为什么做、怎么做与验收标准。
+- `openspec/changes/git-domain-worktree-default/specs/git-domain/spec.md`：定义本阶段新增/变更要求。
+- `openspec/specs/git-domain/spec.md`：Git 领域基线规范，用于判定是否偏离目标。
+- `docs/rts_workflow.md`、`docs/v0.2.0_parity.md`、`docs/implementation_plan.md`：workspace/worktree 方向与边界参考。
+- `/root/autodl-tmp/zjj/p/wsl-docs/00-元语/git-worktree.md`：worktree 实践边界（目录规划、维护清理）。
+
 ## 1. 文档与规格
 
 - [x] 编写 proposal。
-- [ ] 编写 spec delta。
-- [ ] 在任务中显式约束“worktree first, copy fallback”。
+- [x] 编写 spec delta。
+- [x] 在任务中显式约束“worktree first, copy fallback”。
 
 ## 2. Runtime 实现
 
