@@ -17,25 +17,25 @@
 
 ## 2. 策略实现
 
-- [ ] 增加后端策略枚举：`auto | worktree | copy`。
-- [ ] 增加统一解析入口（默认 `auto`，非法值回退默认并记录）。
-- [ ] `worktree` 强制模式失败时返回错误，不自动 fallback。
-- [ ] `auto` 模式失败时 fallback 到 copy。
-- [ ] `copy` 模式直接执行 copy 路径。
+- [x] 增加后端策略枚举：`auto | worktree | copy`。
+- [x] 增加统一解析入口（默认 `auto`，非法值回退默认并记录）。
+- [x] `worktree` 强制模式失败时返回错误，不自动 fallback。
+- [x] `auto` 模式失败时 fallback 到 copy。
+- [x] `copy` 模式直接执行 copy 路径。
 
 ## 3. 可观测字段
 
-- [ ] 在 `isolated_write` 结构化结果中写入 `requested_backend`。
-- [ ] 写入 `backend`（最终执行后端）。
-- [ ] `auto/worktree` 失败回退时写入 `fallback_reason`。
-- [ ] 失败字段语义与 auto-apply 现有字段保持一致（避免歧义）。
+- [x] 在 `isolated_write` 结构化结果中写入 `requested_backend`。
+- [x] 写入 `backend`（最终执行后端）。
+- [x] `auto/worktree` 失败回退时写入 `fallback_reason`。
+- [x] 失败字段语义与 auto-apply 现有字段保持一致（避免歧义）。
 
 ## 4. 验证
 
-- [ ] `cargo fmt --all --check`
-- [ ] `cargo test -p omne-app-server isolated_workspace_`
-- [ ] `cargo test -p omne-app-server fan_out_result_writer`
-- [ ] `rg -n "Command::new\\(\\\"git\\\"\\)" crates/app-server/src/agent/tools/dispatch/subagents_runtime_artifacts.rs`（应无新增命中）
+- [x] `cargo fmt --all --check`
+- [x] `cargo test -p omne-app-server isolated_workspace_`
+- [x] `cargo test -p omne-app-server fan_out_result_writer`
+- [x] `rg -n "Command::new\\(\\\"git\\\"\\)" crates/app-server/src/agent/tools/dispatch/subagents_runtime_artifacts.rs || true`（应无输出）
 
 ## 5. 下一阶段衔接（第 6 阶段）
 
@@ -45,6 +45,6 @@
 
 ## 6. 交接检查清单（离开前必须满足）
 
-- [ ] 文档已同步：proposal + tasks + spec delta。
-- [ ] 测试命令、边界扫描命令可直接复跑。
-- [ ] 下一阶段入口与阻塞点已写明。
+- [x] 文档已同步：proposal + tasks + spec delta。
+- [x] 测试命令、边界扫描命令可直接复跑。
+- [x] 下一阶段入口与阻塞点已写明。
