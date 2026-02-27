@@ -26,6 +26,7 @@ omne-fs-policy = { path = "../fs-policy" }
 omne-process-runtime = { path = "../process-runtime" }
 omne-repo-scan-runtime = { path = "../repo-scan-runtime" }
 omne-repo-symbols-runtime = { path = "../repo-symbols-runtime" }
+omne-thread-git-snapshot-runtime = { path = "../thread-git-snapshot-runtime" }
 omne-app-server-protocol = { path = "../app-server-protocol" }
 omne-checkpoint-runtime = { path = "../checkpoint-runtime" }
 omne-checkpoint-spec = { path = "../checkpoint-spec" }
