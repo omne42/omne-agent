@@ -1,4 +1,5 @@
 use anyhow::Context;
+use std::path::Path;
 use std::time::Duration;
 
 pub const DEFAULT_MAX_BYTES: u64 = 4 * 1024 * 1024;
@@ -237,6 +238,125 @@ pub async fn create_detached_worktree(
         stdout,
         stderr
     );
+}
+
+fn parse_dot_git_marker(marker: &str) -> Option<String> {
+    let line = marker.lines().next()?.trim();
+    let value = line.strip_prefix("gitdir:")?.trim();
+    if value.is_empty() {
+        return None;
+    }
+    Some(value.to_string())
+}
+
+fn looks_like_linked_worktree_gitdir(gitdir: &str) -> bool {
+    gitdir.replace('\\', "/").contains("/worktrees/")
+}
+
+pub async fn remove_detached_worktree_and_prune(worktree_path: &str) -> anyhow::Result<bool> {
+    let worktree_path = worktree_path.trim();
+    if worktree_path.is_empty() {
+        return Ok(false);
+    }
+
+    let git_marker = Path::new(worktree_path).join(".git");
+    let marker_meta = match tokio::fs::metadata(&git_marker).await {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(err).with_context(|| format!("stat {}", git_marker.display())),
+    };
+    if !marker_meta.is_file() {
+        return Ok(false);
+    }
+
+    let marker_text = tokio::fs::read_to_string(&git_marker)
+        .await
+        .with_context(|| format!("read {}", git_marker.display()))?;
+    let Some(gitdir) = parse_dot_git_marker(&marker_text) else {
+        return Ok(false);
+    };
+    if !looks_like_linked_worktree_gitdir(&gitdir) {
+        return Ok(false);
+    }
+
+    let common_dir_output = tokio::process::Command::new("git")
+        .args([
+            "-C",
+            worktree_path,
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-common-dir",
+        ])
+        .output()
+        .await
+        .with_context(|| format!("spawn git rev-parse in {}", worktree_path))?;
+    if !common_dir_output.status.success() {
+        let stdout = String::from_utf8_lossy(&common_dir_output.stdout)
+            .trim()
+            .to_string();
+        let stderr = String::from_utf8_lossy(&common_dir_output.stderr)
+            .trim()
+            .to_string();
+        anyhow::bail!(
+            "git rev-parse --git-common-dir failed in {} (exit {:?}): stdout={}, stderr={}",
+            worktree_path,
+            common_dir_output.status.code(),
+            stdout,
+            stderr
+        );
+    }
+    let common_dir = String::from_utf8_lossy(&common_dir_output.stdout)
+        .trim()
+        .to_string();
+    if common_dir.is_empty() {
+        anyhow::bail!("git rev-parse --git-common-dir returned empty output");
+    }
+
+    let remove_output = tokio::process::Command::new("git")
+        .arg(format!("--git-dir={common_dir}"))
+        .args(["worktree", "remove", "--force", worktree_path])
+        .output()
+        .await
+        .with_context(|| format!("spawn git worktree remove for {}", worktree_path))?;
+    if !remove_output.status.success() {
+        let stdout = String::from_utf8_lossy(&remove_output.stdout)
+            .trim()
+            .to_string();
+        let stderr = String::from_utf8_lossy(&remove_output.stderr)
+            .trim()
+            .to_string();
+        anyhow::bail!(
+            "git worktree remove --force failed for {} (exit {:?}): stdout={}, stderr={}",
+            worktree_path,
+            remove_output.status.code(),
+            stdout,
+            stderr
+        );
+    }
+
+    let prune_output = tokio::process::Command::new("git")
+        .arg(format!("--git-dir={common_dir}"))
+        .args(["worktree", "prune"])
+        .output()
+        .await
+        .with_context(|| format!("spawn git worktree prune for {}", common_dir))?;
+    if !prune_output.status.success() {
+        let stdout = String::from_utf8_lossy(&prune_output.stdout)
+            .trim()
+            .to_string();
+        let stderr = String::from_utf8_lossy(&prune_output.stderr)
+            .trim()
+            .to_string();
+        anyhow::bail!(
+            "git worktree prune failed for {} (exit {:?}): stdout={}, stderr={}",
+            common_dir,
+            prune_output.status.code(),
+            stdout,
+            stderr
+        );
+    }
+
+    Ok(true)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -722,6 +842,68 @@ mod tests {
         .expect_err("expected non-git worktree creation to fail");
         let err = err.to_string();
         assert!(err.contains("git worktree add --detach failed"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn remove_detached_worktree_and_prune_succeeds_for_linked_worktree() -> anyhow::Result<()>
+    {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+        init_repo(&repo_dir).await?;
+
+        let worktree_dir = tmp.path().join("wt-remove");
+        create_detached_worktree(
+            &repo_dir.display().to_string(),
+            &worktree_dir.display().to_string(),
+            None,
+        )
+        .await?;
+        assert!(worktree_dir.exists());
+
+        let removed =
+            remove_detached_worktree_and_prune(worktree_dir.display().to_string().as_str()).await?;
+        assert!(removed);
+        assert!(!worktree_dir.exists());
+
+        let output = tokio::process::Command::new("git")
+            .args(["worktree", "list"])
+            .current_dir(&repo_dir)
+            .output()
+            .await?;
+        assert!(output.status.success());
+        let listed = String::from_utf8_lossy(&output.stdout);
+        assert!(!listed.contains(worktree_dir.display().to_string().as_str()));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn remove_detached_worktree_and_prune_returns_false_for_primary_worktree()
+    -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+        init_repo(&repo_dir).await?;
+
+        let removed =
+            remove_detached_worktree_and_prune(repo_dir.display().to_string().as_str()).await?;
+        assert!(!removed);
+        assert!(repo_dir.exists());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn remove_detached_worktree_and_prune_returns_false_for_non_git_directory()
+    -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let dir = tmp.path().join("plain");
+        tokio::fs::create_dir_all(&dir).await?;
+
+        let removed =
+            remove_detached_worktree_and_prune(dir.display().to_string().as_str()).await?;
+        assert!(!removed);
+        assert!(dir.exists());
         Ok(())
     }
 }

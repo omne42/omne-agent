@@ -1,0 +1,135 @@
+#[cfg(test)]
+mod thread_manage_worktree_lifecycle_tests {
+    use super::*;
+
+    async fn run_git(cwd: &std::path::Path, args: &[&str]) -> anyhow::Result<()> {
+        let output = tokio::process::Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .output()
+            .await
+            .with_context(|| format!("spawn git {} in {}", args.join(" "), cwd.display()))?;
+        if output.status.success() {
+            return Ok(());
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        anyhow::bail!(
+            "git {} failed in {} (exit {:?}): stdout={}, stderr={}",
+            args.join(" "),
+            cwd.display(),
+            output.status.code(),
+            stdout,
+            stderr
+        );
+    }
+
+    async fn init_repo(repo_dir: &std::path::Path) -> anyhow::Result<()> {
+        run_git(repo_dir, &["init"]).await?;
+        run_git(repo_dir, &["config", "user.email", "test@example.com"]).await?;
+        run_git(repo_dir, &["config", "user.name", "Test User"]).await?;
+        tokio::fs::write(repo_dir.join("hello.txt"), "hello\n").await?;
+        run_git(repo_dir, &["add", "hello.txt"]).await?;
+        run_git(repo_dir, &["commit", "-m", "init"]).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn thread_archive_cleans_managed_detached_worktree() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let source_repo = tmp.path().join("source");
+        tokio::fs::create_dir_all(&source_repo).await?;
+        init_repo(&source_repo).await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let worktree_dir = managed_subagent_worktree_root(&server)
+            .join("parent-thread")
+            .join("archive-case")
+            .join("repo");
+        if let Some(parent) = worktree_dir.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        omne_thread_git_snapshot_runtime::create_detached_worktree(
+            &source_repo.display().to_string(),
+            &worktree_dir.display().to_string(),
+            None,
+        )
+        .await?;
+
+        let handle = server.thread_store.create_thread(worktree_dir.clone()).await?;
+        let thread_id = handle.thread_id();
+        let rt = Arc::new(ThreadRuntime::new(handle, server.notify_tx.clone()));
+        server.threads.lock().await.insert(thread_id, rt);
+
+        let result = handle_thread_archive(
+            &server,
+            ThreadArchiveParams {
+                thread_id,
+                force: false,
+                reason: None,
+            },
+        )
+        .await?;
+        assert!(result.archived);
+        assert!(!worktree_dir.exists());
+
+        let output = tokio::process::Command::new("git")
+            .args(["worktree", "list"])
+            .current_dir(&source_repo)
+            .output()
+            .await?;
+        assert!(output.status.success());
+        let listed = String::from_utf8_lossy(&output.stdout);
+        assert!(!listed.contains(worktree_dir.display().to_string().as_str()));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn thread_delete_cleans_managed_detached_worktree() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let source_repo = tmp.path().join("source");
+        tokio::fs::create_dir_all(&source_repo).await?;
+        init_repo(&source_repo).await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let worktree_dir = managed_subagent_worktree_root(&server)
+            .join("parent-thread")
+            .join("delete-case")
+            .join("repo");
+        if let Some(parent) = worktree_dir.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        omne_thread_git_snapshot_runtime::create_detached_worktree(
+            &source_repo.display().to_string(),
+            &worktree_dir.display().to_string(),
+            None,
+        )
+        .await?;
+
+        let handle = server.thread_store.create_thread(worktree_dir.clone()).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let result = handle_thread_delete(
+            &server,
+            ThreadDeleteParams {
+                thread_id,
+                force: false,
+            },
+        )
+        .await?;
+        assert!(result.deleted);
+        assert!(!worktree_dir.exists());
+
+        let output = tokio::process::Command::new("git")
+            .args(["worktree", "list"])
+            .current_dir(&source_repo)
+            .output()
+            .await?;
+        assert!(output.status.success());
+        let listed = String::from_utf8_lossy(&output.stdout);
+        assert!(!listed.contains(worktree_dir.display().to_string().as_str()));
+        Ok(())
+    }
+}
