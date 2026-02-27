@@ -4,10 +4,10 @@ async fn handle_thread_archive(
 ) -> anyhow::Result<omne_app_server_protocol::ThreadArchiveResponse> {
     let thread_rt = server.get_or_load_thread(params.thread_id).await?;
 
-    let (already_archived, active_turn_id) = {
+    let (already_archived, active_turn_id, thread_cwd) = {
         let handle = thread_rt.handle.lock().await;
         let state = handle.state();
-        (state.archived, state.active_turn_id)
+        (state.archived, state.active_turn_id, state.cwd.clone())
     };
 
     if already_archived {
@@ -104,6 +104,13 @@ async fn handle_thread_archive(
         })
         .await?;
     let auto_hook = run_auto_workspace_hook(server, params.thread_id, WorkspaceHookName::Archive).await;
+    cleanup_managed_subagent_worktree(
+        server,
+        params.thread_id,
+        thread_cwd.as_deref(),
+        "thread/archive",
+    )
+    .await;
 
     Ok(omne_app_server_protocol::ThreadArchiveResponse {
         thread_id: params.thread_id,

@@ -3,6 +3,17 @@ async fn handle_thread_delete(
     params: ThreadDeleteParams,
 ) -> anyhow::Result<omne_app_server_protocol::ThreadDeleteResponse> {
     let thread_dir = server.thread_store.thread_dir(params.thread_id);
+    let thread_cwd = match server.thread_store.read_state(params.thread_id).await {
+        Ok(state) => state.and_then(|value| value.cwd),
+        Err(err) => {
+            tracing::warn!(
+                thread_id = %params.thread_id,
+                error = %err,
+                "failed to read thread state before delete"
+            );
+            None
+        }
+    };
 
     let mut running = Vec::<ProcessId>::new();
     let mut to_kill = Vec::<ProcessEntry>::new();
@@ -53,6 +64,13 @@ async fn handle_thread_delete(
             entries.remove(&process_id);
         }
     }
+    cleanup_managed_subagent_worktree(
+        server,
+        params.thread_id,
+        thread_cwd.as_deref(),
+        "thread/delete",
+    )
+    .await;
 
     let deleted = match tokio::fs::remove_dir_all(&thread_dir).await {
         Ok(()) => true,
