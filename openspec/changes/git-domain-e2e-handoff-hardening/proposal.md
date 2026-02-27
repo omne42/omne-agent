@@ -5,6 +5,7 @@
 - `openspec/changes/git-domain-sequence.md`：第 6 阶段收口要求。
 - `openspec/specs/git-domain/implementation-roadmap.md`：全链路目标与最终验收。
 - `openspec/specs/git-domain/spec.md`：跨阶段边界约束。
+- `openspec/specs/git-domain/handoff-template.md`：阶段交接模板（离开前必填）。
 - `openspec/changes/git-domain-worktree-lifecycle/proposal.md`：生命周期回收行为基线。
 - `openspec/changes/git-domain-worktree-policy-observability/proposal.md`：策略与观测字段基线。
 

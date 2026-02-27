@@ -8,6 +8,7 @@
 - `openspec/specs/git-domain/implementation-roadmap.md`：全链路里程碑与完成定义。
 - `openspec/changes/git-domain-worktree-lifecycle/tasks.md`：生命周期回收验证前提。
 - `openspec/changes/git-domain-worktree-policy-observability/tasks.md`：策略与观测验证前提。
+- `openspec/specs/git-domain/handoff-template.md`：阶段交接模板与必填字段。
 
 ## 1. 文档与规范
 
@@ -24,7 +25,7 @@
 
 ## 3. 交接模板固化
 
-- [ ] 新增/更新交接模板文档（当前阶段、下一步、阻塞点、复跑命令）。
+- [x] 新增/更新交接模板文档（当前阶段、下一步、阻塞点、复跑命令）。
 - [ ] 每次阶段结束自动回写“已完成/待办/风险”。
 - [ ] 模板字段与 openspec 任务清单保持一一对应。
 
@@ -32,7 +33,11 @@
 
 - [ ] `cargo fmt --all --check`
 - [ ] `cargo check --workspace`
-- [ ] 目标 E2E 套件命令（待本阶段实现后补充具体命令）
+- [ ] 目标 E2E 套件命令：
+  - [ ] `cargo test -p omne-app-server isolated_workspace_ -- --nocapture`
+  - [ ] `cargo test -p omne-app-server fan_out_result_writer_ -- --nocapture`
+  - [ ] `cargo test -p omne-app-server thread_archive_cleans_managed_detached_worktree -- --nocapture`
+  - [ ] `cargo test -p omne-app-server thread_delete_cleans_managed_detached_worktree -- --nocapture`
 - [ ] 边界扫描：`rg -n "Command::new\\(\\\"git\\\"\\)" crates/app-server/src/main crates/app-server/src/agent/tools/dispatch`（人工复核只允许 runtime 路径）
 
 ## 5. 完成定义（DoD）
