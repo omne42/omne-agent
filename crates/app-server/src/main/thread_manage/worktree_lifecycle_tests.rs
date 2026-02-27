@@ -35,6 +35,23 @@ mod thread_manage_worktree_lifecycle_tests {
         Ok(())
     }
 
+    async fn create_broken_managed_worktree(
+        server: &Server,
+        suffix: &str,
+    ) -> anyhow::Result<std::path::PathBuf> {
+        let worktree_dir = managed_subagent_worktree_root(server)
+            .join("broken")
+            .join(suffix)
+            .join("repo");
+        tokio::fs::create_dir_all(&worktree_dir).await?;
+        tokio::fs::write(
+            worktree_dir.join(".git"),
+            "gitdir: /tmp/nonexistent/worktrees/broken\n",
+        )
+        .await?;
+        Ok(worktree_dir)
+    }
+
     #[tokio::test]
     async fn thread_archive_cleans_managed_detached_worktree() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
@@ -57,7 +74,10 @@ mod thread_manage_worktree_lifecycle_tests {
         )
         .await?;
 
-        let handle = server.thread_store.create_thread(worktree_dir.clone()).await?;
+        let handle = server
+            .thread_store
+            .create_thread(worktree_dir.clone())
+            .await?;
         let thread_id = handle.thread_id();
         let rt = Arc::new(ThreadRuntime::new(handle, server.notify_tx.clone()));
         server.threads.lock().await.insert(thread_id, rt);
@@ -107,7 +127,10 @@ mod thread_manage_worktree_lifecycle_tests {
         )
         .await?;
 
-        let handle = server.thread_store.create_thread(worktree_dir.clone()).await?;
+        let handle = server
+            .thread_store
+            .create_thread(worktree_dir.clone())
+            .await?;
         let thread_id = handle.thread_id();
         drop(handle);
 
@@ -130,6 +153,62 @@ mod thread_manage_worktree_lifecycle_tests {
         assert!(output.status.success());
         let listed = String::from_utf8_lossy(&output.stdout);
         assert!(!listed.contains(worktree_dir.display().to_string().as_str()));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn thread_archive_ignores_cleanup_errors_for_managed_broken_worktree()
+    -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let broken_worktree = create_broken_managed_worktree(&server, "archive").await?;
+
+        let handle = server
+            .thread_store
+            .create_thread(broken_worktree.clone())
+            .await?;
+        let thread_id = handle.thread_id();
+        let rt = Arc::new(ThreadRuntime::new(handle, server.notify_tx.clone()));
+        server.threads.lock().await.insert(thread_id, rt);
+
+        let result = handle_thread_archive(
+            &server,
+            ThreadArchiveParams {
+                thread_id,
+                force: false,
+                reason: Some("archive broken worktree".to_string()),
+            },
+        )
+        .await?;
+        assert!(result.archived);
+        assert!(broken_worktree.exists());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn thread_delete_ignores_cleanup_errors_for_managed_broken_worktree() -> anyhow::Result<()>
+    {
+        let tmp = tempfile::tempdir()?;
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let broken_worktree = create_broken_managed_worktree(&server, "delete").await?;
+
+        let handle = server
+            .thread_store
+            .create_thread(broken_worktree.clone())
+            .await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let result = handle_thread_delete(
+            &server,
+            ThreadDeleteParams {
+                thread_id,
+                force: false,
+            },
+        )
+        .await?;
+        assert!(result.deleted);
+        assert!(broken_worktree.exists());
         Ok(())
     }
 }
