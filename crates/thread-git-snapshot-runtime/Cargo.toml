@@ -1,0 +1,12 @@
+[package]
+name = "omne-thread-git-snapshot-runtime"
+edition.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
