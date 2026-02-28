@@ -7,6 +7,7 @@
 - 默认以 `git worktree` 承载 `isolated_write` 隔离工作区。
 - `app-server` 仅承担编排与协议映射，不承载 Git 过程实现细节。
 - Git 关键能力（snapshot、patch、auto-apply、worktree lifecycle）集中到 runtime。
+- Git 核心主链路优先由 `gix` 承担，逐步移除对系统 `git` CLI 的硬依赖。
 - 对外行为兼容、可回归、可交接。
 
 ## 全局边界（硬性）
@@ -14,7 +15,8 @@
 - 目标终态中，`omne-agent/crates/app-server` 不实现 Git 领域过程逻辑。
 - `app-server` 允许存在的仅有：编排、策略选择、协议字段映射、诊断信息组装。
 - Git 领域实现（worktree、snapshot、apply、lifecycle）统一下沉到 Git runtime crate。
-- `isolated_write` 的 Git 能力只通过本地 Git CLI 调用实现；不启动本地 Git 服务（无 daemon/smart-http 依赖）。
+- 不启动本地 Git 服务（无 daemon/smart-http 依赖）。
+- 对尚未迁移到 `gix` 的能力允许 runtime 内受控 fallback，但禁止在 app-server 旁路实现。
 
 ## 阶段路线（全链路）
 
@@ -69,6 +71,19 @@
   - 全链路命令一键回归通过；
   - 新接手者可按文档独立推进，不依赖聊天上下文。
   - 边界检查通过：`rg -n \"Command::new\\(\\\"git\\\"\\)\" crates/app-server/src` 仅允许出现在明确标注为过渡期的白名单位置，最终白名单收敛到 0。
+
+### Phase 6：Gix Backend Foundation（新增）
+
+- 做什么：在 `omne-git-runtime` 建立 `gix` 后端抽象，并迁移首批主链路能力。
+- 为什么做：让核心 Git 能力不依赖系统 `git` 预装，提升单文件发行可用性。
+- 怎么做：
+  - 新增后端选择：`gix|cli`；
+  - 优先迁移 `fetch/pull` 与仓库基础读能力；
+  - 对未迁移路径保留 runtime 内 fallback（非 app-server）。
+- 验收标准：
+  - runtime 可配置 `gix` 后端并通过单测；
+  - `fetch/pull` 能力有可执行验证；
+  - `app-server` 无新增 Git 过程实现。
 
 ## 依赖与参考
 
