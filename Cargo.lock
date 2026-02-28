@@ -1725,28 +1725,23 @@ dependencies = [
  "anyhow",
  "clap",
  "crossterm",
- "flate2",
  "futures-util",
  "mcp-jsonrpc",
  "notify-kit",
  "omne-app-server-protocol",
  "omne-core",
  "omne-protocol",
+ "omne-toolchain-runtime",
  "omne-workflow-spec",
  "ratatui",
- "reqwest",
  "serde",
  "serde_json",
  "serde_yaml",
- "sha2",
- "tar",
- "tempfile",
  "time",
  "tokio",
  "tracing-subscriber",
  "unicode-width 0.1.14",
  "walkdir",
- "zip",
 ]
 
 [[package]]
@@ -1965,6 +1960,22 @@ dependencies = [
  "tree-sitter",
  "tree-sitter-rust",
  "walkdir",
+]
+
+[[package]]
+name = "omne-toolchain-runtime"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "flate2",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tar",
+ "tempfile",
+ "tokio",
+ "zip",
 ]
 
 [[package]]

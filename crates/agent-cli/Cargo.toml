@@ -8,25 +8,20 @@ version.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 crossterm = { version = "0.28", features = ["event-stream"] }
-flate2 = "1"
 futures-util.workspace = true
 notify-kit = { path = "../../../notify-kit/crates/notify-kit" }
 omne-jsonrpc = { package = "mcp-jsonrpc", path = "../../../mcp-kit/crates/jsonrpc" }
 omne-app-server-protocol = { path = "../app-server-protocol" }
 omne-core = { path = "../core" }
 omne-protocol = { path = "../agent-protocol" }
+omne-toolchain-runtime = { path = "../toolchain-runtime" }
 omne-workflow-spec = { path = "../workflow-spec" }
 ratatui = { version = "0.28", default-features = false, features = ["crossterm", "unstable-rendered-line-info"] }
-reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
-sha2 = "0.10"
-tar = "0.4"
-tempfile.workspace = true
 time.workspace = true
 tokio.workspace = true
 tracing-subscriber.workspace = true
 unicode-width.workspace = true
 walkdir.workspace = true
-zip = { version = "2", default-features = false, features = ["deflate"] }
