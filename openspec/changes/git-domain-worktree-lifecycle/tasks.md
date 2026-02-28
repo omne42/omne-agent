@@ -17,7 +17,7 @@
 
 ## 2. Runtime 实现
 
-- [x] 在 `omne-thread-git-snapshot-runtime` 增加 worktree 生命周期 API：
+- [x] 在 `omne-git-runtime` 增加 worktree 生命周期 API：
 - [x] 识别 detached linked worktree（避免误删普通目录）。
 - [x] 执行 `worktree remove --force`。
 - [x] 执行 `worktree prune` 清理元数据。
@@ -32,7 +32,7 @@
 ## 4. 验证
 
 - [x] `cargo fmt --all --check`
-- [x] `cargo test -p omne-thread-git-snapshot-runtime`
+- [x] `cargo test -p omne-git-runtime`
 - [x] `cargo test -p omne-app-server thread_archive_`
 - [x] `cargo test -p omne-app-server thread_delete_`
 - [x] `rg -n "Command::new\\(\\\"git\\\"\\)" crates/app-server/src/main/thread_manage/archive.rs crates/app-server/src/main/thread_manage/delete.rs crates/app-server/src/main/thread_manage/worktree_lifecycle.rs || true`（应无输出）

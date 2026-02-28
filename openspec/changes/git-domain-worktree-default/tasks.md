@@ -31,7 +31,7 @@
 ## 4. 验证
 
 - [x] `cargo check --workspace`
-- [x] `cargo test -p omne-thread-git-snapshot-runtime`
+- [x] `cargo test -p omne-git-runtime`
 - [x] `cargo test -p omne-app-server isolated_workspace_`
 - [x] `cargo test -p omne-app-server fan_out_result_writer_auto_applies`
 - [x] `cargo test -p omne-app-server fan_out_result_writer_auto_apply`
@@ -49,7 +49,7 @@
 - [x] 文档已包含：做什么、为什么做、怎么做、验收标准。
 - [x] 相关文档已列出并说明用途（仓库内 + 外部依据）。
 - [x] 关键入口文件已明确：
-  - `crates/thread-git-snapshot-runtime/src/lib.rs`
+  - `crates/git-runtime/src/lib.rs`
   - `crates/app-server/src/agent/tools/dispatch/subagents_runtime_artifacts.rs`
   - `crates/app-server/src/agent/tools/dispatch/subagents_agent_spawn_guard_tests.rs`
 - [x] 回归命令可直接执行且通过（见第 4 节）。

@@ -4,75 +4,12 @@ struct BellNotifier {
 
 impl BellNotifier {
     fn from_env() -> anyhow::Result<Self> {
-        const OMNE_NOTIFY_SOUND_ENV: &str = "OMNE_NOTIFY_SOUND";
-        const OMNE_NOTIFY_WEBHOOK_URL_ENV: &str = "OMNE_NOTIFY_WEBHOOK_URL";
-        const OMNE_NOTIFY_WEBHOOK_FIELD_ENV: &str = "OMNE_NOTIFY_WEBHOOK_FIELD";
-        const OMNE_NOTIFY_FEISHU_WEBHOOK_URL_ENV: &str = "OMNE_NOTIFY_FEISHU_WEBHOOK_URL";
-        const OMNE_NOTIFY_SLACK_WEBHOOK_URL_ENV: &str = "OMNE_NOTIFY_SLACK_WEBHOOK_URL";
-        const OMNE_NOTIFY_TIMEOUT_MS_ENV: &str = "OMNE_NOTIFY_TIMEOUT_MS";
-        const OMNE_NOTIFY_EVENTS_ENV: &str = "OMNE_NOTIFY_EVENTS";
-
-        let timeout = parse_notify_timeout_ms_env(OMNE_NOTIFY_TIMEOUT_MS_ENV)
-            .with_context(|| format!("invalid {OMNE_NOTIFY_TIMEOUT_MS_ENV}"))?;
-        let mut sinks: Vec<Arc<dyn notify_kit::Sink>> = Vec::new();
-
-        let sound_enabled = env_bool(OMNE_NOTIFY_SOUND_ENV).unwrap_or(true);
-        if sound_enabled {
-            sinks.push(Arc::new(notify_kit::SoundSink::new(
-                notify_kit::SoundConfig { command_argv: None },
-            )));
-        }
-
-        if let Some(url) = env_nonempty(OMNE_NOTIFY_WEBHOOK_URL_ENV) {
-            let mut cfg = notify_kit::GenericWebhookConfig::new(url).with_timeout(timeout);
-            if let Some(field) = env_nonempty(OMNE_NOTIFY_WEBHOOK_FIELD_ENV) {
-                cfg = cfg.with_payload_field(field);
-            }
-            sinks.push(Arc::new(
-                notify_kit::GenericWebhookSink::new(cfg)
-                    .context("build generic webhook sink")?,
-            ));
-        }
-
-        if let Some(url) = env_nonempty(OMNE_NOTIFY_FEISHU_WEBHOOK_URL_ENV) {
-            let cfg = notify_kit::FeishuWebhookConfig::new(url).with_timeout(timeout);
-            sinks.push(Arc::new(
-                notify_kit::FeishuWebhookSink::new(cfg).context("build feishu sink")?,
-            ));
-        }
-
-        if let Some(url) = env_nonempty(OMNE_NOTIFY_SLACK_WEBHOOK_URL_ENV) {
-            let cfg = notify_kit::SlackWebhookConfig::new(url).with_timeout(timeout);
-            sinks.push(Arc::new(
-                notify_kit::SlackWebhookSink::new(cfg).context("build slack sink")?,
-            ));
-        }
-
-        if sinks.is_empty() {
-            anyhow::bail!(
-                "no notification sinks configured (enable {OMNE_NOTIFY_SOUND_ENV}=1 or provide webhook envs)"
-            );
-        }
-
-        let enabled_kinds = std::env::var(OMNE_NOTIFY_EVENTS_ENV).ok().and_then(|raw| {
-            let set = raw
-                .split(',')
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(ToString::to_string)
-                .collect::<std::collections::BTreeSet<_>>();
-            if set.is_empty() { None } else { Some(set) }
-        });
-
-        Ok(Self {
-            hub: notify_kit::Hub::new(
-                notify_kit::HubConfig {
-                    enabled_kinds,
-                    per_sink_timeout: timeout,
-                },
-                sinks,
-            ),
-        })
+        let hub = notify_kit::build_hub_from_standard_env(notify_kit::StandardEnvHubOptions {
+            default_sound_enabled: true,
+            require_sink: true,
+        })?
+        .context("expected notification hub when require_sink=true")?;
+        Ok(Self { hub })
     }
 
     fn notify_attention_state(&self, title: String, state: &str) {
@@ -88,7 +25,6 @@ impl BellNotifier {
                 .with_tag("state", "stale_process"),
         );
     }
-
 }
 
 fn attention_state_severity(state: &str) -> notify_kit::Severity {
@@ -106,13 +42,6 @@ fn attention_state_severity(state: &str) -> notify_kit::Severity {
     }
 }
 
-fn env_nonempty(key: &str) -> Option<String> {
-    std::env::var(key)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-}
-
 fn env_bool(key: &str) -> Option<bool> {
     let raw = std::env::var(key).ok()?;
     match raw.trim().to_ascii_lowercase().as_str() {
@@ -120,17 +49,6 @@ fn env_bool(key: &str) -> Option<bool> {
         "0" | "false" | "no" | "off" => Some(false),
         _ => None,
     }
-}
-
-fn parse_notify_timeout_ms_env(key: &str) -> anyhow::Result<Duration> {
-    let timeout = std::env::var(key)
-        .ok()
-        .map(|raw| raw.trim().to_string())
-        .filter(|raw| !raw.is_empty())
-        .map(|raw| raw.parse::<u64>())
-        .transpose()?
-        .unwrap_or(5000);
-    Ok(Duration::from_millis(timeout.max(1)))
 }
 
 fn parse_token_budget_warning_threshold_ratio_env() -> f64 {
@@ -189,7 +107,10 @@ fn watch_detail_summary_lines_with_delta(
                 format_fan_in_dependency_blocked_summary(current_fan_in_blocker)
             ));
         }
-    } else if last.and_then(|value| value.fan_in_blocker.as_ref()).is_some() {
+    } else if last
+        .and_then(|value| value.fan_in_blocker.as_ref())
+        .is_some()
+    {
         lines.push("summary: fan_in_dependency_blocker: cleared".to_string());
     }
 
@@ -204,7 +125,10 @@ fn watch_detail_summary_lines_with_delta(
                 format_fan_in_result_diagnostics_summary(current_fan_in_diagnostics)
             ));
         }
-    } else if last.and_then(|value| value.fan_in_diagnostics.as_ref()).is_some() {
+    } else if last
+        .and_then(|value| value.fan_in_diagnostics.as_ref())
+        .is_some()
+    {
         lines.push("summary: fan_in_result_diagnostics: cleared".to_string());
     }
 
@@ -219,7 +143,10 @@ fn watch_detail_summary_lines_with_delta(
                 format_subagent_pending_summary(current_subagent_pending)
             ));
         }
-    } else if last.and_then(|value| value.subagent_pending.as_ref()).is_some() {
+    } else if last
+        .and_then(|value| value.subagent_pending.as_ref())
+        .is_some()
+    {
         lines.push("summary: subagent_pending: cleared".to_string());
     }
 
@@ -290,7 +217,10 @@ fn watch_detail_summary_json_rows_with_delta(
                 "changed_fields": changed_fields,
             }));
         }
-    } else if last.and_then(|value| value.fan_in_blocker.as_ref()).is_some() {
+    } else if last
+        .and_then(|value| value.fan_in_blocker.as_ref())
+        .is_some()
+    {
         rows.push(serde_json::json!({
             "kind": "watch_detail_summary",
             "thread_id": thread_id,
@@ -314,7 +244,10 @@ fn watch_detail_summary_json_rows_with_delta(
                 "changed_fields": changed_fields,
             }));
         }
-    } else if last.and_then(|value| value.fan_in_diagnostics.as_ref()).is_some() {
+    } else if last
+        .and_then(|value| value.fan_in_diagnostics.as_ref())
+        .is_some()
+    {
         rows.push(serde_json::json!({
             "kind": "watch_detail_summary",
             "thread_id": thread_id,
@@ -338,7 +271,10 @@ fn watch_detail_summary_json_rows_with_delta(
                 "changed_fields": changed_fields,
             }));
         }
-    } else if last.and_then(|value| value.subagent_pending.as_ref()).is_some() {
+    } else if last
+        .and_then(|value| value.subagent_pending.as_ref())
+        .is_some()
+    {
         rows.push(serde_json::json!({
             "kind": "watch_detail_summary",
             "thread_id": thread_id,
@@ -365,7 +301,8 @@ fn fan_out_auto_apply_changed_fields(
     if last.and_then(|value| value.stage.as_deref()) != current.stage.as_deref() {
         changed_fields.push("stage");
     }
-    if last.and_then(|value| value.patch_artifact_id.as_deref()) != current.patch_artifact_id.as_deref()
+    if last.and_then(|value| value.patch_artifact_id.as_deref())
+        != current.patch_artifact_id.as_deref()
     {
         changed_fields.push("patch_artifact_id");
     }
@@ -403,7 +340,8 @@ fn fan_in_dependency_blocker_changed_fields(
     {
         changed_fields.push("dependency_blocked_ratio");
     }
-    if last.and_then(|value| value.blocker_task_id.as_deref()) != current.blocker_task_id.as_deref() {
+    if last.and_then(|value| value.blocker_task_id.as_deref()) != current.blocker_task_id.as_deref()
+    {
         changed_fields.push("blocker_task_id");
     }
     if last.and_then(|value| value.blocker_status.as_deref()) != current.blocker_status.as_deref() {
@@ -542,8 +480,8 @@ async fn run_watch(app: &mut App, args: WatchArgs) -> anyhow::Result<()> {
 
         if refresh_detail_summary {
             let previous_snapshot = last_detail_summary.as_ref();
-            let refresh_auto_apply =
-                previous_snapshot.is_none() || should_refresh_watch_auto_apply_summary(&resp.events);
+            let refresh_auto_apply = previous_snapshot.is_none()
+                || should_refresh_watch_auto_apply_summary(&resp.events);
             let refresh_fan_in_blocker = previous_snapshot.is_none()
                 || should_refresh_watch_fan_in_dependency_blocker_summary(&resp.events);
             let refresh_fan_in_diagnostics = previous_snapshot.is_none()
@@ -552,8 +490,12 @@ async fn run_watch(app: &mut App, args: WatchArgs) -> anyhow::Result<()> {
                 || should_refresh_watch_subagent_pending_summary(&resp.events);
 
             let (auto_apply_summary, auto_apply_source) = if refresh_auto_apply {
-                latest_fan_out_auto_apply_summary_with_source(app, args.thread_id, attention.as_ref())
-                    .await
+                latest_fan_out_auto_apply_summary_with_source(
+                    app,
+                    args.thread_id,
+                    attention.as_ref(),
+                )
+                .await
             } else {
                 (
                     previous_snapshot.and_then(|value| value.auto_apply.clone()),
@@ -587,10 +529,9 @@ async fn run_watch(app: &mut App, args: WatchArgs) -> anyhow::Result<()> {
                 )
             };
             let (subagent_pending, subagent_source) = if refresh_subagent_pending {
-                if let Some(summary) = attention
-                    .as_ref()
-                    .and_then(|value| summarize_subagent_pending_approvals(&value.pending_approvals))
-                {
+                if let Some(summary) = attention.as_ref().and_then(|value| {
+                    summarize_subagent_pending_approvals(&value.pending_approvals)
+                }) {
                     (Some(summary), SummarySource::Attention)
                 } else if let Some(summary) =
                     previous_snapshot.and_then(|value| value.subagent_pending.clone())
@@ -600,7 +541,9 @@ async fn run_watch(app: &mut App, args: WatchArgs) -> anyhow::Result<()> {
                     (None, SummarySource::None)
                 }
             } else {
-                if let Some(summary) = previous_snapshot.and_then(|value| value.subagent_pending.clone()) {
+                if let Some(summary) =
+                    previous_snapshot.and_then(|value| value.subagent_pending.clone())
+                {
                     (Some(summary), SummarySource::Previous)
                 } else {
                     (None, SummarySource::None)
@@ -688,14 +631,15 @@ async fn run_watch(app: &mut App, args: WatchArgs) -> anyhow::Result<()> {
             let fan_in_dependency_blocked_present = att.has_fan_in_dependency_blocked;
             let fan_in_result_diagnostics_present = att.has_fan_in_result_diagnostics;
             let token_budget_exceeded_present = att.token_budget_exceeded.unwrap_or(false);
-            let token_budget_warning_active = att.token_budget_warning_active.unwrap_or_else(|| {
-                token_budget_warning_present(
-                    att.token_budget_limit,
-                    att.token_budget_utilization,
-                    att.token_budget_exceeded,
-                    warning_threshold_ratio,
-                )
-            });
+            let token_budget_warning_active =
+                att.token_budget_warning_active.unwrap_or_else(|| {
+                    token_budget_warning_present(
+                        att.token_budget_limit,
+                        att.token_budget_utilization,
+                        att.token_budget_exceeded,
+                        warning_threshold_ratio,
+                    )
+                });
             if suppress_initial_bell {
                 last_stale_present = Some(stale_present);
                 last_linkage_present = Some(linkage_issue_present);
@@ -910,10 +854,14 @@ async fn run_inbox(app: &mut App, args: InboxArgs) -> anyhow::Result<()> {
         std::collections::HashMap::new();
     let mut stale_bell_state: std::collections::HashMap<ThreadId, (Option<bool>, Option<Instant>)> =
         std::collections::HashMap::new();
-    let mut linkage_bell_state: std::collections::HashMap<ThreadId, (Option<bool>, Option<Instant>)> =
-        std::collections::HashMap::new();
-    let mut auto_apply_bell_state: std::collections::HashMap<ThreadId, (Option<bool>, Option<Instant>)> =
-        std::collections::HashMap::new();
+    let mut linkage_bell_state: std::collections::HashMap<
+        ThreadId,
+        (Option<bool>, Option<Instant>),
+    > = std::collections::HashMap::new();
+    let mut auto_apply_bell_state: std::collections::HashMap<
+        ThreadId,
+        (Option<bool>, Option<Instant>),
+    > = std::collections::HashMap::new();
     let mut fan_in_dependency_blocked_bell_state: std::collections::HashMap<
         ThreadId,
         (Option<bool>, Option<Instant>),
@@ -922,10 +870,14 @@ async fn run_inbox(app: &mut App, args: InboxArgs) -> anyhow::Result<()> {
         ThreadId,
         (Option<bool>, Option<Instant>),
     > = std::collections::HashMap::new();
-    let mut token_budget_bell_state: std::collections::HashMap<ThreadId, (Option<bool>, Option<Instant>)> =
-        std::collections::HashMap::new();
-    let mut token_budget_warning_bell_state: std::collections::HashMap<ThreadId, (Option<bool>, Option<Instant>)> =
-        std::collections::HashMap::new();
+    let mut token_budget_bell_state: std::collections::HashMap<
+        ThreadId,
+        (Option<bool>, Option<Instant>),
+    > = std::collections::HashMap::new();
+    let mut token_budget_warning_bell_state: std::collections::HashMap<
+        ThreadId,
+        (Option<bool>, Option<Instant>),
+    > = std::collections::HashMap::new();
     let mut auto_apply_summary_cache =
         std::collections::HashMap::<ThreadId, Option<FanOutAutoApplyInboxSummary>>::new();
     let mut fan_in_summary_cache =
@@ -1009,7 +961,8 @@ async fn run_inbox(app: &mut App, args: InboxArgs) -> anyhow::Result<()> {
                 }
 
                 if state == "running" {
-                    let att = thread_attention_cached(app, &mut attention_cache, *thread_id).await?;
+                    let att =
+                        thread_attention_cached(app, &mut attention_cache, *thread_id).await?;
                     let stale_present = !att.stale_processes.is_empty();
                     let entry = stale_bell_state.entry(*thread_id).or_insert((None, None));
                     maybe_bell_stale_per_thread(
@@ -1021,8 +974,10 @@ async fn run_inbox(app: &mut App, args: InboxArgs) -> anyhow::Result<()> {
                         &mut entry.1,
                     )?;
                 } else {
-                    stale_bell_state.entry(*thread_id).or_insert((Some(false), None)).0 =
-                        Some(false);
+                    stale_bell_state
+                        .entry(*thread_id)
+                        .or_insert((Some(false), None))
+                        .0 = Some(false);
                 }
 
                 let entry = linkage_bell_state.entry(*thread_id).or_insert((None, None));
@@ -1036,7 +991,9 @@ async fn run_inbox(app: &mut App, args: InboxArgs) -> anyhow::Result<()> {
                 )?;
 
                 let auto_apply_error_present = thread.has_fan_out_auto_apply_error;
-                let entry = auto_apply_bell_state.entry(*thread_id).or_insert((None, None));
+                let entry = auto_apply_bell_state
+                    .entry(*thread_id)
+                    .or_insert((None, None));
                 maybe_bell_auto_apply_error_per_thread(
                     &bell_notifier,
                     thread_id,
@@ -1072,7 +1029,9 @@ async fn run_inbox(app: &mut App, args: InboxArgs) -> anyhow::Result<()> {
                 )?;
 
                 let token_budget_exceeded_present = thread.token_budget_exceeded.unwrap_or(false);
-                let entry = token_budget_bell_state.entry(*thread_id).or_insert((None, None));
+                let entry = token_budget_bell_state
+                    .entry(*thread_id)
+                    .or_insert((None, None));
                 maybe_bell_token_budget_exceeded_per_thread(
                     &bell_notifier,
                     thread_id,
@@ -1168,9 +1127,11 @@ async fn render_inbox_once(
         let mut auto_apply_summary_cache =
             std::collections::HashMap::<ThreadId, Option<FanOutAutoApplyInboxSummary>>::new();
         let mut fan_in_summary_cache =
-            std::collections::HashMap::<ThreadId, Option<FanInDependencyBlockedInboxSummary>>::new();
+            std::collections::HashMap::<ThreadId, Option<FanInDependencyBlockedInboxSummary>>::new(
+            );
         let mut fan_in_diagnostics_summary_cache =
-            std::collections::HashMap::<ThreadId, Option<FanInResultDiagnosticsInboxSummary>>::new();
+            std::collections::HashMap::<ThreadId, Option<FanInResultDiagnosticsInboxSummary>>::new(
+            );
         let mut subagent_pending_summary_cache =
             std::collections::HashMap::<ThreadId, Option<SubagentPendingApprovalsSummary>>::new();
         let auto_apply_summaries = if details {
@@ -1248,12 +1209,8 @@ async fn render_inbox_once(
             if let Some(summary) = thread.fan_out_auto_apply.as_ref() {
                 println!("  {}", format_fan_out_auto_apply_summary(summary));
             } else if let Some(summary) =
-                latest_fan_out_auto_apply_summary_with_attention(
-                    app,
-                    thread.thread_id,
-                    Some(att),
-                )
-                .await
+                latest_fan_out_auto_apply_summary_with_attention(app, thread.thread_id, Some(att))
+                    .await
             {
                 println!("  {}", format_fan_out_auto_apply_summary(&summary));
             }
@@ -1508,7 +1465,8 @@ fn build_inbox_json_output(
     if let Some(stats) = summary_cache_stats {
         obj.insert(
             "summary_cache_stats".to_string(),
-            serde_json::to_value(stats).context("serialize inbox summary_cache_stats json output")?,
+            serde_json::to_value(stats)
+                .context("serialize inbox summary_cache_stats json output")?,
         );
     }
     Ok(serde_json::Value::Object(obj))
@@ -1572,7 +1530,9 @@ async fn collect_fan_out_auto_apply_summaries_watch_json(
 
 fn inbox_thread_changed(previous: Option<&ThreadMeta>, current: &ThreadMeta) -> bool {
     match previous {
-        Some(old) => old.last_seq != current.last_seq || old.attention_state != current.attention_state,
+        Some(old) => {
+            old.last_seq != current.last_seq || old.attention_state != current.attention_state
+        }
         None => true,
     }
 }
@@ -1596,7 +1556,10 @@ async fn collect_subagent_pending_approvals_summaries_watch_json(
     prev: &std::collections::BTreeMap<ThreadId, ThreadMeta>,
     cur: &std::collections::BTreeMap<ThreadId, ThreadMeta>,
     attention_cache: &std::collections::HashMap<ThreadId, ThreadAttention>,
-    summary_cache: &mut std::collections::HashMap<ThreadId, Option<SubagentPendingApprovalsSummary>>,
+    summary_cache: &mut std::collections::HashMap<
+        ThreadId,
+        Option<SubagentPendingApprovalsSummary>,
+    >,
     stats: Option<&mut InboxSummaryCacheStats>,
 ) -> std::collections::BTreeMap<ThreadId, SubagentPendingApprovalsSummary> {
     let mut summaries = std::collections::BTreeMap::new();
@@ -1641,7 +1604,9 @@ async fn collect_subagent_pending_approvals_summaries_watch_json(
                 .thread_attention(*thread_id)
                 .await
                 .ok()
-                .and_then(|attention| summarize_subagent_pending_approvals(&attention.pending_approvals));
+                .and_then(|attention| {
+                    summarize_subagent_pending_approvals(&attention.pending_approvals)
+                });
             if summary.is_some() {
                 if let Some(value) = stats.as_deref_mut() {
                     value.subagent_fetch_some += 1;
@@ -1778,7 +1743,8 @@ async fn collect_fan_in_result_diagnostics_summaries_watch_json(
             }
             continue;
         }
-        let fetched = latest_fan_in_result_diagnostics_summary_with_attention(app, *thread_id, None).await;
+        let fetched =
+            latest_fan_in_result_diagnostics_summary_with_attention(app, *thread_id, None).await;
         summary_cache.insert(*thread_id, fetched.clone());
         if let Some(summary) = fetched {
             summaries.insert(*thread_id, summary);
@@ -2213,7 +2179,10 @@ fn format_subagent_pending_summary(summary: &SubagentPendingApprovalsSummary) ->
         .map(|(state, count)| format!("{state}:{count}"))
         .collect::<Vec<_>>()
         .join(", ");
-    format!("subagent_pending: total={} states={state_counts}", summary.total)
+    format!(
+        "subagent_pending: total={} states={state_counts}",
+        summary.total
+    )
 }
 
 fn summarize_subagent_pending_approvals(
@@ -2412,171 +2381,19 @@ async fn latest_fan_in_result_diagnostics_summary_from_artifacts(
 fn fan_out_auto_apply_summary_from_payload(
     payload: &omne_app_server_protocol::ArtifactFanOutResultStructuredData,
 ) -> Option<FanOutAutoApplyInboxSummary> {
-    let auto_apply = payload.isolated_write_auto_apply.as_ref()?;
-    if auto_apply.applied {
-        return None;
-    }
-
-    let status = if auto_apply
-        .error
-        .as_deref()
-        .is_some_and(|value| !value.is_empty())
-    {
-        "error".to_string()
-    } else if auto_apply.attempted {
-        "attempted_not_applied".to_string()
-    } else if auto_apply.enabled {
-        "enabled_not_attempted".to_string()
-    } else {
-        "disabled".to_string()
-    };
-
-    let stage = auto_apply.failure_stage.as_ref().map(|value| value.as_str().to_string());
-    let patch_artifact_id = auto_apply
-        .patch_artifact_id
-        .as_deref()
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string);
-    let recovery_commands = (!auto_apply.recovery_commands.is_empty())
-        .then_some(auto_apply.recovery_commands.len());
-    let recovery_1 = auto_apply
-        .recovery_commands
-        .first()
-        .map(|first_command| {
-            shorten_path(
-                format_recovery_command_preview(first_command).as_str(),
-                120,
-            )
-        });
-    let error = auto_apply
-        .error
-        .as_deref()
-        .filter(|value| !value.is_empty())
-        .map(|value| shorten_path(value, 120));
-
-    Some(FanOutAutoApplyInboxSummary {
-        task_id: payload.task_id.clone(),
-        status,
-        stage,
-        patch_artifact_id,
-        recovery_commands,
-        recovery_1,
-        error,
-    })
+    omne_app_server_protocol::fan_out_auto_apply_summary_from_payload(payload, 120)
 }
 
 fn fan_in_dependency_blocked_summary_from_payload(
     payload: &omne_app_server_protocol::ArtifactFanInSummaryStructuredData,
 ) -> Option<FanInDependencyBlockedInboxSummary> {
-    let dependency_blocked_count = payload
-        .tasks
-        .iter()
-        .filter(|task| task.dependency_blocked)
-        .count();
-    let task = payload.tasks.iter().find(|task| {
-        task.dependency_blocked
-            || task
-                .dependency_blocker_task_id
-                .as_deref()
-                .is_some_and(|value| !value.trim().is_empty())
-            || task
-                .dependency_blocker_status
-                .as_deref()
-                .is_some_and(|value| !value.trim().is_empty())
-    })?;
-    let mut diagnostics_tasks = 0usize;
-    let mut diagnostics_matched_completion_total = 0u64;
-    let mut diagnostics_pending_matching_tool_ids_total = 0usize;
-    let mut diagnostics_scan_last_seq_max = 0u64;
-    for item in &payload.tasks {
-        if let Some(diagnostics) = item.result_artifact_diagnostics.as_ref() {
-            diagnostics_tasks = diagnostics_tasks.saturating_add(1);
-            diagnostics_matched_completion_total = diagnostics_matched_completion_total
-                .saturating_add(diagnostics.matched_completion_count);
-            diagnostics_pending_matching_tool_ids_total = diagnostics_pending_matching_tool_ids_total
-                .saturating_add(diagnostics.pending_matching_tool_ids);
-            diagnostics_scan_last_seq_max =
-                diagnostics_scan_last_seq_max.max(diagnostics.scan_last_seq);
-        }
-    }
-
-    let blocker_task_id = task
-        .dependency_blocker_task_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string);
-    let blocker_status = task
-        .dependency_blocker_status
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string);
-    let reason = task
-        .reason
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| shorten_path(value, 120));
-
-    Some(FanInDependencyBlockedInboxSummary {
-        task_id: task.task_id.clone(),
-        status: task.status.clone(),
-        dependency_blocked_count,
-        task_count: payload.task_count,
-        dependency_blocked_ratio: if payload.task_count == 0 {
-            0.0
-        } else {
-            dependency_blocked_count as f64 / payload.task_count as f64
-        },
-        diagnostics_tasks: (diagnostics_tasks > 0).then_some(diagnostics_tasks),
-        diagnostics_matched_completion_total: (diagnostics_tasks > 0)
-            .then_some(diagnostics_matched_completion_total),
-        diagnostics_pending_matching_tool_ids_total: (diagnostics_tasks > 0)
-            .then_some(diagnostics_pending_matching_tool_ids_total),
-        diagnostics_scan_last_seq_max: (diagnostics_tasks > 0)
-            .then_some(diagnostics_scan_last_seq_max),
-        blocker_task_id,
-        blocker_status,
-        reason,
-    })
+    omne_app_server_protocol::fan_in_dependency_blocked_summary_from_payload(payload, 120)
 }
 
 fn fan_in_result_diagnostics_summary_from_payload(
     payload: &omne_app_server_protocol::ArtifactFanInSummaryStructuredData,
 ) -> Option<FanInResultDiagnosticsInboxSummary> {
-    let mut diagnostics_tasks = 0usize;
-    let mut diagnostics_matched_completion_total = 0u64;
-    let mut diagnostics_pending_matching_tool_ids_total = 0usize;
-    let mut diagnostics_scan_last_seq_max = 0u64;
-    for item in &payload.tasks {
-        if let Some(diagnostics) = item.result_artifact_diagnostics.as_ref() {
-            diagnostics_tasks = diagnostics_tasks.saturating_add(1);
-            diagnostics_matched_completion_total = diagnostics_matched_completion_total
-                .saturating_add(diagnostics.matched_completion_count);
-            diagnostics_pending_matching_tool_ids_total = diagnostics_pending_matching_tool_ids_total
-                .saturating_add(diagnostics.pending_matching_tool_ids);
-            diagnostics_scan_last_seq_max =
-                diagnostics_scan_last_seq_max.max(diagnostics.scan_last_seq);
-        }
-    }
-
-    (diagnostics_tasks > 0).then_some(FanInResultDiagnosticsInboxSummary {
-        task_count: payload.task_count,
-        diagnostics_tasks,
-        diagnostics_matched_completion_total,
-        diagnostics_pending_matching_tool_ids_total,
-        diagnostics_scan_last_seq_max,
-    })
-}
-
-fn format_recovery_command_preview(
-    command: &omne_app_server_protocol::ArtifactFanOutResultRecoveryCommandStructuredData,
-) -> String {
-    if command.argv.is_empty() {
-        return command.label.clone();
-    }
-    format!("{}: {}", command.label, command.argv.join(" "))
+    omne_app_server_protocol::fan_in_result_diagnostics_summary_from_payload(payload)
 }
 
 fn format_fan_out_auto_apply_summary(summary: &FanOutAutoApplyInboxSummary) -> String {
@@ -2600,7 +2417,11 @@ fn format_fan_out_auto_apply_summary(summary: &FanOutAutoApplyInboxSummary) -> S
         out.push_str(" recovery_commands=");
         out.push_str(recovery_commands.to_string().as_str());
     }
-    if let Some(recovery_1) = summary.recovery_1.as_deref().filter(|value| !value.is_empty()) {
+    if let Some(recovery_1) = summary
+        .recovery_1
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    {
         out.push_str(" recovery_1=");
         out.push_str(recovery_1);
     }
@@ -2611,7 +2432,9 @@ fn format_fan_out_auto_apply_summary(summary: &FanOutAutoApplyInboxSummary) -> S
     out
 }
 
-fn format_fan_in_dependency_blocked_summary(summary: &FanInDependencyBlockedInboxSummary) -> String {
+fn format_fan_in_dependency_blocked_summary(
+    summary: &FanInDependencyBlockedInboxSummary,
+) -> String {
     let mut out = format!(
         "fan_in_dependency_blocker: task_id={} status={} blocked={}/{}",
         summary.task_id, summary.status, summary.dependency_blocked_count, summary.task_count
@@ -2649,7 +2472,11 @@ fn format_fan_in_dependency_blocked_summary(summary: &FanInDependencyBlockedInbo
         summary.diagnostics_pending_matching_tool_ids_total
     {
         out.push_str(" diagnostics_pending_matching_tool_ids_total=");
-        out.push_str(diagnostics_pending_matching_tool_ids_total.to_string().as_str());
+        out.push_str(
+            diagnostics_pending_matching_tool_ids_total
+                .to_string()
+                .as_str(),
+        );
     }
     if let Some(diagnostics_scan_last_seq_max) = summary.diagnostics_scan_last_seq_max {
         out.push_str(" diagnostics_scan_last_seq_max=");
@@ -2658,7 +2485,9 @@ fn format_fan_in_dependency_blocked_summary(summary: &FanInDependencyBlockedInbo
     out
 }
 
-fn format_fan_in_result_diagnostics_summary(summary: &FanInResultDiagnosticsInboxSummary) -> String {
+fn format_fan_in_result_diagnostics_summary(
+    summary: &FanInResultDiagnosticsInboxSummary,
+) -> String {
     format!(
         "fan_in_result_diagnostics: tasks={} diagnostics_tasks={} matched_completion_total={} pending_matching_tool_ids_total={} scan_last_seq_max={}",
         summary.task_count,
@@ -2668,7 +2497,6 @@ fn format_fan_in_result_diagnostics_summary(summary: &FanInResultDiagnosticsInbo
         summary.diagnostics_scan_last_seq_max
     )
 }
-
 
 fn format_pending_approval_preview(
     pending: &omne_app_server_protocol::ThreadAttentionPendingApproval,
@@ -2770,7 +2598,9 @@ fn attention_state_update(event: &ThreadEvent) -> Option<&'static str> {
             omne_protocol::AttentionMarkerKind::FanOutLinkageIssue
             | omne_protocol::AttentionMarkerKind::FanOutAutoApplyError => Some("failed"),
             omne_protocol::AttentionMarkerKind::TokenBudgetWarning => Some("token_budget_warning"),
-            omne_protocol::AttentionMarkerKind::TokenBudgetExceeded => Some("token_budget_exceeded"),
+            omne_protocol::AttentionMarkerKind::TokenBudgetExceeded => {
+                Some("token_budget_exceeded")
+            }
             _ => None,
         },
         omne_protocol::ThreadEventKind::TurnCompleted { status, .. } => match status {
@@ -2797,7 +2627,9 @@ fn should_refresh_watch_detail_summary(events: &[ThreadEvent]) -> bool {
 }
 
 fn should_refresh_watch_auto_apply_summary(events: &[ThreadEvent]) -> bool {
-    events.iter().any(watch_auto_apply_summary_maybe_changed_by_event)
+    events
+        .iter()
+        .any(watch_auto_apply_summary_maybe_changed_by_event)
 }
 
 fn watch_auto_apply_summary_maybe_changed_by_event(event: &ThreadEvent) -> bool {
@@ -2818,7 +2650,9 @@ fn watch_auto_apply_summary_maybe_changed_by_event(event: &ThreadEvent) -> bool 
 }
 
 fn should_refresh_watch_fan_in_dependency_blocker_summary(events: &[ThreadEvent]) -> bool {
-    events.iter().any(watch_fan_in_dependency_blocker_maybe_changed_by_event)
+    events
+        .iter()
+        .any(watch_fan_in_dependency_blocker_maybe_changed_by_event)
 }
 
 fn watch_fan_in_dependency_blocker_maybe_changed_by_event(event: &ThreadEvent) -> bool {
@@ -2944,7 +2778,12 @@ fn maybe_bell_linkage_issue_per_thread(
     last_present: &mut Option<bool>,
     last_bell_at: &mut Option<Instant>,
 ) -> anyhow::Result<()> {
-    if should_emit_presence_bell(linkage_issue_present, debounce_ms, last_present, last_bell_at) {
+    if should_emit_presence_bell(
+        linkage_issue_present,
+        debounce_ms,
+        last_present,
+        last_bell_at,
+    ) {
         eprintln!("attention: {thread_id} -> fan_out_linkage_issue");
         bell_notifier.notify_attention_state(
             format!("attention: {thread_id} -> fan_out_linkage_issue"),

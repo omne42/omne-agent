@@ -1,3 +1,5 @@
+use super::*;
+
 #[derive(Debug, Deserialize)]
 struct ThreadStreamParamsRaw {
     thread_id: ThreadId,
@@ -11,8 +13,8 @@ struct ThreadStreamParamsRaw {
     wait_ms: Option<u64>,
 }
 
-struct ThreadEventBatch {
-    events: Vec<omne_protocol::ThreadEvent>,
+pub(super) struct ThreadEventBatch {
+    pub(super) events: Vec<omne_protocol::ThreadEvent>,
     last_seq: u64,
     thread_last_seq: u64,
     has_more: bool,
@@ -74,7 +76,7 @@ fn parse_thread_stream_params(
     })
 }
 
-fn filter_and_paginate_thread_events(
+pub(super) fn filter_and_paginate_thread_events(
     mut events: Vec<omne_protocol::ThreadEvent>,
     since: EventSeq,
     kinds: Option<&[omne_protocol::ThreadEventKindTag]>,
@@ -121,7 +123,7 @@ fn build_thread_events_response(
     }
 }
 
-fn build_thread_subscribe_response(
+pub(super) fn build_thread_subscribe_response(
     batch: ThreadEventBatch,
     timed_out: bool,
 ) -> omne_app_server_protocol::ThreadSubscribeResponse {
@@ -134,66 +136,7 @@ fn build_thread_subscribe_response(
     }
 }
 
-fn jsonrpc_internal_error_data(err: &anyhow::Error) -> Option<serde_json::Value> {
-    thread_configure_error_code(err)
-        .map(|error_code| serde_json::json!({ "error_code": error_code }))
-}
-
-fn jsonrpc_internal_error(id: &serde_json::Value, err: impl Into<anyhow::Error>) -> JsonRpcResponse {
-    let err = err.into();
-    JsonRpcResponse::err(
-        id.clone(),
-        JSONRPC_INTERNAL_ERROR,
-        err.to_string(),
-        jsonrpc_internal_error_data(&err),
-    )
-}
-
-fn jsonrpc_ok_serialized(
-    id: &serde_json::Value,
-    payload: impl serde::Serialize,
-) -> JsonRpcResponse {
-    match serde_json::to_value(payload) {
-        Ok(response) => JsonRpcResponse::ok(id.clone(), response),
-        Err(err) => jsonrpc_internal_error(id, err),
-    }
-}
-
-fn jsonrpc_ok_or_internal<T: serde::Serialize>(
-    id: &serde_json::Value,
-    result: anyhow::Result<T>,
-) -> JsonRpcResponse {
-    match result {
-        Ok(payload) => jsonrpc_ok_serialized(id, payload),
-        Err(err) => jsonrpc_internal_error(id, err),
-    }
-}
-
-fn parse_jsonrpc_params<T: serde::de::DeserializeOwned>(
-    id: &serde_json::Value,
-    params: serde_json::Value,
-) -> Result<T, JsonRpcResponse> {
-    serde_json::from_value(params).map_err(|err| invalid_params(id.clone(), err))
-}
-
-async fn dispatch_jsonrpc_request<P, R, F, Fut>(
-    id: &serde_json::Value,
-    params: serde_json::Value,
-    handler: F,
-) -> JsonRpcResponse
-where
-    P: serde::de::DeserializeOwned,
-    R: serde::Serialize,
-    F: FnOnce(P) -> Fut,
-    Fut: std::future::Future<Output = anyhow::Result<R>>,
-{
-    match parse_jsonrpc_params::<P>(id, params) {
-        Ok(params) => jsonrpc_ok_or_internal(id, handler(params).await),
-        Err(response) => response,
-    }
-}
-
-async fn read_thread_events_since_or_not_found(
+pub(super) async fn read_thread_events_since_or_not_found(
     server: &Server,
     thread_id: ThreadId,
     since: EventSeq,
@@ -242,7 +185,7 @@ fn usage_ratio(numerator: u64, denominator: u64) -> Option<f64> {
     }
 }
 
-fn configured_total_token_budget_limit() -> Option<u64> {
+pub(super) fn configured_total_token_budget_limit() -> Option<u64> {
     std::env::var("OMNE_AGENT_MAX_TOTAL_TOKENS")
         .ok()
         .and_then(|value| value.trim().parse::<u64>().ok())
@@ -276,7 +219,7 @@ fn thread_usage_token_budget_warning_snapshot(
     })
 }
 
-fn thread_token_budget_snapshot_with_limit(
+pub(super) fn thread_token_budget_snapshot_with_limit(
     total_tokens_used: u64,
     token_budget_limit: Option<u64>,
     warning_threshold_ratio: f64,
@@ -303,7 +246,7 @@ fn thread_token_budget_snapshot_with_limit(
     )
 }
 
-fn thread_token_budget_snapshot(
+pub(super) fn thread_token_budget_snapshot(
     total_tokens_used: u64,
     warning_threshold_ratio: f64,
 ) -> (
@@ -650,171 +593,45 @@ mod thread_usage_budget_tests {
     }
 }
 
-async fn handle_thread_request(
+pub(super) async fn handle_thread_request(
     server: &Arc<Server>,
     id: serde_json::Value,
     method: &str,
     params: serde_json::Value,
 ) -> JsonRpcResponse {
-    match method {
-        "thread/start" => {
-            dispatch_jsonrpc_request(&id, params, |params: ThreadStartParams| {
-                handle_thread_start(server, params)
-            })
-            .await
-        }
-        "thread/resume" => {
-            dispatch_jsonrpc_request(&id, params, |params: ThreadResumeParams| {
-                handle_thread_resume(server, params)
-            })
-            .await
-        }
-        "thread/fork" => {
-            dispatch_jsonrpc_request(&id, params, |params: ThreadForkParams| {
-                handle_thread_fork(server, params)
-            })
-            .await
-        }
-        "thread/archive" => {
-            dispatch_jsonrpc_request(&id, params, |params: ThreadArchiveParams| {
-                handle_thread_archive(server, params)
-            })
-            .await
-        }
-        "thread/unarchive" => {
-            dispatch_jsonrpc_request(&id, params, |params: ThreadUnarchiveParams| {
-                handle_thread_unarchive(server, params)
-            })
-            .await
-        }
-        "thread/pause" => {
-            dispatch_jsonrpc_request(&id, params, |params: ThreadPauseParams| {
-                handle_thread_pause(server, params)
-            })
-            .await
-        }
-        "thread/unpause" => {
-            dispatch_jsonrpc_request(&id, params, |params: ThreadUnpauseParams| {
-                handle_thread_unpause(server, params)
-            })
-            .await
-        }
-        "thread/delete" => {
-            dispatch_jsonrpc_request(&id, params, |params: ThreadDeleteParams| {
-                handle_thread_delete(server, params)
-            })
-            .await
-        }
-        "thread/clear_artifacts" => {
-            dispatch_jsonrpc_request(&id, params, |params: ThreadClearArtifactsParams| {
-                handle_thread_clear_artifacts(server, params)
-            })
-            .await
-        }
-        "thread/list" => {
-            dispatch_jsonrpc_request(&id, params, |_: Option<ThreadListParams>| {
-                handle_thread_list(server)
-            })
-            .await
-        }
-        "thread/list_meta" => {
-            dispatch_jsonrpc_request(&id, params, |params: ThreadListMetaParams| {
-                handle_thread_list_meta(server, params)
-            })
-            .await
-        }
-        "thread/loaded" => {
-            dispatch_jsonrpc_request(&id, params, |_: Option<ThreadLoadedParams>| {
-                handle_thread_loaded(server)
-            })
-            .await
-        }
-        "thread/events" => handle_thread_events_request(server, &id, params).await,
-        "thread/subscribe" => handle_thread_subscribe_request(server, &id, params).await,
-        "thread/state" => {
-            dispatch_jsonrpc_request(&id, params, |params: ThreadStateParams| {
-                handle_thread_state(server, params)
-            })
-            .await
-        }
-        "thread/usage" => {
-            dispatch_jsonrpc_request(&id, params, |params: ThreadUsageParams| {
-                handle_thread_usage(server, params)
-            })
-            .await
-        }
-        "thread/attention" => {
-            dispatch_jsonrpc_request(&id, params, |params: ThreadAttentionParams| {
-                handle_thread_attention(server, params)
-            })
-            .await
-        }
-        "thread/disk_usage" => {
-            dispatch_jsonrpc_request(&id, params, |params: ThreadDiskUsageParams| {
-                handle_thread_disk_usage(server, params)
-            })
-            .await
-        }
-        "thread/disk_report" => {
-            dispatch_jsonrpc_request(&id, params, |params: ThreadDiskReportParams| {
-                handle_thread_disk_report(server, params)
-            })
-            .await
-        }
-        "thread/diff" => {
-            dispatch_jsonrpc_request(&id, params, |params: ThreadDiffParams| {
-                handle_thread_diff(server, params)
-            })
-            .await
-        }
-        "thread/patch" => {
-            dispatch_jsonrpc_request(&id, params, |params: ThreadPatchParams| {
-                handle_thread_patch(server, params)
-            })
-            .await
-        }
-        "thread/checkpoint/create" => {
-            dispatch_jsonrpc_request(&id, params, |params: ThreadCheckpointCreateParams| {
-                handle_thread_checkpoint_create(server, params)
-            })
-            .await
-        }
-        "thread/checkpoint/list" => {
-            dispatch_jsonrpc_request(&id, params, |params: ThreadCheckpointListParams| {
-                handle_thread_checkpoint_list(server, params)
-            })
-            .await
-        }
-        "thread/checkpoint/restore" => {
-            dispatch_jsonrpc_request(&id, params, |params: ThreadCheckpointRestoreParams| {
-                handle_thread_checkpoint_restore(server, params)
-            })
-            .await
-        }
-        "thread/hook_run" => {
-            dispatch_jsonrpc_request(&id, params, |params: ThreadHookRunParams| {
-                handle_thread_hook_run(server, params)
-            })
-            .await
-        }
-        "thread/configure" => {
-            dispatch_jsonrpc_request(&id, params, |params: ThreadConfigureParams| {
-                handle_thread_configure(server, params)
-            })
-            .await
-        }
-        "thread/config/explain" => {
-            dispatch_jsonrpc_request(&id, params, |params: ThreadConfigExplainParams| {
-                handle_thread_config_explain(server, params)
-            })
-            .await
-        }
-        "thread/models" => {
-            dispatch_jsonrpc_request(&id, params, |params: ThreadModelsParams| {
-                handle_thread_models(server, params)
-            })
-            .await
-        }
-        _ => method_not_found(id, method),
+    if method == "thread/events" {
+        return handle_thread_events_request(server, &id, params).await;
     }
+    if method == "thread/subscribe" {
+        return handle_thread_subscribe_request(server, &id, params).await;
+    }
+
+    dispatch_typed_routes!(id, method, params, {
+        "thread/start" => ThreadStartParams => |params| handle_thread_start(server, params),
+        "thread/resume" => ThreadResumeParams => |params| handle_thread_resume(server, params),
+        "thread/fork" => ThreadForkParams => |params| handle_thread_fork(server, params),
+        "thread/archive" => ThreadArchiveParams => |params| handle_thread_archive(server, params),
+        "thread/unarchive" => ThreadUnarchiveParams => |params| handle_thread_unarchive(server, params),
+        "thread/pause" => ThreadPauseParams => |params| handle_thread_pause(server, params),
+        "thread/unpause" => ThreadUnpauseParams => |params| handle_thread_unpause(server, params),
+        "thread/delete" => ThreadDeleteParams => |params| handle_thread_delete(server, params),
+        "thread/clear_artifacts" => ThreadClearArtifactsParams => |params| handle_thread_clear_artifacts(server, params),
+        "thread/list" => Option<ThreadListParams> => |_| handle_thread_list(server),
+        "thread/list_meta" => ThreadListMetaParams => |params| handle_thread_list_meta(server, params),
+        "thread/loaded" => Option<ThreadLoadedParams> => |_| handle_thread_loaded(server),
+        "thread/state" => ThreadStateParams => |params| handle_thread_state(server, params),
+        "thread/usage" => ThreadUsageParams => |params| handle_thread_usage(server, params),
+        "thread/attention" => ThreadAttentionParams => |params| handle_thread_attention(server, params),
+        "thread/disk_usage" => ThreadDiskUsageParams => |params| handle_thread_disk_usage(server, params),
+        "thread/disk_report" => ThreadDiskReportParams => |params| handle_thread_disk_report(server, params),
+        "thread/diff" => ThreadDiffParams => |params| handle_thread_diff(server, params),
+        "thread/patch" => ThreadPatchParams => |params| handle_thread_patch(server, params),
+        "thread/checkpoint/create" => ThreadCheckpointCreateParams => |params| handle_thread_checkpoint_create(server, params),
+        "thread/checkpoint/list" => ThreadCheckpointListParams => |params| handle_thread_checkpoint_list(server, params),
+        "thread/checkpoint/restore" => ThreadCheckpointRestoreParams => |params| handle_thread_checkpoint_restore(server, params),
+        "thread/hook_run" => ThreadHookRunParams => |params| handle_thread_hook_run(server, params),
+        "thread/configure" => ThreadConfigureParams => |params| handle_thread_configure(server, params),
+        "thread/config/explain" => ThreadConfigExplainParams => |params| handle_thread_config_explain(server, params),
+        "thread/models" => ThreadModelsParams => |params| handle_thread_models(server, params),
+    })
 }

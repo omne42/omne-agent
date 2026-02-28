@@ -1,3 +1,137 @@
+async fn emit_artifact_tool_denied(
+    thread_rt: &Arc<ThreadRuntime>,
+    tool_id: omne_protocol::ToolId,
+    turn_id: Option<TurnId>,
+    action: &str,
+    params: &Value,
+    error: String,
+    result: Value,
+) -> anyhow::Result<()> {
+    emit_tool_denied(
+        thread_rt,
+        tool_id,
+        turn_id,
+        action,
+        Some(params.clone()),
+        error,
+        result,
+    )
+    .await
+}
+
+struct ArtifactModeApprovalContext<'a> {
+    thread_rt: &'a Arc<ThreadRuntime>,
+    thread_root: &'a Path,
+    thread_id: ThreadId,
+    turn_id: Option<TurnId>,
+    approval_id: Option<omne_protocol::ApprovalId>,
+    approval_policy: omne_protocol::ApprovalPolicy,
+    mode_name: &'a str,
+    action: &'static str,
+    tool_id: omne_protocol::ToolId,
+    approval_params: &'a Value,
+}
+
+async fn enforce_artifact_mode_and_approval(
+    server: &Server,
+    ctx: ArtifactModeApprovalContext<'_>,
+) -> anyhow::Result<Option<Value>> {
+    let catalog = omne_core::modes::ModeCatalog::load(ctx.thread_root).await;
+    let mode = match catalog.mode(ctx.mode_name) {
+        Some(mode) => mode,
+        None => {
+            let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
+            let denied_event_result = serde_json::json!({
+                "mode": ctx.mode_name,
+                "decision": omne_core::modes::Decision::Deny,
+                "available": available.clone(),
+                "load_error": catalog.load_error.clone(),
+            });
+            let denied_response = artifact_unknown_mode_denied_response(
+                ctx.tool_id,
+                ctx.mode_name.to_string(),
+                available,
+                catalog.load_error.clone(),
+            )?;
+            emit_artifact_tool_denied(
+                ctx.thread_rt,
+                ctx.tool_id,
+                ctx.turn_id,
+                ctx.action,
+                ctx.approval_params,
+                "unknown mode".to_string(),
+                denied_event_result,
+            )
+            .await?;
+            return Ok(Some(denied_response));
+        }
+    };
+
+    let mode_decision = resolve_mode_decision_audit(mode, ctx.action, mode.permissions.artifact);
+    if mode_decision.decision == omne_core::modes::Decision::Deny {
+        let denied_event_result = serde_json::json!({
+            "mode": ctx.mode_name,
+            "decision": mode_decision.decision,
+            "decision_source": mode_decision.decision_source,
+            "tool_override_hit": mode_decision.tool_override_hit,
+        });
+        let denied_response =
+            artifact_mode_denied_response(ctx.tool_id, ctx.mode_name.to_string(), mode_decision)?;
+        emit_artifact_tool_denied(
+            ctx.thread_rt,
+            ctx.tool_id,
+            ctx.turn_id,
+            ctx.action,
+            ctx.approval_params,
+            format!("mode denies {}", ctx.action),
+            denied_event_result,
+        )
+        .await?;
+        return Ok(Some(denied_response));
+    }
+
+    if mode_decision.decision == omne_core::modes::Decision::Prompt {
+        match gate_approval(
+            server,
+            ctx.thread_rt,
+            ctx.thread_id,
+            ctx.turn_id,
+            ctx.approval_policy,
+            ApprovalRequest {
+                approval_id: ctx.approval_id,
+                action: ctx.action,
+                params: ctx.approval_params,
+            },
+        )
+        .await?
+        {
+            ApprovalGate::Approved => {}
+            ApprovalGate::Denied { remembered } => {
+                let denied_response = artifact_denied_response(ctx.tool_id, Some(remembered))?;
+                emit_artifact_tool_denied(
+                    ctx.thread_rt,
+                    ctx.tool_id,
+                    ctx.turn_id,
+                    ctx.action,
+                    ctx.approval_params,
+                    approval_denied_error(remembered).to_string(),
+                    serde_json::json!({
+                        "approval_policy": ctx.approval_policy,
+                    }),
+                )
+                .await?;
+                return Ok(Some(denied_response));
+            }
+            ApprovalGate::NeedsApproval { approval_id } => {
+                let result = artifact_needs_approval_response(ctx.thread_id, approval_id)?;
+                return Ok(Some(result));
+            }
+        }
+    }
+
+    Ok(None)
+}
+
 async fn handle_artifact_list(
     server: &Server,
     params: ArtifactListParams,
@@ -27,110 +161,24 @@ async fn handle_artifact_list(
         return artifact_allowed_tools_denied_response(tool_id, "artifact/list", &allowed_tools);
     }
 
-    let catalog = omne_core::modes::ModeCatalog::load(&thread_root).await;
-    let mode = match catalog.mode(&mode_name) {
-        Some(mode) => mode,
-        None => {
-            let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
-            let decision = omne_core::modes::Decision::Deny;
-
-            thread_rt
-                .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                    tool_id,
-                    turn_id: params.turn_id,
-                    tool: "artifact/list".to_string(),
-                    params: Some(approval_params),
-                })
-                .await?;
-            thread_rt
-                .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                    tool_id,
-                    status: omne_protocol::ToolStatus::Denied,
-                    error: Some("unknown mode".to_string()),
-                    result: Some(serde_json::json!({
-                        "mode": mode_name,
-                        "decision": decision,
-                        "available": available,
-                        "load_error": catalog.load_error.clone(),
-                    })),
-                })
-                .await?;
-            return artifact_unknown_mode_denied_response(
-                tool_id,
-                mode_name,
-                available,
-                catalog.load_error.clone(),
-            );
-        }
-    };
-
-    let mode_decision = resolve_mode_decision_audit(mode, "artifact/list", mode.permissions.artifact);
-    if mode_decision.decision == omne_core::modes::Decision::Deny {
-        thread_rt
-            .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                tool_id,
-                turn_id: params.turn_id,
-                tool: "artifact/list".to_string(),
-                params: Some(approval_params),
-            })
-            .await?;
-        thread_rt
-            .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                tool_id,
-                status: omne_protocol::ToolStatus::Denied,
-                error: Some("mode denies artifact/list".to_string()),
-                result: Some(serde_json::json!({
-                    "mode": mode_name,
-                    "decision": mode_decision.decision,
-                    "decision_source": mode_decision.decision_source,
-                    "tool_override_hit": mode_decision.tool_override_hit,
-                })),
-            })
-            .await?;
-        return artifact_mode_denied_response(tool_id, mode_name, mode_decision);
-    }
-
-    if mode_decision.decision == omne_core::modes::Decision::Prompt {
-        match gate_approval(
-            server,
-            &thread_rt,
-            params.thread_id,
-            params.turn_id,
+    if let Some(result) = enforce_artifact_mode_and_approval(
+        server,
+        ArtifactModeApprovalContext {
+            thread_rt: &thread_rt,
+            thread_root: &thread_root,
+            thread_id: params.thread_id,
+            turn_id: params.turn_id,
+            approval_id: params.approval_id,
             approval_policy,
-            ApprovalRequest {
-                approval_id: params.approval_id,
-                action: "artifact/list",
-                params: &approval_params,
-            },
-        )
-        .await?
-        {
-            ApprovalGate::Approved => {}
-            ApprovalGate::Denied { remembered } => {
-                thread_rt
-                    .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                        tool_id,
-                        turn_id: params.turn_id,
-                        tool: "artifact/list".to_string(),
-                        params: Some(approval_params),
-                    })
-                    .await?;
-                thread_rt
-                    .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                        tool_id,
-                        status: omne_protocol::ToolStatus::Denied,
-                        error: Some(approval_denied_error(remembered).to_string()),
-                        result: Some(serde_json::json!({
-                            "approval_policy": approval_policy,
-                        })),
-                    })
-                    .await?;
-                return artifact_denied_response(tool_id, Some(remembered));
-            }
-            ApprovalGate::NeedsApproval { approval_id } => {
-                return artifact_needs_approval_response(params.thread_id, approval_id);
-            }
-        }
+            mode_name: &mode_name,
+            action: "artifact/list",
+            tool_id,
+            approval_params: &approval_params,
+        },
+    )
+    .await?
+    {
+        return Ok(result);
     }
 
     thread_rt
@@ -271,110 +319,24 @@ async fn handle_artifact_read(
         return artifact_allowed_tools_denied_response(tool_id, "artifact/read", &allowed_tools);
     }
 
-    let catalog = omne_core::modes::ModeCatalog::load(&thread_root).await;
-    let mode = match catalog.mode(&mode_name) {
-        Some(mode) => mode,
-        None => {
-            let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
-            let decision = omne_core::modes::Decision::Deny;
-
-            thread_rt
-                .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                    tool_id,
-                    turn_id: params.turn_id,
-                    tool: "artifact/read".to_string(),
-                    params: Some(approval_params),
-                })
-                .await?;
-            thread_rt
-                .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                    tool_id,
-                    status: omne_protocol::ToolStatus::Denied,
-                    error: Some("unknown mode".to_string()),
-                    result: Some(serde_json::json!({
-                        "mode": mode_name,
-                        "decision": decision,
-                        "available": available,
-                        "load_error": catalog.load_error.clone(),
-                    })),
-                })
-                .await?;
-            return artifact_unknown_mode_denied_response(
-                tool_id,
-                mode_name,
-                available,
-                catalog.load_error.clone(),
-            );
-        }
-    };
-
-    let mode_decision = resolve_mode_decision_audit(mode, "artifact/read", mode.permissions.artifact);
-    if mode_decision.decision == omne_core::modes::Decision::Deny {
-        thread_rt
-            .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                tool_id,
-                turn_id: params.turn_id,
-                tool: "artifact/read".to_string(),
-                params: Some(approval_params),
-            })
-            .await?;
-        thread_rt
-            .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                tool_id,
-                status: omne_protocol::ToolStatus::Denied,
-                error: Some("mode denies artifact/read".to_string()),
-                result: Some(serde_json::json!({
-                    "mode": mode_name,
-                    "decision": mode_decision.decision,
-                    "decision_source": mode_decision.decision_source,
-                    "tool_override_hit": mode_decision.tool_override_hit,
-                })),
-            })
-            .await?;
-        return artifact_mode_denied_response(tool_id, mode_name, mode_decision);
-    }
-
-    if mode_decision.decision == omne_core::modes::Decision::Prompt {
-        match gate_approval(
-            server,
-            &thread_rt,
-            params.thread_id,
-            params.turn_id,
+    if let Some(result) = enforce_artifact_mode_and_approval(
+        server,
+        ArtifactModeApprovalContext {
+            thread_rt: &thread_rt,
+            thread_root: &thread_root,
+            thread_id: params.thread_id,
+            turn_id: params.turn_id,
+            approval_id: params.approval_id,
             approval_policy,
-            ApprovalRequest {
-                approval_id: params.approval_id,
-                action: "artifact/read",
-                params: &approval_params,
-            },
-        )
-        .await?
-        {
-            ApprovalGate::Approved => {}
-            ApprovalGate::Denied { remembered } => {
-                thread_rt
-                    .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                        tool_id,
-                        turn_id: params.turn_id,
-                        tool: "artifact/read".to_string(),
-                        params: Some(approval_params),
-                    })
-                    .await?;
-                thread_rt
-                    .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                        tool_id,
-                        status: omne_protocol::ToolStatus::Denied,
-                        error: Some(approval_denied_error(remembered).to_string()),
-                        result: Some(serde_json::json!({
-                            "approval_policy": approval_policy,
-                        })),
-                    })
-                    .await?;
-                return artifact_denied_response(tool_id, Some(remembered));
-            }
-            ApprovalGate::NeedsApproval { approval_id } => {
-                return artifact_needs_approval_response(params.thread_id, approval_id);
-            }
-        }
+            mode_name: &mode_name,
+            action: "artifact/read",
+            tool_id,
+            approval_params: &approval_params,
+        },
+    )
+    .await?
+    {
+        return Ok(result);
     }
 
     thread_rt
@@ -602,13 +564,17 @@ fn artifact_denied_response(
     tool_id: omne_protocol::ToolId,
     remembered: Option<bool>,
 ) -> anyhow::Result<Value> {
-    let response = omne_app_server_protocol::ArtifactDeniedResponse {
+    denied_response_with_remembered(
         tool_id,
-        denied: true,
-        error_code: Some("approval_denied".to_string()),
         remembered,
-    };
-    serde_json::to_value(response).context("serialize artifact denied response")
+        "serialize artifact denied response",
+        |tool_id, remembered, error_code| omne_app_server_protocol::ArtifactDeniedResponse {
+            tool_id,
+            denied: true,
+            error_code,
+            remembered,
+        },
+    )
 }
 
 fn artifact_allowed_tools_denied_response(
@@ -630,22 +596,15 @@ fn artifact_needs_approval_response(
     thread_id: omne_protocol::ThreadId,
     approval_id: omne_protocol::ApprovalId,
 ) -> anyhow::Result<Value> {
-    let response = omne_app_server_protocol::ArtifactNeedsApprovalResponse {
-        needs_approval: true,
-        thread_id,
+    needs_approval_response_json(
         approval_id,
-    };
-    serde_json::to_value(response).context("serialize artifact needs_approval response")
-}
-
-fn artifact_mode_decision(decision: omne_core::modes::Decision) -> omne_app_server_protocol::ArtifactModeDecision {
-    match decision {
-        omne_core::modes::Decision::Allow => omne_app_server_protocol::ArtifactModeDecision::Allow,
-        omne_core::modes::Decision::Prompt => {
-            omne_app_server_protocol::ArtifactModeDecision::Prompt
-        }
-        omne_core::modes::Decision::Deny => omne_app_server_protocol::ArtifactModeDecision::Deny,
-    }
+        "serialize artifact needs_approval response",
+        |approval_id| omne_app_server_protocol::ArtifactNeedsApprovalResponse {
+            needs_approval: true,
+            thread_id,
+            approval_id,
+        },
+    )
 }
 
 fn artifact_mode_denied_response(
@@ -658,7 +617,10 @@ fn artifact_mode_denied_response(
         denied: true,
         error_code: Some("mode_denied".to_string()),
         mode,
-        decision: artifact_mode_decision(mode_decision.decision),
+        decision: map_mode_decision_for_protocol!(
+            mode_decision.decision,
+            omne_app_server_protocol::ArtifactModeDecision
+        ),
         decision_source: mode_decision.decision_source.to_string(),
         tool_override_hit: mode_decision.tool_override_hit,
     };
@@ -1118,110 +1080,24 @@ async fn handle_artifact_versions(
         return artifact_allowed_tools_denied_response(tool_id, "artifact/versions", &allowed_tools);
     }
 
-    let catalog = omne_core::modes::ModeCatalog::load(&thread_root).await;
-    let mode = match catalog.mode(&mode_name) {
-        Some(mode) => mode,
-        None => {
-            let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
-            let decision = omne_core::modes::Decision::Deny;
-            thread_rt
-                .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                    tool_id,
-                    turn_id: params.turn_id,
-                    tool: "artifact/versions".to_string(),
-                    params: Some(approval_params),
-                })
-                .await?;
-            thread_rt
-                .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                    tool_id,
-                    status: omne_protocol::ToolStatus::Denied,
-                    error: Some("unknown mode".to_string()),
-                    result: Some(serde_json::json!({
-                        "mode": mode_name,
-                        "decision": decision,
-                        "available": available,
-                        "load_error": catalog.load_error.clone(),
-                    })),
-                })
-                .await?;
-            return artifact_unknown_mode_denied_response(
-                tool_id,
-                mode_name,
-                available,
-                catalog.load_error.clone(),
-            );
-        }
-    };
-
-    let mode_decision =
-        resolve_mode_decision_audit(mode, "artifact/versions", mode.permissions.artifact);
-    if mode_decision.decision == omne_core::modes::Decision::Deny {
-        thread_rt
-            .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                tool_id,
-                turn_id: params.turn_id,
-                tool: "artifact/versions".to_string(),
-                params: Some(approval_params),
-            })
-            .await?;
-        thread_rt
-            .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                tool_id,
-                status: omne_protocol::ToolStatus::Denied,
-                error: Some("mode denies artifact/versions".to_string()),
-                result: Some(serde_json::json!({
-                    "mode": mode_name,
-                    "decision": mode_decision.decision,
-                    "decision_source": mode_decision.decision_source,
-                    "tool_override_hit": mode_decision.tool_override_hit,
-                })),
-            })
-            .await?;
-        return artifact_mode_denied_response(tool_id, mode_name, mode_decision);
-    }
-
-    if mode_decision.decision == omne_core::modes::Decision::Prompt {
-        match gate_approval(
-            server,
-            &thread_rt,
-            params.thread_id,
-            params.turn_id,
+    if let Some(result) = enforce_artifact_mode_and_approval(
+        server,
+        ArtifactModeApprovalContext {
+            thread_rt: &thread_rt,
+            thread_root: &thread_root,
+            thread_id: params.thread_id,
+            turn_id: params.turn_id,
+            approval_id: params.approval_id,
             approval_policy,
-            ApprovalRequest {
-                approval_id: params.approval_id,
-                action: "artifact/versions",
-                params: &approval_params,
-            },
-        )
-        .await?
-        {
-            ApprovalGate::Approved => {}
-            ApprovalGate::Denied { remembered } => {
-                thread_rt
-                    .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                        tool_id,
-                        turn_id: params.turn_id,
-                        tool: "artifact/versions".to_string(),
-                        params: Some(approval_params),
-                    })
-                    .await?;
-                thread_rt
-                    .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                        tool_id,
-                        status: omne_protocol::ToolStatus::Denied,
-                        error: Some(approval_denied_error(remembered).to_string()),
-                        result: Some(serde_json::json!({
-                            "approval_policy": approval_policy,
-                        })),
-                    })
-                    .await?;
-                return artifact_denied_response(tool_id, Some(remembered));
-            }
-            ApprovalGate::NeedsApproval { approval_id } => {
-                return artifact_needs_approval_response(params.thread_id, approval_id);
-            }
-        }
+            mode_name: &mode_name,
+            action: "artifact/versions",
+            tool_id,
+            approval_params: &approval_params,
+        },
+    )
+    .await?
+    {
+        return Ok(result);
     }
 
     thread_rt
@@ -1330,110 +1206,24 @@ async fn handle_artifact_delete(
         return artifact_allowed_tools_denied_response(tool_id, "artifact/delete", &allowed_tools);
     }
 
-    let catalog = omne_core::modes::ModeCatalog::load(&thread_root).await;
-    let mode = match catalog.mode(&mode_name) {
-        Some(mode) => mode,
-        None => {
-            let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
-            let decision = omne_core::modes::Decision::Deny;
-
-            thread_rt
-                .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                    tool_id,
-                    turn_id: params.turn_id,
-                    tool: "artifact/delete".to_string(),
-                    params: Some(approval_params.clone()),
-                })
-                .await?;
-            thread_rt
-                .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                    tool_id,
-                    status: omne_protocol::ToolStatus::Denied,
-                    error: Some("unknown mode".to_string()),
-                    result: Some(serde_json::json!({
-                        "mode": mode_name,
-                        "decision": decision,
-                        "available": available,
-                        "load_error": catalog.load_error.clone(),
-                    })),
-                })
-                .await?;
-            return artifact_unknown_mode_denied_response(
-                tool_id,
-                mode_name,
-                available,
-                catalog.load_error.clone(),
-            );
-        }
-    };
-
-    let mode_decision = resolve_mode_decision_audit(mode, "artifact/delete", mode.permissions.artifact);
-    if mode_decision.decision == omne_core::modes::Decision::Deny {
-        thread_rt
-            .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                tool_id,
-                turn_id: params.turn_id,
-                tool: "artifact/delete".to_string(),
-                params: Some(approval_params.clone()),
-            })
-            .await?;
-        thread_rt
-            .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                tool_id,
-                status: omne_protocol::ToolStatus::Denied,
-                error: Some("mode denies artifact/delete".to_string()),
-                result: Some(serde_json::json!({
-                    "mode": mode_name,
-                    "decision": mode_decision.decision,
-                    "decision_source": mode_decision.decision_source,
-                    "tool_override_hit": mode_decision.tool_override_hit,
-                })),
-            })
-            .await?;
-        return artifact_mode_denied_response(tool_id, mode_name, mode_decision);
-    }
-
-    if mode_decision.decision == omne_core::modes::Decision::Prompt {
-        match gate_approval(
-            server,
-            &thread_rt,
-            params.thread_id,
-            params.turn_id,
+    if let Some(result) = enforce_artifact_mode_and_approval(
+        server,
+        ArtifactModeApprovalContext {
+            thread_rt: &thread_rt,
+            thread_root: &thread_root,
+            thread_id: params.thread_id,
+            turn_id: params.turn_id,
+            approval_id: params.approval_id,
             approval_policy,
-            ApprovalRequest {
-                approval_id: params.approval_id,
-                action: "artifact/delete",
-                params: &approval_params,
-            },
-        )
-        .await?
-        {
-            ApprovalGate::Approved => {}
-            ApprovalGate::Denied { remembered } => {
-                thread_rt
-                    .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                        tool_id,
-                        turn_id: params.turn_id,
-                        tool: "artifact/delete".to_string(),
-                        params: Some(approval_params.clone()),
-                    })
-                    .await?;
-                thread_rt
-                    .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                        tool_id,
-                        status: omne_protocol::ToolStatus::Denied,
-                        error: Some(approval_denied_error(remembered).to_string()),
-                        result: Some(serde_json::json!({
-                            "approval_policy": approval_policy,
-                        })),
-                    })
-                    .await?;
-                return artifact_denied_response(tool_id, Some(remembered));
-            }
-            ApprovalGate::NeedsApproval { approval_id } => {
-                return artifact_needs_approval_response(params.thread_id, approval_id);
-            }
-        }
+            mode_name: &mode_name,
+            action: "artifact/delete",
+            tool_id,
+            approval_params: &approval_params,
+        },
+    )
+    .await?
+    {
+        return Ok(result);
     }
 
     thread_rt

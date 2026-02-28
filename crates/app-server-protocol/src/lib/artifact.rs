@@ -1,3 +1,5 @@
+use super::*;
+
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
 pub struct ArtifactWriteParams {
     pub thread_id: omne_protocol::ThreadId,
@@ -420,26 +422,11 @@ pub struct ArtifactWriteResponse {
     pub history: Option<ArtifactWriteHistory>,
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
-pub struct ArtifactDeniedResponse {
-    pub tool_id: omne_protocol::ToolId,
-    #[serde(default)]
-    pub denied: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub error_code: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub remembered: Option<bool>,
-}
+define_tool_denied_response_skip_none!(ArtifactDeniedResponse {});
 
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
-pub struct ArtifactNeedsApprovalResponse {
-    #[serde(default)]
-    pub needs_approval: bool,
+define_tool_needs_approval_response!(ArtifactNeedsApprovalResponse {
     pub thread_id: omne_protocol::ThreadId,
-    pub approval_id: omne_protocol::ApprovalId,
-}
+});
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]

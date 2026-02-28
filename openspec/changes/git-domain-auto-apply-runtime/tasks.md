@@ -21,6 +21,6 @@
 ## 4. 验证
 
 - [x] `cargo check --workspace`
-- [x] `cargo test -p omne-thread-git-snapshot-runtime`
+- [x] `cargo test -p omne-git-runtime`
 - [x] `cargo test -p omne-app-server fan_out_result_writer_auto_apply`
 - [x] `cargo test -p omne-app-server fan_out_result_writer_auto_applies`

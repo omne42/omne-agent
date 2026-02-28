@@ -1,3 +1,5 @@
+use super::*;
+
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
 pub struct ThreadStartParams {
     #[serde(default)]
@@ -1364,6 +1366,182 @@ pub struct ThreadSubscribeResponse {
     pub thread_last_seq: u64,
     pub has_more: bool,
     pub timed_out: bool,
+}
+
+fn truncate_summary_chars(input: &str, max_chars: usize) -> String {
+    if max_chars == 0 {
+        return String::new();
+    }
+    let mut chars = input.chars();
+    let truncated: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        format!("{truncated}...")
+    } else {
+        truncated
+    }
+}
+
+pub fn fan_out_auto_apply_summary_from_payload(
+    payload: &crate::ArtifactFanOutResultStructuredData,
+    truncate_len: usize,
+) -> Option<ThreadFanOutAutoApplySummary> {
+    let auto_apply = payload.isolated_write_auto_apply.as_ref()?;
+    if auto_apply.applied {
+        return None;
+    }
+
+    let status = if auto_apply
+        .error
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        "error".to_string()
+    } else if auto_apply.attempted {
+        "attempted_not_applied".to_string()
+    } else if auto_apply.enabled {
+        "enabled_not_attempted".to_string()
+    } else {
+        "disabled".to_string()
+    };
+
+    let stage = auto_apply
+        .failure_stage
+        .as_ref()
+        .map(|value| value.as_str().to_string());
+    let patch_artifact_id = auto_apply
+        .patch_artifact_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
+    let recovery_commands =
+        (!auto_apply.recovery_commands.is_empty()).then_some(auto_apply.recovery_commands.len());
+    let recovery_1 = auto_apply
+        .recovery_commands
+        .first()
+        .map(format_fan_out_recovery_command_preview)
+        .map(|value| truncate_summary_chars(value.as_str(), truncate_len));
+    let error = auto_apply
+        .error
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| truncate_summary_chars(value, truncate_len));
+
+    Some(ThreadFanOutAutoApplySummary {
+        task_id: payload.task_id.clone(),
+        status,
+        stage,
+        patch_artifact_id,
+        recovery_commands,
+        recovery_1,
+        error,
+    })
+}
+
+pub fn fan_in_result_diagnostics_summary_from_payload(
+    payload: &crate::ArtifactFanInSummaryStructuredData,
+) -> Option<ThreadFanInResultDiagnosticsSummary> {
+    let mut diagnostics_tasks = 0usize;
+    let mut diagnostics_matched_completion_total = 0u64;
+    let mut diagnostics_pending_matching_tool_ids_total = 0usize;
+    let mut diagnostics_scan_last_seq_max = 0u64;
+    for item in &payload.tasks {
+        if let Some(diagnostics) = item.result_artifact_diagnostics.as_ref() {
+            diagnostics_tasks = diagnostics_tasks.saturating_add(1);
+            diagnostics_matched_completion_total = diagnostics_matched_completion_total
+                .saturating_add(diagnostics.matched_completion_count);
+            diagnostics_pending_matching_tool_ids_total =
+                diagnostics_pending_matching_tool_ids_total
+                    .saturating_add(diagnostics.pending_matching_tool_ids);
+            diagnostics_scan_last_seq_max =
+                diagnostics_scan_last_seq_max.max(diagnostics.scan_last_seq);
+        }
+    }
+
+    (diagnostics_tasks > 0).then_some(ThreadFanInResultDiagnosticsSummary {
+        task_count: payload.task_count,
+        diagnostics_tasks,
+        diagnostics_matched_completion_total,
+        diagnostics_pending_matching_tool_ids_total,
+        diagnostics_scan_last_seq_max,
+    })
+}
+
+pub fn fan_in_dependency_blocked_summary_from_payload(
+    payload: &crate::ArtifactFanInSummaryStructuredData,
+    reason_truncate_len: usize,
+) -> Option<ThreadFanInDependencyBlockedSummary> {
+    let dependency_blocked_count = payload
+        .tasks
+        .iter()
+        .filter(|task| task.dependency_blocked)
+        .count();
+    let task = payload.tasks.iter().find(|task| {
+        task.dependency_blocked
+            || task
+                .dependency_blocker_task_id
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty())
+            || task
+                .dependency_blocker_status
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty())
+    })?;
+    let diagnostics = fan_in_result_diagnostics_summary_from_payload(payload);
+
+    let blocker_task_id = task
+        .dependency_blocker_task_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
+    let blocker_status = task
+        .dependency_blocker_status
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
+    let reason = task
+        .reason
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| truncate_summary_chars(value, reason_truncate_len));
+
+    Some(ThreadFanInDependencyBlockedSummary {
+        task_id: task.task_id.clone(),
+        status: task.status.clone(),
+        dependency_blocked_count,
+        task_count: payload.task_count,
+        dependency_blocked_ratio: if payload.task_count == 0 {
+            0.0
+        } else {
+            dependency_blocked_count as f64 / payload.task_count as f64
+        },
+        diagnostics_tasks: diagnostics.as_ref().map(|value| value.diagnostics_tasks),
+        diagnostics_matched_completion_total: diagnostics
+            .as_ref()
+            .map(|value| value.diagnostics_matched_completion_total),
+        diagnostics_pending_matching_tool_ids_total: diagnostics
+            .as_ref()
+            .map(|value| value.diagnostics_pending_matching_tool_ids_total),
+        diagnostics_scan_last_seq_max: diagnostics
+            .as_ref()
+            .map(|value| value.diagnostics_scan_last_seq_max),
+        blocker_task_id,
+        blocker_status,
+        reason,
+    })
+}
+
+fn format_fan_out_recovery_command_preview(
+    command: &crate::ArtifactFanOutResultRecoveryCommandStructuredData,
+) -> String {
+    if command.argv.is_empty() {
+        return command.label.clone();
+    }
+    format!("{}: {}", command.label, command.argv.join(" "))
 }
 
 #[cfg(test)]

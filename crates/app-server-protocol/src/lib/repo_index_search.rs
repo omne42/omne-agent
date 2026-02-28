@@ -1,3 +1,5 @@
+use super::*;
+
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
 pub struct RepoSearchParams {
     pub thread_id: omne_protocol::ThreadId,
@@ -123,26 +125,11 @@ pub struct RepoSymbolsResponse {
     pub files_failed_parse: usize,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
-pub struct RepoDeniedResponse {
-    pub tool_id: omne_protocol::ToolId,
-    #[serde(default)]
-    pub denied: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub remembered: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub error_code: Option<String>,
-}
+define_tool_denied_response_skip_none!(RepoDeniedResponse {});
 
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
-pub struct RepoNeedsApprovalResponse {
-    #[serde(default)]
-    pub needs_approval: bool,
+define_tool_needs_approval_response!(RepoNeedsApprovalResponse {
     pub thread_id: omne_protocol::ThreadId,
-    pub approval_id: omne_protocol::ApprovalId,
-}
+});
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]

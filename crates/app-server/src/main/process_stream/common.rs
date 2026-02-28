@@ -20,6 +20,136 @@ async fn resolve_process_info(server: &Server, process_id: ProcessId) -> anyhow:
         .ok_or_else(|| anyhow::anyhow!("process not found: {}", process_id))
 }
 
+enum ProcessModeGate {
+    Allowed {
+        mode: omne_core::modes::ModeDef,
+        mode_decision: ModeDecisionAudit,
+    },
+    Denied(Value),
+}
+
+struct ProcessModeApprovalContext<'a> {
+    thread_rt: &'a Arc<ThreadRuntime>,
+    thread_root: &'a Path,
+    thread_id: ThreadId,
+    turn_id: Option<TurnId>,
+    approval_id: Option<omne_protocol::ApprovalId>,
+    approval_policy: omne_protocol::ApprovalPolicy,
+    mode_name: &'a str,
+    action: &'static str,
+    tool_id: omne_protocol::ToolId,
+    approval_params: &'a Value,
+}
+
+async fn enforce_process_mode_gate<F>(
+    ctx: &ProcessModeApprovalContext<'_>,
+    base_decision_for_mode: F,
+) -> anyhow::Result<ProcessModeGate>
+where
+    F: Fn(&omne_core::modes::ModeDef) -> omne_core::modes::Decision,
+{
+    let catalog = omne_core::modes::ModeCatalog::load(ctx.thread_root).await;
+    let mode = match catalog.mode(ctx.mode_name).cloned() {
+        Some(mode) => mode,
+        None => {
+            let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
+            let result = process_unknown_mode_denied_response(
+                ctx.tool_id,
+                ctx.thread_id,
+                ctx.mode_name,
+                available,
+                catalog.load_error.clone(),
+            )?;
+            emit_process_tool_denied(
+                ctx.thread_rt,
+                ctx.tool_id,
+                ctx.turn_id,
+                ctx.action,
+                ctx.approval_params,
+                "unknown mode".to_string(),
+                result.clone(),
+            )
+            .await?;
+            return Ok(ProcessModeGate::Denied(result));
+        }
+    };
+
+    let mode_decision = resolve_mode_decision_audit(&mode, ctx.action, base_decision_for_mode(&mode));
+    if mode_decision.decision == omne_core::modes::Decision::Deny {
+        let result =
+            process_mode_denied_response(ctx.tool_id, ctx.thread_id, ctx.mode_name, mode_decision)?;
+        emit_process_tool_denied(
+            ctx.thread_rt,
+            ctx.tool_id,
+            ctx.turn_id,
+            ctx.action,
+            ctx.approval_params,
+            format!("mode denies {}", ctx.action),
+            result.clone(),
+        )
+        .await?;
+        return Ok(ProcessModeGate::Denied(result));
+    }
+
+    Ok(ProcessModeGate::Allowed {
+        mode,
+        mode_decision,
+    })
+}
+
+async fn enforce_process_mode_and_approval<F>(
+    server: &Server,
+    ctx: ProcessModeApprovalContext<'_>,
+    base_decision_for_mode: F,
+) -> anyhow::Result<Option<Value>>
+where
+    F: Fn(&omne_core::modes::ModeDef) -> omne_core::modes::Decision,
+{
+    let mode_decision = match enforce_process_mode_gate(&ctx, base_decision_for_mode).await? {
+        ProcessModeGate::Denied(result) => return Ok(Some(result)),
+        ProcessModeGate::Allowed { mode_decision, .. } => mode_decision,
+    };
+
+    if mode_decision.decision == omne_core::modes::Decision::Prompt {
+        match gate_approval(
+            server,
+            ctx.thread_rt,
+            ctx.thread_id,
+            ctx.turn_id,
+            ctx.approval_policy,
+            ApprovalRequest {
+                approval_id: ctx.approval_id,
+                action: ctx.action,
+                params: ctx.approval_params,
+            },
+        )
+        .await?
+        {
+            ApprovalGate::Approved => {}
+            ApprovalGate::Denied { remembered } => {
+                let result = process_denied_response(ctx.tool_id, ctx.thread_id, Some(remembered))?;
+                emit_process_tool_denied(
+                    ctx.thread_rt,
+                    ctx.tool_id,
+                    ctx.turn_id,
+                    ctx.action,
+                    ctx.approval_params,
+                    approval_denied_error(remembered).to_string(),
+                    result.clone(),
+                )
+                .await?;
+                return Ok(Some(result));
+            }
+            ApprovalGate::NeedsApproval { approval_id } => {
+                let result = process_needs_approval_response(ctx.thread_id, approval_id)?;
+                return Ok(Some(result));
+            }
+        }
+    }
+
+    Ok(None)
+}
+
 async fn emit_process_tool_denied(
     thread_rt: &Arc<ThreadRuntime>,
     tool_id: omne_protocol::ToolId,
@@ -29,23 +159,16 @@ async fn emit_process_tool_denied(
     error: String,
     result: Value,
 ) -> anyhow::Result<()> {
-    thread_rt
-        .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-            tool_id,
-            turn_id,
-            tool: action.to_string(),
-            params: Some(params.clone()),
-        })
-        .await?;
-    thread_rt
-        .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-            tool_id,
-            status: omne_protocol::ToolStatus::Denied,
-            error: Some(error),
-            result: Some(result),
-        })
-        .await?;
-    Ok(())
+    emit_tool_denied(
+        thread_rt,
+        tool_id,
+        turn_id,
+        action,
+        Some(params.clone()),
+        error,
+        result,
+    )
+    .await
 }
 
 fn process_denied_response(
@@ -53,26 +176,33 @@ fn process_denied_response(
     thread_id: ThreadId,
     remembered: Option<bool>,
 ) -> anyhow::Result<Value> {
-    let response = omne_app_server_protocol::ProcessDeniedResponse {
+    denied_response_with_remembered(
         tool_id,
-        denied: true,
-        thread_id,
         remembered,
-        error_code: Some("approval_denied".to_string()),
-    };
-    serde_json::to_value(response).context("serialize process denied response")
+        "serialize process denied response",
+        |tool_id, remembered, error_code| omne_app_server_protocol::ProcessDeniedResponse {
+            tool_id,
+            denied: true,
+            thread_id,
+            remembered,
+            error_code,
+        },
+    )
 }
 
 fn process_needs_approval_response(
     thread_id: ThreadId,
     approval_id: omne_protocol::ApprovalId,
 ) -> anyhow::Result<Value> {
-    let response = omne_app_server_protocol::ProcessNeedsApprovalResponse {
-        needs_approval: true,
-        thread_id,
+    needs_approval_response_json(
         approval_id,
-    };
-    serde_json::to_value(response).context("serialize process needs_approval response")
+        "serialize process needs_approval response",
+        |approval_id| omne_app_server_protocol::ProcessNeedsApprovalResponse {
+            needs_approval: true,
+            thread_id,
+            approval_id,
+        },
+    )
 }
 
 fn process_allowed_tools_denied_response(
@@ -101,7 +231,10 @@ fn process_mode_denied_response(
         denied: true,
         thread_id,
         mode: mode_name.to_string(),
-        decision: process_mode_decision(mode_decision.decision),
+        decision: map_mode_decision_for_protocol!(
+            mode_decision.decision,
+            omne_app_server_protocol::ProcessModeDecision
+        ),
         decision_source: mode_decision.decision_source.to_string(),
         tool_override_hit: mode_decision.tool_override_hit,
         error_code: Some("mode_denied".to_string()),
@@ -187,18 +320,6 @@ fn process_execpolicy_load_denied_response(
         error_code: Some("execpolicy_load_denied".to_string()),
     };
     serde_json::to_value(response).context("serialize process execpolicy load denied response")
-}
-
-fn process_mode_decision(
-    decision: omne_core::modes::Decision,
-) -> omne_app_server_protocol::ProcessModeDecision {
-    match decision {
-        omne_core::modes::Decision::Allow => omne_app_server_protocol::ProcessModeDecision::Allow,
-        omne_core::modes::Decision::Prompt => {
-            omne_app_server_protocol::ProcessModeDecision::Prompt
-        }
-        omne_core::modes::Decision::Deny => omne_app_server_protocol::ProcessModeDecision::Deny,
-    }
 }
 
 fn to_protocol_execpolicy_decision(

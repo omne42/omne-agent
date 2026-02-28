@@ -7,23 +7,16 @@ async fn emit_repo_tool_denied(
     error: String,
     result: Value,
 ) -> anyhow::Result<()> {
-    thread_rt
-        .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-            tool_id,
-            turn_id,
-            tool: action.to_string(),
-            params: Some(params.clone()),
-        })
-        .await?;
-    thread_rt
-        .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-            tool_id,
-            status: omne_protocol::ToolStatus::Denied,
-            error: Some(error),
-            result: Some(result),
-        })
-        .await?;
-    Ok(())
+    emit_tool_denied(
+        thread_rt,
+        tool_id,
+        turn_id,
+        action,
+        Some(params.clone()),
+        error,
+        result,
+    )
+    .await
 }
 
 struct RepoModeApprovalContext<'a> {
@@ -132,13 +125,17 @@ fn repo_denied_response(
     tool_id: omne_protocol::ToolId,
     remembered: Option<bool>,
 ) -> anyhow::Result<Value> {
-    let response = omne_app_server_protocol::RepoDeniedResponse {
+    denied_response_with_remembered(
         tool_id,
-        denied: true,
         remembered,
-        error_code: Some("approval_denied".to_string()),
-    };
-    serde_json::to_value(response).context("serialize repo denied response")
+        "serialize repo denied response",
+        |tool_id, remembered, error_code| omne_app_server_protocol::RepoDeniedResponse {
+            tool_id,
+            denied: true,
+            remembered,
+            error_code,
+        },
+    )
 }
 
 fn repo_allowed_tools_denied_response(
@@ -160,12 +157,15 @@ fn repo_needs_approval_response(
     thread_id: ThreadId,
     approval_id: omne_protocol::ApprovalId,
 ) -> anyhow::Result<Value> {
-    let response = omne_app_server_protocol::RepoNeedsApprovalResponse {
-        needs_approval: true,
-        thread_id,
+    needs_approval_response_json(
         approval_id,
-    };
-    serde_json::to_value(response).context("serialize repo needs_approval response")
+        "serialize repo needs_approval response",
+        |approval_id| omne_app_server_protocol::RepoNeedsApprovalResponse {
+            needs_approval: true,
+            thread_id,
+            approval_id,
+        },
+    )
 }
 
 fn repo_mode_denied_response(
@@ -177,7 +177,10 @@ fn repo_mode_denied_response(
         tool_id,
         denied: true,
         mode: mode_name.to_string(),
-        decision: repo_mode_decision(mode_decision.decision),
+        decision: map_mode_decision_for_protocol!(
+            mode_decision.decision,
+            omne_app_server_protocol::RepoModeDecision
+        ),
         decision_source: mode_decision.decision_source.to_string(),
         tool_override_hit: mode_decision.tool_override_hit,
         error_code: Some("mode_denied".to_string()),
@@ -201,12 +204,4 @@ fn repo_unknown_mode_denied_response(
         error_code: Some("mode_unknown".to_string()),
     };
     serde_json::to_value(response).context("serialize repo unknown mode denied response")
-}
-
-fn repo_mode_decision(decision: omne_core::modes::Decision) -> omne_app_server_protocol::RepoModeDecision {
-    match decision {
-        omne_core::modes::Decision::Allow => omne_app_server_protocol::RepoModeDecision::Allow,
-        omne_core::modes::Decision::Prompt => omne_app_server_protocol::RepoModeDecision::Prompt,
-        omne_core::modes::Decision::Deny => omne_app_server_protocol::RepoModeDecision::Deny,
-    }
 }

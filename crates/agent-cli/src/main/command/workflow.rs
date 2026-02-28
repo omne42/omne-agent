@@ -101,13 +101,22 @@ impl std::fmt::Display for CommandSpecError {
                 write!(f, "unknown mode: {mode} (available: {available})")
             }
             Self::UnknownAllowedTool { tool, known } => {
-                write!(f, "unknown tool in allowed_tools: {tool} (known tools: {known})")
+                write!(
+                    f,
+                    "unknown tool in allowed_tools: {tool} (known tools: {known})"
+                )
             }
             Self::AllowedToolDeniedByMode { mode, tool } => {
-                write!(f, "allowed_tools tool is denied by mode: mode={mode} tool={tool}")
+                write!(
+                    f,
+                    "allowed_tools tool is denied by mode: mode={mode} tool={tool}"
+                )
             }
             Self::AllowedToolDecisionMappingMissing { tool } => {
-                write!(f, "tool decision mapping is missing for allowed_tools entry: {tool}")
+                write!(
+                    f,
+                    "tool decision mapping is missing for allowed_tools entry: {tool}"
+                )
             }
         }
     }
@@ -331,7 +340,9 @@ pub(super) fn fan_out_scheduling_params(total_tasks: usize) -> FanOutSchedulingP
     }
 }
 
-pub(super) fn duplicate_command_name_errors(validated: &[CommandValidateItem]) -> Vec<CommandValidateError> {
+pub(super) fn duplicate_command_name_errors(
+    validated: &[CommandValidateItem],
+) -> Vec<CommandValidateError> {
     let mut by_name = std::collections::BTreeMap::<String, Vec<String>>::new();
     for item in validated {
         by_name
@@ -473,7 +484,9 @@ pub(super) fn ensure_thread_start_auto_hook_ready(
     ensure_auto_hook_ready(action, "thread/start auto hook", &started.auto_hook)
 }
 
-pub(super) fn first_non_completed_result(results: &[WorkflowTaskResult]) -> Option<&WorkflowTaskResult> {
+pub(super) fn first_non_completed_result(
+    results: &[WorkflowTaskResult],
+) -> Option<&WorkflowTaskResult> {
     results
         .iter()
         .find(|result| !matches!(result.status, TurnStatus::Completed))
@@ -591,7 +604,9 @@ pub(super) fn format_non_completed_fan_out_issue_from_structured_task(
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(|error_artifact_id| format!("omne artifact read {parent_thread_id} {error_artifact_id}"))
+        .map(|error_artifact_id| {
+            format!("omne artifact read {parent_thread_id} {error_artifact_id}")
+        })
         .unwrap_or_else(|| "-".to_string());
     let pending_approval = task
         .pending_approval
@@ -720,8 +735,12 @@ pub(super) fn format_fan_out_linkage_issue_clear_from_structured_payload(
     format_fan_out_linkage_issue_clear_detail_from_payload(payload, artifact_id)
 }
 
-pub(super) fn default_fan_out_linkage_issue_clear_text(artifact_id: omne_protocol::ArtifactId) -> String {
-    format!("fan-out linkage issue cleared (see fan_out_linkage_issue_clear artifact_id={artifact_id})")
+pub(super) fn default_fan_out_linkage_issue_clear_text(
+    artifact_id: omne_protocol::ArtifactId,
+) -> String {
+    format!(
+        "fan-out linkage issue cleared (see fan_out_linkage_issue_clear artifact_id={artifact_id})"
+    )
 }
 
 pub(super) async fn format_fan_out_linkage_issue_clear_from_artifact(
@@ -748,7 +767,9 @@ pub(super) async fn validate_fan_out_results_with_artifact_fallback(
     require_completed: bool,
     prefix: &str,
 ) -> anyhow::Result<()> {
-    if let Err(err) = validate_fan_out_results(results, parent_thread_id, artifact_id, require_completed) {
+    if let Err(err) =
+        validate_fan_out_results(results, parent_thread_id, artifact_id, require_completed)
+    {
         if let Some(issue) = format_non_completed_fan_out_issue_from_summary_artifact(
             app,
             parent_thread_id,
@@ -816,7 +837,9 @@ pub(super) async fn wait_for_process_exit(
             );
         }
         let exit_code = process.exit_code.ok_or_else(|| {
-            anyhow::anyhow!("context step missing exit_code: summary={summary} process_id={process_id}")
+            anyhow::anyhow!(
+                "context step missing exit_code: summary={summary} process_id={process_id}"
+            )
         })?;
         if !ok_exit_codes.contains(&exit_code) {
             anyhow::bail!(
@@ -869,7 +892,9 @@ pub(super) async fn run_command_list(cli: &Cli, json: bool) -> anyhow::Result<()
 }
 
 #[cfg(test)]
-pub(super) async fn collect_command_list_result(dir: &std::path::Path) -> anyhow::Result<CommandListResult> {
+pub(super) async fn collect_command_list_result(
+    dir: &std::path::Path,
+) -> anyhow::Result<CommandListResult> {
     let mode_catalog = omne_core::modes::ModeCatalog::builtin();
     collect_command_list_result_with_mode_catalog(dir, &mode_catalog).await
 }
@@ -937,7 +962,10 @@ pub(super) async fn run_command_show(cli: &Cli, name: &str, json: bool) -> anyho
     let wf = load_workflow_file(cli, name).await?;
     if json {
         let mut v = serde_json::Map::new();
-        v.insert("frontmatter".to_string(), serde_json::to_value(wf.frontmatter)?);
+        v.insert(
+            "frontmatter".to_string(),
+            serde_json::to_value(wf.frontmatter)?,
+        );
         v.insert("body".to_string(), serde_json::Value::String(wf.body));
         if let Some(load_error) = wf.modes_load_error {
             v.insert(
@@ -1073,8 +1101,8 @@ pub(super) async fn collect_command_validate_result(
         };
 
         let parsed = (|| -> anyhow::Result<WorkflowFileFrontmatterV1> {
-            let (yaml, _) =
-                split_frontmatter(&raw).with_context(|| format!("parse frontmatter {}", path.display()))?;
+            let (yaml, _) = split_frontmatter(&raw)
+                .with_context(|| format!("parse frontmatter {}", path.display()))?;
             let fm = serde_yaml::from_str::<WorkflowFileFrontmatterV1>(yaml)
                 .with_context(|| format!("parse frontmatter yaml {}", path.display()))?;
             sanitize_frontmatter(fm, stem.clone(), &mode_catalog)
@@ -1106,7 +1134,8 @@ pub(super) async fn collect_command_validate_result(
     errors.sort_by(|a, b| a.file.cmp(&b.file));
 
     let validated_count = validated.len();
-    let summary = CommandResultSummary::new(dir.display().to_string(), validated_count, errors.len());
+    let summary =
+        CommandResultSummary::new(dir.display().to_string(), validated_count, errors.len());
     let result = CommandValidateResult {
         summary,
         strict,
@@ -1239,17 +1268,16 @@ pub(super) async fn run_command_run(
                 )
                 .await?;
                 fan_out_results = scheduler.run_to_completion(app, thread_id, None).await?;
-                let _artifact_path =
-                    write_fan_in_summary_artifact(
-                        app,
-                        thread_id,
-                        None,
-                        artifact_id,
-                        &fan_out_results,
-                        scheduling,
-                        None,
-                    )
-                    .await?;
+                let _artifact_path = write_fan_in_summary_artifact(
+                    app,
+                    thread_id,
+                    None,
+                    artifact_id,
+                    &fan_out_results,
+                    scheduling,
+                    None,
+                )
+                .await?;
                 validate_fan_out_results_with_artifact_fallback(
                     app,
                     &fan_out_results,
@@ -1336,88 +1364,95 @@ pub(super) async fn run_command_run(
 
         let scheduler_for_tick = scheduler.clone();
         let fan_out_abort_reason_for_tick = fan_out_abort_reason.clone();
-        let parent_turn_id = run_ask_with_tick(app, ask_args, move |app, parent_thread_id, turn_id| {
-            let scheduler_for_tick = scheduler_for_tick.clone();
-            let fan_out_abort_reason_for_tick = fan_out_abort_reason_for_tick.clone();
-            Box::pin(async move {
-                let mut guard = scheduler_for_tick.lock().await;
-                let Some(mut scheduler) = guard.take() else {
-                    return Ok(());
-                };
-                drop(guard);
+        let parent_turn_id =
+            run_ask_with_tick(app, ask_args, move |app, parent_thread_id, turn_id| {
+                let scheduler_for_tick = scheduler_for_tick.clone();
+                let fan_out_abort_reason_for_tick = fan_out_abort_reason_for_tick.clone();
+                Box::pin(async move {
+                    let mut guard = scheduler_for_tick.lock().await;
+                    let Some(mut scheduler) = guard.take() else {
+                        return Ok(());
+                    };
+                    drop(guard);
 
-                let mut linkage_issue = None::<String>;
-                if let Err(err) = scheduler.tick(app, parent_thread_id, Some(turn_id)).await {
-                    linkage_issue = Some(format!("fan-out linkage issue: {err}"));
-                } else if fan_out_require_completed {
-                    let has_non_completed = scheduler.first_non_completed_result().is_some();
-                    if has_non_completed {
-                        linkage_issue = format_non_completed_fan_out_issue_from_summary_artifact(
-                            app,
-                            parent_thread_id,
-                            artifact_id,
-                            "fan-out linkage issue",
-                        )
-                        .await;
+                    let mut linkage_issue = None::<String>;
+                    if let Err(err) = scheduler.tick(app, parent_thread_id, Some(turn_id)).await {
+                        linkage_issue = Some(format!("fan-out linkage issue: {err}"));
+                    } else if fan_out_require_completed {
+                        let has_non_completed = scheduler.first_non_completed_result().is_some();
+                        if has_non_completed {
+                            linkage_issue =
+                                format_non_completed_fan_out_issue_from_summary_artifact(
+                                    app,
+                                    parent_thread_id,
+                                    artifact_id,
+                                    "fan-out linkage issue",
+                                )
+                                .await;
 
-                        if linkage_issue.is_none()
-                            && let Some(result) = scheduler.first_non_completed_result()
-                        {
-                            linkage_issue = Some(format_non_completed_fan_out_issue(
-                                "fan-out linkage issue",
-                                result,
-                                parent_thread_id,
-                                artifact_id,
-                            ));
-                        }
-                    }
-                }
-
-                if let Some(issue) = linkage_issue {
-                    let should_interrupt = fan_out_abort_reason_for_tick.lock().await.is_none();
-                    if should_interrupt {
-                        let mut issue_with_handles = issue;
-                        if let Some(linkage_artifact_id) = try_write_fan_out_linkage_issue_artifact(
-                            app,
-                            parent_thread_id,
-                            Some(turn_id),
-                            artifact_id,
-                            &issue_with_handles,
-                        )
-                        .await
-                        {
-                            if let Some(structured_issue) = format_fan_out_linkage_issue_from_artifact(
-                                app,
-                                parent_thread_id,
-                                linkage_artifact_id,
-                            )
-                            .await
+                            if linkage_issue.is_none()
+                                && let Some(result) = scheduler.first_non_completed_result()
                             {
-                                issue_with_handles = structured_issue;
-                            }
-                            issue_with_handles.push_str(&format!(
-                                " linkage_issue_read_cmd={}",
-                                fan_out_result_read_command(parent_thread_id, linkage_artifact_id)
-                            ));
-                        }
-                        {
-                            let mut reason = fan_out_abort_reason_for_tick.lock().await;
-                            if reason.is_none() {
-                                *reason = Some(issue_with_handles.clone());
+                                linkage_issue = Some(format_non_completed_fan_out_issue(
+                                    "fan-out linkage issue",
+                                    result,
+                                    parent_thread_id,
+                                    artifact_id,
+                                ));
                             }
                         }
-                        eprintln!("[fan-out] {issue_with_handles}");
-                        let _ = app
-                            .turn_interrupt(parent_thread_id, turn_id, Some(issue_with_handles))
-                            .await;
                     }
-                }
 
-                if scheduler.is_done() && !scheduler.final_summary_written {
-                    let results = scheduler.results_ordered();
-                    let summary_linkage_issue = fan_out_abort_reason_for_tick.lock().await.clone();
-                    let outcome =
-                        write_fan_in_summary_artifact(
+                    if let Some(issue) = linkage_issue {
+                        let should_interrupt = fan_out_abort_reason_for_tick.lock().await.is_none();
+                        if should_interrupt {
+                            let mut issue_with_handles = issue;
+                            if let Some(linkage_artifact_id) =
+                                try_write_fan_out_linkage_issue_artifact(
+                                    app,
+                                    parent_thread_id,
+                                    Some(turn_id),
+                                    artifact_id,
+                                    &issue_with_handles,
+                                )
+                                .await
+                            {
+                                if let Some(structured_issue) =
+                                    format_fan_out_linkage_issue_from_artifact(
+                                        app,
+                                        parent_thread_id,
+                                        linkage_artifact_id,
+                                    )
+                                    .await
+                                {
+                                    issue_with_handles = structured_issue;
+                                }
+                                issue_with_handles.push_str(&format!(
+                                    " linkage_issue_read_cmd={}",
+                                    fan_out_result_read_command(
+                                        parent_thread_id,
+                                        linkage_artifact_id
+                                    )
+                                ));
+                            }
+                            {
+                                let mut reason = fan_out_abort_reason_for_tick.lock().await;
+                                if reason.is_none() {
+                                    *reason = Some(issue_with_handles.clone());
+                                }
+                            }
+                            eprintln!("[fan-out] {issue_with_handles}");
+                            let _ = app
+                                .turn_interrupt(parent_thread_id, turn_id, Some(issue_with_handles))
+                                .await;
+                        }
+                    }
+
+                    if scheduler.is_done() && !scheduler.final_summary_written {
+                        let results = scheduler.results_ordered();
+                        let summary_linkage_issue =
+                            fan_out_abort_reason_for_tick.lock().await.clone();
+                        let outcome = write_fan_in_summary_artifact(
                             app,
                             parent_thread_id,
                             Some(turn_id),
@@ -1427,19 +1462,19 @@ pub(super) async fn run_command_run(
                             summary_linkage_issue.as_deref(),
                         )
                         .await;
-                    if let Err(err) = outcome {
-                        eprintln!("[fan-out] final summary artifact write failed: {err}");
-                    } else {
-                        scheduler.final_summary_written = true;
+                        if let Err(err) = outcome {
+                            eprintln!("[fan-out] final summary artifact write failed: {err}");
+                        } else {
+                            scheduler.final_summary_written = true;
+                        }
                     }
-                }
 
-                let mut guard = scheduler_for_tick.lock().await;
-                *guard = Some(scheduler);
-                Ok(())
+                    let mut guard = scheduler_for_tick.lock().await;
+                    *guard = Some(scheduler);
+                    Ok(())
+                })
             })
-        })
-        .await?;
+            .await?;
 
         let mut scheduler = scheduler
             .lock()
@@ -1447,25 +1482,22 @@ pub(super) async fn run_command_run(
             .take()
             .ok_or_else(|| anyhow::anyhow!("fan-out scheduler missing"))?;
         while !scheduler.is_done() {
-            scheduler
-                .tick(app, thread_id, Some(parent_turn_id))
-                .await?;
+            scheduler.tick(app, thread_id, Some(parent_turn_id)).await?;
             tokio::time::sleep(Duration::from_millis(200)).await;
         }
         let results = scheduler.results_ordered();
         if !scheduler.final_summary_written {
             let summary_linkage_issue = fan_out_abort_reason.lock().await.clone();
-            let _artifact_path =
-                write_fan_in_summary_artifact(
-                    app,
-                    thread_id,
-                    Some(parent_turn_id),
-                    artifact_id,
-                    &results,
-                    scheduler.scheduling,
-                    summary_linkage_issue.as_deref(),
-                )
-                .await?;
+            let _artifact_path = write_fan_in_summary_artifact(
+                app,
+                thread_id,
+                Some(parent_turn_id),
+                artifact_id,
+                &results,
+                scheduler.scheduling,
+                summary_linkage_issue.as_deref(),
+            )
+            .await?;
         }
         validate_fan_out_results_with_artifact_fallback(
             app,

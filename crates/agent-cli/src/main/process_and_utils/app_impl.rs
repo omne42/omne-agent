@@ -1,3 +1,19 @@
+macro_rules! define_rpc_value_passthrough {
+    ($fn_name:ident, $method:literal, $params_ty:path) => {
+        async fn $fn_name(&mut self, params: $params_ty) -> anyhow::Result<Value> {
+            self.rpc_with_serialized_params($method, params).await
+        }
+    };
+}
+
+macro_rules! define_rpc_parsed_passthrough {
+    ($fn_name:ident, $method:literal, $params_ty:path, $response_ty:path, $parser:path) => {
+        async fn $fn_name(&mut self, params: $params_ty) -> anyhow::Result<$response_ty> {
+            self.rpc_parsed($method, params, $parser).await
+        }
+    };
+}
+
 impl App {
     async fn connect(cli: &Cli) -> anyhow::Result<Self> {
         let cwd = std::env::current_dir()?;
@@ -109,50 +125,36 @@ impl App {
         anyhow::bail!("{action} failed: expected ok=true");
     }
 
-    async fn rpc_artifact_list_value(
-        &mut self,
-        params: omne_app_server_protocol::ArtifactListParams,
-    ) -> anyhow::Result<Value> {
-        self.rpc_with_serialized_params("artifact/list", params).await
-    }
-
-    async fn rpc_artifact_read_value(
-        &mut self,
-        params: omne_app_server_protocol::ArtifactReadParams,
-    ) -> anyhow::Result<Value> {
-        self.rpc_with_serialized_params("artifact/read", params).await
-    }
-
-    async fn rpc_artifact_versions_value(
-        &mut self,
-        params: omne_app_server_protocol::ArtifactVersionsParams,
-    ) -> anyhow::Result<Value> {
-        self.rpc_with_serialized_params("artifact/versions", params)
-            .await
-    }
-
-    async fn rpc_process_inspect_value(
-        &mut self,
-        params: omne_app_server_protocol::ProcessInspectParams,
-    ) -> anyhow::Result<Value> {
-        self.rpc_with_serialized_params("process/inspect", params)
-            .await
-    }
-
-    async fn rpc_process_kill_value(
-        &mut self,
-        params: omne_app_server_protocol::ProcessKillParams,
-    ) -> anyhow::Result<Value> {
-        self.rpc_with_serialized_params("process/kill", params).await
-    }
-
-    async fn rpc_process_interrupt_value(
-        &mut self,
-        params: omne_app_server_protocol::ProcessInterruptParams,
-    ) -> anyhow::Result<Value> {
-        self.rpc_with_serialized_params("process/interrupt", params)
-            .await
-    }
+    define_rpc_value_passthrough!(
+        rpc_artifact_list_value,
+        "artifact/list",
+        omne_app_server_protocol::ArtifactListParams
+    );
+    define_rpc_value_passthrough!(
+        rpc_artifact_read_value,
+        "artifact/read",
+        omne_app_server_protocol::ArtifactReadParams
+    );
+    define_rpc_value_passthrough!(
+        rpc_artifact_versions_value,
+        "artifact/versions",
+        omne_app_server_protocol::ArtifactVersionsParams
+    );
+    define_rpc_value_passthrough!(
+        rpc_process_inspect_value,
+        "process/inspect",
+        omne_app_server_protocol::ProcessInspectParams
+    );
+    define_rpc_value_passthrough!(
+        rpc_process_kill_value,
+        "process/kill",
+        omne_app_server_protocol::ProcessKillParams
+    );
+    define_rpc_value_passthrough!(
+        rpc_process_interrupt_value,
+        "process/interrupt",
+        omne_app_server_protocol::ProcessInterruptParams
+    );
 
     fn take_notifications(
         &mut self,
@@ -730,13 +732,13 @@ impl App {
         .await
     }
 
-    async fn process_start(
-        &mut self,
-        params: omne_app_server_protocol::ProcessStartParams,
-    ) -> anyhow::Result<omne_app_server_protocol::ProcessStartResponse> {
-        self.rpc_parsed("process/start", params, parse_process_rpc_response_typed)
-            .await
-    }
+    define_rpc_parsed_passthrough!(
+        process_start,
+        "process/start",
+        omne_app_server_protocol::ProcessStartParams,
+        omne_app_server_protocol::ProcessStartResponse,
+        parse_process_rpc_response_typed
+    );
 
     async fn process_inspect(
         &mut self,
@@ -868,69 +870,62 @@ impl App {
         Self::ensure_ok("process/interrupt", response.ok)
     }
 
-    async fn repo_search(
-        &mut self,
-        req: omne_app_server_protocol::RepoSearchParams,
-    ) -> anyhow::Result<omne_app_server_protocol::RepoSearchResponse> {
-        self.rpc_parsed("repo/search", req, parse_repo_rpc_response_typed)
-            .await
-    }
-
-    async fn repo_index(
-        &mut self,
-        req: omne_app_server_protocol::RepoIndexParams,
-    ) -> anyhow::Result<omne_app_server_protocol::RepoIndexResponse> {
-        self.rpc_parsed("repo/index", req, parse_repo_rpc_response_typed)
-            .await
-    }
-
-    async fn repo_symbols(
-        &mut self,
-        req: omne_app_server_protocol::RepoSymbolsParams,
-    ) -> anyhow::Result<omne_app_server_protocol::RepoSymbolsResponse> {
-        self.rpc_parsed("repo/symbols", req, parse_repo_rpc_response_typed)
-            .await
-    }
-
-    async fn mcp_list_servers(
-        &mut self,
-        req: omne_app_server_protocol::McpListServersParams,
-    ) -> anyhow::Result<McpListServersOrFailedResponse> {
-        self.rpc_parsed("mcp/list_servers", req, parse_mcp_rpc_response_typed)
-            .await
-    }
-
-    async fn mcp_list_tools(
-        &mut self,
-        req: omne_app_server_protocol::McpListToolsParams,
-    ) -> anyhow::Result<McpActionOrFailedResponse> {
-        self.rpc_parsed("mcp/list_tools", req, parse_mcp_rpc_response_typed)
-            .await
-    }
-
-    async fn mcp_list_resources(
-        &mut self,
-        req: omne_app_server_protocol::McpListResourcesParams,
-    ) -> anyhow::Result<McpActionOrFailedResponse> {
-        self.rpc_parsed("mcp/list_resources", req, parse_mcp_rpc_response_typed)
-            .await
-    }
-
-    async fn mcp_call(
-        &mut self,
-        req: omne_app_server_protocol::McpCallParams,
-    ) -> anyhow::Result<McpActionOrFailedResponse> {
-        self.rpc_parsed("mcp/call", req, parse_mcp_rpc_response_typed)
-            .await
-    }
-
-    async fn artifact_write(
-        &mut self,
-        params: omne_app_server_protocol::ArtifactWriteParams,
-    ) -> anyhow::Result<omne_app_server_protocol::ArtifactWriteResponse> {
-        self.rpc_parsed("artifact/write", params, parse_artifact_rpc_response_typed)
-            .await
-    }
+    define_rpc_parsed_passthrough!(
+        repo_search,
+        "repo/search",
+        omne_app_server_protocol::RepoSearchParams,
+        omne_app_server_protocol::RepoSearchResponse,
+        parse_repo_rpc_response_typed
+    );
+    define_rpc_parsed_passthrough!(
+        repo_index,
+        "repo/index",
+        omne_app_server_protocol::RepoIndexParams,
+        omne_app_server_protocol::RepoIndexResponse,
+        parse_repo_rpc_response_typed
+    );
+    define_rpc_parsed_passthrough!(
+        repo_symbols,
+        "repo/symbols",
+        omne_app_server_protocol::RepoSymbolsParams,
+        omne_app_server_protocol::RepoSymbolsResponse,
+        parse_repo_rpc_response_typed
+    );
+    define_rpc_parsed_passthrough!(
+        mcp_list_servers,
+        "mcp/list_servers",
+        omne_app_server_protocol::McpListServersParams,
+        McpListServersOrFailedResponse,
+        parse_mcp_rpc_response_typed
+    );
+    define_rpc_parsed_passthrough!(
+        mcp_list_tools,
+        "mcp/list_tools",
+        omne_app_server_protocol::McpListToolsParams,
+        McpActionOrFailedResponse,
+        parse_mcp_rpc_response_typed
+    );
+    define_rpc_parsed_passthrough!(
+        mcp_list_resources,
+        "mcp/list_resources",
+        omne_app_server_protocol::McpListResourcesParams,
+        McpActionOrFailedResponse,
+        parse_mcp_rpc_response_typed
+    );
+    define_rpc_parsed_passthrough!(
+        mcp_call,
+        "mcp/call",
+        omne_app_server_protocol::McpCallParams,
+        McpActionOrFailedResponse,
+        parse_mcp_rpc_response_typed
+    );
+    define_rpc_parsed_passthrough!(
+        artifact_write,
+        "artifact/write",
+        omne_app_server_protocol::ArtifactWriteParams,
+        omne_app_server_protocol::ArtifactWriteResponse,
+        parse_artifact_rpc_response_typed
+    );
 
     async fn artifact_list(
         &mut self,

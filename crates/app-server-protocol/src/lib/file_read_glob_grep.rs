@@ -1,3 +1,5 @@
+use super::*;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum FileRoot {
@@ -79,23 +81,9 @@ pub struct FileGrepParams {
     pub max_files: Option<usize>,
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
-pub struct FileDeniedResponse {
-    pub tool_id: omne_protocol::ToolId,
-    pub denied: bool,
-    #[serde(default)]
-    #[ts(optional)]
-    pub remembered: Option<bool>,
-    #[serde(default)]
-    #[ts(optional)]
-    pub error_code: Option<String>,
-}
+define_tool_denied_response!(FileDeniedResponse {});
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
-pub struct FileNeedsApprovalResponse {
-    pub needs_approval: bool,
-    pub approval_id: omne_protocol::ApprovalId,
-}
+define_tool_needs_approval_response!(FileNeedsApprovalResponse {});
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
 pub struct FileAllowedToolsDeniedResponse {

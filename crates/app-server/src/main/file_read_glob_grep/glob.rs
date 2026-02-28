@@ -31,81 +31,25 @@ async fn handle_file_glob(server: &Server, params: FileGlobParams) -> anyhow::Re
     {
         return file_allowed_tools_denied_response(tool_id, "file/glob", &allowed_tools);
     }
-    let catalog = omne_core::modes::ModeCatalog::load(&thread_root).await;
-    let mode = match catalog.mode(&mode_name) {
-        Some(mode) => mode,
-        None => {
-            let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
-            let result = file_unknown_mode_denied_response(
-                tool_id,
-                &mode_name,
-                available,
-                catalog.load_error.clone(),
-            )?;
-
-            emit_file_tool_denied(
-                &thread_rt,
-                tool_id,
-                params.turn_id,
-                "file/glob",
-                &approval_params,
-                "unknown mode".to_string(),
-                result.clone(),
-            )
-            .await?;
-            return Ok(result);
-        }
-    };
-    let mode_decision = resolve_mode_decision_audit(mode, "file/glob", mode.permissions.read);
-    if mode_decision.decision == omne_core::modes::Decision::Deny {
-        let result = file_mode_denied_response(tool_id, &mode_name, mode_decision)?;
-        emit_file_tool_denied(
-            &thread_rt,
-            tool_id,
-            params.turn_id,
-            "file/glob",
-            &approval_params,
-            "mode denies file/glob".to_string(),
-            result.clone(),
-        )
-        .await?;
-        return Ok(result);
-    }
-
-    if mode_decision.decision == omne_core::modes::Decision::Prompt {
-        match gate_approval(
-            server,
-            &thread_rt,
-            params.thread_id,
-            params.turn_id,
+    if let FileModeApprovalGate::Denied(result) = enforce_file_mode_and_approval(
+        server,
+        FileModeApprovalContext {
+            thread_rt: &thread_rt,
+            thread_root: &thread_root,
+            thread_id: params.thread_id,
+            turn_id: params.turn_id,
+            approval_id: params.approval_id,
             approval_policy,
-            ApprovalRequest {
-                approval_id: params.approval_id,
-                action: "file/glob",
-                params: &approval_params,
-            },
-        )
-        .await?
-        {
-            ApprovalGate::Approved => {}
-            ApprovalGate::Denied { remembered } => {
-                let result = file_denied_response(tool_id, Some(remembered))?;
-                emit_file_tool_denied(
-                    &thread_rt,
-                    tool_id,
-                    params.turn_id,
-                    "file/glob",
-                    &approval_params,
-                    approval_denied_error(remembered).to_string(),
-                    result.clone(),
-                )
-                .await?;
-                return Ok(result);
-            }
-            ApprovalGate::NeedsApproval { approval_id } => {
-                return file_needs_approval_response(approval_id);
-            }
-        }
+            mode_name: &mode_name,
+            action: "file/glob",
+            tool_id,
+            approval_params: &approval_params,
+        },
+        |mode| mode.permissions.read,
+    )
+    .await?
+    {
+        return Ok(result);
     }
 
     thread_rt

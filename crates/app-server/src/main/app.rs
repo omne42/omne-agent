@@ -1,13 +1,58 @@
-include!("app/dispatch.rs");
-include!("app/thread.rs");
-include!("app/turn.rs");
-include!("app/process.rs");
-include!("app/file.rs");
-include!("app/repo.rs");
-include!("app/mcp.rs");
-include!("app/fs.rs");
-include!("app/artifact.rs");
-include!("app/approval.rs");
+macro_rules! dispatch_typed_routes {
+    ($id:expr, $method:expr, $params:expr, {
+        $($route:literal => $params_ty:ty => $handler:expr),+ $(,)?
+    }) => {{
+        match $method {
+            $(
+                $route => {
+                    dispatch_jsonrpc_request(&$id, $params, |params: $params_ty| $handler(params))
+                        .await
+                }
+            )+
+            _ => method_not_found($id, $method),
+        }
+    }};
+}
+
+#[path = "app/approval.rs"]
+mod approval;
+#[path = "app/artifact.rs"]
+mod artifact;
+#[path = "app/dispatch.rs"]
+mod dispatch;
+#[path = "app/file.rs"]
+mod file;
+#[path = "app/fs.rs"]
+mod fs;
+#[path = "app/mcp.rs"]
+mod mcp;
+#[path = "app/process.rs"]
+mod process;
+#[path = "app/repo.rs"]
+mod repo;
+#[path = "app/thread.rs"]
+mod thread;
+#[path = "app/turn.rs"]
+mod turn;
+
+use approval::handle_approval_request;
+use artifact::handle_artifact_request;
+use dispatch::{
+    dispatch_jsonrpc_request, handle_initialized_request, invalid_params, jsonrpc_internal_error,
+    jsonrpc_ok_or_internal, method_not_found, parse_jsonrpc_params,
+};
+use file::handle_file_request;
+use fs::handle_fs_request;
+use mcp::handle_mcp_request;
+use process::handle_process_request;
+use repo::handle_repo_request;
+use thread::build_thread_subscribe_response;
+use thread::{
+    configured_total_token_budget_limit, filter_and_paginate_thread_events, handle_thread_request,
+    read_thread_events_since_or_not_found, thread_token_budget_snapshot,
+    thread_token_budget_snapshot_with_limit,
+};
+use turn::handle_turn_request;
 
 const NOTIFY_CHANNEL_CAPACITY: usize = 1024;
 
@@ -23,7 +68,9 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     if let Some(command) = args.command {
         match command {
-            CliCommand::GenerateTs(output) => omne_app_server_protocol::generate_ts(&output.out_dir)?,
+            CliCommand::GenerateTs(output) => {
+                omne_app_server_protocol::generate_ts(&output.out_dir)?
+            }
             CliCommand::GenerateJsonSchema(output) => {
                 omne_app_server_protocol::generate_json_schema(&output.out_dir)?
             }
@@ -138,7 +185,9 @@ where
                     JsonRpcResponse::err(id, OMNE_NOT_INITIALIZED, "not initialized", None)
                 }
             }
-            _ if !initialized => JsonRpcResponse::err(id, OMNE_NOT_INITIALIZED, "not initialized", None),
+            _ if !initialized => {
+                JsonRpcResponse::err(id, OMNE_NOT_INITIALIZED, "not initialized", None)
+            }
             _ => handle_initialized_request(&server, request).await,
         };
 
@@ -235,7 +284,10 @@ async fn serve_unix_socket(server: Arc<Server>, listen_path: PathBuf) -> anyhow:
 }
 
 #[cfg(unix)]
-async fn serve_unix_connection(server: Arc<Server>, stream: tokio::net::UnixStream) -> anyhow::Result<()> {
+async fn serve_unix_connection(
+    server: Arc<Server>,
+    stream: tokio::net::UnixStream,
+) -> anyhow::Result<()> {
     let (read_half, write_half) = stream.into_split();
     let (out_tx, out_rx) = mpsc::unbounded_channel::<String>();
 

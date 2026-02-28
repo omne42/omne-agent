@@ -86,88 +86,32 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
             .await?;
         return file_denied_response(tool_id, None);
     }
-    let catalog = omne_core::modes::ModeCatalog::load(&thread_root).await;
-    let mode = match catalog.mode(&mode_name) {
-        Some(mode) => mode,
-        None => {
-            let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
-            let result = file_unknown_mode_denied_response(
-                tool_id,
-                &mode_name,
-                available,
-                catalog.load_error.clone(),
-            )?;
-
-            emit_file_tool_denied(
-                &thread_rt,
-                tool_id,
-                params.turn_id,
-                "file/read",
-                &approval_params,
-                "unknown mode".to_string(),
-                result.clone(),
-            )
-            .await?;
-            return Ok(result);
-        }
-    };
-
-    let base_decision = match rel_path.as_ref() {
-        Ok(rel) if mode.permissions.edit.is_denied(rel) => omne_core::modes::Decision::Deny,
-        Ok(_) => mode.permissions.read,
-        Err(_) => omne_core::modes::Decision::Deny,
-    };
-    let mode_decision = resolve_mode_decision_audit(mode, "file/read", base_decision);
-    if mode_decision.decision == omne_core::modes::Decision::Deny {
-        let result = file_mode_denied_response(tool_id, &mode_name, mode_decision)?;
-        emit_file_tool_denied(
-            &thread_rt,
-            tool_id,
-            params.turn_id,
-            "file/read",
-            &approval_params,
-            "mode denies file/read".to_string(),
-            result.clone(),
-        )
-        .await?;
-        return Ok(result);
-    }
-
-    if mode_decision.decision == omne_core::modes::Decision::Prompt {
-        match gate_approval(
-            server,
-            &thread_rt,
-            params.thread_id,
-            params.turn_id,
+    let rel_path_for_mode = rel_path.as_ref().ok().cloned();
+    let mode = match enforce_file_mode_and_approval(
+        server,
+        FileModeApprovalContext {
+            thread_rt: &thread_rt,
+            thread_root: &thread_root,
+            thread_id: params.thread_id,
+            turn_id: params.turn_id,
+            approval_id: params.approval_id,
             approval_policy,
-            ApprovalRequest {
-                approval_id: params.approval_id,
-                action: "file/read",
-                params: &approval_params,
-            },
-        )
-        .await?
-        {
-            ApprovalGate::Approved => {}
-            ApprovalGate::Denied { remembered } => {
-                let result = file_denied_response(tool_id, Some(remembered))?;
-                emit_file_tool_denied(
-                    &thread_rt,
-                    tool_id,
-                    params.turn_id,
-                    "file/read",
-                    &approval_params,
-                    approval_denied_error(remembered).to_string(),
-                    result.clone(),
-                )
-                .await?;
-                return Ok(result);
-            }
-            ApprovalGate::NeedsApproval { approval_id } => {
-                return file_needs_approval_response(approval_id);
-            }
-        }
-    }
+            mode_name: &mode_name,
+            action: "file/read",
+            tool_id,
+            approval_params: &approval_params,
+        },
+        move |mode| match rel_path_for_mode.as_ref() {
+            Some(rel) if mode.permissions.edit.is_denied(rel) => omne_core::modes::Decision::Deny,
+            Some(_) => mode.permissions.read,
+            None => omne_core::modes::Decision::Deny,
+        },
+    )
+    .await?
+    {
+        FileModeApprovalGate::Allowed(mode) => mode,
+        FileModeApprovalGate::Denied(result) => return Ok(result),
+    };
 
     thread_rt
         .append_event(omne_protocol::ThreadEventKind::ToolStarted {
@@ -215,7 +159,7 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
         } else {
             mode.permissions.read
         };
-        let mode_decision = resolve_mode_decision_audit(mode, "file/read", base_decision);
+        let mode_decision = resolve_mode_decision_audit(&mode, "file/read", base_decision);
         if mode_decision.decision == omne_core::modes::Decision::Deny {
             let result = file_mode_denied_response(tool_id, &mode_name, mode_decision)?;
             return Err(tool_denied(

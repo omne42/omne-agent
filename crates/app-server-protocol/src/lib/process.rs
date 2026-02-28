@@ -1,3 +1,5 @@
+use super::*;
+
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
 pub struct ProcessStartParams {
     pub thread_id: omne_protocol::ThreadId,
@@ -174,25 +176,13 @@ pub struct ProcessSignalResponse {
     pub ok: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
-pub struct ProcessDeniedResponse {
-    pub tool_id: omne_protocol::ToolId,
-    pub denied: bool,
+define_tool_denied_response!(ProcessDeniedResponse {
     pub thread_id: omne_protocol::ThreadId,
-    #[serde(default)]
-    #[ts(optional)]
-    pub remembered: Option<bool>,
-    #[serde(default)]
-    #[ts(optional)]
-    pub error_code: Option<String>,
-}
+});
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
-pub struct ProcessNeedsApprovalResponse {
-    pub needs_approval: bool,
+define_tool_needs_approval_response!(ProcessNeedsApprovalResponse {
     pub thread_id: omne_protocol::ThreadId,
-    pub approval_id: omne_protocol::ApprovalId,
-}
+});
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
 pub struct ProcessAllowedToolsDeniedResponse {

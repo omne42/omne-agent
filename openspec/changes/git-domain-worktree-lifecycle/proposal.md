@@ -23,7 +23,7 @@
 
 ## 怎么做
 
-- 在 `omne-thread-git-snapshot-runtime` 新增 worktree 生命周期 API：
+- 在 `omne-git-runtime` 新增 worktree 生命周期 API：
   - 识别受管的 detached worktree；
   - 执行 `worktree remove --force`；
   - 执行 `worktree prune` 清理元数据。
@@ -45,9 +45,9 @@
   - `thread/archive`、`thread/delete` 对受管 worktree 执行回收后，worktree 目录被移除，且 `git worktree list` 无残留。
   - 非受管目录或非 worktree 目录不误删。
 - 架构边界：
-  - `app-server` 不新增直接 `git` 命令实现；Git 生命周期逻辑归属 `omne-thread-git-snapshot-runtime`。
+  - `app-server` 不新增直接 `git` 命令实现；Git 生命周期逻辑归属 `omne-git-runtime`。
 - 可验证检查：
-  - `cargo test -p omne-thread-git-snapshot-runtime`
+  - `cargo test -p omne-git-runtime`
   - `cargo test -p omne-app-server thread_archive_`
   - `cargo test -p omne-app-server thread_delete_`
   - `rg -n "Command::new\\(\\\"git\\\"\\)" crates/app-server/src/main/thread_manage`（应无新增命中）

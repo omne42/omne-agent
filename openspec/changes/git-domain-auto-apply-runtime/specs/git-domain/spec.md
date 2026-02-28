@@ -4,7 +4,7 @@
 
 ### 要求：Runtime 自动应用状态机
 
-`omne-thread-git-snapshot-runtime` 必须提供自动应用状态机 API，覆盖：
+`omne-git-runtime` 必须提供自动应用状态机 API，覆盖：
 前置条件校验、patch 抓取、`git apply --check`、`git apply`。
 
 #### 场景：前置条件失败

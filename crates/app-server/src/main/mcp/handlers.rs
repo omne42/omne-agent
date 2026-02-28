@@ -24,60 +24,23 @@ async fn handle_mcp_list_servers(server: &Server, params: McpListServersParams) 
         return deny_mcp_disabled(&thread_rt, tool_id, params.turn_id, "mcp/list_servers", approval_params).await;
     }
 
-    let catalog = omne_core::modes::ModeCatalog::load(&thread_root).await;
-    let mode = match catalog.mode(&mode_name) {
-        Some(mode) => mode,
-        None => {
-            let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
-            let result = mcp_unknown_mode_denied_response(
-                tool_id,
-                &mode_name,
-                available,
-                catalog.load_error.clone(),
-            )?;
-
-            thread_rt
-                .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                    tool_id,
-                    turn_id: params.turn_id,
-                    tool: "mcp/list_servers".to_string(),
-                    params: Some(approval_params.clone()),
-                })
-                .await?;
-            thread_rt
-                .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                    tool_id,
-                    status: omne_protocol::ToolStatus::Denied,
-                    error: Some("unknown mode".to_string()),
-                    result: Some(result.clone()),
-                })
-                .await?;
-            return Ok(result);
-        }
+    let mode_decision = match enforce_mcp_mode_gate(
+        &McpModeGateContext {
+            thread_rt: &thread_rt,
+            thread_root: &thread_root,
+            turn_id: params.turn_id,
+            mode_name: &mode_name,
+            action: "mcp/list_servers",
+            tool_id,
+            approval_params: &approval_params,
+        },
+        |mode| mode.permissions.read,
+    )
+    .await?
+    {
+        McpModeGate::Allowed { mode_decision, .. } => mode_decision,
+        McpModeGate::Denied(result) => return Ok(result),
     };
-
-    let mode_decision =
-        resolve_mode_decision_audit(mode, "mcp/list_servers", mode.permissions.read);
-    if mode_decision.decision == omne_core::modes::Decision::Deny {
-        let result = mcp_mode_denied_response(tool_id, &mode_name, mode_decision)?;
-        thread_rt
-            .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                tool_id,
-                turn_id: params.turn_id,
-                tool: "mcp/list_servers".to_string(),
-                params: Some(approval_params.clone()),
-            })
-            .await?;
-        thread_rt
-            .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                tool_id,
-                status: omne_protocol::ToolStatus::Denied,
-                error: Some("mode denies mcp/list_servers".to_string()),
-                result: Some(result.clone()),
-            })
-            .await?;
-        return Ok(result);
-    }
 
     if mode_decision.decision == omne_core::modes::Decision::Prompt {
         match gate_approval(
@@ -97,22 +60,16 @@ async fn handle_mcp_list_servers(server: &Server, params: McpListServersParams) 
             ApprovalGate::Approved => {}
             ApprovalGate::Denied { remembered } => {
                 let result = mcp_denied_response(tool_id, Some(remembered))?;
-                thread_rt
-                    .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                        tool_id,
-                        turn_id: params.turn_id,
-                        tool: "mcp/list_servers".to_string(),
-                        params: Some(approval_params.clone()),
-                    })
-                    .await?;
-                thread_rt
-                    .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                        tool_id,
-                        status: omne_protocol::ToolStatus::Denied,
-                        error: Some(approval_denied_error(remembered).to_string()),
-                        result: Some(result.clone()),
-                    })
-                    .await?;
+                emit_mcp_tool_denied(
+                    &thread_rt,
+                    tool_id,
+                    params.turn_id,
+                    "mcp/list_servers",
+                    &approval_params,
+                    approval_denied_error(remembered).to_string(),
+                    result.clone(),
+                )
+                .await?;
                 return Ok(result);
             }
             ApprovalGate::NeedsApproval { approval_id } => {
@@ -232,6 +189,100 @@ async fn handle_mcp_call(server: &Server, params: McpCallParams) -> anyhow::Resu
     .await
 }
 
+enum McpModeGate {
+    Allowed {
+        mode: omne_core::modes::ModeDef,
+        mode_decision: ModeDecisionAudit,
+    },
+    Denied(Value),
+}
+
+struct McpModeGateContext<'a> {
+    thread_rt: &'a Arc<ThreadRuntime>,
+    thread_root: &'a Path,
+    turn_id: Option<TurnId>,
+    mode_name: &'a str,
+    action: &'static str,
+    tool_id: omne_protocol::ToolId,
+    approval_params: &'a Value,
+}
+
+async fn emit_mcp_tool_denied(
+    thread_rt: &Arc<ThreadRuntime>,
+    tool_id: omne_protocol::ToolId,
+    turn_id: Option<TurnId>,
+    action: &str,
+    params: &Value,
+    error: String,
+    result: Value,
+) -> anyhow::Result<()> {
+    emit_tool_denied(
+        thread_rt,
+        tool_id,
+        turn_id,
+        action,
+        Some(params.clone()),
+        error,
+        result,
+    )
+    .await
+}
+
+async fn enforce_mcp_mode_gate<F>(
+    ctx: &McpModeGateContext<'_>,
+    base_decision_for_mode: F,
+) -> anyhow::Result<McpModeGate>
+where
+    F: Fn(&omne_core::modes::ModeDef) -> omne_core::modes::Decision,
+{
+    let catalog = omne_core::modes::ModeCatalog::load(ctx.thread_root).await;
+    let mode = match catalog.mode(ctx.mode_name).cloned() {
+        Some(mode) => mode,
+        None => {
+            let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
+            let result = mcp_unknown_mode_denied_response(
+                ctx.tool_id,
+                ctx.mode_name,
+                available,
+                catalog.load_error.clone(),
+            )?;
+            emit_mcp_tool_denied(
+                ctx.thread_rt,
+                ctx.tool_id,
+                ctx.turn_id,
+                ctx.action,
+                ctx.approval_params,
+                "unknown mode".to_string(),
+                result.clone(),
+            )
+            .await?;
+            return Ok(McpModeGate::Denied(result));
+        }
+    };
+
+    let mode_decision =
+        resolve_mode_decision_audit(&mode, ctx.action, base_decision_for_mode(&mode));
+    if mode_decision.decision == omne_core::modes::Decision::Deny {
+        let result = mcp_mode_denied_response(ctx.tool_id, ctx.mode_name, mode_decision)?;
+        emit_mcp_tool_denied(
+            ctx.thread_rt,
+            ctx.tool_id,
+            ctx.turn_id,
+            ctx.action,
+            ctx.approval_params,
+            format!("mode denies {}", ctx.action),
+            result.clone(),
+        )
+        .await?;
+        return Ok(McpModeGate::Denied(result));
+    }
+
+    Ok(McpModeGate::Allowed {
+        mode,
+        mode_decision,
+    })
+}
+
 struct McpActionRequest {
     thread_id: ThreadId,
     turn_id: Option<TurnId>,
@@ -305,22 +356,16 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
 
     if sandbox_policy == omne_protocol::SandboxPolicy::ReadOnly {
         let result = mcp_sandbox_policy_denied_response(tool_id, sandbox_policy)?;
-        thread_rt
-            .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                tool_id,
-                turn_id: req.turn_id,
-                tool: req.action.to_string(),
-                params: Some(approval_params.clone()),
-            })
-            .await?;
-        thread_rt
-            .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                tool_id,
-                status: omne_protocol::ToolStatus::Denied,
-                error: Some("sandbox_policy=read_only forbids mcp".to_string()),
-                result: Some(result.clone()),
-            })
-            .await?;
+        emit_mcp_tool_denied(
+            &thread_rt,
+            tool_id,
+            req.turn_id,
+            req.action,
+            &approval_params,
+            "sandbox_policy=read_only forbids mcp".to_string(),
+            result.clone(),
+        )
+        .await?;
         return Ok(result);
     }
 
@@ -350,82 +395,38 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
         && omne_process_runtime::command_uses_network(server_cfg.argv())
     {
         let result = mcp_sandbox_network_denied_response(tool_id, sandbox_network_access)?;
-        thread_rt
-            .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                tool_id,
-                turn_id: req.turn_id,
-                tool: req.action.to_string(),
-                params: Some(approval_params.clone()),
-            })
-            .await?;
-        thread_rt
-            .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                tool_id,
-                status: omne_protocol::ToolStatus::Denied,
-                error: Some("sandbox_network_access=deny forbids this command".to_string()),
-                result: Some(result.clone()),
-            })
-            .await?;
+        emit_mcp_tool_denied(
+            &thread_rt,
+            tool_id,
+            req.turn_id,
+            req.action,
+            &approval_params,
+            "sandbox_network_access=deny forbids this command".to_string(),
+            result.clone(),
+        )
+        .await?;
         return Ok(result);
     }
-
-    let catalog = omne_core::modes::ModeCatalog::load(&thread_root).await;
-    let mode = match catalog.mode(&mode_name) {
-        Some(mode) => mode,
-        None => {
-            let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
-            let result = mcp_unknown_mode_denied_response(
-                tool_id,
-                &mode_name,
-                available,
-                catalog.load_error.clone(),
-            )?;
-
-            thread_rt
-                .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                    tool_id,
-                    turn_id: req.turn_id,
-                    tool: req.action.to_string(),
-                    params: Some(approval_params.clone()),
-                })
-                .await?;
-            thread_rt
-                .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                    tool_id,
-                    status: omne_protocol::ToolStatus::Denied,
-                    error: Some("unknown mode".to_string()),
-                    result: Some(result.clone()),
-                })
-                .await?;
-            return Ok(result);
-        }
+    let (mode, mode_decision) = match enforce_mcp_mode_gate(
+        &McpModeGateContext {
+            thread_rt: &thread_rt,
+            thread_root: &thread_root,
+            turn_id: req.turn_id,
+            mode_name: &mode_name,
+            action: req.action,
+            tool_id,
+            approval_params: &approval_params,
+        },
+        |mode| mode.permissions.command.combine(mode.permissions.artifact),
+    )
+    .await?
+    {
+        McpModeGate::Allowed {
+            mode,
+            mode_decision,
+        } => (mode, mode_decision),
+        McpModeGate::Denied(result) => return Ok(result),
     };
-
-    let mode_decision = resolve_mode_decision_audit(
-        mode,
-        req.action,
-        mode.permissions.command.combine(mode.permissions.artifact),
-    );
-    if mode_decision.decision == omne_core::modes::Decision::Deny {
-        let result = mcp_mode_denied_response(tool_id, &mode_name, mode_decision)?;
-        thread_rt
-            .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                tool_id,
-                turn_id: req.turn_id,
-                tool: req.action.to_string(),
-                params: Some(approval_params.clone()),
-            })
-            .await?;
-        thread_rt
-            .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                tool_id,
-                status: omne_protocol::ToolStatus::Denied,
-                error: Some(format!("mode denies {}", req.action)),
-                result: Some(result.clone()),
-            })
-            .await?;
-        return Ok(result);
-    }
 
     let mut effective_exec_policy = server.exec_policy.clone();
     if !mode.command_execpolicy_rules.is_empty() {
@@ -439,22 +440,16 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
                         "failed to load mode execpolicy rules",
                         err.to_string(),
                     )?;
-                    thread_rt
-                        .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                            tool_id,
-                            turn_id: req.turn_id,
-                            tool: req.action.to_string(),
-                            params: Some(approval_params.clone()),
-                        })
-                        .await?;
-                    thread_rt
-                        .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                            tool_id,
-                            status: omne_protocol::ToolStatus::Denied,
-                            error: Some("failed to load mode execpolicy rules".to_string()),
-                            result: Some(result.clone()),
-                        })
-                        .await?;
+                    emit_mcp_tool_denied(
+                        &thread_rt,
+                        tool_id,
+                        req.turn_id,
+                        req.action,
+                        &approval_params,
+                        "failed to load mode execpolicy rules".to_string(),
+                        result.clone(),
+                    )
+                    .await?;
                     return Ok(result);
                 }
             };
@@ -470,22 +465,16 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
                     "failed to load thread execpolicy rules",
                     err.to_string(),
                 )?;
-                thread_rt
-                    .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                        tool_id,
-                        turn_id: req.turn_id,
-                        tool: req.action.to_string(),
-                        params: Some(approval_params.clone()),
-                    })
-                    .await?;
-                thread_rt
-                    .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                        tool_id,
-                        status: omne_protocol::ToolStatus::Denied,
-                        error: Some("failed to load thread execpolicy rules".to_string()),
-                        result: Some(result.clone()),
-                    })
-                    .await?;
+                emit_mcp_tool_denied(
+                    &thread_rt,
+                    tool_id,
+                    req.turn_id,
+                    req.action,
+                    &approval_params,
+                    "failed to load thread execpolicy rules".to_string(),
+                    result.clone(),
+                )
+                .await?;
                 return Ok(result);
             }
         };
@@ -504,22 +493,16 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
     if effective_exec_decision == ExecDecision::Forbidden {
         let result =
             mcp_execpolicy_denied_response(tool_id, ExecDecision::Forbidden, &exec_matches)?;
-        thread_rt
-            .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                tool_id,
-                turn_id: req.turn_id,
-                tool: req.action.to_string(),
-                params: Some(approval_params.clone()),
-            })
-            .await?;
-        thread_rt
-            .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                tool_id,
-                status: omne_protocol::ToolStatus::Denied,
-                error: Some("execpolicy forbids this command".to_string()),
-                result: Some(result.clone()),
-            })
-            .await?;
+        emit_mcp_tool_denied(
+            &thread_rt,
+            tool_id,
+            req.turn_id,
+            req.action,
+            &approval_params,
+            "execpolicy forbids this command".to_string(),
+            result.clone(),
+        )
+        .await?;
         return Ok(result);
     }
 
@@ -558,22 +541,16 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
             ApprovalGate::Approved => {}
             ApprovalGate::Denied { remembered } => {
                 let result = mcp_denied_response(tool_id, Some(remembered))?;
-                thread_rt
-                    .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                        tool_id,
-                        turn_id: req.turn_id,
-                        tool: req.action.to_string(),
-                        params: Some(approval_params.clone()),
-                    })
-                    .await?;
-                thread_rt
-                    .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                        tool_id,
-                        status: omne_protocol::ToolStatus::Denied,
-                        error: Some(approval_denied_error(remembered).to_string()),
-                        result: Some(result.clone()),
-                    })
-                    .await?;
+                emit_mcp_tool_denied(
+                    &thread_rt,
+                    tool_id,
+                    req.turn_id,
+                    req.action,
+                    &approval_params,
+                    approval_denied_error(remembered).to_string(),
+                    result.clone(),
+                )
+                .await?;
                 return Ok(result);
             }
             ApprovalGate::NeedsApproval { approval_id } => {
@@ -676,25 +653,32 @@ fn mcp_denied_response(
     tool_id: omne_protocol::ToolId,
     remembered: Option<bool>,
 ) -> anyhow::Result<Value> {
-    let response = omne_app_server_protocol::McpDeniedResponse {
+    denied_response_with_remembered(
         tool_id,
-        denied: true,
         remembered,
-        error_code: Some("approval_denied".to_string()),
-    };
-    serde_json::to_value(response).context("serialize mcp denied response")
+        "serialize mcp denied response",
+        |tool_id, remembered, error_code| omne_app_server_protocol::McpDeniedResponse {
+            tool_id,
+            denied: true,
+            remembered,
+            error_code,
+        },
+    )
 }
 
 fn mcp_needs_approval_response(
     thread_id: ThreadId,
     approval_id: omne_protocol::ApprovalId,
 ) -> anyhow::Result<Value> {
-    let response = omne_app_server_protocol::McpNeedsApprovalResponse {
-        needs_approval: true,
-        thread_id,
+    needs_approval_response_json(
         approval_id,
-    };
-    serde_json::to_value(response).context("serialize mcp needs_approval response")
+        "serialize mcp needs_approval response",
+        |approval_id| omne_app_server_protocol::McpNeedsApprovalResponse {
+            needs_approval: true,
+            thread_id,
+            approval_id,
+        },
+    )
 }
 
 fn mcp_mode_denied_response(
@@ -706,7 +690,10 @@ fn mcp_mode_denied_response(
         tool_id,
         denied: true,
         mode: mode_name.to_string(),
-        decision: mcp_mode_decision(mode_decision.decision),
+        decision: map_mode_decision_for_protocol!(
+            mode_decision.decision,
+            omne_app_server_protocol::McpModeDecision
+        ),
         decision_source: mode_decision.decision_source.to_string(),
         tool_override_hit: mode_decision.tool_override_hit,
         error_code: Some("mode_denied".to_string()),
@@ -817,12 +804,4 @@ fn mcp_failed_response(
         server: server.to_string(),
     };
     serde_json::to_value(response).context("serialize mcp failed response")
-}
-
-fn mcp_mode_decision(decision: omne_core::modes::Decision) -> omne_app_server_protocol::McpModeDecision {
-    match decision {
-        omne_core::modes::Decision::Allow => omne_app_server_protocol::McpModeDecision::Allow,
-        omne_core::modes::Decision::Prompt => omne_app_server_protocol::McpModeDecision::Prompt,
-        omne_core::modes::Decision::Deny => omne_app_server_protocol::McpModeDecision::Deny,
-    }
 }

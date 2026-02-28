@@ -2538,7 +2538,7 @@ modes:
         if let Some(parent) = managed_worktree.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
-        omne_thread_git_snapshot_runtime::create_detached_worktree(
+        omne_git_runtime::create_detached_worktree(
             &source_repo.display().to_string(),
             &managed_worktree.display().to_string(),
             None,
@@ -2673,7 +2673,7 @@ modes:
         if let Some(parent) = managed_worktree.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
-        omne_thread_git_snapshot_runtime::create_detached_worktree(
+        omne_git_runtime::create_detached_worktree(
             &source_repo.display().to_string(),
             &managed_worktree.display().to_string(),
             None,

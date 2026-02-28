@@ -23,20 +23,46 @@ mod thread_diff_tests {
         Ok(())
     }
 
+    async fn init_git_repo(repo_dir: &Path) -> anyhow::Result<()> {
+        run_git(repo_dir, &["init"]).await?;
+        run_git(repo_dir, &["config", "user.email", "test@example.com"]).await?;
+        run_git(repo_dir, &["config", "user.name", "Test User"]).await?;
+        Ok(())
+    }
+
+    async fn create_initial_hello_commit(repo_dir: &Path) -> anyhow::Result<PathBuf> {
+        let file_path = repo_dir.join("hello.txt");
+        tokio::fs::write(&file_path, "hello\n").await?;
+        run_git(repo_dir, &["add", "hello.txt"]).await?;
+        run_git(repo_dir, &["commit", "-m", "init"]).await?;
+        Ok(file_path)
+    }
+
+    fn thread_configure_defaults(thread_id: ThreadId) -> ThreadConfigureParams {
+        ThreadConfigureParams {
+            thread_id,
+            approval_policy: None,
+            sandbox_policy: None,
+            sandbox_writable_roots: None,
+            sandbox_network_access: None,
+            mode: None,
+            model: None,
+            thinking: None,
+            openai_base_url: None,
+            allowed_tools: None,
+            execpolicy_rules: None,
+        }
+    }
+
     #[tokio::test]
     async fn thread_diff_writes_diff_artifact() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        run_git(&repo_dir, &["init"]).await?;
-        run_git(&repo_dir, &["config", "user.email", "test@example.com"]).await?;
-        run_git(&repo_dir, &["config", "user.name", "Test User"]).await?;
+        init_git_repo(&repo_dir).await?;
 
-        let file_path = repo_dir.join("hello.txt");
-        tokio::fs::write(&file_path, "hello\n").await?;
-        run_git(&repo_dir, &["add", "hello.txt"]).await?;
-        run_git(&repo_dir, &["commit", "-m", "init"]).await?;
+        let file_path = create_initial_hello_commit(&repo_dir).await?;
 
         tokio::fs::write(&file_path, "hello\nworld\n").await?;
 
@@ -104,14 +130,9 @@ mod thread_diff_tests {
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        run_git(&repo_dir, &["init"]).await?;
-        run_git(&repo_dir, &["config", "user.email", "test@example.com"]).await?;
-        run_git(&repo_dir, &["config", "user.name", "Test User"]).await?;
+        init_git_repo(&repo_dir).await?;
 
-        let file_path = repo_dir.join("hello.txt");
-        tokio::fs::write(&file_path, "hello\n").await?;
-        run_git(&repo_dir, &["add", "hello.txt"]).await?;
-        run_git(&repo_dir, &["commit", "-m", "init"]).await?;
+        let file_path = create_initial_hello_commit(&repo_dir).await?;
 
         tokio::fs::write(&file_path, "hello\nworld\n").await?;
 
@@ -179,14 +200,9 @@ mod thread_diff_tests {
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        run_git(&repo_dir, &["init"]).await?;
-        run_git(&repo_dir, &["config", "user.email", "test@example.com"]).await?;
-        run_git(&repo_dir, &["config", "user.name", "Test User"]).await?;
+        init_git_repo(&repo_dir).await?;
 
-        let file_path = repo_dir.join("hello.txt");
-        tokio::fs::write(&file_path, "hello\n").await?;
-        run_git(&repo_dir, &["add", "hello.txt"]).await?;
-        run_git(&repo_dir, &["commit", "-m", "init"]).await?;
+        create_initial_hello_commit(&repo_dir).await?;
 
         let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
@@ -196,17 +212,8 @@ mod thread_diff_tests {
         handle_thread_configure(
             &server,
             ThreadConfigureParams {
-                thread_id,
-                approval_policy: None,
                 sandbox_policy: Some(omne_protocol::SandboxPolicy::ReadOnly),
-                sandbox_writable_roots: None,
-                sandbox_network_access: None,
-                mode: None,
-                model: None,
-                thinking: None,
-                openai_base_url: None,
-                allowed_tools: None,
-                execpolicy_rules: None,
+                ..thread_configure_defaults(thread_id)
             },
         )
         .await?;
@@ -286,14 +293,9 @@ mod thread_diff_tests {
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        run_git(&repo_dir, &["init"]).await?;
-        run_git(&repo_dir, &["config", "user.email", "test@example.com"]).await?;
-        run_git(&repo_dir, &["config", "user.name", "Test User"]).await?;
+        init_git_repo(&repo_dir).await?;
 
-        let file_path = repo_dir.join("hello.txt");
-        tokio::fs::write(&file_path, "hello\n").await?;
-        run_git(&repo_dir, &["add", "hello.txt"]).await?;
-        run_git(&repo_dir, &["commit", "-m", "init"]).await?;
+        create_initial_hello_commit(&repo_dir).await?;
 
         let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
@@ -303,17 +305,8 @@ mod thread_diff_tests {
         handle_thread_configure(
             &server,
             ThreadConfigureParams {
-                thread_id,
-                approval_policy: None,
                 sandbox_policy: Some(omne_protocol::SandboxPolicy::ReadOnly),
-                sandbox_writable_roots: None,
-                sandbox_network_access: None,
-                mode: None,
-                model: None,
-                thinking: None,
-                openai_base_url: None,
-                allowed_tools: None,
-                execpolicy_rules: None,
+                ..thread_configure_defaults(thread_id)
             },
         )
         .await?;
@@ -401,17 +394,8 @@ mod thread_diff_tests {
         handle_thread_configure(
             &server,
             ThreadConfigureParams {
-                thread_id,
-                approval_policy: None,
-                sandbox_policy: None,
-                sandbox_writable_roots: None,
-                sandbox_network_access: None,
-                mode: None,
-                model: None,
-                thinking: None,
-                openai_base_url: None,
                 allowed_tools: Some(Some(vec!["repo/search".to_string()])),
-                execpolicy_rules: None,
+                ..thread_configure_defaults(thread_id)
             },
         )
         .await?;
@@ -453,12 +437,8 @@ mod thread_diff_tests {
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        run_git(&repo_dir, &["init"]).await?;
-        run_git(&repo_dir, &["config", "user.email", "test@example.com"]).await?;
-        run_git(&repo_dir, &["config", "user.name", "Test User"]).await?;
-        tokio::fs::write(repo_dir.join("hello.txt"), "hello\n").await?;
-        run_git(&repo_dir, &["add", "hello.txt"]).await?;
-        run_git(&repo_dir, &["commit", "-m", "init"]).await?;
+        init_git_repo(&repo_dir).await?;
+        create_initial_hello_commit(&repo_dir).await?;
 
         let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
@@ -468,17 +448,8 @@ mod thread_diff_tests {
         handle_thread_configure(
             &server,
             ThreadConfigureParams {
-                thread_id,
-                approval_policy: None,
-                sandbox_policy: None,
-                sandbox_writable_roots: None,
-                sandbox_network_access: None,
-                mode: None,
-                model: None,
-                thinking: None,
-                openai_base_url: None,
                 allowed_tools: Some(Some(vec!["process/start".to_string()])),
-                execpolicy_rules: None,
+                ..thread_configure_defaults(thread_id)
             },
         )
         .await?;
@@ -521,12 +492,8 @@ mod thread_diff_tests {
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        run_git(&repo_dir, &["init"]).await?;
-        run_git(&repo_dir, &["config", "user.email", "test@example.com"]).await?;
-        run_git(&repo_dir, &["config", "user.name", "Test User"]).await?;
-        tokio::fs::write(repo_dir.join("hello.txt"), "hello\n").await?;
-        run_git(&repo_dir, &["add", "hello.txt"]).await?;
-        run_git(&repo_dir, &["commit", "-m", "init"]).await?;
+        init_git_repo(&repo_dir).await?;
+        create_initial_hello_commit(&repo_dir).await?;
 
         let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
@@ -536,17 +503,8 @@ mod thread_diff_tests {
         handle_thread_configure(
             &server,
             ThreadConfigureParams {
-                thread_id,
-                approval_policy: None,
-                sandbox_policy: None,
-                sandbox_writable_roots: None,
-                sandbox_network_access: None,
-                mode: None,
-                model: None,
-                thinking: None,
-                openai_base_url: None,
                 allowed_tools: Some(Some(vec!["process/start".to_string()])),
-                execpolicy_rules: None,
+                ..thread_configure_defaults(thread_id)
             },
         )
         .await?;
@@ -601,12 +559,8 @@ modes:
         )
         .await?;
 
-        run_git(&repo_dir, &["init"]).await?;
-        run_git(&repo_dir, &["config", "user.email", "test@example.com"]).await?;
-        run_git(&repo_dir, &["config", "user.name", "Test User"]).await?;
-        tokio::fs::write(repo_dir.join("hello.txt"), "hello\n").await?;
-        run_git(&repo_dir, &["add", "hello.txt"]).await?;
-        run_git(&repo_dir, &["commit", "-m", "init"]).await?;
+        init_git_repo(&repo_dir).await?;
+        create_initial_hello_commit(&repo_dir).await?;
 
         let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
@@ -616,17 +570,8 @@ modes:
         handle_thread_configure(
             &server,
             ThreadConfigureParams {
-                thread_id,
-                approval_policy: None,
-                sandbox_policy: None,
-                sandbox_writable_roots: None,
-                sandbox_network_access: None,
                 mode: Some("artifact-deny".to_string()),
-                model: None,
-                thinking: None,
-                openai_base_url: None,
-                allowed_tools: None,
-                execpolicy_rules: None,
+                ..thread_configure_defaults(thread_id)
             },
         )
         .await?;
@@ -686,12 +631,8 @@ modes:
         )
         .await?;
 
-        run_git(&repo_dir, &["init"]).await?;
-        run_git(&repo_dir, &["config", "user.email", "test@example.com"]).await?;
-        run_git(&repo_dir, &["config", "user.name", "Test User"]).await?;
-        tokio::fs::write(repo_dir.join("hello.txt"), "hello\n").await?;
-        run_git(&repo_dir, &["add", "hello.txt"]).await?;
-        run_git(&repo_dir, &["commit", "-m", "init"]).await?;
+        init_git_repo(&repo_dir).await?;
+        create_initial_hello_commit(&repo_dir).await?;
 
         let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
@@ -701,17 +642,8 @@ modes:
         handle_thread_configure(
             &server,
             ThreadConfigureParams {
-                thread_id,
-                approval_policy: None,
-                sandbox_policy: None,
-                sandbox_writable_roots: None,
-                sandbox_network_access: None,
                 mode: Some("artifact-deny".to_string()),
-                model: None,
-                thinking: None,
-                openai_base_url: None,
-                allowed_tools: None,
-                execpolicy_rules: None,
+                ..thread_configure_defaults(thread_id)
             },
         )
         .await?;
@@ -775,12 +707,8 @@ modes:
         )
         .await?;
 
-        run_git(&repo_dir, &["init"]).await?;
-        run_git(&repo_dir, &["config", "user.email", "test@example.com"]).await?;
-        run_git(&repo_dir, &["config", "user.name", "Test User"]).await?;
-        tokio::fs::write(repo_dir.join("hello.txt"), "hello\n").await?;
-        run_git(&repo_dir, &["add", "hello.txt"]).await?;
-        run_git(&repo_dir, &["commit", "-m", "init"]).await?;
+        init_git_repo(&repo_dir).await?;
+        create_initial_hello_commit(&repo_dir).await?;
 
         let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
@@ -790,17 +718,8 @@ modes:
         handle_thread_configure(
             &server,
             ThreadConfigureParams {
-                thread_id,
-                approval_policy: None,
-                sandbox_policy: None,
-                sandbox_writable_roots: None,
-                sandbox_network_access: None,
                 mode: Some("artifact-override-deny".to_string()),
-                model: None,
-                thinking: None,
-                openai_base_url: None,
-                allowed_tools: None,
-                execpolicy_rules: None,
+                ..thread_configure_defaults(thread_id)
             },
         )
         .await?;
@@ -861,12 +780,8 @@ modes:
         )
         .await?;
 
-        run_git(&repo_dir, &["init"]).await?;
-        run_git(&repo_dir, &["config", "user.email", "test@example.com"]).await?;
-        run_git(&repo_dir, &["config", "user.name", "Test User"]).await?;
-        tokio::fs::write(repo_dir.join("hello.txt"), "hello\n").await?;
-        run_git(&repo_dir, &["add", "hello.txt"]).await?;
-        run_git(&repo_dir, &["commit", "-m", "init"]).await?;
+        init_git_repo(&repo_dir).await?;
+        create_initial_hello_commit(&repo_dir).await?;
 
         let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
@@ -876,17 +791,9 @@ modes:
         handle_thread_configure(
             &server,
             ThreadConfigureParams {
-                thread_id,
                 approval_policy: Some(omne_protocol::ApprovalPolicy::AutoApprove),
-                sandbox_policy: None,
-                sandbox_writable_roots: None,
-                sandbox_network_access: None,
                 mode: Some("artifact-unknown".to_string()),
-                model: None,
-                thinking: None,
-                openai_base_url: None,
-                allowed_tools: None,
-                execpolicy_rules: None,
+                ..thread_configure_defaults(thread_id)
             },
         )
         .await?;
@@ -917,14 +824,17 @@ modes:
                 approval_id: None,
                 max_bytes: None,
                 wait_seconds: Some(10),
-                argv: vec![
-                    "sh".to_string(),
-                    "-lc".to_string(),
-                    "sleep 0.5; printf 'snapshot\\n'".to_string(),
-                ],
-                artifact_type: "diff",
-                summary_clean: "test clean",
-                summary_dirty: "test dirty",
+                kind: omne_git_runtime::SnapshotKind::Diff,
+                recipe_override: Some(omne_git_runtime::SnapshotRecipe {
+                    argv: vec![
+                        "sh".to_string(),
+                        "-lc".to_string(),
+                        "sleep 0.5; printf 'snapshot\\n'".to_string(),
+                    ],
+                    artifact_type: "diff",
+                    summary_clean: "test clean",
+                    summary_dirty: "test dirty",
+                }),
             },
         )
         .await?;
@@ -971,12 +881,8 @@ modes:
         )
         .await?;
 
-        run_git(&repo_dir, &["init"]).await?;
-        run_git(&repo_dir, &["config", "user.email", "test@example.com"]).await?;
-        run_git(&repo_dir, &["config", "user.name", "Test User"]).await?;
-        tokio::fs::write(repo_dir.join("hello.txt"), "hello\n").await?;
-        run_git(&repo_dir, &["add", "hello.txt"]).await?;
-        run_git(&repo_dir, &["commit", "-m", "init"]).await?;
+        init_git_repo(&repo_dir).await?;
+        create_initial_hello_commit(&repo_dir).await?;
 
         let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
@@ -986,17 +892,9 @@ modes:
         handle_thread_configure(
             &server,
             ThreadConfigureParams {
-                thread_id,
                 approval_policy: Some(omne_protocol::ApprovalPolicy::AutoApprove),
-                sandbox_policy: None,
-                sandbox_writable_roots: None,
-                sandbox_network_access: None,
                 mode: Some("patch-artifact-unknown".to_string()),
-                model: None,
-                thinking: None,
-                openai_base_url: None,
-                allowed_tools: None,
-                execpolicy_rules: None,
+                ..thread_configure_defaults(thread_id)
             },
         )
         .await?;
@@ -1027,14 +925,17 @@ modes:
                 approval_id: None,
                 max_bytes: None,
                 wait_seconds: Some(10),
-                argv: vec![
-                    "sh".to_string(),
-                    "-lc".to_string(),
-                    "sleep 0.5; printf 'snapshot\\n'".to_string(),
-                ],
-                artifact_type: "patch",
-                summary_clean: "test clean",
-                summary_dirty: "test dirty",
+                kind: omne_git_runtime::SnapshotKind::Patch,
+                recipe_override: Some(omne_git_runtime::SnapshotRecipe {
+                    argv: vec![
+                        "sh".to_string(),
+                        "-lc".to_string(),
+                        "sleep 0.5; printf 'snapshot\\n'".to_string(),
+                    ],
+                    artifact_type: "patch",
+                    summary_clean: "test clean",
+                    summary_dirty: "test dirty",
+                }),
             },
         )
         .await?;
@@ -1094,17 +995,8 @@ modes:
         handle_thread_configure(
             &server,
             ThreadConfigureParams {
-                thread_id,
-                approval_policy: None,
-                sandbox_policy: None,
-                sandbox_writable_roots: None,
-                sandbox_network_access: None,
                 mode: Some("patch-mode".to_string()),
-                model: None,
-                thinking: None,
-                openai_base_url: None,
-                allowed_tools: None,
-                execpolicy_rules: None,
+                ..thread_configure_defaults(thread_id)
             },
         )
         .await?;
@@ -1174,17 +1066,8 @@ modes:
         handle_thread_configure(
             &server,
             ThreadConfigureParams {
-                thread_id,
-                approval_policy: None,
-                sandbox_policy: None,
-                sandbox_writable_roots: None,
-                sandbox_network_access: None,
-                mode: None,
-                model: None,
-                thinking: None,
-                openai_base_url: None,
                 allowed_tools: Some(Some(vec!["repo/search".to_string()])),
-                execpolicy_rules: None,
+                ..thread_configure_defaults(thread_id)
             },
         )
         .await?;
@@ -1253,17 +1136,8 @@ modes:
         handle_thread_configure(
             &server,
             ThreadConfigureParams {
-                thread_id,
-                approval_policy: None,
-                sandbox_policy: None,
-                sandbox_writable_roots: None,
-                sandbox_network_access: None,
                 mode: Some("diff-mode".to_string()),
-                model: None,
-                thinking: None,
-                openai_base_url: None,
-                allowed_tools: None,
-                execpolicy_rules: None,
+                ..thread_configure_defaults(thread_id)
             },
         )
         .await?;
@@ -1343,17 +1217,8 @@ prefix_rule(
         handle_thread_configure(
             &server,
             ThreadConfigureParams {
-                thread_id,
-                approval_policy: None,
-                sandbox_policy: None,
-                sandbox_writable_roots: None,
-                sandbox_network_access: None,
-                mode: None,
-                model: None,
-                thinking: None,
-                openai_base_url: None,
-                allowed_tools: None,
                 execpolicy_rules: Some(vec!["rules/thread.rules".to_string()]),
+                ..thread_configure_defaults(thread_id)
             },
         )
         .await?;
@@ -1406,17 +1271,8 @@ prefix_rule(
         handle_thread_configure(
             &server,
             ThreadConfigureParams {
-                thread_id,
-                approval_policy: None,
-                sandbox_policy: None,
-                sandbox_writable_roots: None,
-                sandbox_network_access: None,
-                mode: None,
-                model: None,
-                thinking: None,
-                openai_base_url: None,
-                allowed_tools: None,
                 execpolicy_rules: Some(vec!["rules/missing.rules".to_string()]),
+                ..thread_configure_defaults(thread_id)
             },
         )
         .await?;
@@ -1476,17 +1332,8 @@ prefix_rule(
         handle_thread_configure(
             &server,
             ThreadConfigureParams {
-                thread_id,
-                approval_policy: None,
-                sandbox_policy: None,
-                sandbox_writable_roots: None,
-                sandbox_network_access: None,
-                mode: None,
-                model: None,
-                thinking: None,
-                openai_base_url: None,
-                allowed_tools: None,
                 execpolicy_rules: Some(vec!["rules/thread.rules".to_string()]),
+                ..thread_configure_defaults(thread_id)
             },
         )
         .await?;
@@ -1539,17 +1386,8 @@ prefix_rule(
         handle_thread_configure(
             &server,
             ThreadConfigureParams {
-                thread_id,
-                approval_policy: None,
-                sandbox_policy: None,
-                sandbox_writable_roots: None,
-                sandbox_network_access: None,
-                mode: None,
-                model: None,
-                thinking: None,
-                openai_base_url: None,
-                allowed_tools: None,
                 execpolicy_rules: Some(vec!["rules/missing.rules".to_string()]),
+                ..thread_configure_defaults(thread_id)
             },
         )
         .await?;

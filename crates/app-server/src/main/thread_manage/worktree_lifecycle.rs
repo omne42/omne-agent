@@ -25,7 +25,7 @@ async fn cleanup_managed_subagent_worktree(
         return;
     };
     let worktree = path.display().to_string();
-    match omne_thread_git_snapshot_runtime::remove_detached_worktree_and_prune(&worktree).await {
+    match omne_git_runtime::remove_detached_worktree_and_prune(&worktree).await {
         Ok(true) => {
             tracing::debug!(thread_id = %thread_id, lifecycle, worktree = %worktree, "cleaned managed worktree");
         }

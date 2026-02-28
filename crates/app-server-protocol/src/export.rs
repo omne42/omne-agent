@@ -41,191 +41,202 @@ use crate::{
     TurnInterruptResponse, TurnStartResponse,
 };
 
+macro_rules! for_each_export_type {
+    ($m:ident) => {
+        $m!(RequestId, "RequestId");
+        $m!(JsonRpcRequest, "JsonRpcRequest");
+        $m!(JsonRpcResponse, "JsonRpcResponse");
+        $m!(JsonRpcErrorResponse, "JsonRpcErrorResponse");
+        $m!(JsonRpcError, "JsonRpcError");
+        $m!(ClientRequest, "ClientRequest");
+        $m!(ServerNotification, "ServerNotification");
+        $m!(omne_protocol::ThreadEvent, "ThreadEvent");
+        $m!(ThreadEventsResponse, "ThreadEventsResponse");
+        $m!(ThreadSubscribeResponse, "ThreadSubscribeResponse");
+        $m!(ThreadHandleResponse, "ThreadHandleResponse");
+        $m!(ThreadStartResponse, "ThreadStartResponse");
+        $m!(TurnStartResponse, "TurnStartResponse");
+        $m!(TurnInterruptResponse, "TurnInterruptResponse");
+        $m!(ThreadListResponse, "ThreadListResponse");
+        $m!(ThreadArchiveResponse, "ThreadArchiveResponse");
+        $m!(ThreadUnarchiveResponse, "ThreadUnarchiveResponse");
+        $m!(ThreadPauseResponse, "ThreadPauseResponse");
+        $m!(ThreadUnpauseResponse, "ThreadUnpauseResponse");
+        $m!(ThreadDeleteResponse, "ThreadDeleteResponse");
+        $m!(ThreadClearArtifactsResponse, "ThreadClearArtifactsResponse");
+        $m!(ThreadListMetaResponse, "ThreadListMetaResponse");
+        $m!(ThreadAttentionResponse, "ThreadAttentionResponse");
+        $m!(ThreadStateResponse, "ThreadStateResponse");
+        $m!(ThreadUsageResponse, "ThreadUsageResponse");
+        $m!(ThreadConfigureResponse, "ThreadConfigureResponse");
+        $m!(ThreadConfigExplainResponse, "ThreadConfigExplainResponse");
+        $m!(ThreadModelsResponse, "ThreadModelsResponse");
+        $m!(ThreadDiskUsageResponse, "ThreadDiskUsageResponse");
+        $m!(ThreadDiskReportResponse, "ThreadDiskReportResponse");
+        $m!(
+            ThreadCheckpointRestoreDeniedResponse,
+            "ThreadCheckpointRestoreDeniedResponse"
+        );
+        $m!(
+            ThreadCheckpointRestoreNeedsApprovalResponse,
+            "ThreadCheckpointRestoreNeedsApprovalResponse"
+        );
+        $m!(
+            ThreadCheckpointRestoreResponse,
+            "ThreadCheckpointRestoreResponse"
+        );
+        $m!(
+            ThreadCheckpointCreateResponse,
+            "ThreadCheckpointCreateResponse"
+        );
+        $m!(ThreadCheckpointListResponse, "ThreadCheckpointListResponse");
+        $m!(ThreadGitSnapshotResponse, "ThreadGitSnapshotResponse");
+        $m!(
+            ThreadGitSnapshotNeedsApprovalResponse,
+            "ThreadGitSnapshotNeedsApprovalResponse"
+        );
+        $m!(
+            ThreadGitSnapshotDeniedResponse,
+            "ThreadGitSnapshotDeniedResponse"
+        );
+        $m!(
+            ThreadGitSnapshotTimedOutResponse,
+            "ThreadGitSnapshotTimedOutResponse"
+        );
+        $m!(ThreadGitSnapshotRpcResponse, "ThreadGitSnapshotRpcResponse");
+        $m!(ThreadHookRunResponse, "ThreadHookRunResponse");
+        $m!(
+            ThreadHookRunNeedsApprovalResponse,
+            "ThreadHookRunNeedsApprovalResponse"
+        );
+        $m!(ThreadHookRunDeniedResponse, "ThreadHookRunDeniedResponse");
+        $m!(ThreadHookRunErrorResponse, "ThreadHookRunErrorResponse");
+        $m!(ThreadHookRunRpcResponse, "ThreadHookRunRpcResponse");
+        $m!(ThreadAutoHookResponse, "ThreadAutoHookResponse");
+        $m!(ArtifactListResponse, "ArtifactListResponse");
+        $m!(ArtifactVersionsResponse, "ArtifactVersionsResponse");
+        $m!(ArtifactReadResponse, "ArtifactReadResponse");
+        $m!(ArtifactDeleteResponse, "ArtifactDeleteResponse");
+        $m!(ArtifactDeniedResponse, "ArtifactDeniedResponse");
+        $m!(
+            ArtifactNeedsApprovalResponse,
+            "ArtifactNeedsApprovalResponse"
+        );
+        $m!(ArtifactModeDeniedResponse, "ArtifactModeDeniedResponse");
+        $m!(
+            ArtifactUnknownModeDeniedResponse,
+            "ArtifactUnknownModeDeniedResponse"
+        );
+        $m!(
+            ArtifactAllowedToolsDeniedResponse,
+            "ArtifactAllowedToolsDeniedResponse"
+        );
+        $m!(RepoDeniedResponse, "RepoDeniedResponse");
+        $m!(RepoNeedsApprovalResponse, "RepoNeedsApprovalResponse");
+        $m!(RepoModeDeniedResponse, "RepoModeDeniedResponse");
+        $m!(
+            RepoUnknownModeDeniedResponse,
+            "RepoUnknownModeDeniedResponse"
+        );
+        $m!(
+            RepoAllowedToolsDeniedResponse,
+            "RepoAllowedToolsDeniedResponse"
+        );
+        $m!(RepoSearchResponse, "RepoSearchResponse");
+        $m!(RepoIndexResponse, "RepoIndexResponse");
+        $m!(RepoSymbolsResponse, "RepoSymbolsResponse");
+        $m!(McpDeniedResponse, "McpDeniedResponse");
+        $m!(McpNeedsApprovalResponse, "McpNeedsApprovalResponse");
+        $m!(McpModeDeniedResponse, "McpModeDeniedResponse");
+        $m!(McpUnknownModeDeniedResponse, "McpUnknownModeDeniedResponse");
+        $m!(
+            McpAllowedToolsDeniedResponse,
+            "McpAllowedToolsDeniedResponse"
+        );
+        $m!(McpDisabledDeniedResponse, "McpDisabledDeniedResponse");
+        $m!(
+            McpSandboxPolicyDeniedResponse,
+            "McpSandboxPolicyDeniedResponse"
+        );
+        $m!(
+            McpSandboxNetworkDeniedResponse,
+            "McpSandboxNetworkDeniedResponse"
+        );
+        $m!(McpExecPolicyDeniedResponse, "McpExecPolicyDeniedResponse");
+        $m!(
+            McpExecPolicyLoadDeniedResponse,
+            "McpExecPolicyLoadDeniedResponse"
+        );
+        $m!(McpFailedResponse, "McpFailedResponse");
+        $m!(McpServerDescriptor, "McpServerDescriptor");
+        $m!(McpListServersResponse, "McpListServersResponse");
+        $m!(McpActionInlineResponse, "McpActionInlineResponse");
+        $m!(McpActionArtifactResponse, "McpActionArtifactResponse");
+        $m!(McpActionResponse, "McpActionResponse");
+        $m!(ProcessStatus, "ProcessStatus");
+        $m!(ProcessInfo, "ProcessInfo");
+        $m!(ProcessListResponse, "ProcessListResponse");
+        $m!(ProcessStartResponse, "ProcessStartResponse");
+        $m!(ProcessInspectResponse, "ProcessInspectResponse");
+        $m!(ProcessTailResponse, "ProcessTailResponse");
+        $m!(ProcessFollowResponse, "ProcessFollowResponse");
+        $m!(ProcessSignalResponse, "ProcessSignalResponse");
+        $m!(ProcessDeniedResponse, "ProcessDeniedResponse");
+        $m!(ProcessNeedsApprovalResponse, "ProcessNeedsApprovalResponse");
+        $m!(ProcessModeDeniedResponse, "ProcessModeDeniedResponse");
+        $m!(
+            ProcessUnknownModeDeniedResponse,
+            "ProcessUnknownModeDeniedResponse"
+        );
+        $m!(
+            ProcessAllowedToolsDeniedResponse,
+            "ProcessAllowedToolsDeniedResponse"
+        );
+        $m!(
+            ProcessSandboxPolicyDeniedResponse,
+            "ProcessSandboxPolicyDeniedResponse"
+        );
+        $m!(
+            ProcessSandboxNetworkDeniedResponse,
+            "ProcessSandboxNetworkDeniedResponse"
+        );
+        $m!(
+            ProcessExecPolicyDeniedResponse,
+            "ProcessExecPolicyDeniedResponse"
+        );
+        $m!(
+            ProcessExecPolicyLoadDeniedResponse,
+            "ProcessExecPolicyLoadDeniedResponse"
+        );
+        $m!(FileDeniedResponse, "FileDeniedResponse");
+        $m!(FileNeedsApprovalResponse, "FileNeedsApprovalResponse");
+        $m!(FileModeDeniedResponse, "FileModeDeniedResponse");
+        $m!(
+            FileUnknownModeDeniedResponse,
+            "FileUnknownModeDeniedResponse"
+        );
+        $m!(
+            FileAllowedToolsDeniedResponse,
+            "FileAllowedToolsDeniedResponse"
+        );
+        $m!(
+            FileSandboxPolicyDeniedResponse,
+            "FileSandboxPolicyDeniedResponse"
+        );
+        $m!(ApprovalDecideResponse, "ApprovalDecideResponse");
+        $m!(ApprovalListResponse, "ApprovalListResponse");
+    };
+}
+
 pub fn generate_ts(out_dir: &Path) -> anyhow::Result<()> {
     fs::create_dir_all(out_dir).with_context(|| format!("create out dir {}", out_dir.display()))?;
 
-    RequestId::export_all_to(out_dir).context("export RequestId typescript")?;
-    JsonRpcRequest::export_all_to(out_dir).context("export JsonRpcRequest typescript")?;
-    JsonRpcResponse::export_all_to(out_dir).context("export JsonRpcResponse typescript")?;
-    JsonRpcErrorResponse::export_all_to(out_dir)
-        .context("export JsonRpcErrorResponse typescript")?;
-    JsonRpcError::export_all_to(out_dir).context("export JsonRpcError typescript")?;
-    ClientRequest::export_all_to(out_dir).context("export ClientRequest typescript")?;
-    ServerNotification::export_all_to(out_dir).context("export ServerNotification typescript")?;
-    omne_protocol::ThreadEvent::export_all_to(out_dir).context("export ThreadEvent typescript")?;
-    ThreadEventsResponse::export_all_to(out_dir)
-        .context("export ThreadEventsResponse typescript")?;
-    ThreadSubscribeResponse::export_all_to(out_dir)
-        .context("export ThreadSubscribeResponse typescript")?;
-    ThreadHandleResponse::export_all_to(out_dir)
-        .context("export ThreadHandleResponse typescript")?;
-    ThreadStartResponse::export_all_to(out_dir).context("export ThreadStartResponse typescript")?;
-    TurnStartResponse::export_all_to(out_dir).context("export TurnStartResponse typescript")?;
-    TurnInterruptResponse::export_all_to(out_dir)
-        .context("export TurnInterruptResponse typescript")?;
-    ThreadListResponse::export_all_to(out_dir).context("export ThreadListResponse typescript")?;
-    ThreadArchiveResponse::export_all_to(out_dir)
-        .context("export ThreadArchiveResponse typescript")?;
-    ThreadUnarchiveResponse::export_all_to(out_dir)
-        .context("export ThreadUnarchiveResponse typescript")?;
-    ThreadPauseResponse::export_all_to(out_dir).context("export ThreadPauseResponse typescript")?;
-    ThreadUnpauseResponse::export_all_to(out_dir)
-        .context("export ThreadUnpauseResponse typescript")?;
-    ThreadDeleteResponse::export_all_to(out_dir)
-        .context("export ThreadDeleteResponse typescript")?;
-    ThreadClearArtifactsResponse::export_all_to(out_dir)
-        .context("export ThreadClearArtifactsResponse typescript")?;
-    ThreadListMetaResponse::export_all_to(out_dir)
-        .context("export ThreadListMetaResponse typescript")?;
-    ThreadAttentionResponse::export_all_to(out_dir)
-        .context("export ThreadAttentionResponse typescript")?;
-    ThreadStateResponse::export_all_to(out_dir).context("export ThreadStateResponse typescript")?;
-    ThreadUsageResponse::export_all_to(out_dir).context("export ThreadUsageResponse typescript")?;
-    ThreadConfigureResponse::export_all_to(out_dir)
-        .context("export ThreadConfigureResponse typescript")?;
-    ThreadConfigExplainResponse::export_all_to(out_dir)
-        .context("export ThreadConfigExplainResponse typescript")?;
-    ThreadModelsResponse::export_all_to(out_dir)
-        .context("export ThreadModelsResponse typescript")?;
-    ThreadDiskUsageResponse::export_all_to(out_dir)
-        .context("export ThreadDiskUsageResponse typescript")?;
-    ThreadDiskReportResponse::export_all_to(out_dir)
-        .context("export ThreadDiskReportResponse typescript")?;
-    ThreadCheckpointRestoreDeniedResponse::export_all_to(out_dir)
-        .context("export ThreadCheckpointRestoreDeniedResponse typescript")?;
-    ThreadCheckpointRestoreNeedsApprovalResponse::export_all_to(out_dir)
-        .context("export ThreadCheckpointRestoreNeedsApprovalResponse typescript")?;
-    ThreadCheckpointRestoreResponse::export_all_to(out_dir)
-        .context("export ThreadCheckpointRestoreResponse typescript")?;
-    ThreadCheckpointCreateResponse::export_all_to(out_dir)
-        .context("export ThreadCheckpointCreateResponse typescript")?;
-    ThreadCheckpointListResponse::export_all_to(out_dir)
-        .context("export ThreadCheckpointListResponse typescript")?;
-    ThreadGitSnapshotResponse::export_all_to(out_dir)
-        .context("export ThreadGitSnapshotResponse typescript")?;
-    ThreadGitSnapshotNeedsApprovalResponse::export_all_to(out_dir)
-        .context("export ThreadGitSnapshotNeedsApprovalResponse typescript")?;
-    ThreadGitSnapshotDeniedResponse::export_all_to(out_dir)
-        .context("export ThreadGitSnapshotDeniedResponse typescript")?;
-    ThreadGitSnapshotTimedOutResponse::export_all_to(out_dir)
-        .context("export ThreadGitSnapshotTimedOutResponse typescript")?;
-    ThreadGitSnapshotRpcResponse::export_all_to(out_dir)
-        .context("export ThreadGitSnapshotRpcResponse typescript")?;
-    ThreadHookRunResponse::export_all_to(out_dir)
-        .context("export ThreadHookRunResponse typescript")?;
-    ThreadHookRunNeedsApprovalResponse::export_all_to(out_dir)
-        .context("export ThreadHookRunNeedsApprovalResponse typescript")?;
-    ThreadHookRunDeniedResponse::export_all_to(out_dir)
-        .context("export ThreadHookRunDeniedResponse typescript")?;
-    ThreadHookRunErrorResponse::export_all_to(out_dir)
-        .context("export ThreadHookRunErrorResponse typescript")?;
-    ThreadHookRunRpcResponse::export_all_to(out_dir)
-        .context("export ThreadHookRunRpcResponse typescript")?;
-    ThreadAutoHookResponse::export_all_to(out_dir)
-        .context("export ThreadAutoHookResponse typescript")?;
-    ArtifactListResponse::export_all_to(out_dir)
-        .context("export ArtifactListResponse typescript")?;
-    ArtifactVersionsResponse::export_all_to(out_dir)
-        .context("export ArtifactVersionsResponse typescript")?;
-    ArtifactReadResponse::export_all_to(out_dir)
-        .context("export ArtifactReadResponse typescript")?;
-    ArtifactDeleteResponse::export_all_to(out_dir)
-        .context("export ArtifactDeleteResponse typescript")?;
-    ArtifactDeniedResponse::export_all_to(out_dir)
-        .context("export ArtifactDeniedResponse typescript")?;
-    ArtifactNeedsApprovalResponse::export_all_to(out_dir)
-        .context("export ArtifactNeedsApprovalResponse typescript")?;
-    ArtifactModeDeniedResponse::export_all_to(out_dir)
-        .context("export ArtifactModeDeniedResponse typescript")?;
-    ArtifactUnknownModeDeniedResponse::export_all_to(out_dir)
-        .context("export ArtifactUnknownModeDeniedResponse typescript")?;
-    ArtifactAllowedToolsDeniedResponse::export_all_to(out_dir)
-        .context("export ArtifactAllowedToolsDeniedResponse typescript")?;
-    RepoDeniedResponse::export_all_to(out_dir).context("export RepoDeniedResponse typescript")?;
-    RepoNeedsApprovalResponse::export_all_to(out_dir)
-        .context("export RepoNeedsApprovalResponse typescript")?;
-    RepoModeDeniedResponse::export_all_to(out_dir)
-        .context("export RepoModeDeniedResponse typescript")?;
-    RepoUnknownModeDeniedResponse::export_all_to(out_dir)
-        .context("export RepoUnknownModeDeniedResponse typescript")?;
-    RepoAllowedToolsDeniedResponse::export_all_to(out_dir)
-        .context("export RepoAllowedToolsDeniedResponse typescript")?;
-    RepoSearchResponse::export_all_to(out_dir).context("export RepoSearchResponse typescript")?;
-    RepoIndexResponse::export_all_to(out_dir).context("export RepoIndexResponse typescript")?;
-    RepoSymbolsResponse::export_all_to(out_dir).context("export RepoSymbolsResponse typescript")?;
-    McpDeniedResponse::export_all_to(out_dir).context("export McpDeniedResponse typescript")?;
-    McpNeedsApprovalResponse::export_all_to(out_dir)
-        .context("export McpNeedsApprovalResponse typescript")?;
-    McpModeDeniedResponse::export_all_to(out_dir)
-        .context("export McpModeDeniedResponse typescript")?;
-    McpUnknownModeDeniedResponse::export_all_to(out_dir)
-        .context("export McpUnknownModeDeniedResponse typescript")?;
-    McpAllowedToolsDeniedResponse::export_all_to(out_dir)
-        .context("export McpAllowedToolsDeniedResponse typescript")?;
-    McpDisabledDeniedResponse::export_all_to(out_dir)
-        .context("export McpDisabledDeniedResponse typescript")?;
-    McpSandboxPolicyDeniedResponse::export_all_to(out_dir)
-        .context("export McpSandboxPolicyDeniedResponse typescript")?;
-    McpSandboxNetworkDeniedResponse::export_all_to(out_dir)
-        .context("export McpSandboxNetworkDeniedResponse typescript")?;
-    McpExecPolicyDeniedResponse::export_all_to(out_dir)
-        .context("export McpExecPolicyDeniedResponse typescript")?;
-    McpExecPolicyLoadDeniedResponse::export_all_to(out_dir)
-        .context("export McpExecPolicyLoadDeniedResponse typescript")?;
-    McpFailedResponse::export_all_to(out_dir).context("export McpFailedResponse typescript")?;
-    McpServerDescriptor::export_all_to(out_dir).context("export McpServerDescriptor typescript")?;
-    McpListServersResponse::export_all_to(out_dir)
-        .context("export McpListServersResponse typescript")?;
-    McpActionInlineResponse::export_all_to(out_dir)
-        .context("export McpActionInlineResponse typescript")?;
-    McpActionArtifactResponse::export_all_to(out_dir)
-        .context("export McpActionArtifactResponse typescript")?;
-    McpActionResponse::export_all_to(out_dir).context("export McpActionResponse typescript")?;
-    ProcessStatus::export_all_to(out_dir).context("export ProcessStatus typescript")?;
-    ProcessInfo::export_all_to(out_dir).context("export ProcessInfo typescript")?;
-    ProcessListResponse::export_all_to(out_dir).context("export ProcessListResponse typescript")?;
-    ProcessStartResponse::export_all_to(out_dir)
-        .context("export ProcessStartResponse typescript")?;
-    ProcessInspectResponse::export_all_to(out_dir)
-        .context("export ProcessInspectResponse typescript")?;
-    ProcessTailResponse::export_all_to(out_dir).context("export ProcessTailResponse typescript")?;
-    ProcessFollowResponse::export_all_to(out_dir)
-        .context("export ProcessFollowResponse typescript")?;
-    ProcessSignalResponse::export_all_to(out_dir)
-        .context("export ProcessSignalResponse typescript")?;
-    ProcessDeniedResponse::export_all_to(out_dir)
-        .context("export ProcessDeniedResponse typescript")?;
-    ProcessNeedsApprovalResponse::export_all_to(out_dir)
-        .context("export ProcessNeedsApprovalResponse typescript")?;
-    ProcessModeDeniedResponse::export_all_to(out_dir)
-        .context("export ProcessModeDeniedResponse typescript")?;
-    ProcessUnknownModeDeniedResponse::export_all_to(out_dir)
-        .context("export ProcessUnknownModeDeniedResponse typescript")?;
-    ProcessAllowedToolsDeniedResponse::export_all_to(out_dir)
-        .context("export ProcessAllowedToolsDeniedResponse typescript")?;
-    ProcessSandboxPolicyDeniedResponse::export_all_to(out_dir)
-        .context("export ProcessSandboxPolicyDeniedResponse typescript")?;
-    ProcessSandboxNetworkDeniedResponse::export_all_to(out_dir)
-        .context("export ProcessSandboxNetworkDeniedResponse typescript")?;
-    ProcessExecPolicyDeniedResponse::export_all_to(out_dir)
-        .context("export ProcessExecPolicyDeniedResponse typescript")?;
-    ProcessExecPolicyLoadDeniedResponse::export_all_to(out_dir)
-        .context("export ProcessExecPolicyLoadDeniedResponse typescript")?;
-    FileDeniedResponse::export_all_to(out_dir).context("export FileDeniedResponse typescript")?;
-    FileNeedsApprovalResponse::export_all_to(out_dir)
-        .context("export FileNeedsApprovalResponse typescript")?;
-    FileModeDeniedResponse::export_all_to(out_dir)
-        .context("export FileModeDeniedResponse typescript")?;
-    FileUnknownModeDeniedResponse::export_all_to(out_dir)
-        .context("export FileUnknownModeDeniedResponse typescript")?;
-    FileAllowedToolsDeniedResponse::export_all_to(out_dir)
-        .context("export FileAllowedToolsDeniedResponse typescript")?;
-    FileSandboxPolicyDeniedResponse::export_all_to(out_dir)
-        .context("export FileSandboxPolicyDeniedResponse typescript")?;
-    ApprovalDecideResponse::export_all_to(out_dir)
-        .context("export ApprovalDecideResponse typescript")?;
-    ApprovalListResponse::export_all_to(out_dir)
-        .context("export ApprovalListResponse typescript")?;
+    macro_rules! export_ts_type {
+        ($ty:ty, $name:literal) => {
+            <$ty>::export_all_to(out_dir).context(concat!("export ", $name, " typescript"))?;
+        };
+    }
+    for_each_export_type!(export_ts_type);
 
     Ok(())
 }
@@ -233,143 +244,12 @@ pub fn generate_ts(out_dir: &Path) -> anyhow::Result<()> {
 pub fn generate_json_schema(out_dir: &Path) -> anyhow::Result<()> {
     fs::create_dir_all(out_dir).with_context(|| format!("create out dir {}", out_dir.display()))?;
 
-    write_schema::<RequestId>(out_dir, "RequestId")?;
-    write_schema::<JsonRpcRequest>(out_dir, "JsonRpcRequest")?;
-    write_schema::<JsonRpcResponse>(out_dir, "JsonRpcResponse")?;
-    write_schema::<JsonRpcErrorResponse>(out_dir, "JsonRpcErrorResponse")?;
-    write_schema::<JsonRpcError>(out_dir, "JsonRpcError")?;
-    write_schema::<ClientRequest>(out_dir, "ClientRequest")?;
-    write_schema::<ServerNotification>(out_dir, "ServerNotification")?;
-    write_schema::<omne_protocol::ThreadEvent>(out_dir, "ThreadEvent")?;
-    write_schema::<ThreadEventsResponse>(out_dir, "ThreadEventsResponse")?;
-    write_schema::<ThreadSubscribeResponse>(out_dir, "ThreadSubscribeResponse")?;
-    write_schema::<ThreadHandleResponse>(out_dir, "ThreadHandleResponse")?;
-    write_schema::<ThreadStartResponse>(out_dir, "ThreadStartResponse")?;
-    write_schema::<TurnStartResponse>(out_dir, "TurnStartResponse")?;
-    write_schema::<TurnInterruptResponse>(out_dir, "TurnInterruptResponse")?;
-    write_schema::<ThreadListResponse>(out_dir, "ThreadListResponse")?;
-    write_schema::<ThreadArchiveResponse>(out_dir, "ThreadArchiveResponse")?;
-    write_schema::<ThreadUnarchiveResponse>(out_dir, "ThreadUnarchiveResponse")?;
-    write_schema::<ThreadPauseResponse>(out_dir, "ThreadPauseResponse")?;
-    write_schema::<ThreadUnpauseResponse>(out_dir, "ThreadUnpauseResponse")?;
-    write_schema::<ThreadDeleteResponse>(out_dir, "ThreadDeleteResponse")?;
-    write_schema::<ThreadClearArtifactsResponse>(out_dir, "ThreadClearArtifactsResponse")?;
-    write_schema::<ThreadListMetaResponse>(out_dir, "ThreadListMetaResponse")?;
-    write_schema::<ThreadAttentionResponse>(out_dir, "ThreadAttentionResponse")?;
-    write_schema::<ThreadStateResponse>(out_dir, "ThreadStateResponse")?;
-    write_schema::<ThreadUsageResponse>(out_dir, "ThreadUsageResponse")?;
-    write_schema::<ThreadConfigureResponse>(out_dir, "ThreadConfigureResponse")?;
-    write_schema::<ThreadConfigExplainResponse>(out_dir, "ThreadConfigExplainResponse")?;
-    write_schema::<ThreadModelsResponse>(out_dir, "ThreadModelsResponse")?;
-    write_schema::<ThreadDiskUsageResponse>(out_dir, "ThreadDiskUsageResponse")?;
-    write_schema::<ThreadDiskReportResponse>(out_dir, "ThreadDiskReportResponse")?;
-    write_schema::<ThreadCheckpointRestoreDeniedResponse>(
-        out_dir,
-        "ThreadCheckpointRestoreDeniedResponse",
-    )?;
-    write_schema::<ThreadCheckpointRestoreNeedsApprovalResponse>(
-        out_dir,
-        "ThreadCheckpointRestoreNeedsApprovalResponse",
-    )?;
-    write_schema::<ThreadCheckpointRestoreResponse>(out_dir, "ThreadCheckpointRestoreResponse")?;
-    write_schema::<ThreadCheckpointCreateResponse>(out_dir, "ThreadCheckpointCreateResponse")?;
-    write_schema::<ThreadCheckpointListResponse>(out_dir, "ThreadCheckpointListResponse")?;
-    write_schema::<ThreadGitSnapshotResponse>(out_dir, "ThreadGitSnapshotResponse")?;
-    write_schema::<ThreadGitSnapshotNeedsApprovalResponse>(
-        out_dir,
-        "ThreadGitSnapshotNeedsApprovalResponse",
-    )?;
-    write_schema::<ThreadGitSnapshotDeniedResponse>(out_dir, "ThreadGitSnapshotDeniedResponse")?;
-    write_schema::<ThreadGitSnapshotTimedOutResponse>(
-        out_dir,
-        "ThreadGitSnapshotTimedOutResponse",
-    )?;
-    write_schema::<ThreadGitSnapshotRpcResponse>(out_dir, "ThreadGitSnapshotRpcResponse")?;
-    write_schema::<ThreadHookRunResponse>(out_dir, "ThreadHookRunResponse")?;
-    write_schema::<ThreadHookRunNeedsApprovalResponse>(
-        out_dir,
-        "ThreadHookRunNeedsApprovalResponse",
-    )?;
-    write_schema::<ThreadHookRunDeniedResponse>(out_dir, "ThreadHookRunDeniedResponse")?;
-    write_schema::<ThreadHookRunErrorResponse>(out_dir, "ThreadHookRunErrorResponse")?;
-    write_schema::<ThreadHookRunRpcResponse>(out_dir, "ThreadHookRunRpcResponse")?;
-    write_schema::<ThreadAutoHookResponse>(out_dir, "ThreadAutoHookResponse")?;
-    write_schema::<ArtifactListResponse>(out_dir, "ArtifactListResponse")?;
-    write_schema::<ArtifactVersionsResponse>(out_dir, "ArtifactVersionsResponse")?;
-    write_schema::<ArtifactReadResponse>(out_dir, "ArtifactReadResponse")?;
-    write_schema::<ArtifactDeleteResponse>(out_dir, "ArtifactDeleteResponse")?;
-    write_schema::<ArtifactDeniedResponse>(out_dir, "ArtifactDeniedResponse")?;
-    write_schema::<ArtifactNeedsApprovalResponse>(out_dir, "ArtifactNeedsApprovalResponse")?;
-    write_schema::<ArtifactModeDeniedResponse>(out_dir, "ArtifactModeDeniedResponse")?;
-    write_schema::<ArtifactUnknownModeDeniedResponse>(
-        out_dir,
-        "ArtifactUnknownModeDeniedResponse",
-    )?;
-    write_schema::<ArtifactAllowedToolsDeniedResponse>(
-        out_dir,
-        "ArtifactAllowedToolsDeniedResponse",
-    )?;
-    write_schema::<RepoDeniedResponse>(out_dir, "RepoDeniedResponse")?;
-    write_schema::<RepoNeedsApprovalResponse>(out_dir, "RepoNeedsApprovalResponse")?;
-    write_schema::<RepoModeDeniedResponse>(out_dir, "RepoModeDeniedResponse")?;
-    write_schema::<RepoUnknownModeDeniedResponse>(out_dir, "RepoUnknownModeDeniedResponse")?;
-    write_schema::<RepoAllowedToolsDeniedResponse>(out_dir, "RepoAllowedToolsDeniedResponse")?;
-    write_schema::<RepoSearchResponse>(out_dir, "RepoSearchResponse")?;
-    write_schema::<RepoIndexResponse>(out_dir, "RepoIndexResponse")?;
-    write_schema::<RepoSymbolsResponse>(out_dir, "RepoSymbolsResponse")?;
-    write_schema::<McpDeniedResponse>(out_dir, "McpDeniedResponse")?;
-    write_schema::<McpNeedsApprovalResponse>(out_dir, "McpNeedsApprovalResponse")?;
-    write_schema::<McpModeDeniedResponse>(out_dir, "McpModeDeniedResponse")?;
-    write_schema::<McpUnknownModeDeniedResponse>(out_dir, "McpUnknownModeDeniedResponse")?;
-    write_schema::<McpAllowedToolsDeniedResponse>(out_dir, "McpAllowedToolsDeniedResponse")?;
-    write_schema::<McpDisabledDeniedResponse>(out_dir, "McpDisabledDeniedResponse")?;
-    write_schema::<McpSandboxPolicyDeniedResponse>(out_dir, "McpSandboxPolicyDeniedResponse")?;
-    write_schema::<McpSandboxNetworkDeniedResponse>(out_dir, "McpSandboxNetworkDeniedResponse")?;
-    write_schema::<McpExecPolicyDeniedResponse>(out_dir, "McpExecPolicyDeniedResponse")?;
-    write_schema::<McpExecPolicyLoadDeniedResponse>(out_dir, "McpExecPolicyLoadDeniedResponse")?;
-    write_schema::<McpFailedResponse>(out_dir, "McpFailedResponse")?;
-    write_schema::<McpServerDescriptor>(out_dir, "McpServerDescriptor")?;
-    write_schema::<McpListServersResponse>(out_dir, "McpListServersResponse")?;
-    write_schema::<McpActionInlineResponse>(out_dir, "McpActionInlineResponse")?;
-    write_schema::<McpActionArtifactResponse>(out_dir, "McpActionArtifactResponse")?;
-    write_schema::<McpActionResponse>(out_dir, "McpActionResponse")?;
-    write_schema::<ProcessStatus>(out_dir, "ProcessStatus")?;
-    write_schema::<ProcessInfo>(out_dir, "ProcessInfo")?;
-    write_schema::<ProcessListResponse>(out_dir, "ProcessListResponse")?;
-    write_schema::<ProcessStartResponse>(out_dir, "ProcessStartResponse")?;
-    write_schema::<ProcessInspectResponse>(out_dir, "ProcessInspectResponse")?;
-    write_schema::<ProcessTailResponse>(out_dir, "ProcessTailResponse")?;
-    write_schema::<ProcessFollowResponse>(out_dir, "ProcessFollowResponse")?;
-    write_schema::<ProcessSignalResponse>(out_dir, "ProcessSignalResponse")?;
-    write_schema::<ProcessDeniedResponse>(out_dir, "ProcessDeniedResponse")?;
-    write_schema::<ProcessNeedsApprovalResponse>(out_dir, "ProcessNeedsApprovalResponse")?;
-    write_schema::<ProcessModeDeniedResponse>(out_dir, "ProcessModeDeniedResponse")?;
-    write_schema::<ProcessUnknownModeDeniedResponse>(out_dir, "ProcessUnknownModeDeniedResponse")?;
-    write_schema::<ProcessAllowedToolsDeniedResponse>(
-        out_dir,
-        "ProcessAllowedToolsDeniedResponse",
-    )?;
-    write_schema::<ProcessSandboxPolicyDeniedResponse>(
-        out_dir,
-        "ProcessSandboxPolicyDeniedResponse",
-    )?;
-    write_schema::<ProcessSandboxNetworkDeniedResponse>(
-        out_dir,
-        "ProcessSandboxNetworkDeniedResponse",
-    )?;
-    write_schema::<ProcessExecPolicyDeniedResponse>(out_dir, "ProcessExecPolicyDeniedResponse")?;
-    write_schema::<ProcessExecPolicyLoadDeniedResponse>(
-        out_dir,
-        "ProcessExecPolicyLoadDeniedResponse",
-    )?;
-    write_schema::<FileDeniedResponse>(out_dir, "FileDeniedResponse")?;
-    write_schema::<FileNeedsApprovalResponse>(out_dir, "FileNeedsApprovalResponse")?;
-    write_schema::<FileModeDeniedResponse>(out_dir, "FileModeDeniedResponse")?;
-    write_schema::<FileUnknownModeDeniedResponse>(out_dir, "FileUnknownModeDeniedResponse")?;
-    write_schema::<FileAllowedToolsDeniedResponse>(out_dir, "FileAllowedToolsDeniedResponse")?;
-    write_schema::<FileSandboxPolicyDeniedResponse>(out_dir, "FileSandboxPolicyDeniedResponse")?;
-    write_schema::<ApprovalDecideResponse>(out_dir, "ApprovalDecideResponse")?;
-    write_schema::<ApprovalListResponse>(out_dir, "ApprovalListResponse")?;
+    macro_rules! write_schema_type {
+        ($ty:ty, $name:literal) => {
+            write_schema::<$ty>(out_dir, $name)?;
+        };
+    }
+    for_each_export_type!(write_schema_type);
 
     Ok(())
 }

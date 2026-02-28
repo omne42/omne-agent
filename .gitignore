@@ -8,6 +8,9 @@
 /.omne_data/locks/
 /.omne_data/logs/
 /.omne_data/data/
+/.omne_data/state/
+/.omne_data/cache/
+/.omne_data/config/
 /.omne_data/repos/
 /.github-agent-data/
 /.codex/

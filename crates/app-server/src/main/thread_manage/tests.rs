@@ -2,6 +2,22 @@
 mod thread_manage_tests {
     use super::*;
 
+    fn thread_configure_defaults(thread_id: ThreadId) -> ThreadConfigureParams {
+        ThreadConfigureParams {
+            thread_id,
+            approval_policy: None,
+            sandbox_policy: None,
+            sandbox_writable_roots: None,
+            sandbox_network_access: None,
+            mode: None,
+            model: None,
+            thinking: None,
+            openai_base_url: None,
+            allowed_tools: None,
+            execpolicy_rules: None,
+        }
+    }
+
     #[tokio::test]
     async fn thread_state_includes_cache_token_aggregates() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
@@ -404,17 +420,8 @@ hooks:
         handle_thread_configure(
             &server,
             ThreadConfigureParams {
-                thread_id,
-                approval_policy: None,
                 sandbox_policy: Some(omne_protocol::SandboxPolicy::ReadOnly),
-                sandbox_writable_roots: None,
-                sandbox_network_access: None,
-                mode: None,
-                model: None,
-                thinking: None,
-                openai_base_url: None,
-                allowed_tools: None,
-                execpolicy_rules: None,
+                ..thread_configure_defaults(thread_id)
             },
         )
         .await?;
@@ -488,17 +495,8 @@ hooks:
         handle_thread_configure(
             &server,
             ThreadConfigureParams {
-                thread_id,
-                approval_policy: None,
-                sandbox_policy: None,
-                sandbox_writable_roots: None,
-                sandbox_network_access: None,
-                mode: None,
-                model: None,
-                thinking: None,
-                openai_base_url: None,
                 allowed_tools: Some(Some(vec!["repo/search".to_string()])),
-                execpolicy_rules: None,
+                ..thread_configure_defaults(thread_id)
             },
         )
         .await?;
@@ -570,17 +568,8 @@ modes:
         handle_thread_configure(
             &server,
             ThreadConfigureParams {
-                thread_id,
-                approval_policy: None,
-                sandbox_policy: None,
-                sandbox_writable_roots: None,
-                sandbox_network_access: None,
                 mode: Some("hook-mode-deny".to_string()),
-                model: None,
-                thinking: None,
-                openai_base_url: None,
-                allowed_tools: None,
-                execpolicy_rules: None,
+                ..thread_configure_defaults(thread_id)
             },
         )
         .await?;
@@ -663,17 +652,8 @@ modes:
         handle_thread_configure(
             &server,
             ThreadConfigureParams {
-                thread_id,
-                approval_policy: None,
-                sandbox_policy: None,
-                sandbox_writable_roots: None,
-                sandbox_network_access: None,
                 mode: Some("hook-mode".to_string()),
-                model: None,
-                thinking: None,
-                openai_base_url: None,
-                allowed_tools: None,
-                execpolicy_rules: None,
+                ..thread_configure_defaults(thread_id)
             },
         )
         .await?;
@@ -763,17 +743,8 @@ prefix_rule(
         handle_thread_configure(
             &server,
             ThreadConfigureParams {
-                thread_id,
-                approval_policy: None,
-                sandbox_policy: None,
-                sandbox_writable_roots: None,
-                sandbox_network_access: None,
-                mode: None,
-                model: None,
-                thinking: None,
-                openai_base_url: None,
-                allowed_tools: None,
                 execpolicy_rules: Some(vec!["rules/thread.rules".to_string()]),
+                ..thread_configure_defaults(thread_id)
             },
         )
         .await?;
@@ -835,17 +806,8 @@ hooks:
         handle_thread_configure(
             &server,
             ThreadConfigureParams {
-                thread_id,
-                approval_policy: None,
-                sandbox_policy: None,
-                sandbox_writable_roots: None,
-                sandbox_network_access: None,
-                mode: None,
-                model: None,
-                thinking: None,
-                openai_base_url: None,
-                allowed_tools: None,
                 execpolicy_rules: Some(vec!["rules/missing.rules".to_string()]),
+                ..thread_configure_defaults(thread_id)
             },
         )
         .await?;
@@ -2592,17 +2554,8 @@ modes:
         handle_thread_configure(
             &server,
             ThreadConfigureParams {
-                thread_id,
-                approval_policy: None,
-                sandbox_policy: None,
-                sandbox_writable_roots: None,
-                sandbox_network_access: None,
                 mode: Some("archive-deny".to_string()),
-                model: None,
-                thinking: None,
-                openai_base_url: None,
-                allowed_tools: None,
-                execpolicy_rules: None,
+                ..thread_configure_defaults(thread_id)
             },
         )
         .await?;
@@ -2818,17 +2771,8 @@ modes:
         handle_thread_configure(
             &server,
             ThreadConfigureParams {
-                thread_id,
-                approval_policy: None,
                 sandbox_policy: Some(omne_protocol::SandboxPolicy::ReadOnly),
-                sandbox_writable_roots: None,
-                sandbox_network_access: None,
-                mode: None,
-                model: None,
-                thinking: None,
-                openai_base_url: None,
-                allowed_tools: None,
-                execpolicy_rules: None,
+                ..thread_configure_defaults(thread_id)
             },
         )
         .await?;
@@ -2926,17 +2870,8 @@ modes:
         handle_thread_configure(
             &server,
             ThreadConfigureParams {
-                thread_id,
                 approval_policy: Some(omne_protocol::ApprovalPolicy::AutoDeny),
-                sandbox_policy: None,
-                sandbox_writable_roots: None,
-                sandbox_network_access: None,
-                mode: None,
-                model: None,
-                thinking: None,
-                openai_base_url: None,
-                allowed_tools: None,
-                execpolicy_rules: None,
+                ..thread_configure_defaults(thread_id)
             },
         )
         .await?;
@@ -3038,17 +2973,8 @@ modes:
         handle_thread_configure(
             &server,
             ThreadConfigureParams {
-                thread_id,
-                approval_policy: None,
-                sandbox_policy: None,
-                sandbox_writable_roots: None,
-                sandbox_network_access: None,
                 mode: Some("checkpoint-deny".to_string()),
-                model: None,
-                thinking: None,
-                openai_base_url: None,
-                allowed_tools: None,
-                execpolicy_rules: None,
+                ..thread_configure_defaults(thread_id)
             },
         )
         .await?;
@@ -3118,17 +3044,8 @@ modes:
         handle_thread_configure(
             &server,
             ThreadConfigureParams {
-                thread_id,
-                approval_policy: None,
-                sandbox_policy: None,
-                sandbox_writable_roots: None,
-                sandbox_network_access: None,
                 mode: Some("checkpoint-restore-mode".to_string()),
-                model: None,
-                thinking: None,
-                openai_base_url: None,
-                allowed_tools: None,
-                execpolicy_rules: None,
+                ..thread_configure_defaults(thread_id)
             },
         )
         .await?;
@@ -3227,17 +3144,8 @@ modes:
         handle_thread_configure(
             &server,
             ThreadConfigureParams {
-                thread_id,
-                approval_policy: None,
-                sandbox_policy: None,
                 sandbox_writable_roots: Some(vec![".".to_string()]),
-                sandbox_network_access: None,
-                mode: None,
-                model: None,
-                thinking: None,
-                openai_base_url: None,
-                allowed_tools: None,
-                execpolicy_rules: None,
+                ..thread_configure_defaults(thread_id)
             },
         )
         .await?;
@@ -3282,17 +3190,8 @@ modes:
         handle_thread_configure(
             &server,
             ThreadConfigureParams {
-                thread_id,
-                approval_policy: None,
-                sandbox_policy: None,
-                sandbox_writable_roots: None,
-                sandbox_network_access: None,
-                mode: None,
-                model: None,
-                thinking: None,
-                openai_base_url: None,
                 allowed_tools: Some(Some(vec!["repo/search".to_string()])),
-                execpolicy_rules: None,
+                ..thread_configure_defaults(thread_id)
             },
         )
         .await?;
@@ -3502,21 +3401,12 @@ modes:
         handle_thread_configure(
             &server,
             ThreadConfigureParams {
-                thread_id,
-                approval_policy: None,
-                sandbox_policy: None,
-                sandbox_writable_roots: None,
-                sandbox_network_access: None,
-                mode: None,
-                model: None,
-                thinking: None,
-                openai_base_url: None,
-                allowed_tools: None,
                 execpolicy_rules: Some(vec![
                     "rules/thread.rules".to_string(),
                     "rules/thread.rules".to_string(),
                     "  ".to_string(),
                 ]),
+                ..thread_configure_defaults(thread_id)
             },
         )
         .await?;

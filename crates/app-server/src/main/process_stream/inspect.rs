@@ -34,83 +34,25 @@ async fn handle_process_inspect(
         return process_allowed_tools_denied_response(tool_id, "process/inspect", &allowed_tools);
     }
 
-    let catalog = omne_core::modes::ModeCatalog::load(&thread_root).await;
-    let mode = match catalog.mode(&mode_name) {
-        Some(mode) => mode,
-        None => {
-            let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
-            let result = process_unknown_mode_denied_response(
-                tool_id,
-                info.thread_id,
-                &mode_name,
-                available,
-                catalog.load_error.clone(),
-            )?;
-            emit_process_tool_denied(
-                &thread_rt,
-                tool_id,
-                params.turn_id,
-                "process/inspect",
-                &approval_params,
-                "unknown mode".to_string(),
-                result.clone(),
-            )
-            .await?;
-            return Ok(result);
-        }
-    };
-
-    let mode_decision =
-        resolve_mode_decision_audit(mode, "process/inspect", mode.permissions.process.inspect);
-    if mode_decision.decision == omne_core::modes::Decision::Deny {
-        let result = process_mode_denied_response(tool_id, info.thread_id, &mode_name, mode_decision)?;
-        emit_process_tool_denied(
-            &thread_rt,
-            tool_id,
-            params.turn_id,
-            "process/inspect",
-            &approval_params,
-            "mode denies process/inspect".to_string(),
-            result.clone(),
-        )
-        .await?;
-        return Ok(result);
-    }
-
-    if mode_decision.decision == omne_core::modes::Decision::Prompt {
-        match gate_approval(
-            server,
-            &thread_rt,
-            info.thread_id,
-            params.turn_id,
+    if let Some(result) = enforce_process_mode_and_approval(
+        server,
+        ProcessModeApprovalContext {
+            thread_rt: &thread_rt,
+            thread_root: &thread_root,
+            thread_id: info.thread_id,
+            turn_id: params.turn_id,
+            approval_id: params.approval_id,
             approval_policy,
-            ApprovalRequest {
-                approval_id: params.approval_id,
-                action: "process/inspect",
-                params: &approval_params,
-            },
-        )
-        .await?
-        {
-            ApprovalGate::Approved => {}
-            ApprovalGate::Denied { remembered } => {
-                let result = process_denied_response(tool_id, info.thread_id, Some(remembered))?;
-                emit_process_tool_denied(
-                    &thread_rt,
-                    tool_id,
-                    params.turn_id,
-                    "process/inspect",
-                    &approval_params,
-                    approval_denied_error(remembered).to_string(),
-                    result.clone(),
-                )
-                .await?;
-                return Ok(result);
-            }
-            ApprovalGate::NeedsApproval { approval_id } => {
-                return process_needs_approval_response(info.thread_id, approval_id);
-            }
-        }
+            mode_name: &mode_name,
+            action: "process/inspect",
+            tool_id,
+            approval_params: &approval_params,
+        },
+        |mode| mode.permissions.process.inspect,
+    )
+    .await?
+    {
+        return Ok(result);
     }
 
     thread_rt

@@ -1,37 +1,5 @@
 fn is_known_agent_tool(tool_name: &str) -> bool {
-    matches!(
-        tool_name,
-        "file_read"
-            | "file_glob"
-            | "file_grep"
-            | "repo_search"
-            | "repo_index"
-            | "repo_symbols"
-            | "mcp_list_servers"
-            | "mcp_list_tools"
-            | "mcp_list_resources"
-            | "mcp_call"
-            | "file_write"
-            | "file_patch"
-            | "file_edit"
-            | "file_delete"
-            | "fs_mkdir"
-            | "process_start"
-            | "process_inspect"
-            | "process_tail"
-            | "process_follow"
-            | "process_kill"
-            | "artifact_write"
-            | "artifact_list"
-            | "artifact_read"
-            | "artifact_delete"
-            | "thread_diff"
-            | "thread_state"
-            | "thread_usage"
-            | "thread_events"
-            | "thread_hook_run"
-            | "agent_spawn"
-    )
+    is_known_agent_tool_name(tool_name)
 }
 
 const FAN_OUT_PRIORITY_AGING_ROUNDS_ENV: &str = "OMNE_FAN_OUT_PRIORITY_AGING_ROUNDS";
@@ -59,51 +27,12 @@ fn fan_out_priority_aging_rounds_from_env() -> usize {
 }
 
 fn is_plan_read_only_tool(tool_name: &str) -> bool {
-    matches!(
-        tool_name,
-        "file_read"
-            | "file_glob"
-            | "file_grep"
-            | "repo_search"
-            | "repo_index"
-            | "repo_symbols"
-            | "mcp_list_servers"
-            | "mcp_list_tools"
-            | "mcp_list_resources"
-            | "process_inspect"
-            | "process_tail"
-            | "process_follow"
-            | "artifact_list"
-            | "artifact_read"
-            | "thread_diff"
-            | "thread_state"
-            | "thread_usage"
-            | "thread_events"
-    )
+    is_plan_read_only_agent_tool(tool_name)
 }
 
 fn plan_tool_action(tool_name: &str) -> Option<&'static str> {
-    match tool_name {
-        "file_read" => Some("file/read"),
-        "file_glob" => Some("file/glob"),
-        "file_grep" => Some("file/grep"),
-        "repo_search" => Some("repo/search"),
-        "repo_index" => Some("repo/index"),
-        "repo_symbols" => Some("repo/symbols"),
-        "mcp_list_servers" => Some("mcp/list_servers"),
-        "mcp_list_tools" => Some("mcp/list_tools"),
-        "mcp_list_resources" => Some("mcp/list_resources"),
-        "process_inspect" => Some("process/inspect"),
-        "process_tail" => Some("process/tail"),
-        "process_follow" => Some("process/follow"),
-        "artifact_list" => Some("artifact/list"),
-        "artifact_read" => Some("artifact/read"),
-        "thread_diff" => Some("thread/diff"),
-        "thread_state" => Some("thread/state"),
-        "thread_usage" => Some("thread/usage"),
-        "thread_events" => Some("thread/events"),
-        _ => None,
-    }
+    let action = agent_tool_action(tool_name)?;
+    is_plan_read_only_tool(tool_name).then_some(action)
 }
 
 fn plan_architect_base_decision(
@@ -687,6 +616,288 @@ fn token_budget_snapshot(
     (remaining, utilization, exceeded)
 }
 
+struct AgentSpawnDefaults {
+    spawn_mode: AgentSpawnMode,
+    mode: String,
+    workspace_mode: AgentSpawnWorkspaceMode,
+    priority: AgentSpawnTaskPriority,
+    model: Option<String>,
+    openai_base_url: Option<String>,
+    expected_artifact_type: String,
+}
+
+struct PreparedAgentSpawn {
+    plans: Vec<SubagentSpawnTaskPlan>,
+    approval_params: Value,
+    priority_aging_rounds: usize,
+}
+
+fn normalize_optional_string(value: Option<String>) -> Option<String> {
+    value.map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
+}
+
+fn validate_agent_spawn_dependencies(plans: &[SubagentSpawnTaskPlan]) -> anyhow::Result<()> {
+    let mut by_id = std::collections::HashMap::<String, usize>::new();
+    for (idx, task) in plans.iter().enumerate() {
+        by_id.insert(task.id.clone(), idx);
+    }
+    for task in plans {
+        for dep in &task.depends_on {
+            if !by_id.contains_key(dep) {
+                anyhow::bail!("unknown depends_on: {dep} (task_id={})", task.id);
+            }
+        }
+    }
+
+    let mut indegree = std::collections::HashMap::<String, usize>::new();
+    let mut edges = std::collections::HashMap::<String, Vec<String>>::new();
+    for task in plans {
+        indegree.insert(task.id.clone(), task.depends_on.len());
+        for dep in &task.depends_on {
+            edges.entry(dep.clone()).or_default().push(task.id.clone());
+        }
+    }
+    let mut queue = std::collections::VecDeque::<String>::new();
+    for (id, degree) in &indegree {
+        if *degree == 0 {
+            queue.push_back(id.clone());
+        }
+    }
+    let mut visited = 0usize;
+    while let Some(id) = queue.pop_front() {
+        visited += 1;
+        if let Some(children) = edges.get(&id) {
+            for child in children {
+                if let Some(degree) = indegree.get_mut(child) {
+                    *degree = degree.saturating_sub(1);
+                    if *degree == 0 {
+                        queue.push_back(child.clone());
+                    }
+                }
+            }
+        }
+    }
+    if visited != plans.len() {
+        anyhow::bail!("task dependencies contain a cycle");
+    }
+    Ok(())
+}
+
+fn prepare_agent_spawn(args: AgentSpawnArgs) -> anyhow::Result<PreparedAgentSpawn> {
+    if args.tasks.is_empty() {
+        anyhow::bail!("tasks must not be empty");
+    }
+
+    let defaults = AgentSpawnDefaults {
+        spawn_mode: args.spawn_mode.unwrap_or(AgentSpawnMode::New),
+        mode: normalize_optional_string(args.mode).unwrap_or_else(|| "reviewer".to_string()),
+        workspace_mode: args
+            .workspace_mode
+            .unwrap_or(AgentSpawnWorkspaceMode::ReadOnly),
+        priority: args.priority.unwrap_or(AgentSpawnTaskPriority::Normal),
+        model: normalize_optional_string(args.model),
+        openai_base_url: normalize_optional_string(args.openai_base_url),
+        expected_artifact_type: normalize_optional_string(args.expected_artifact_type)
+            .unwrap_or_else(|| "fan_out_result".to_string()),
+    };
+
+    let mut seen_ids = std::collections::BTreeSet::<String>::new();
+    let mut plans = Vec::<SubagentSpawnTaskPlan>::new();
+    for task in args.tasks {
+        let id = task.id.trim().to_string();
+        if id.is_empty() {
+            anyhow::bail!("tasks[].id must not be empty");
+        }
+        if !seen_ids.insert(id.clone()) {
+            anyhow::bail!("duplicate task id: {id}");
+        }
+
+        let input = task.input.trim().to_string();
+        if input.is_empty() {
+            anyhow::bail!("task input must not be empty (task_id={id})");
+        }
+
+        let title = task.title.unwrap_or_default().trim().to_string();
+        let mut depends_on = Vec::<String>::new();
+        let mut seen_deps = std::collections::BTreeSet::<String>::new();
+        for dep in task.depends_on {
+            let dep = dep.trim().to_string();
+            if dep.is_empty() {
+                continue;
+            }
+            if dep == id {
+                anyhow::bail!("task depends_on itself: {id}");
+            }
+            if seen_deps.insert(dep.clone()) {
+                depends_on.push(dep);
+            }
+        }
+
+        plans.push(SubagentSpawnTaskPlan {
+            id,
+            title,
+            input,
+            depends_on,
+            priority: task.priority.unwrap_or(defaults.priority),
+            spawn_mode: task.spawn_mode.unwrap_or(defaults.spawn_mode),
+            mode: normalize_optional_string(task.mode).unwrap_or_else(|| defaults.mode.clone()),
+            workspace_mode: task.workspace_mode.unwrap_or(defaults.workspace_mode),
+            model: normalize_optional_string(task.model).or_else(|| defaults.model.clone()),
+            openai_base_url: normalize_optional_string(task.openai_base_url)
+                .or_else(|| defaults.openai_base_url.clone()),
+            expected_artifact_type: normalize_optional_string(task.expected_artifact_type)
+                .unwrap_or_else(|| defaults.expected_artifact_type.clone()),
+        });
+    }
+
+    validate_agent_spawn_dependencies(&plans)?;
+
+    let task_previews = plans
+        .iter()
+        .map(|task| {
+            let input_preview = omne_core::redact_text(&truncate_chars(&task.input, 400));
+            serde_json::json!({
+                "id": task.id.clone(),
+                "spawn_mode": spawn_mode_label(task.spawn_mode),
+                "mode": task.mode.clone(),
+                "workspace_mode": workspace_mode_label(task.workspace_mode),
+                "priority": priority_label(task.priority),
+                "depends_on": task.depends_on.clone(),
+                "input_chars": task.input.chars().count(),
+                "input_preview": input_preview,
+            })
+        })
+        .collect::<Vec<_>>();
+    let priority_aging_rounds = fan_out_priority_aging_rounds_from_env();
+
+    let approval_params = serde_json::json!({
+        "task_count": plans.len(),
+        "tasks": task_previews,
+        "default_spawn_mode": spawn_mode_label(defaults.spawn_mode),
+        "default_mode": defaults.mode,
+        "default_workspace_mode": workspace_mode_label(defaults.workspace_mode),
+        "default_priority": priority_label(defaults.priority),
+        "priority_aging_rounds": priority_aging_rounds,
+        "default_expected_artifact_type": defaults.expected_artifact_type,
+        "model": defaults.model,
+        "openai_base_url": defaults.openai_base_url,
+    });
+
+    Ok(PreparedAgentSpawn {
+        plans,
+        approval_params,
+        priority_aging_rounds,
+    })
+}
+
+async fn start_agent_spawn_schedule(
+    server: &super::Server,
+    thread_id: ThreadId,
+    plans: Vec<SubagentSpawnTaskPlan>,
+    active_threads: Vec<ThreadId>,
+    max_concurrent_subagents: usize,
+    env_max_concurrent_subagents: usize,
+    priority_aging_rounds: usize,
+    thread_cwd: &str,
+    thread_root: &std::path::Path,
+    approval_policy: omne_protocol::ApprovalPolicy,
+) -> anyhow::Result<Vec<Value>> {
+    let mut tasks = Vec::<SubagentSpawnTask>::with_capacity(plans.len());
+    for plan in plans {
+        let isolated_cwd = if matches!(plan.workspace_mode, AgentSpawnWorkspaceMode::IsolatedWrite) {
+            Some(prepare_isolated_workspace(server, thread_id, &plan.id, thread_root).await?)
+        } else {
+            None
+        };
+        let spawned_cwd = isolated_cwd.as_ref().map(|path| path.display().to_string());
+        let spawned = match plan.spawn_mode {
+            AgentSpawnMode::Fork => {
+                let forked = super::handle_thread_fork(
+                    server,
+                    super::ThreadForkParams {
+                        thread_id,
+                        cwd: spawned_cwd.clone(),
+                    },
+                )
+                .await?;
+                SpawnedThread {
+                    thread_id: forked.thread_id,
+                    log_path: forked.log_path,
+                    last_seq: forked.last_seq,
+                }
+            }
+            AgentSpawnMode::New => {
+                create_new_thread(server, spawned_cwd.as_deref().unwrap_or(thread_cwd)).await?
+            }
+        };
+
+        let approval_override = if matches!(plan.spawn_mode, AgentSpawnMode::New) {
+            Some(approval_policy)
+        } else {
+            None
+        };
+        let sandbox_policy = match plan.workspace_mode {
+            AgentSpawnWorkspaceMode::ReadOnly => omne_protocol::SandboxPolicy::ReadOnly,
+            AgentSpawnWorkspaceMode::IsolatedWrite => omne_protocol::SandboxPolicy::WorkspaceWrite,
+        };
+        super::handle_thread_configure(
+            server,
+            super::ThreadConfigureParams {
+                thread_id: spawned.thread_id,
+                approval_policy: approval_override,
+                sandbox_policy: Some(sandbox_policy),
+                sandbox_writable_roots: None,
+                sandbox_network_access: None,
+                mode: Some(plan.mode.clone()),
+                model: plan.model.clone(),
+                thinking: None,
+                openai_base_url: plan.openai_base_url.clone(),
+                allowed_tools: None,
+                execpolicy_rules: None,
+            },
+        )
+        .await?;
+
+        tasks.push(SubagentSpawnTask {
+            id: plan.id,
+            title: plan.title,
+            input: plan.input,
+            depends_on: plan.depends_on,
+            priority: plan.priority,
+            spawn_mode: plan.spawn_mode,
+            mode: plan.mode,
+            workspace_mode: plan.workspace_mode,
+            model: plan.model,
+            openai_base_url: plan.openai_base_url,
+            expected_artifact_type: plan.expected_artifact_type,
+            workspace_cwd: spawned_cwd,
+            thread_id: spawned.thread_id,
+            log_path: spawned.log_path,
+            last_seq: spawned.last_seq,
+            turn_id: None,
+            status: SubagentTaskStatus::Pending,
+            error: None,
+        });
+    }
+
+    let external_active = active_threads
+        .into_iter()
+        .collect::<std::collections::HashSet<_>>();
+    let mut schedule = SubagentSpawnSchedule::new(
+        thread_id,
+        tasks,
+        external_active,
+        max_concurrent_subagents,
+        priority_aging_rounds,
+    );
+    schedule.set_env_max_concurrent_subagents(env_max_concurrent_subagents);
+    schedule.start_ready_tasks(server).await;
+    schedule.catch_up_running_events(server).await;
+    let snapshot = schedule.snapshot();
+    spawn_subagent_scheduler(server.clone(), schedule);
+    Ok(snapshot)
+}
+
 async fn run_tool_call_once(
     server: &super::Server,
     thread_id: omne_protocol::ThreadId,
@@ -1089,92 +1300,15 @@ async fn run_tool_call_once(
         }
         "thread_state" => {
             let args: ThreadStateArgs = serde_json::from_value(args)?;
-            let thread_id: omne_protocol::ThreadId = args.thread_id.parse()?;
-            let rt = server.get_or_load_thread(thread_id).await?;
-            let handle = rt.handle.lock().await;
-            let state = handle.state();
-            let archived_at = state.archived_at.and_then(|ts| ts.format(&Rfc3339).ok());
-            let paused_at = state.paused_at.and_then(|ts| ts.format(&Rfc3339).ok());
-            Ok(serde_json::json!({
-                "thread_id": handle.thread_id(),
-                "cwd": state.cwd,
-                "archived": state.archived,
-                "archived_at": archived_at,
-                "archived_reason": state.archived_reason,
-                "paused": state.paused,
-                "paused_at": paused_at,
-                "paused_reason": state.paused_reason,
-                "approval_policy": state.approval_policy,
-                "sandbox_policy": state.sandbox_policy,
-                "model": state.model,
-                "openai_base_url": state.openai_base_url,
-                "last_seq": handle.last_seq().0,
-                "active_turn_id": state.active_turn_id,
-                "active_turn_interrupt_requested": state.active_turn_interrupt_requested,
-                "last_turn_id": state.last_turn_id,
-                "last_turn_status": state.last_turn_status,
-                "last_turn_reason": state.last_turn_reason,
-            }))
+            handle_thread_state_tool(server, args).await
         }
         "thread_usage" => {
             let args: ThreadUsageArgs = serde_json::from_value(args)?;
-            let thread_id: omne_protocol::ThreadId = args.thread_id.parse()?;
-            let rt = server.get_or_load_thread(thread_id).await?;
-            let handle = rt.handle.lock().await;
-            let state = handle.state();
-            let non_cache_input_tokens_used = state
-                .input_tokens_used
-                .saturating_sub(state.cache_input_tokens_used);
-            let token_budget_limit = configured_total_token_budget_limit();
-            let (token_budget_remaining, token_budget_utilization, token_budget_exceeded) =
-                token_budget_snapshot(state.total_tokens_used, token_budget_limit);
-            Ok(serde_json::json!({
-                "thread_id": handle.thread_id(),
-                "last_seq": handle.last_seq().0,
-                "total_tokens_used": state.total_tokens_used,
-                "input_tokens_used": state.input_tokens_used,
-                "output_tokens_used": state.output_tokens_used,
-                "cache_input_tokens_used": state.cache_input_tokens_used,
-                "cache_creation_input_tokens_used": state.cache_creation_input_tokens_used,
-                "non_cache_input_tokens_used": non_cache_input_tokens_used,
-                "cache_input_ratio": usage_ratio(state.cache_input_tokens_used, state.input_tokens_used),
-                "output_ratio": usage_ratio(state.output_tokens_used, state.total_tokens_used),
-                "token_budget_limit": token_budget_limit,
-                "token_budget_remaining": token_budget_remaining,
-                "token_budget_utilization": token_budget_utilization,
-                "token_budget_exceeded": token_budget_exceeded,
-            }))
+            handle_thread_usage_tool(server, args).await
         }
         "thread_events" => {
             let args: ThreadEventsArgs = serde_json::from_value(args)?;
-            let thread_id: omne_protocol::ThreadId = args.thread_id.parse()?;
-            let since = EventSeq(args.since_seq);
-
-            let mut events = server
-                .thread_store
-                .read_events_since(thread_id, since)
-                .await?
-                .ok_or_else(|| anyhow::anyhow!("thread not found: {}", thread_id))?;
-
-            let thread_last_seq = events.last().map(|e| e.seq.0).unwrap_or(since.0);
-
-            let mut has_more = false;
-            if let Some(max_events) = args.max_events {
-                let max_events = max_events.clamp(1, 50_000);
-                if events.len() > max_events {
-                    events.truncate(max_events);
-                    has_more = true;
-                }
-            }
-
-            let last_seq = events.last().map(|e| e.seq.0).unwrap_or(since.0);
-
-            Ok(serde_json::json!({
-                "events": events,
-                "last_seq": last_seq,
-                "thread_last_seq": thread_last_seq,
-                "has_more": has_more,
-            }))
+            handle_thread_events_tool(server, args).await
         }
         "thread_hook_run" => {
             let args: ThreadHookRunArgs = serde_json::from_value(args)?;
@@ -1192,407 +1326,126 @@ async fn run_tool_call_once(
         }
         "agent_spawn" => {
             let args: AgentSpawnArgs = serde_json::from_value(args)?;
-            if args.tasks.is_empty() {
-                anyhow::bail!("tasks must not be empty");
-            }
+            handle_agent_spawn_tool(server, thread_id, turn_id, approval_id, args).await
+        }
+        _ => anyhow::bail!("unknown tool: {tool_name}"),
+    }
+}
 
-            let normalize_optional = |value: Option<String>| {
-                value
-                    .map(|v| v.trim().to_string())
-                    .filter(|v| !v.is_empty())
-            };
+async fn handle_agent_spawn_tool(
+    server: &super::Server,
+    thread_id: ThreadId,
+    turn_id: Option<TurnId>,
+    approval_id: Option<ApprovalId>,
+    args: AgentSpawnArgs,
+) -> anyhow::Result<Value> {
+    let PreparedAgentSpawn {
+        plans,
+        approval_params,
+        priority_aging_rounds,
+    } = prepare_agent_spawn(args)?;
 
-            let default_spawn_mode = args.spawn_mode.unwrap_or(AgentSpawnMode::New);
-            let default_mode =
-                normalize_optional(args.mode).unwrap_or_else(|| "reviewer".to_string());
-            let default_workspace_mode = args
-                .workspace_mode
-                .unwrap_or(AgentSpawnWorkspaceMode::ReadOnly);
-            let default_priority = args.priority.unwrap_or(AgentSpawnTaskPriority::Normal);
-            let default_model = normalize_optional(args.model);
-            let default_openai_base_url = normalize_optional(args.openai_base_url);
-            let default_expected_artifact_type = normalize_optional(args.expected_artifact_type)
-                .unwrap_or_else(|| "fan_out_result".to_string());
+    let tool_id = omne_protocol::ToolId::new();
+    let (thread_rt, thread_root) = super::load_thread_root(server, thread_id).await?;
+    let (approval_policy, mode_name, thread_cwd) = {
+        let handle = thread_rt.handle.lock().await;
+        let state = handle.state();
+        (state.approval_policy, state.mode.clone(), state.cwd.clone())
+    };
+    let thread_cwd = thread_cwd.ok_or_else(|| anyhow::anyhow!("thread cwd is missing: {thread_id}"))?;
 
-            let mut seen_ids = std::collections::BTreeSet::<String>::new();
-            let mut plans = Vec::<SubagentSpawnTaskPlan>::new();
-            for task in args.tasks {
-                let id = task.id.trim().to_string();
-                if id.is_empty() {
-                    anyhow::bail!("tasks[].id must not be empty");
-                }
-                if !seen_ids.insert(id.clone()) {
-                    anyhow::bail!("duplicate task id: {id}");
-                }
-
-                let input = task.input.trim().to_string();
-                if input.is_empty() {
-                    anyhow::bail!("task input must not be empty (task_id={id})");
-                }
-
-                let title = task.title.unwrap_or_default().trim().to_string();
-
-                let mut depends_on = Vec::<String>::new();
-                let mut seen_deps = std::collections::BTreeSet::<String>::new();
-                for dep in task.depends_on {
-                    let dep = dep.trim().to_string();
-                    if dep.is_empty() {
-                        continue;
-                    }
-                    if dep == id {
-                        anyhow::bail!("task depends_on itself: {id}");
-                    }
-                    if seen_deps.insert(dep.clone()) {
-                        depends_on.push(dep);
-                    }
-                }
-
-                let spawn_mode = task.spawn_mode.unwrap_or(default_spawn_mode);
-                let mode = normalize_optional(task.mode).unwrap_or_else(|| default_mode.clone());
-                let workspace_mode = task.workspace_mode.unwrap_or(default_workspace_mode);
-                let priority = task.priority.unwrap_or(default_priority);
-                let model = normalize_optional(task.model).or_else(|| default_model.clone());
-                let openai_base_url = normalize_optional(task.openai_base_url)
-                    .or_else(|| default_openai_base_url.clone());
-                let expected_artifact_type = normalize_optional(task.expected_artifact_type)
-                    .unwrap_or_else(|| default_expected_artifact_type.clone());
-
-                plans.push(SubagentSpawnTaskPlan {
-                    id,
-                    title,
-                    input,
-                    depends_on,
-                    priority,
-                    spawn_mode,
-                    mode,
-                    workspace_mode,
-                    model,
-                    openai_base_url,
-                    expected_artifact_type,
-                });
-            }
-
-            let mut by_id = std::collections::HashMap::<String, usize>::new();
-            for (idx, task) in plans.iter().enumerate() {
-                by_id.insert(task.id.clone(), idx);
-            }
-            for task in &plans {
-                for dep in &task.depends_on {
-                    if !by_id.contains_key(dep) {
-                        anyhow::bail!("unknown depends_on: {dep} (task_id={})", task.id);
-                    }
-                }
-            }
-
-            let mut indegree = std::collections::HashMap::<String, usize>::new();
-            let mut edges = std::collections::HashMap::<String, Vec<String>>::new();
-            for task in &plans {
-                indegree.insert(task.id.clone(), task.depends_on.len());
-                for dep in &task.depends_on {
-                    edges.entry(dep.clone()).or_default().push(task.id.clone());
-                }
-            }
-            let mut queue = std::collections::VecDeque::<String>::new();
-            for (id, degree) in &indegree {
-                if *degree == 0 {
-                    queue.push_back(id.clone());
-                }
-            }
-            let mut visited = 0usize;
-            while let Some(id) = queue.pop_front() {
-                visited += 1;
-                if let Some(children) = edges.get(&id) {
-                    for child in children {
-                        if let Some(degree) = indegree.get_mut(child) {
-                            *degree = degree.saturating_sub(1);
-                            if *degree == 0 {
-                                queue.push_back(child.clone());
-                            }
-                        }
-                    }
-                }
-            }
-            if visited != plans.len() {
-                anyhow::bail!("task dependencies contain a cycle");
-            }
-
-            let task_previews = plans
-                .iter()
-                .map(|task| {
-                    let input_preview = omne_core::redact_text(&truncate_chars(&task.input, 400));
-                    serde_json::json!({
-                        "id": task.id.clone(),
-                        "spawn_mode": spawn_mode_label(task.spawn_mode),
-                        "mode": task.mode.clone(),
-                        "workspace_mode": workspace_mode_label(task.workspace_mode),
-                        "priority": priority_label(task.priority),
-                        "depends_on": task.depends_on.clone(),
-                        "input_chars": task.input.chars().count(),
-                        "input_preview": input_preview,
-                    })
-                })
-                .collect::<Vec<_>>();
-            let priority_aging_rounds = fan_out_priority_aging_rounds_from_env();
-
-            let approval_params = serde_json::json!({
-                "task_count": plans.len(),
-                "tasks": task_previews,
-                "default_spawn_mode": spawn_mode_label(default_spawn_mode),
-                "default_mode": default_mode,
-                "default_workspace_mode": workspace_mode_label(default_workspace_mode),
-                "default_priority": priority_label(default_priority),
-                "priority_aging_rounds": priority_aging_rounds,
-                "default_expected_artifact_type": default_expected_artifact_type,
-                "model": default_model,
-                "openai_base_url": default_openai_base_url,
-            });
-
-            let tool_id = omne_protocol::ToolId::new();
-            let (thread_rt, thread_root) = super::load_thread_root(server, thread_id).await?;
-            let (approval_policy, mode_name, thread_cwd) = {
-                let handle = thread_rt.handle.lock().await;
-                let state = handle.state();
-                (state.approval_policy, state.mode.clone(), state.cwd.clone())
-            };
-            let thread_cwd = thread_cwd
-                .ok_or_else(|| anyhow::anyhow!("thread cwd is missing: {}", thread_id))?;
-
-            let catalog = omne_core::modes::ModeCatalog::load(&thread_root).await;
-            let Some(mode) = catalog.mode(&mode_name) else {
-                let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
-                let decision = omne_core::modes::Decision::Deny;
-                thread_rt
-                    .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                        tool_id,
-                        turn_id,
-                        tool: "subagent/spawn".to_string(),
-                        params: Some(approval_params),
-                    })
-                    .await?;
-                thread_rt
-                    .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                        tool_id,
-                        status: omne_protocol::ToolStatus::Denied,
-                        error: Some("unknown mode".to_string()),
-                        result: Some(serde_json::json!({
-                            "mode": mode_name,
-                            "decision": decision,
-                            "available": available,
-                            "load_error": catalog.load_error.clone(),
-                        })),
-                    })
-                    .await?;
-                return Ok(serde_json::json!({
-                    "tool_id": tool_id,
-                    "denied": true,
+    let catalog = omne_core::modes::ModeCatalog::load(&thread_root).await;
+    let Some(mode) = catalog.mode(&mode_name) else {
+        let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
+        let decision = omne_core::modes::Decision::Deny;
+        thread_rt
+            .append_event(omne_protocol::ThreadEventKind::ToolStarted {
+                tool_id,
+                turn_id,
+                tool: "subagent/spawn".to_string(),
+                params: Some(approval_params),
+            })
+            .await?;
+        thread_rt
+            .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
+                tool_id,
+                status: omne_protocol::ToolStatus::Denied,
+                error: Some("unknown mode".to_string()),
+                result: Some(serde_json::json!({
                     "mode": mode_name,
                     "decision": decision,
                     "available": available,
-                    "load_error": catalog.load_error,
-                }));
-            };
+                    "load_error": catalog.load_error.clone(),
+                })),
+            })
+            .await?;
+        return Ok(serde_json::json!({
+            "tool_id": tool_id,
+            "denied": true,
+            "mode": mode_name,
+            "decision": decision,
+            "available": available,
+            "load_error": catalog.load_error,
+        }));
+    };
 
-            let mode_decision = crate::resolve_mode_decision_audit(
-                mode,
-                "subagent/spawn",
-                mode.permissions.subagent.spawn.decision,
-            );
-            let effective_decision = mode_decision.decision;
-            let tool_override_hit = mode_decision.tool_override_hit;
-            let decision_source = mode_decision.decision_source;
+    let mode_decision = crate::resolve_mode_decision_audit(
+        mode,
+        "subagent/spawn",
+        mode.permissions.subagent.spawn.decision,
+    );
+    let effective_decision = mode_decision.decision;
+    let tool_override_hit = mode_decision.tool_override_hit;
+    let decision_source = mode_decision.decision_source;
 
-            if effective_decision == omne_core::modes::Decision::Deny {
-                thread_rt
-                    .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                        tool_id,
-                        turn_id,
-                        tool: "subagent/spawn".to_string(),
-                        params: Some(approval_params),
-                    })
-                    .await?;
-                thread_rt
-                    .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                        tool_id,
-                        status: omne_protocol::ToolStatus::Denied,
-                        error: Some("mode denies subagent/spawn".to_string()),
-                        result: Some(serde_json::json!({
-                            "mode": mode_name,
-                            "decision_source": decision_source,
-                            "tool_override_hit": tool_override_hit,
-                            "decision": effective_decision,
-                        })),
-                    })
-                    .await?;
-                return Ok(serde_json::json!({
-                    "tool_id": tool_id,
-                    "denied": true,
+    if effective_decision == omne_core::modes::Decision::Deny {
+        thread_rt
+            .append_event(omne_protocol::ThreadEventKind::ToolStarted {
+                tool_id,
+                turn_id,
+                tool: "subagent/spawn".to_string(),
+                params: Some(approval_params),
+            })
+            .await?;
+        thread_rt
+            .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
+                tool_id,
+                status: omne_protocol::ToolStatus::Denied,
+                error: Some("mode denies subagent/spawn".to_string()),
+                result: Some(serde_json::json!({
                     "mode": mode_name,
                     "decision_source": decision_source,
                     "tool_override_hit": tool_override_hit,
                     "decision": effective_decision,
-                }));
+                })),
+            })
+            .await?;
+        return Ok(serde_json::json!({
+            "tool_id": tool_id,
+            "denied": true,
+            "mode": mode_name,
+            "decision_source": decision_source,
+            "tool_override_hit": tool_override_hit,
+            "decision": effective_decision,
+        }));
+    }
+
+    let env_max_concurrent_subagents = parse_env_usize("OMNE_MAX_CONCURRENT_SUBAGENTS", 4, 0, 64);
+    let mode_max_concurrent_subagents = mode.permissions.subagent.spawn.max_threads;
+    let limit = combine_subagent_spawn_limits(
+        env_max_concurrent_subagents,
+        mode_max_concurrent_subagents,
+    );
+    let max_concurrent_subagents = limit.effective;
+    if let Some(allowed) = mode.permissions.subagent.spawn.allowed_modes.as_ref() {
+        let mut disallowed = std::collections::BTreeSet::<String>::new();
+        for task in &plans {
+            if !allowed.iter().any(|name| name == &task.mode) {
+                disallowed.insert(task.mode.clone());
             }
-
-            let env_max_concurrent_subagents =
-                parse_env_usize("OMNE_MAX_CONCURRENT_SUBAGENTS", 4, 0, 64);
-            let mode_max_concurrent_subagents = mode.permissions.subagent.spawn.max_threads;
-            let limit = combine_subagent_spawn_limits(
-                env_max_concurrent_subagents,
-                mode_max_concurrent_subagents,
-            );
-            let max_concurrent_subagents = limit.effective;
-            if let Some(allowed) = mode.permissions.subagent.spawn.allowed_modes.as_ref() {
-                let mut disallowed = std::collections::BTreeSet::<String>::new();
-                for task in &plans {
-                    if !allowed.iter().any(|name| name == &task.mode) {
-                        disallowed.insert(task.mode.clone());
-                    }
-                }
-                if !disallowed.is_empty() {
-                    let requested_modes = disallowed.into_iter().collect::<Vec<_>>();
-                    thread_rt
-                        .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                            tool_id,
-                            turn_id,
-                            tool: "subagent/spawn".to_string(),
-                            params: Some(approval_params),
-                        })
-                        .await?;
-                    thread_rt
-                        .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                            tool_id,
-                            status: omne_protocol::ToolStatus::Denied,
-                            error: Some("mode forbids spawning this subagent mode".to_string()),
-                            result: Some(serde_json::json!({
-                                "mode": mode_name,
-                                "decision_source": decision_source,
-                                "tool_override_hit": tool_override_hit,
-                                "decision": effective_decision,
-                                "requested_modes": requested_modes,
-                                "allowed_modes": allowed,
-                            })),
-                        })
-                        .await?;
-                    return Ok(serde_json::json!({
-                        "tool_id": tool_id,
-                        "denied": true,
-                        "mode": mode_name,
-                        "decision_source": decision_source,
-                        "tool_override_hit": tool_override_hit,
-                        "decision": effective_decision,
-                        "allowed_modes": allowed,
-                        "priority_aging_rounds": priority_aging_rounds,
-                        "limit_policy": "min_non_zero",
-                        "limit_source": limit.source.as_str(),
-                        "env_max_concurrent_subagents": env_max_concurrent_subagents,
-                        "mode_max_concurrent_subagents": mode_max_concurrent_subagents,
-                        "max_concurrent_subagents": max_concurrent_subagents,
-                    }));
-                }
-            }
-
-            let active_threads = if max_concurrent_subagents > 0 {
-                active_subagent_threads(server, thread_id).await?
-            } else {
-                Vec::new()
-            };
-            if max_concurrent_subagents > 0 && active_threads.len() >= max_concurrent_subagents {
-                let active = active_threads.len();
-                let active_thread_ids = active_threads
-                    .iter()
-                    .map(|id| id.to_string())
-                    .collect::<Vec<_>>();
-
-                thread_rt
-                    .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                        tool_id,
-                        turn_id,
-                        tool: "subagent/spawn".to_string(),
-                        params: Some(approval_params),
-                    })
-                    .await?;
-                thread_rt
-                    .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                        tool_id,
-                        status: omne_protocol::ToolStatus::Denied,
-                        error: Some(format!(
-                            "max_concurrent_subagents limit reached: active={active}, max={max_concurrent_subagents}"
-                        )),
-                        result: Some(serde_json::json!({
-                            "limit_policy": "min_non_zero",
-                            "limit_source": limit.source.as_str(),
-                            "priority_aging_rounds": priority_aging_rounds,
-                            "env_max_concurrent_subagents": env_max_concurrent_subagents,
-                            "mode_max_concurrent_subagents": mode_max_concurrent_subagents,
-                            "max_concurrent_subagents": max_concurrent_subagents,
-                            "active": active,
-                            "active_threads": active_thread_ids,
-                        })),
-                    })
-                    .await?;
-                return Ok(serde_json::json!({
-                    "tool_id": tool_id,
-                    "denied": true,
-                    "limit_policy": "min_non_zero",
-                    "limit_source": limit.source.as_str(),
-                    "priority_aging_rounds": priority_aging_rounds,
-                    "env_max_concurrent_subagents": env_max_concurrent_subagents,
-                    "mode_max_concurrent_subagents": mode_max_concurrent_subagents,
-                    "max_concurrent_subagents": max_concurrent_subagents,
-                    "active": active,
-                }));
-            }
-
-            if effective_decision == omne_core::modes::Decision::Prompt {
-                match super::gate_approval(
-                    server,
-                    &thread_rt,
-                    thread_id,
-                    turn_id,
-                    approval_policy,
-                    super::ApprovalRequest {
-                        approval_id,
-                        action: "subagent/spawn",
-                        params: &approval_params,
-                    },
-                )
-                .await?
-                {
-                    super::ApprovalGate::Approved => {}
-                    super::ApprovalGate::Denied { remembered } => {
-                        thread_rt
-                            .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-                                tool_id,
-                                turn_id,
-                                tool: "subagent/spawn".to_string(),
-                                params: Some(approval_params),
-                            })
-                            .await?;
-                        thread_rt
-                            .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                                tool_id,
-                                status: omne_protocol::ToolStatus::Denied,
-                                error: Some(super::approval_denied_error(remembered).to_string()),
-                                result: Some(serde_json::json!({
-                                    "approval_policy": approval_policy,
-                                })),
-                            })
-                            .await?;
-                        return Ok(serde_json::json!({
-                            "tool_id": tool_id,
-                            "denied": true,
-                            "remembered": remembered,
-                        }));
-                    }
-                    super::ApprovalGate::NeedsApproval { approval_id } => {
-                        return Ok(serde_json::json!({
-                            "needs_approval": true,
-                            "approval_id": approval_id,
-                        }));
-                    }
-                }
-            }
-
+        }
+        if !disallowed.is_empty() {
+            let requested_modes = disallowed.into_iter().collect::<Vec<_>>();
             thread_rt
                 .append_event(omne_protocol::ThreadEventKind::ToolStarted {
                     tool_id,
@@ -1601,138 +1454,172 @@ async fn run_tool_call_once(
                     params: Some(approval_params),
                 })
                 .await?;
+            thread_rt
+                .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: omne_protocol::ToolStatus::Denied,
+                    error: Some("mode forbids spawning this subagent mode".to_string()),
+                    result: Some(serde_json::json!({
+                        "mode": mode_name,
+                        "decision_source": decision_source,
+                        "tool_override_hit": tool_override_hit,
+                        "decision": effective_decision,
+                        "requested_modes": requested_modes,
+                        "allowed_modes": allowed,
+                    })),
+                })
+                .await?;
+            return Ok(serde_json::json!({
+                "tool_id": tool_id,
+                "denied": true,
+                "mode": mode_name,
+                "decision_source": decision_source,
+                "tool_override_hit": tool_override_hit,
+                "decision": effective_decision,
+                "allowed_modes": allowed,
+                "priority_aging_rounds": priority_aging_rounds,
+                "limit_policy": "min_non_zero",
+                "limit_source": limit.source.as_str(),
+                "env_max_concurrent_subagents": env_max_concurrent_subagents,
+                "mode_max_concurrent_subagents": mode_max_concurrent_subagents,
+                "max_concurrent_subagents": max_concurrent_subagents,
+            }));
+        }
+    }
 
-            let outcome: anyhow::Result<Vec<Value>> = async {
-                let mut tasks = Vec::<SubagentSpawnTask>::with_capacity(plans.len());
-                for plan in plans {
-                    let isolated_cwd =
-                        if matches!(plan.workspace_mode, AgentSpawnWorkspaceMode::IsolatedWrite) {
-                            Some(
-                                prepare_isolated_workspace(
-                                    server,
-                                    thread_id,
-                                    &plan.id,
-                                    &thread_root,
-                                )
-                                .await?,
-                            )
-                        } else {
-                            None
-                        };
-                    let spawned_cwd = isolated_cwd.as_ref().map(|path| path.display().to_string());
-                    let spawned = match plan.spawn_mode {
-                        AgentSpawnMode::Fork => {
-                            let forked = super::handle_thread_fork(
-                                server,
-                                super::ThreadForkParams {
-                                    thread_id,
-                                    cwd: spawned_cwd.clone(),
-                                },
-                            )
-                            .await?;
-                            SpawnedThread {
-                                thread_id: forked.thread_id,
-                                log_path: forked.log_path,
-                                last_seq: forked.last_seq,
-                            }
-                        }
-                        AgentSpawnMode::New => {
-                            create_new_thread(server, spawned_cwd.as_deref().unwrap_or(&thread_cwd))
-                                .await?
-                        }
-                    };
+    let active_threads = if max_concurrent_subagents > 0 {
+        active_subagent_threads(server, thread_id).await?
+    } else {
+        Vec::new()
+    };
+    if max_concurrent_subagents > 0 && active_threads.len() >= max_concurrent_subagents {
+        let active = active_threads.len();
+        let active_thread_ids = active_threads
+            .iter()
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>();
 
-                    let approval_override = if matches!(plan.spawn_mode, AgentSpawnMode::New) {
-                        Some(approval_policy)
-                    } else {
-                        None
-                    };
-                    let sandbox_policy = match plan.workspace_mode {
-                        AgentSpawnWorkspaceMode::ReadOnly => omne_protocol::SandboxPolicy::ReadOnly,
-                        AgentSpawnWorkspaceMode::IsolatedWrite => {
-                            omne_protocol::SandboxPolicy::WorkspaceWrite
-                        }
-                    };
-                    super::handle_thread_configure(
-                        server,
-                        super::ThreadConfigureParams {
-                            thread_id: spawned.thread_id,
-                            approval_policy: approval_override,
-                            sandbox_policy: Some(sandbox_policy),
-                            sandbox_writable_roots: None,
-                            sandbox_network_access: None,
-                            mode: Some(plan.mode.clone()),
-                            model: plan.model.clone(),
-                            thinking: None,
-                            openai_base_url: plan.openai_base_url.clone(),
-                            allowed_tools: None,
-                            execpolicy_rules: None,
-                        },
-                    )
+        thread_rt
+            .append_event(omne_protocol::ThreadEventKind::ToolStarted {
+                tool_id,
+                turn_id,
+                tool: "subagent/spawn".to_string(),
+                params: Some(approval_params.clone()),
+            })
+            .await?;
+        thread_rt
+            .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
+                tool_id,
+                status: omne_protocol::ToolStatus::Denied,
+                error: Some(format!(
+                    "max_concurrent_subagents limit reached: active={active}, max={max_concurrent_subagents}"
+                )),
+                result: Some(serde_json::json!({
+                    "limit_policy": "min_non_zero",
+                    "limit_source": limit.source.as_str(),
+                    "priority_aging_rounds": priority_aging_rounds,
+                    "env_max_concurrent_subagents": env_max_concurrent_subagents,
+                    "mode_max_concurrent_subagents": mode_max_concurrent_subagents,
+                    "max_concurrent_subagents": max_concurrent_subagents,
+                    "active": active,
+                    "active_threads": active_thread_ids,
+                })),
+            })
+            .await?;
+        return Ok(serde_json::json!({
+            "tool_id": tool_id,
+            "denied": true,
+            "limit_policy": "min_non_zero",
+            "limit_source": limit.source.as_str(),
+            "priority_aging_rounds": priority_aging_rounds,
+            "env_max_concurrent_subagents": env_max_concurrent_subagents,
+            "mode_max_concurrent_subagents": mode_max_concurrent_subagents,
+            "max_concurrent_subagents": max_concurrent_subagents,
+            "active": active,
+        }));
+    }
+
+    if effective_decision == omne_core::modes::Decision::Prompt {
+        match super::gate_approval(
+            server,
+            &thread_rt,
+            thread_id,
+            turn_id,
+            approval_policy,
+            super::ApprovalRequest {
+                approval_id,
+                action: "subagent/spawn",
+                params: &approval_params,
+            },
+        )
+        .await?
+        {
+            super::ApprovalGate::Approved => {}
+            super::ApprovalGate::Denied { remembered } => {
+                thread_rt
+                    .append_event(omne_protocol::ThreadEventKind::ToolStarted {
+                        tool_id,
+                        turn_id,
+                        tool: "subagent/spawn".to_string(),
+                        params: Some(approval_params),
+                    })
                     .await?;
-
-                    tasks.push(SubagentSpawnTask {
-                        id: plan.id,
-                        title: plan.title,
-                        input: plan.input,
-                        depends_on: plan.depends_on,
-                        priority: plan.priority,
-                        spawn_mode: plan.spawn_mode,
-                        mode: plan.mode,
-                        workspace_mode: plan.workspace_mode,
-                        model: plan.model,
-                        openai_base_url: plan.openai_base_url,
-                        expected_artifact_type: plan.expected_artifact_type,
-                        workspace_cwd: spawned_cwd,
-                        thread_id: spawned.thread_id,
-                        log_path: spawned.log_path,
-                        last_seq: spawned.last_seq,
-                        turn_id: None,
-                        status: SubagentTaskStatus::Pending,
-                        error: None,
-                    });
-                }
-
-                let external_active = active_threads
-                    .into_iter()
-                    .collect::<std::collections::HashSet<_>>();
-                let mut schedule = SubagentSpawnSchedule::new(
-                    thread_id,
-                    tasks,
-                    external_active,
-                    max_concurrent_subagents,
-                    priority_aging_rounds,
-                );
-                schedule.set_env_max_concurrent_subagents(env_max_concurrent_subagents);
-                schedule.start_ready_tasks(server).await;
-                schedule.catch_up_running_events(server).await;
-                let snapshot = schedule.snapshot();
-                spawn_subagent_scheduler(server.clone(), schedule);
-                Ok(snapshot)
+                thread_rt
+                    .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
+                        tool_id,
+                        status: omne_protocol::ToolStatus::Denied,
+                        error: Some(super::approval_denied_error(remembered).to_string()),
+                        result: Some(serde_json::json!({
+                            "approval_policy": approval_policy,
+                        })),
+                    })
+                    .await?;
+                return Ok(serde_json::json!({
+                    "tool_id": tool_id,
+                    "denied": true,
+                    "remembered": remembered,
+                }));
             }
-            .await;
+            super::ApprovalGate::NeedsApproval { approval_id } => {
+                return Ok(serde_json::json!({
+                    "needs_approval": true,
+                    "approval_id": approval_id,
+                }));
+            }
+        }
+    }
 
-            match outcome {
-                Ok(tasks) => {
-                    thread_rt
-                        .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                            tool_id,
-                            status: omne_protocol::ToolStatus::Completed,
-                            error: None,
-                            result: Some(serde_json::json!({
-                                "tasks": tasks,
-                                "priority_aging_rounds": priority_aging_rounds,
-                                "limit_policy": "min_non_zero",
-                                "limit_source": limit.source.as_str(),
-                                "env_max_concurrent_subagents": env_max_concurrent_subagents,
-                                "mode_max_concurrent_subagents": mode_max_concurrent_subagents,
-                                "max_concurrent_subagents": max_concurrent_subagents,
-                            })),
-                        })
-                        .await?;
+    thread_rt
+        .append_event(omne_protocol::ThreadEventKind::ToolStarted {
+            tool_id,
+            turn_id,
+            tool: "subagent/spawn".to_string(),
+            params: Some(approval_params.clone()),
+        })
+        .await?;
 
-                    Ok(serde_json::json!({
-                        "tool_id": tool_id,
+    let outcome = start_agent_spawn_schedule(
+        server,
+        thread_id,
+        plans,
+        active_threads,
+        max_concurrent_subagents,
+        env_max_concurrent_subagents,
+        priority_aging_rounds,
+        &thread_cwd,
+        &thread_root,
+        approval_policy,
+    )
+    .await;
+
+    match outcome {
+        Ok(tasks) => {
+            thread_rt
+                .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: omne_protocol::ToolStatus::Completed,
+                    error: None,
+                    result: Some(serde_json::json!({
                         "tasks": tasks,
                         "priority_aging_rounds": priority_aging_rounds,
                         "limit_policy": "min_non_zero",
@@ -1740,21 +1627,120 @@ async fn run_tool_call_once(
                         "env_max_concurrent_subagents": env_max_concurrent_subagents,
                         "mode_max_concurrent_subagents": mode_max_concurrent_subagents,
                         "max_concurrent_subagents": max_concurrent_subagents,
-                    }))
-                }
-                Err(err) => {
-                    thread_rt
-                        .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                            tool_id,
-                            status: omne_protocol::ToolStatus::Failed,
-                            error: Some(err.to_string()),
-                            result: None,
-                        })
-                        .await?;
-                    Err(err)
-                }
-            }
+                    })),
+                })
+                .await?;
+
+            Ok(serde_json::json!({
+                "tool_id": tool_id,
+                "tasks": tasks,
+                "priority_aging_rounds": priority_aging_rounds,
+                "limit_policy": "min_non_zero",
+                "limit_source": limit.source.as_str(),
+                "env_max_concurrent_subagents": env_max_concurrent_subagents,
+                "mode_max_concurrent_subagents": mode_max_concurrent_subagents,
+                "max_concurrent_subagents": max_concurrent_subagents,
+            }))
         }
-        _ => anyhow::bail!("unknown tool: {tool_name}"),
+        Err(err) => {
+            thread_rt
+                .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: omne_protocol::ToolStatus::Failed,
+                    error: Some(err.to_string()),
+                    result: None,
+                })
+                .await?;
+            Err(err)
+        }
     }
+}
+
+async fn handle_thread_state_tool(server: &super::Server, args: ThreadStateArgs) -> anyhow::Result<Value> {
+    let thread_id: omne_protocol::ThreadId = args.thread_id.parse()?;
+    let rt = server.get_or_load_thread(thread_id).await?;
+    let handle = rt.handle.lock().await;
+    let state = handle.state();
+    let archived_at = state.archived_at.and_then(|ts| ts.format(&Rfc3339).ok());
+    let paused_at = state.paused_at.and_then(|ts| ts.format(&Rfc3339).ok());
+    Ok(serde_json::json!({
+        "thread_id": handle.thread_id(),
+        "cwd": state.cwd,
+        "archived": state.archived,
+        "archived_at": archived_at,
+        "archived_reason": state.archived_reason,
+        "paused": state.paused,
+        "paused_at": paused_at,
+        "paused_reason": state.paused_reason,
+        "approval_policy": state.approval_policy,
+        "sandbox_policy": state.sandbox_policy,
+        "model": state.model,
+        "openai_base_url": state.openai_base_url,
+        "last_seq": handle.last_seq().0,
+        "active_turn_id": state.active_turn_id,
+        "active_turn_interrupt_requested": state.active_turn_interrupt_requested,
+        "last_turn_id": state.last_turn_id,
+        "last_turn_status": state.last_turn_status,
+        "last_turn_reason": state.last_turn_reason,
+    }))
+}
+
+async fn handle_thread_usage_tool(server: &super::Server, args: ThreadUsageArgs) -> anyhow::Result<Value> {
+    let thread_id: omne_protocol::ThreadId = args.thread_id.parse()?;
+    let rt = server.get_or_load_thread(thread_id).await?;
+    let handle = rt.handle.lock().await;
+    let state = handle.state();
+    let non_cache_input_tokens_used = state
+        .input_tokens_used
+        .saturating_sub(state.cache_input_tokens_used);
+    let token_budget_limit = configured_total_token_budget_limit();
+    let (token_budget_remaining, token_budget_utilization, token_budget_exceeded) =
+        token_budget_snapshot(state.total_tokens_used, token_budget_limit);
+    Ok(serde_json::json!({
+        "thread_id": handle.thread_id(),
+        "last_seq": handle.last_seq().0,
+        "total_tokens_used": state.total_tokens_used,
+        "input_tokens_used": state.input_tokens_used,
+        "output_tokens_used": state.output_tokens_used,
+        "cache_input_tokens_used": state.cache_input_tokens_used,
+        "cache_creation_input_tokens_used": state.cache_creation_input_tokens_used,
+        "non_cache_input_tokens_used": non_cache_input_tokens_used,
+        "cache_input_ratio": usage_ratio(state.cache_input_tokens_used, state.input_tokens_used),
+        "output_ratio": usage_ratio(state.output_tokens_used, state.total_tokens_used),
+        "token_budget_limit": token_budget_limit,
+        "token_budget_remaining": token_budget_remaining,
+        "token_budget_utilization": token_budget_utilization,
+        "token_budget_exceeded": token_budget_exceeded,
+    }))
+}
+
+async fn handle_thread_events_tool(server: &super::Server, args: ThreadEventsArgs) -> anyhow::Result<Value> {
+    let thread_id: omne_protocol::ThreadId = args.thread_id.parse()?;
+    let since = EventSeq(args.since_seq);
+
+    let mut events = server
+        .thread_store
+        .read_events_since(thread_id, since)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("thread not found: {}", thread_id))?;
+
+    let thread_last_seq = events.last().map(|e| e.seq.0).unwrap_or(since.0);
+
+    let mut has_more = false;
+    if let Some(max_events) = args.max_events {
+        let max_events = max_events.clamp(1, 50_000);
+        if events.len() > max_events {
+            events.truncate(max_events);
+            has_more = true;
+        }
+    }
+
+    let last_seq = events.last().map(|e| e.seq.0).unwrap_or(since.0);
+
+    Ok(serde_json::json!({
+        "events": events,
+        "last_seq": last_seq,
+        "thread_last_seq": thread_last_seq,
+        "has_more": has_more,
+    }))
 }

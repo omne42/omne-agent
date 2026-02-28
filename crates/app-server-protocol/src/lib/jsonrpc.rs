@@ -1,3 +1,5 @@
+use super::*;
+
 pub const JSONRPC_VERSION: &str = "2.0";
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize, JsonSchema, TS)]

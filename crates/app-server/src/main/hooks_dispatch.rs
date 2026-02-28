@@ -21,6 +21,17 @@ impl HookPoint {
             HookPoint::SubagentStop => "subagent_stop",
         }
     }
+
+    fn commands(self, hooks: &HooksConfigHooks) -> &[HookCommandConfig] {
+        match self {
+            HookPoint::SessionStart => &hooks.session_start,
+            HookPoint::PreToolUse => &hooks.pre_tool_use,
+            HookPoint::PostToolUse => &hooks.post_tool_use,
+            HookPoint::Stop => &hooks.stop,
+            HookPoint::SubagentStart => &hooks.subagent_start,
+            HookPoint::SubagentStop => &hooks.subagent_stop,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -297,39 +308,7 @@ fn hook_tool_params_for_action(action: &str, tool_args: &Value) -> Value {
 }
 
 fn hook_tool_name_from_agent_tool(tool_name: &str) -> Option<&'static str> {
-    Some(match tool_name {
-        "file_read" => "file/read",
-        "file_glob" => "file/glob",
-        "file_grep" => "file/grep",
-        "repo_search" => "repo/search",
-        "repo_index" => "repo/index",
-        "repo_symbols" => "repo/symbols",
-        "mcp_list_servers" => "mcp/list_servers",
-        "mcp_list_tools" => "mcp/list_tools",
-        "mcp_list_resources" => "mcp/list_resources",
-        "mcp_call" => "mcp/call",
-        "file_write" => "file/write",
-        "file_patch" => "file/patch",
-        "file_edit" => "file/edit",
-        "file_delete" => "file/delete",
-        "fs_mkdir" => "fs/mkdir",
-        "process_start" => "process/start",
-        "process_inspect" => "process/inspect",
-        "process_tail" => "process/tail",
-        "process_follow" => "process/follow",
-        "process_kill" => "process/kill",
-        "artifact_write" => "artifact/write",
-        "artifact_list" => "artifact/list",
-        "artifact_read" => "artifact/read",
-        "artifact_delete" => "artifact/delete",
-        "thread_state" => "thread/state",
-        "thread_usage" => "thread/usage",
-        "thread_events" => "thread/events",
-        "thread_diff" => "thread/diff",
-        "thread_hook_run" => "thread/hook_run",
-        "agent_spawn" => "subagent/spawn",
-        _ => return None,
-    })
+    crate::agent::agent_tool_action(tool_name)
 }
 
 async fn wait_for_process_exit(
@@ -396,14 +375,7 @@ async fn run_hook_commands(
         }
     };
 
-    let commands = match hook_point {
-        HookPoint::SessionStart => &cfg.hooks.session_start,
-        HookPoint::PreToolUse => &cfg.hooks.pre_tool_use,
-        HookPoint::PostToolUse => &cfg.hooks.post_tool_use,
-        HookPoint::Stop => &cfg.hooks.stop,
-        HookPoint::SubagentStart => &cfg.hooks.subagent_start,
-        HookPoint::SubagentStop => &cfg.hooks.subagent_stop,
-    };
+    let commands = hook_point.commands(&cfg.hooks);
     if commands.is_empty() {
         return Vec::new();
     }
@@ -731,12 +703,22 @@ async fn run_hook_commands(
     out
 }
 
+async fn run_hooks_for_point(
+    server: &Server,
+    thread_id: ThreadId,
+    turn_id: Option<TurnId>,
+    hook_point: HookPoint,
+    ctx: HookDispatchContext<'_>,
+) -> Vec<HookAdditionalContext> {
+    run_hook_commands(server, thread_id, turn_id, hook_point, ctx).await
+}
+
 async fn run_session_start_hooks(
     server: &Server,
     thread_id: ThreadId,
     turn_id: TurnId,
 ) -> Vec<HookAdditionalContext> {
-    run_hook_commands(
+    run_hooks_for_point(
         server,
         thread_id,
         Some(turn_id),
@@ -753,7 +735,7 @@ async fn run_pre_tool_use_hooks(
     tool: &str,
     tool_args: &Value,
 ) -> Vec<HookAdditionalContext> {
-    run_hook_commands(
+    run_hooks_for_point(
         server,
         thread_id,
         Some(turn_id),
@@ -775,7 +757,7 @@ async fn run_post_tool_use_hooks(
     tool_args: &Value,
     tool_result: &Value,
 ) -> Vec<HookAdditionalContext> {
-    run_hook_commands(
+    run_hooks_for_point(
         server,
         thread_id,
         Some(turn_id),
@@ -797,7 +779,7 @@ async fn run_stop_hooks(
     status: TurnStatus,
     reason: Option<&str>,
 ) -> Vec<HookAdditionalContext> {
-    run_hook_commands(
+    run_hooks_for_point(
         server,
         thread_id,
         Some(turn_id),
@@ -818,7 +800,7 @@ async fn run_subagent_start_hooks(
     child_thread_id: ThreadId,
     child_turn_id: TurnId,
 ) -> Vec<HookAdditionalContext> {
-    run_hook_commands(
+    run_hooks_for_point(
         server,
         parent_thread_id,
         None,
@@ -847,7 +829,7 @@ async fn run_subagent_stop_hooks(
     status: TurnStatus,
     reason: Option<&str>,
 ) -> Vec<HookAdditionalContext> {
-    run_hook_commands(
+    run_hooks_for_point(
         server,
         parent_thread_id,
         None,

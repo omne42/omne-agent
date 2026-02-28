@@ -158,30 +158,17 @@ pub(super) async fn handle_thread_attention(
         token_budget_warning_active,
     ) = thread_token_budget_snapshot(total_tokens_used, token_budget_warning_threshold_ratio());
 
-    let attention_state = if !pending_approvals.is_empty() {
-        "need_approval"
-    } else if !failed_processes.is_empty() {
-        "failed"
-    } else if has_fan_out_auto_apply_error {
-        "failed"
-    } else if has_fan_out_linkage_issue {
-        "failed"
-    } else if active_turn_id.is_some() || !running_processes.is_empty() {
-        "running"
-    } else if paused {
-        "paused"
-    } else if archived {
-        "archived"
-    } else {
-        match last_turn_status {
-            Some(omne_protocol::TurnStatus::Completed) => "done",
-            Some(omne_protocol::TurnStatus::Interrupted) => "interrupted",
-            Some(omne_protocol::TurnStatus::Failed) => "failed",
-            Some(omne_protocol::TurnStatus::Cancelled) => "cancelled",
-            Some(omne_protocol::TurnStatus::Stuck) => "stuck",
-            None => "idle",
-        }
-    };
+    let attention_state = compute_attention_state(
+        archived,
+        !pending_approvals.is_empty(),
+        !failed_processes.is_empty(),
+        has_fan_out_auto_apply_error,
+        has_fan_out_linkage_issue,
+        active_turn_id.is_some() || !running_processes.is_empty(),
+        paused,
+        last_turn_status,
+        false,
+    );
 
     Ok(omne_app_server_protocol::ThreadAttentionResponse {
         thread_id: params.thread_id,
@@ -224,6 +211,45 @@ pub(super) async fn handle_thread_attention(
         fan_in_result_diagnostics,
         has_test_failed,
     })
+}
+
+fn compute_attention_state(
+    archived: bool,
+    has_pending_approvals: bool,
+    has_failed_processes: bool,
+    has_fan_out_auto_apply_error: bool,
+    has_fan_out_linkage_issue: bool,
+    has_running_activity: bool,
+    paused: bool,
+    last_turn_status: Option<omne_protocol::TurnStatus>,
+    archived_first: bool,
+) -> &'static str {
+    if archived_first && archived {
+        return "archived";
+    }
+    if has_pending_approvals {
+        return "need_approval";
+    }
+    if has_failed_processes || has_fan_out_auto_apply_error || has_fan_out_linkage_issue {
+        return "failed";
+    }
+    if has_running_activity {
+        return "running";
+    }
+    if paused {
+        return "paused";
+    }
+    if !archived_first && archived {
+        return "archived";
+    }
+    match last_turn_status {
+        Some(omne_protocol::TurnStatus::Completed) => "done",
+        Some(omne_protocol::TurnStatus::Interrupted) => "interrupted",
+        Some(omne_protocol::TurnStatus::Failed) => "failed",
+        Some(omne_protocol::TurnStatus::Cancelled) => "cancelled",
+        Some(omne_protocol::TurnStatus::Stuck) => "stuck",
+        None => "idle",
+    }
 }
 
 pub(super) fn summarize_pending_approval(
@@ -1030,64 +1056,7 @@ async fn infer_fan_out_auto_apply_summary_from_result_artifact(
 fn fan_out_auto_apply_summary_from_payload(
     payload: &omne_app_server_protocol::ArtifactFanOutResultStructuredData,
 ) -> Option<omne_app_server_protocol::ThreadFanOutAutoApplySummary> {
-    let auto_apply = payload.isolated_write_auto_apply.as_ref()?;
-    if auto_apply.applied {
-        return None;
-    }
-    let status = if auto_apply
-        .error
-        .as_deref()
-        .is_some_and(|value| !value.is_empty())
-    {
-        "error".to_string()
-    } else if auto_apply.attempted {
-        "attempted_not_applied".to_string()
-    } else if auto_apply.enabled {
-        "enabled_not_attempted".to_string()
-    } else {
-        "disabled".to_string()
-    };
-    let stage = auto_apply
-        .failure_stage
-        .as_ref()
-        .map(|value| value.as_str().to_string());
-    let patch_artifact_id = auto_apply
-        .patch_artifact_id
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .map(ToString::to_string);
-    let recovery_commands = (!auto_apply.recovery_commands.is_empty())
-        .then_some(auto_apply.recovery_commands.len());
-    let recovery_1 = auto_apply
-        .recovery_commands
-        .first()
-        .map(format_fan_out_recovery_command_preview)
-        .map(|value| truncate_chars(value.as_str(), 120));
-    let error = auto_apply
-        .error
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| truncate_chars(value, 120));
-
-    Some(omne_app_server_protocol::ThreadFanOutAutoApplySummary {
-        task_id: payload.task_id.clone(),
-        status,
-        stage,
-        patch_artifact_id,
-        recovery_commands,
-        recovery_1,
-        error,
-    })
-}
-
-fn format_fan_out_recovery_command_preview(
-    command: &omne_app_server_protocol::ArtifactFanOutResultRecoveryCommandStructuredData,
-) -> String {
-    if command.argv.is_empty() {
-        return command.label.clone();
-    }
-    format!("{}: {}", command.label, command.argv.join(" "))
+    omne_app_server_protocol::fan_out_auto_apply_summary_from_payload(payload, 120)
 }
 
 async fn latest_fan_in_dependency_blocked_summary(
@@ -1159,94 +1128,13 @@ async fn infer_fan_in_summary_signals_from_summary_artifact(
 fn fan_in_dependency_blocked_summary_from_payload(
     payload: &omne_app_server_protocol::ArtifactFanInSummaryStructuredData,
 ) -> Option<omne_app_server_protocol::ThreadFanInDependencyBlockedSummary> {
-    let dependency_blocked_count = payload
-        .tasks
-        .iter()
-        .filter(|task| task.dependency_blocked)
-        .count();
-    let task = payload.tasks.iter().find(|task| {
-        task.dependency_blocked
-            || task
-                .dependency_blocker_task_id
-                .as_deref()
-                .is_some_and(|value| !value.trim().is_empty())
-            || task
-                .dependency_blocker_status
-                .as_deref()
-                .is_some_and(|value| !value.trim().is_empty())
-    })?;
-    let diagnostics = fan_in_result_diagnostics_summary_from_payload(payload);
-    let blocker_task_id = task
-        .dependency_blocker_task_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string);
-    let blocker_status = task
-        .dependency_blocker_status
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string);
-    let reason = task
-        .reason
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| truncate_chars(value, 280));
-    Some(omne_app_server_protocol::ThreadFanInDependencyBlockedSummary {
-        task_id: task.task_id.clone(),
-        status: task.status.clone(),
-        dependency_blocked_count,
-        task_count: payload.task_count,
-        dependency_blocked_ratio: if payload.task_count == 0 {
-            0.0
-        } else {
-            dependency_blocked_count as f64 / payload.task_count as f64
-        },
-        diagnostics_tasks: diagnostics.as_ref().map(|value| value.diagnostics_tasks),
-        diagnostics_matched_completion_total: diagnostics
-            .as_ref()
-            .map(|value| value.diagnostics_matched_completion_total),
-        diagnostics_pending_matching_tool_ids_total: diagnostics
-            .as_ref()
-            .map(|value| value.diagnostics_pending_matching_tool_ids_total),
-        diagnostics_scan_last_seq_max: diagnostics
-            .as_ref()
-            .map(|value| value.diagnostics_scan_last_seq_max),
-        blocker_task_id,
-        blocker_status,
-        reason,
-    })
+    omne_app_server_protocol::fan_in_dependency_blocked_summary_from_payload(payload, 280)
 }
 
 fn fan_in_result_diagnostics_summary_from_payload(
     payload: &omne_app_server_protocol::ArtifactFanInSummaryStructuredData,
 ) -> Option<omne_app_server_protocol::ThreadFanInResultDiagnosticsSummary> {
-    let mut diagnostics_tasks = 0usize;
-    let mut diagnostics_matched_completion_total = 0u64;
-    let mut diagnostics_pending_matching_tool_ids_total = 0usize;
-    let mut diagnostics_scan_last_seq_max = 0u64;
-    for item in &payload.tasks {
-        if let Some(diagnostics) = item.result_artifact_diagnostics.as_ref() {
-            diagnostics_tasks = diagnostics_tasks.saturating_add(1);
-            diagnostics_matched_completion_total = diagnostics_matched_completion_total
-                .saturating_add(diagnostics.matched_completion_count);
-            diagnostics_pending_matching_tool_ids_total = diagnostics_pending_matching_tool_ids_total
-                .saturating_add(diagnostics.pending_matching_tool_ids);
-            diagnostics_scan_last_seq_max =
-                diagnostics_scan_last_seq_max.max(diagnostics.scan_last_seq);
-        }
-    }
-    (diagnostics_tasks > 0).then_some(
-        omne_app_server_protocol::ThreadFanInResultDiagnosticsSummary {
-            task_count: payload.task_count,
-            diagnostics_tasks,
-            diagnostics_matched_completion_total,
-            diagnostics_pending_matching_tool_ids_total,
-            diagnostics_scan_last_seq_max,
-        },
-    )
+    omne_app_server_protocol::fan_in_result_diagnostics_summary_from_payload(payload)
 }
 
 pub(super) fn process_command_label(argv: &[String]) -> Option<String> {
@@ -3697,30 +3585,17 @@ pub(super) async fn handle_thread_list_meta(
             token_budget_warning_threshold_ratio(),
         );
 
-        let attention_state = if state.archived {
-            "archived"
-        } else if !state.pending_approvals.is_empty() {
-            "need_approval"
-        } else if !state.failed_processes.is_empty() {
-            "failed"
-        } else if has_fan_out_auto_apply_error {
-            "failed"
-        } else if has_fan_out_linkage_issue {
-            "failed"
-        } else if state.active_turn_id.is_some() || !state.running_processes.is_empty() {
-            "running"
-        } else if state.paused {
-            "paused"
-        } else {
-            match state.last_turn_status {
-                Some(omne_protocol::TurnStatus::Completed) => "done",
-                Some(omne_protocol::TurnStatus::Interrupted) => "interrupted",
-                Some(omne_protocol::TurnStatus::Failed) => "failed",
-                Some(omne_protocol::TurnStatus::Cancelled) => "cancelled",
-                Some(omne_protocol::TurnStatus::Stuck) => "stuck",
-                None => "idle",
-            }
-        };
+        let attention_state = compute_attention_state(
+            state.archived,
+            !state.pending_approvals.is_empty(),
+            !state.failed_processes.is_empty(),
+            has_fan_out_auto_apply_error,
+            has_fan_out_linkage_issue,
+            state.active_turn_id.is_some() || !state.running_processes.is_empty(),
+            state.paused,
+            state.last_turn_status,
+            true,
+        );
 
         let sort_ts = updated_at
             .or(created_at)

@@ -317,8 +317,11 @@ impl FanOutScheduler {
         }
 
         if !self.is_done() {
-            let blocked =
-                collect_dependency_blocked_task_ids(&self.tasks, &self.started_ids, &self.task_statuses);
+            let blocked = collect_dependency_blocked_task_ids(
+                &self.tasks,
+                &self.started_ids,
+                &self.task_statuses,
+            );
             if !blocked.is_empty() {
                 for (task_id, dep_id, dep_status) in blocked {
                     self.started_ids.insert(task_id.clone());

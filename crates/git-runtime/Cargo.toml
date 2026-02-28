@@ -1,5 +1,5 @@
 [package]
-name = "omne-thread-git-snapshot-runtime"
+name = "omne-git-runtime"
 edition.workspace = true
 rust-version.workspace = true
 version.workspace = true

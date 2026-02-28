@@ -112,49 +112,30 @@ async fn handle_process_start_inner(
         return Ok(result);
     }
 
-    let catalog = omne_core::modes::ModeCatalog::load(&thread_root).await;
-    let mode = match catalog.mode(&mode_name) {
-        Some(mode) => mode,
-        None => {
-            let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
-            let result = process_unknown_mode_denied_response(
-                tool_id,
-                params.thread_id,
-                &mode_name,
-                available,
-                catalog.load_error.clone(),
-            )?;
-            emit_process_tool_denied(
-                &thread_rt,
-                tool_id,
-                params.turn_id,
-                "process/start",
-                &start_tool_params,
-                "unknown mode".to_string(),
-                result.clone(),
-            )
-            .await?;
-            return Ok(result);
-        }
+    let mode_ctx = ProcessModeApprovalContext {
+        thread_rt: &thread_rt,
+        thread_root: &thread_root,
+        thread_id: params.thread_id,
+        turn_id: params.turn_id,
+        approval_id: params.approval_id,
+        approval_policy,
+        mode_name: &mode_name,
+        action: "process/start",
+        tool_id,
+        approval_params: &start_tool_params,
     };
-
-    let mode_decision =
-        resolve_mode_decision_audit(mode, "process/start", mode.permissions.command);
-    if mode_decision.decision == omne_core::modes::Decision::Deny {
-        let result =
-            process_mode_denied_response(tool_id, params.thread_id, &mode_name, mode_decision)?;
-        emit_process_tool_denied(
-            &thread_rt,
-            tool_id,
-            params.turn_id,
-            "process/start",
-            &start_tool_params,
-            "mode denies process/start".to_string(),
-            result.clone(),
-        )
-        .await?;
-        return Ok(result);
-    }
+    let (mode, mode_decision) = match enforce_process_mode_gate(
+        &mode_ctx,
+        |mode| mode.permissions.command,
+    )
+    .await?
+    {
+        ProcessModeGate::Denied(result) => return Ok(result),
+        ProcessModeGate::Allowed {
+            mode,
+            mode_decision,
+        } => (mode, mode_decision),
+    };
 
     let mut effective_exec_policy = server.exec_policy.clone();
     if !mode.command_execpolicy_rules.is_empty() {

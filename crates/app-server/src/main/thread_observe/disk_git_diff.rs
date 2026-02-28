@@ -1,6 +1,7 @@
 use super::*;
 #[cfg(test)]
 use super::attention_and_subscribe::compute_stale_processes;
+use omne_git_runtime::{SnapshotKind, SnapshotRecipe, normalize_limits, recipe};
 
 #[derive(Debug)]
 struct ThreadDiskUsage {
@@ -218,23 +219,14 @@ pub(super) async fn handle_thread_disk_report(
     })
 }
 
-const DEFAULT_THREAD_DIFF_MAX_BYTES: u64 = 4 * 1024 * 1024;
-const MAX_THREAD_DIFF_MAX_BYTES: u64 = 64 * 1024 * 1024;
-const DEFAULT_THREAD_DIFF_WAIT_SECONDS: u64 = 30;
-const MAX_THREAD_DIFF_WAIT_SECONDS: u64 = 10 * 60;
-const THREAD_DIFF_POLL_INTERVAL_MS: u64 = 50;
-const THREAD_DIFF_MAX_STDERR_BYTES: u64 = 32 * 1024;
-
 pub(super) struct ThreadGitSnapshotSpec {
     pub(super) thread_id: ThreadId,
     pub(super) turn_id: Option<TurnId>,
     pub(super) approval_id: Option<omne_protocol::ApprovalId>,
     pub(super) max_bytes: Option<u64>,
     pub(super) wait_seconds: Option<u64>,
-    pub(super) argv: Vec<String>,
-    pub(super) artifact_type: &'static str,
-    pub(super) summary_clean: &'static str,
-    pub(super) summary_dirty: &'static str,
+    pub(super) kind: SnapshotKind,
+    pub(super) recipe_override: Option<SnapshotRecipe>,
 }
 
 fn thread_git_snapshot_denied_error_code(
@@ -288,14 +280,8 @@ pub(super) async fn handle_thread_git_snapshot(
     server: &Server,
     spec: ThreadGitSnapshotSpec,
 ) -> anyhow::Result<omne_app_server_protocol::ThreadGitSnapshotRpcResponse> {
-    let max_bytes = spec
-        .max_bytes
-        .unwrap_or(DEFAULT_THREAD_DIFF_MAX_BYTES)
-        .min(MAX_THREAD_DIFF_MAX_BYTES);
-    let wait_seconds = spec
-        .wait_seconds
-        .unwrap_or(DEFAULT_THREAD_DIFF_WAIT_SECONDS)
-        .min(MAX_THREAD_DIFF_WAIT_SECONDS);
+    let limits = normalize_limits(spec.max_bytes, spec.wait_seconds);
+    let snapshot_recipe = spec.recipe_override.unwrap_or_else(|| recipe(spec.kind));
 
     let process = handle_process_start(
         server,
@@ -303,7 +289,7 @@ pub(super) async fn handle_thread_git_snapshot(
             thread_id: spec.thread_id,
             turn_id: spec.turn_id,
             approval_id: spec.approval_id,
-            argv: spec.argv,
+            argv: snapshot_recipe.argv,
             cwd: None,
             timeout_ms: None,
         },
@@ -367,13 +353,16 @@ pub(super) async fn handle_thread_git_snapshot(
             .ok_or_else(|| anyhow::anyhow!("process not found: {}", process_id))?
     };
 
-    let waited = tokio::time::timeout(Duration::from_secs(wait_seconds), async {
+    let waited = tokio::time::timeout(Duration::from_secs(limits.wait_seconds), async {
         loop {
             let info = entry.info.lock().await.clone();
             if !matches!(info.status, ProcessStatus::Running) {
                 return Ok::<_, anyhow::Error>(info);
             }
-            tokio::time::sleep(Duration::from_millis(THREAD_DIFF_POLL_INTERVAL_MS)).await;
+            tokio::time::sleep(Duration::from_millis(
+                omne_git_runtime::POLL_INTERVAL_MS,
+            ))
+            .await;
         }
     })
     .await;
@@ -387,7 +376,7 @@ pub(super) async fn handle_thread_git_snapshot(
                 stdout_path,
                 stderr_path,
                 timed_out: true,
-                wait_seconds,
+                wait_seconds: limits.wait_seconds,
             };
             return Ok(omne_app_server_protocol::ThreadGitSnapshotRpcResponse::TimedOut(response));
         }
@@ -395,12 +384,16 @@ pub(super) async fn handle_thread_git_snapshot(
 
     if info.exit_code != Some(0) {
         let (stderr_bytes, stderr_truncated) =
-            read_rotating_log_prefix(Path::new(&stderr_path), THREAD_DIFF_MAX_STDERR_BYTES).await?;
+            read_rotating_log_prefix(
+                Path::new(&stderr_path),
+                omne_git_runtime::MAX_STDERR_BYTES,
+            )
+            .await?;
         let stderr_text = String::from_utf8_lossy(&stderr_bytes).trim().to_string();
         let stderr_suffix = if stderr_truncated { " (truncated)" } else { "" };
         anyhow::bail!(
             "{} failed (process_id={}, exit_code={:?}): {}{}",
-            spec.summary_dirty,
+            snapshot_recipe.summary_dirty,
             process_id,
             info.exit_code,
             stderr_text,
@@ -409,13 +402,13 @@ pub(super) async fn handle_thread_git_snapshot(
     }
 
     let (diff_bytes, truncated) =
-        read_rotating_log_prefix(Path::new(&stdout_path), max_bytes).await?;
+        read_rotating_log_prefix(Path::new(&stdout_path), limits.max_bytes).await?;
     let diff_text = String::from_utf8_lossy(&diff_bytes).to_string();
 
     let mut summary = if diff_text.trim().is_empty() {
-        spec.summary_clean.to_string()
+        snapshot_recipe.summary_clean.to_string()
     } else {
-        spec.summary_dirty.to_string()
+        snapshot_recipe.summary_dirty.to_string()
     };
     if truncated {
         summary.push_str(" (truncated)");
@@ -428,7 +421,7 @@ pub(super) async fn handle_thread_git_snapshot(
             turn_id: spec.turn_id,
             approval_id: None,
             artifact_id: None,
-            artifact_type: spec.artifact_type.to_string(),
+            artifact_type: snapshot_recipe.artifact_type.to_string(),
             summary,
             text: diff_text,
         },
@@ -482,7 +475,7 @@ pub(super) async fn handle_thread_git_snapshot(
         stderr_path,
         exit_code: info.exit_code,
         truncated,
-        max_bytes,
+        max_bytes: limits.max_bytes,
         artifact,
     };
     Ok(omne_app_server_protocol::ThreadGitSnapshotRpcResponse::Ok(
@@ -502,17 +495,8 @@ pub(super) async fn handle_thread_diff(
             approval_id: params.approval_id,
             max_bytes: params.max_bytes,
             wait_seconds: params.wait_seconds,
-            argv: vec![
-                "git".to_string(),
-                "--no-pager".to_string(),
-                "diff".to_string(),
-                "--no-ext-diff".to_string(),
-                "--no-textconv".to_string(),
-                "--no-color".to_string(),
-            ],
-            artifact_type: "diff",
-            summary_clean: "git diff (clean)",
-            summary_dirty: "git diff",
+            kind: SnapshotKind::Diff,
+            recipe_override: None,
         },
     )
     .await
@@ -530,19 +514,8 @@ pub(super) async fn handle_thread_patch(
             approval_id: params.approval_id,
             max_bytes: params.max_bytes,
             wait_seconds: params.wait_seconds,
-            argv: vec![
-                "git".to_string(),
-                "--no-pager".to_string(),
-                "diff".to_string(),
-                "--no-ext-diff".to_string(),
-                "--no-textconv".to_string(),
-                "--no-color".to_string(),
-                "--binary".to_string(),
-                "--patch".to_string(),
-            ],
-            artifact_type: "patch",
-            summary_clean: "git patch (clean)",
-            summary_dirty: "git patch",
+            kind: SnapshotKind::Patch,
+            recipe_override: None,
         },
     )
     .await

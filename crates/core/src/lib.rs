@@ -2,6 +2,7 @@ pub mod allowed_tools;
 pub mod domain;
 pub mod events;
 pub mod hooks;
+pub mod jsonrpc_line;
 pub mod modes;
 pub mod orchestrator;
 pub mod paths;

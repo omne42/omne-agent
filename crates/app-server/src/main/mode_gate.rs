@@ -29,6 +29,16 @@ fn resolve_mode_decision_audit(
     }
 }
 
+macro_rules! map_mode_decision_for_protocol {
+    ($decision:expr, $enum:ty) => {
+        match $decision {
+            omne_core::modes::Decision::Allow => <$enum>::Allow,
+            omne_core::modes::Decision::Prompt => <$enum>::Prompt,
+            omne_core::modes::Decision::Deny => <$enum>::Deny,
+        }
+    };
+}
+
 #[cfg(test)]
 mod mode_gate_tests {
     use super::*;

@@ -400,7 +400,7 @@ async fn prepare_isolated_workspace_with_details(
                 .await
                 .with_context(|| format!("create {}", parent.display()))?;
         }
-        let worktree_result = omne_thread_git_snapshot_runtime::create_detached_worktree(
+        let worktree_result = omne_git_runtime::create_detached_worktree(
             &source_root_text,
             &isolated_root_text,
             Some("HEAD"),
@@ -897,9 +897,9 @@ fn spawn_fan_out_result_writer_with_target_workspace(
 }
 
 const DEFAULT_ISOLATED_PATCH_MAX_BYTES: u64 =
-    omne_thread_git_snapshot_runtime::DEFAULT_ISOLATED_PATCH_MAX_BYTES;
+    omne_git_runtime::DEFAULT_ISOLATED_PATCH_MAX_BYTES;
 const DEFAULT_ISOLATED_PATCH_TIMEOUT_MS: u64 =
-    omne_thread_git_snapshot_runtime::DEFAULT_ISOLATED_PATCH_TIMEOUT_MS;
+    omne_git_runtime::DEFAULT_ISOLATED_PATCH_TIMEOUT_MS;
 const ISOLATED_AUTO_APPLY_PATCH_ENV: &str = "OMNE_SUBAGENT_ISOLATED_AUTO_APPLY_PATCH";
 
 fn parse_subagent_env_bool(raw: Option<&str>, default: bool) -> bool {
@@ -963,9 +963,9 @@ async fn capture_isolated_workspace_patch(cwd: &str) -> anyhow::Result<Option<(S
         120_000,
     );
 
-    let patch = omne_thread_git_snapshot_runtime::capture_workspace_patch(
+    let patch = omne_git_runtime::capture_workspace_patch(
         cwd,
-        omne_thread_git_snapshot_runtime::PatchCaptureConfig::new(
+        omne_git_runtime::PatchCaptureConfig::new(
             max_patch_bytes,
             std::time::Duration::from_millis(timeout_ms),
         ),
@@ -1015,11 +1015,11 @@ async fn try_auto_apply_isolated_workspace_patch(
         100,
         120_000,
     );
-    let outcome = omne_thread_git_snapshot_runtime::auto_apply_workspace_patch(
+    let outcome = omne_git_runtime::auto_apply_workspace_patch(
         workspace_cwd,
         target_workspace_cwd,
         matches!(status, omne_protocol::TurnStatus::Completed),
-        omne_thread_git_snapshot_runtime::PatchCaptureConfig::new(
+        omne_git_runtime::PatchCaptureConfig::new(
             max_patch_bytes,
             std::time::Duration::from_millis(timeout_ms),
         ),
@@ -1036,16 +1036,16 @@ async fn try_auto_apply_isolated_workspace_patch(
     }
     if let Some(failure) = outcome.failure {
         let stage = match failure.stage {
-            omne_thread_git_snapshot_runtime::AutoApplyFailureStage::Precondition => {
+            omne_git_runtime::AutoApplyFailureStage::Precondition => {
                 omne_workflow_spec::FanOutResultIsolatedWriteAutoApplyFailureStage::Precondition
             }
-            omne_thread_git_snapshot_runtime::AutoApplyFailureStage::CapturePatch => {
+            omne_git_runtime::AutoApplyFailureStage::CapturePatch => {
                 omne_workflow_spec::FanOutResultIsolatedWriteAutoApplyFailureStage::CapturePatch
             }
-            omne_thread_git_snapshot_runtime::AutoApplyFailureStage::CheckPatch => {
+            omne_git_runtime::AutoApplyFailureStage::CheckPatch => {
                 omne_workflow_spec::FanOutResultIsolatedWriteAutoApplyFailureStage::CheckPatch
             }
-            omne_thread_git_snapshot_runtime::AutoApplyFailureStage::ApplyPatch => {
+            omne_git_runtime::AutoApplyFailureStage::ApplyPatch => {
                 omne_workflow_spec::FanOutResultIsolatedWriteAutoApplyFailureStage::ApplyPatch
             }
         };

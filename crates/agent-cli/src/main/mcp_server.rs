@@ -63,48 +63,31 @@ async fn run_mcp_serve(app: &mut App, args: McpServeArgs) -> anyhow::Result<()> 
     let mut stdout = tokio::io::stdout();
 
     while let Some(line) = stdin.next_line().await? {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-
-        let msg: Value = match serde_json::from_str(line) {
-            Ok(v) => v,
+        let message = match omne_core::jsonrpc_line::parse_jsonrpc_line(&line) {
+            Ok(Some(message)) => message,
+            Ok(None) => continue,
             Err(err) => {
-                let resp = jsonrpc_error(Value::Null, -32700, "parse error", Some(err.to_string()));
+                let resp = jsonrpc_error(err.id, err.code, err.message, err.data);
                 write_json_line(&mut stdout, &resp).await?;
                 continue;
             }
         };
 
-        let Some(obj) = msg.as_object() else {
-            let resp = jsonrpc_error(Value::Null, -32600, "invalid request", None::<String>);
-            write_json_line(&mut stdout, &resp).await?;
-            continue;
-        };
-
-        let method = obj.get("method").and_then(|v| v.as_str());
-        let id = obj.get("id").cloned();
-        let params = obj.get("params").cloned();
-
-        let Some(method) = method else {
-            let resp = jsonrpc_error(Value::Null, -32600, "invalid request", None::<String>);
-            write_json_line(&mut stdout, &resp).await?;
-            continue;
-        };
-
-        // Notifications (no id) are best-effort and never responded to.
-        let Some(id) = id else {
-            if method == "notifications/initialized" && state.init == McpInitState::InitializeResponded {
-                state.init = McpInitState::Ready;
+        let (id, method, params) = match message {
+            omne_core::jsonrpc_line::JsonRpcLine::Notification(notification) => {
+                if notification.method == "notifications/initialized"
+                    && state.init == McpInitState::InitializeResponded
+                {
+                    state.init = McpInitState::Ready;
+                }
+                continue;
             }
-            continue;
+            omne_core::jsonrpc_line::JsonRpcLine::Request(request) => {
+                (request.id, request.method, request.params)
+            }
         };
-        if id.is_null() {
-            continue;
-        }
 
-        let resp = match method {
+        let resp = match method.as_str() {
             "initialize" => handle_mcp_initialize(&mut state, id).await,
             "tools/list" => handle_mcp_tools_list(&mut state, id).await,
             "tools/call" => handle_mcp_tools_call(app, &mut state, id, params).await,

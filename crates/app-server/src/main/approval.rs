@@ -81,6 +81,87 @@ struct SubagentApprovalProxy {
     child_approval_id: omne_protocol::ApprovalId,
 }
 
+#[derive(Clone)]
+struct ApprovalRequestRecord {
+    turn_id: Option<TurnId>,
+    action: String,
+    params: Value,
+    requested_at: String,
+}
+
+#[derive(Clone)]
+struct ApprovalDecisionRecord {
+    decision: omne_protocol::ApprovalDecision,
+    remember: bool,
+    reason: Option<String>,
+    decided_at: String,
+}
+
+#[derive(Default)]
+struct ApprovalEventIndex {
+    requested: BTreeMap<omne_protocol::ApprovalId, ApprovalRequestRecord>,
+    decided: BTreeMap<omne_protocol::ApprovalId, ApprovalDecisionRecord>,
+}
+
+impl ApprovalEventIndex {
+    fn from_events(events: &[omne_protocol::ThreadEvent]) -> anyhow::Result<Self> {
+        let mut out = Self::default();
+        for event in events {
+            let ts = event.timestamp.format(&Rfc3339)?;
+            match &event.kind {
+                omne_protocol::ThreadEventKind::ApprovalRequested {
+                    approval_id,
+                    turn_id,
+                    action,
+                    params,
+                } => {
+                    out.requested.insert(
+                        *approval_id,
+                        ApprovalRequestRecord {
+                            turn_id: *turn_id,
+                            action: action.clone(),
+                            params: params.clone(),
+                            requested_at: ts,
+                        },
+                    );
+                }
+                omne_protocol::ThreadEventKind::ApprovalDecided {
+                    approval_id,
+                    decision,
+                    remember,
+                    reason,
+                } => {
+                    out.decided.insert(
+                        *approval_id,
+                        ApprovalDecisionRecord {
+                            decision: *decision,
+                            remember: *remember,
+                            reason: reason.clone(),
+                            decided_at: ts,
+                        },
+                    );
+                }
+                _ => {}
+            }
+        }
+        Ok(out)
+    }
+
+    fn ensure_pending(
+        &self,
+        thread_id: ThreadId,
+        approval_id: omne_protocol::ApprovalId,
+    ) -> anyhow::Result<()> {
+        if !self.requested.contains_key(&approval_id) {
+            anyhow::bail!("approval not requested: thread_id={thread_id} approval_id={approval_id}");
+        }
+        if self.decided.contains_key(&approval_id) {
+            anyhow::bail!("approval already decided: thread_id={thread_id} approval_id={approval_id}");
+        }
+        Ok(())
+    }
+}
+
 fn parse_subagent_approval_proxy(params: &Value) -> Option<SubagentApprovalProxy> {
     let proxy = params.get("subagent_proxy")?.as_object()?;
     if proxy.get("kind").and_then(Value::as_str) != Some("approval") {
@@ -112,8 +193,9 @@ async fn resolve_pending_approval_proxy(
         .await?
         .ok_or_else(|| anyhow::anyhow!("thread not found: {thread_id}"))?;
 
-    let mut requested = false;
-    let mut decided = false;
+    let index = ApprovalEventIndex::from_events(&events)?;
+    index.ensure_pending(thread_id, approval_id)?;
+
     let mut proxy: Option<SubagentApprovalProxy> = None;
     for event in events {
         match event.kind {
@@ -125,25 +207,10 @@ async fn resolve_pending_approval_proxy(
                 if got != approval_id {
                     continue;
                 }
-                requested = true;
                 proxy = parse_subagent_approval_proxy(&params);
-            }
-            omne_protocol::ThreadEventKind::ApprovalDecided {
-                approval_id: got, ..
-            } => {
-                if got == approval_id {
-                    decided = true;
-                }
             }
             _ => {}
         }
-    }
-
-    if !requested {
-        anyhow::bail!("approval not requested: thread_id={thread_id} approval_id={approval_id}");
-    }
-    if decided {
-        anyhow::bail!("approval already decided: thread_id={thread_id} approval_id={approval_id}");
     }
 
     Ok(proxy)
@@ -159,33 +226,8 @@ async fn ensure_pending_approval(
         .await?
         .ok_or_else(|| anyhow::anyhow!("thread not found: {thread_id}"))?;
 
-    let mut requested = false;
-    let mut decided = false;
-    for event in events {
-        match event.kind {
-            omne_protocol::ThreadEventKind::ApprovalRequested { approval_id: got, .. } => {
-                if got == approval_id {
-                    requested = true;
-                }
-            }
-            omne_protocol::ThreadEventKind::ApprovalDecided {
-                approval_id: got, ..
-            } => {
-                if got == approval_id {
-                    decided = true;
-                }
-            }
-            _ => {}
-        }
-    }
-
-    if !requested {
-        anyhow::bail!("approval not requested: thread_id={thread_id} approval_id={approval_id}");
-    }
-    if decided {
-        anyhow::bail!("approval already decided: thread_id={thread_id} approval_id={approval_id}");
-    }
-    Ok(())
+    let index = ApprovalEventIndex::from_events(&events)?;
+    index.ensure_pending(thread_id, approval_id)
 }
 
 async fn handle_approval_list(
@@ -198,65 +240,35 @@ async fn handle_approval_list(
         .await?
         .ok_or_else(|| anyhow::anyhow!("thread not found: {}", params.thread_id))?;
 
-    let mut requested =
-        BTreeMap::<omne_protocol::ApprovalId, omne_app_server_protocol::ApprovalRequestInfo>::new();
-    let mut decided =
-        BTreeMap::<omne_protocol::ApprovalId, omne_app_server_protocol::ApprovalDecisionInfo>::new();
-
-    for event in events {
-        let ts = event.timestamp.format(&Rfc3339)?;
-        match event.kind {
-            omne_protocol::ThreadEventKind::ApprovalRequested {
-                approval_id,
-                turn_id,
-                action,
-                params,
-            } => {
-                requested.insert(
-                    approval_id,
-                    omne_app_server_protocol::ApprovalRequestInfo {
-                        approval_id,
-                        turn_id,
-                        action: action.clone(),
-                        action_id: Some(parse_thread_approval_action_id(&action)),
-                        params: params.clone(),
-                        summary: summarize_pending_approval(&params),
-                        requested_at: ts,
-                    },
-                );
-            }
-            omne_protocol::ThreadEventKind::ApprovalDecided {
-                approval_id,
-                decision,
-                remember,
-                reason,
-            } => {
-                decided.insert(
-                    approval_id,
-                    omne_app_server_protocol::ApprovalDecisionInfo {
-                        decision,
-                        remember,
-                        reason,
-                        decided_at: ts,
-                    },
-                );
-            }
-            _ => {}
-        }
-    }
+    let index = ApprovalEventIndex::from_events(&events)?;
+    let ApprovalEventIndex { requested, decided } = index;
 
     let mut approvals = Vec::<omne_app_server_protocol::ApprovalListItem>::new();
     for (id, req) in requested {
+        let request = omne_app_server_protocol::ApprovalRequestInfo {
+            approval_id: id,
+            turn_id: req.turn_id,
+            action: req.action.clone(),
+            action_id: Some(parse_thread_approval_action_id(&req.action)),
+            params: req.params.clone(),
+            summary: summarize_pending_approval(&req.params),
+            requested_at: req.requested_at,
+        };
         if let Some(decision) = decided.get(&id) {
             if params.include_decided {
                 approvals.push(omne_app_server_protocol::ApprovalListItem {
-                    request: req,
-                    decision: Some(decision.clone()),
+                    request,
+                    decision: Some(omne_app_server_protocol::ApprovalDecisionInfo {
+                        decision: decision.decision,
+                        remember: decision.remember,
+                        reason: decision.reason.clone(),
+                        decided_at: decision.decided_at.clone(),
+                    }),
                 });
             }
         } else {
             approvals.push(omne_app_server_protocol::ApprovalListItem {
-                request: req,
+                request,
                 decision: None,
             });
         }
@@ -278,45 +290,22 @@ async fn ensure_approval(
         .await?
         .ok_or_else(|| anyhow::anyhow!("thread not found: {}", thread_id))?;
 
-    let mut found_request: Option<(String, serde_json::Value)> = None;
-    let mut found_decision: Option<omne_protocol::ApprovalDecision> = None;
-
-    for event in events {
-        match event.kind {
-            omne_protocol::ThreadEventKind::ApprovalRequested {
-                approval_id: got,
-                action,
-                params,
-                ..
-            } if got == approval_id => {
-                found_request = Some((action, params));
-            }
-            omne_protocol::ThreadEventKind::ApprovalDecided {
-                approval_id: got,
-                decision,
-                ..
-            } if got == approval_id => {
-                found_decision = Some(decision);
-            }
-            _ => {}
-        }
-    }
-
-    let Some((action, params)) = found_request else {
+    let index = ApprovalEventIndex::from_events(&events)?;
+    let Some(request) = index.requested.get(&approval_id) else {
         anyhow::bail!("approval not requested: {}", approval_id);
     };
-    if action != expected_action {
+    if request.action != expected_action {
         anyhow::bail!(
             "approval action mismatch: expected {}, got {}",
             expected_action,
-            action
+            request.action
         );
     }
-    if &params != expected_params {
+    if &request.params != expected_params {
         anyhow::bail!("approval params mismatch for {}", approval_id);
     }
 
-    match found_decision {
+    match index.decided.get(&approval_id).map(|d| d.decision) {
         Some(omne_protocol::ApprovalDecision::Approved) => Ok(()),
         Some(omne_protocol::ApprovalDecision::Denied) => {
             anyhow::bail!("approval denied: {}", approval_id)
@@ -340,6 +329,61 @@ fn approval_denied_error(remembered: bool) -> &'static str {
     }
 }
 
+async fn emit_tool_denied(
+    thread_rt: &Arc<ThreadRuntime>,
+    tool_id: omne_protocol::ToolId,
+    turn_id: Option<TurnId>,
+    action: &str,
+    params: Option<Value>,
+    error: String,
+    result: Value,
+) -> anyhow::Result<()> {
+    thread_rt
+        .append_event(omne_protocol::ThreadEventKind::ToolStarted {
+            tool_id,
+            turn_id,
+            tool: action.to_string(),
+            params,
+        })
+        .await?;
+    thread_rt
+        .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
+            tool_id,
+            status: omne_protocol::ToolStatus::Denied,
+            error: Some(error),
+            result: Some(result),
+        })
+        .await?;
+    Ok(())
+}
+
+fn denied_response_with_remembered<T, F>(
+    tool_id: omne_protocol::ToolId,
+    remembered: Option<bool>,
+    context: &'static str,
+    build: F,
+) -> anyhow::Result<Value>
+where
+    T: serde::Serialize,
+    F: FnOnce(omne_protocol::ToolId, Option<bool>, Option<String>) -> T,
+{
+    let response = build(tool_id, remembered, Some("approval_denied".to_string()));
+    serde_json::to_value(response).context(context)
+}
+
+fn needs_approval_response_json<T, F>(
+    approval_id: omne_protocol::ApprovalId,
+    context: &'static str,
+    build: F,
+) -> anyhow::Result<Value>
+where
+    T: serde::Serialize,
+    F: FnOnce(omne_protocol::ApprovalId) -> T,
+{
+    let response = build(approval_id);
+    serde_json::to_value(response).context(context)
+}
+
 async fn enforce_thread_allowed_tools(
     thread_rt: &Arc<ThreadRuntime>,
     tool_id: omne_protocol::ToolId,
@@ -358,26 +402,21 @@ async fn enforce_thread_allowed_tools(
     let allowed_json = serde_json::to_string(allowed_tools)
         .unwrap_or_else(|_| format!("{allowed_tools:?}"));
     let error = format!("tool {tool} denied by thread allowed_tools={allowed_json}");
+    let denied_result = serde_json::json!({
+        "tool": tool,
+        "allowed_tools": allowed_tools,
+    });
 
-    thread_rt
-        .append_event(omne_protocol::ThreadEventKind::ToolStarted {
-            tool_id,
-            turn_id,
-            tool: tool.to_string(),
-            params,
-        })
-        .await?;
-    thread_rt
-        .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-            tool_id,
-            status: omne_protocol::ToolStatus::Denied,
-            error: Some(error),
-            result: Some(serde_json::json!({
-                "tool": tool,
-                "allowed_tools": allowed_tools,
-            })),
-        })
-        .await?;
+    emit_tool_denied(
+        thread_rt,
+        tool_id,
+        turn_id,
+        tool,
+        params,
+        error,
+        denied_result,
+    )
+    .await?;
 
     Ok(Some(serde_json::json!({
         "tool_id": tool_id,

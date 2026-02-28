@@ -67,7 +67,7 @@ mod thread_manage_worktree_lifecycle_tests {
         if let Some(parent) = worktree_dir.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
-        omne_thread_git_snapshot_runtime::create_detached_worktree(
+        omne_git_runtime::create_detached_worktree(
             &source_repo.display().to_string(),
             &worktree_dir.display().to_string(),
             None,
@@ -120,7 +120,7 @@ mod thread_manage_worktree_lifecycle_tests {
         if let Some(parent) = worktree_dir.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
-        omne_thread_git_snapshot_runtime::create_detached_worktree(
+        omne_git_runtime::create_detached_worktree(
             &source_repo.display().to_string(),
             &worktree_dir.display().to_string(),
             None,

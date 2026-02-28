@@ -94,11 +94,13 @@ pub(super) fn parse_task_directives(
                     anyhow::bail!("duplicate depends_on directive: {task_id}");
                 }
                 saw_depends_on_directive = true;
+                let mut parsed_dependency_count = 0usize;
                 for dep in rest.split(',') {
                     let dep = dep.trim();
                     if dep.is_empty() {
                         continue;
                     }
+                    parsed_dependency_count += 1;
                     ensure_valid_var_name(dep, "depends_on")?;
                     if dep == task_id {
                         anyhow::bail!("task depends_on itself: {task_id}");
@@ -106,6 +108,11 @@ pub(super) fn parse_task_directives(
                     if seen_depends.insert(dep.to_string()) {
                         depends_on.push(dep.to_string());
                     }
+                }
+                if parsed_dependency_count == 0 {
+                    anyhow::bail!(
+                        "depends_on directive must include at least one task id: {task_id}"
+                    );
                 }
                 continue;
             }
@@ -214,7 +221,10 @@ pub(super) fn collect_dependency_blocked_task_ids(
     blocked
 }
 
-pub(super) fn is_runnable_task(task: &WorkflowTask, task_statuses: &BTreeMap<String, TurnStatus>) -> bool {
+pub(super) fn is_runnable_task(
+    task: &WorkflowTask,
+    task_statuses: &BTreeMap<String, TurnStatus>,
+) -> bool {
     task.depends_on
         .iter()
         .all(|dep| matches!(task_statuses.get(dep), Some(TurnStatus::Completed)))
@@ -311,7 +321,11 @@ pub(super) fn display_artifact_error(error: Option<&str>) -> String {
         .to_string()
 }
 
-pub(super) fn blocked_task_result(task: &WorkflowTask, dep_id: &str, dep_status: TurnStatus) -> WorkflowTaskResult {
+pub(super) fn blocked_task_result(
+    task: &WorkflowTask,
+    dep_id: &str,
+    dep_status: TurnStatus,
+) -> WorkflowTaskResult {
     WorkflowTaskResult {
         task_id: task.id.clone(),
         title: task.title.clone(),
@@ -412,7 +426,11 @@ pub(super) fn fan_out_deny_command(issue: &FanOutApprovalIssue) -> String {
     approval_decide_command(issue.thread_id, issue.approval_id, false)
 }
 
-pub(super) fn approval_decide_command(thread_id: ThreadId, approval_id: ApprovalId, approve: bool) -> String {
+pub(super) fn approval_decide_command(
+    thread_id: ThreadId,
+    approval_id: ApprovalId,
+    approve: bool,
+) -> String {
     let decision_flag = if approve { "--approve" } else { "--deny" };
     format!("omne approval decide {thread_id} {approval_id} {decision_flag}")
 }
@@ -434,12 +452,22 @@ pub(super) fn pending_approval_commands_for_result(
     let mut approve_cmd = normalize_optional_command(pending.approve_cmd.as_deref());
     let mut deny_cmd = normalize_optional_command(pending.deny_cmd.as_deref());
 
-    if (approve_cmd.is_none() || deny_cmd.is_none()) && let Some(thread_id) = result.thread_id {
+    if (approve_cmd.is_none() || deny_cmd.is_none())
+        && let Some(thread_id) = result.thread_id
+    {
         if approve_cmd.is_none() {
-            approve_cmd = Some(approval_decide_command(thread_id, pending.approval_id, true));
+            approve_cmd = Some(approval_decide_command(
+                thread_id,
+                pending.approval_id,
+                true,
+            ));
         }
         if deny_cmd.is_none() {
-            deny_cmd = Some(approval_decide_command(thread_id, pending.approval_id, false));
+            deny_cmd = Some(approval_decide_command(
+                thread_id,
+                pending.approval_id,
+                false,
+            ));
         }
     }
 
@@ -479,7 +507,9 @@ pub(super) fn render_fan_in_summary_structured_json(
                 dependency_blocker_status,
                 result_artifact_id: result.result_artifact_id.map(|value| value.to_string()),
                 result_artifact_error: result.result_artifact_error.clone(),
-                result_artifact_error_id: result.result_artifact_error_id.map(|value| value.to_string()),
+                result_artifact_error_id: result
+                    .result_artifact_error_id
+                    .map(|value| value.to_string()),
                 result_artifact_diagnostics: None,
                 pending_approval,
             }
@@ -498,7 +528,9 @@ pub(super) fn render_fan_in_summary_structured_json(
     serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{\"tasks\":[]}".to_string())
 }
 
-pub(super) fn normalize_task_read_commands(mut values: Vec<(String, String)>) -> Vec<(String, String)> {
+pub(super) fn normalize_task_read_commands(
+    mut values: Vec<(String, String)>,
+) -> Vec<(String, String)> {
     values.sort_unstable();
     values.dedup();
     values
@@ -507,18 +539,18 @@ pub(super) fn normalize_task_read_commands(mut values: Vec<(String, String)>) ->
 pub(super) fn collect_failed_task_reads(results: &[WorkflowTaskResult]) -> Vec<(String, String)> {
     normalize_task_read_commands(
         results
-        .iter()
-        .filter(|result| !matches!(result.status, TurnStatus::Completed))
-        .filter_map(
-            |result| match (result.thread_id, result.result_artifact_id) {
-                (Some(thread_id), Some(result_artifact_id)) => Some((
-                    result.task_id.clone(),
-                    fan_out_result_read_command(thread_id, result_artifact_id),
-                )),
-                _ => None,
-            },
-        )
-        .collect::<Vec<_>>(),
+            .iter()
+            .filter(|result| !matches!(result.status, TurnStatus::Completed))
+            .filter_map(
+                |result| match (result.thread_id, result.result_artifact_id) {
+                    (Some(thread_id), Some(result_artifact_id)) => Some((
+                        result.task_id.clone(),
+                        fan_out_result_read_command(thread_id, result_artifact_id),
+                    )),
+                    _ => None,
+                },
+            )
+            .collect::<Vec<_>>(),
     )
 }
 
@@ -528,22 +560,23 @@ pub(super) fn collect_failed_task_error_reads(
 ) -> Vec<(String, String)> {
     normalize_task_read_commands(
         results
-        .iter()
-        .filter_map(|result| {
-            result
-                .result_artifact_error_id
-                .map(|artifact_id| {
+            .iter()
+            .filter_map(|result| {
+                result.result_artifact_error_id.map(|artifact_id| {
                     (
                         result.task_id.clone(),
                         fan_out_result_read_command(parent_thread_id, artifact_id),
                     )
                 })
-        })
-        .collect::<Vec<_>>(),
+            })
+            .collect::<Vec<_>>(),
     )
 }
 
-pub(super) fn append_fan_out_linkage_issue_markdown(text: &mut String, linkage_issue: Option<&str>) {
+pub(super) fn append_fan_out_linkage_issue_markdown(
+    text: &mut String,
+    linkage_issue: Option<&str>,
+) {
     let Some(linkage_issue) = linkage_issue
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -559,7 +592,10 @@ pub(super) fn append_fan_out_linkage_issue_markdown(text: &mut String, linkage_i
     text.push_str("\n```\n\n");
 }
 
-pub(super) fn append_fan_out_scheduling_markdown(text: &mut String, scheduling: FanOutSchedulingParams) {
+pub(super) fn append_fan_out_scheduling_markdown(
+    text: &mut String,
+    scheduling: FanOutSchedulingParams,
+) {
     text.push_str("## Scheduling\n\n");
     text.push_str(&format!(
         "- env_max_concurrent_subagents: `{}`\n",
@@ -575,12 +611,19 @@ pub(super) fn append_fan_out_scheduling_markdown(text: &mut String, scheduling: 
     ));
 }
 
-pub(super) fn fan_out_approval_error(issue: &FanOutApprovalIssue, artifact_id: omne_protocol::ArtifactId) -> String {
+pub(super) fn fan_out_approval_error(
+    issue: &FanOutApprovalIssue,
+    artifact_id: omne_protocol::ArtifactId,
+) -> String {
     let mut text = format!(
         "fan-out task needs approval: task_id={} thread_id={} turn_id={} approval_id={} action={}",
         issue.task_id, issue.thread_id, issue.turn_id, issue.approval_id, issue.action
     );
-    if let Some(summary) = issue.summary.as_deref().filter(|value| !value.trim().is_empty()) {
+    if let Some(summary) = issue
+        .summary
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
         text.push_str(&format!(" summary={summary}"));
     }
     let approve_cmd = fan_out_approval_command(issue);
@@ -610,7 +653,12 @@ pub(super) fn find_pending_approval_task_from_fan_in_summary<'a>(
                 .iter()
                 .find(|task| task.task_id == issue.task_id && task.pending_approval.is_some())
         })
-        .or_else(|| payload.tasks.iter().find(|task| task.pending_approval.is_some()))
+        .or_else(|| {
+            payload
+                .tasks
+                .iter()
+                .find(|task| task.pending_approval.is_some())
+        })
 }
 
 pub(super) fn fan_out_approval_error_from_structured_task(
@@ -707,9 +755,8 @@ pub(super) async fn fan_out_approval_error_with_artifact_fallback(
         .ok()
         .and_then(|read| read.fan_in_summary)
         .and_then(|payload| {
-            find_pending_approval_task_from_fan_in_summary(&payload, issue).map(|task| {
-                fan_out_approval_error_from_structured_task(issue, artifact_id, task)
-            })
+            find_pending_approval_task_from_fan_in_summary(&payload, issue)
+                .map(|task| fan_out_approval_error_from_structured_task(issue, artifact_id, task))
         });
     maybe_structured.unwrap_or_else(|| fan_out_approval_error(issue, artifact_id))
 }
@@ -818,7 +865,8 @@ pub(super) async fn try_write_fan_out_result_artifact(
     assistant_text: Option<&str>,
 ) -> Result<ArtifactId, String> {
     let summary = format!("fan-out result: {task_id} ({status:?})");
-    let text = render_fan_out_result_markdown(task_id, title, turn_id, status, reason, assistant_text);
+    let text =
+        render_fan_out_result_markdown(task_id, title, turn_id, status, reason, assistant_text);
     let parsed = app
         .artifact_write(omne_app_server_protocol::ArtifactWriteParams {
             thread_id,
@@ -881,12 +929,8 @@ pub(super) async fn write_fan_out_result_error_artifact(
         reason,
         write_error,
     );
-    let params = fan_out_result_error_artifact_write_params(
-        parent_thread_id,
-        parent_turn_id,
-        summary,
-        text,
-    );
+    let params =
+        fan_out_result_error_artifact_write_params(parent_thread_id, parent_turn_id, summary, text);
     match app.artifact_write(params).await {
         Ok(response) => Some(response.artifact_id),
         Err(err) => {
@@ -939,7 +983,9 @@ pub(super) fn fan_out_linkage_issue_artifact_text(
         text.push_str("\n<...truncated...>\n");
     }
     text.push_str("\n```\n\n");
-    text.push_str(&format!("- fan_in_summary_artifact_id: `{fan_in_artifact_id}`\n"));
+    text.push_str(&format!(
+        "- fan_in_summary_artifact_id: `{fan_in_artifact_id}`\n"
+    ));
     text.push_str("\n## Structured Data\n\n");
     text.push_str("```json\n");
     text.push_str(&structured_json);
@@ -988,9 +1034,11 @@ pub(super) fn fan_out_linkage_issue_clear_artifact_write_params(
     parent_turn_id: Option<TurnId>,
     fan_in_artifact_id: omne_protocol::ArtifactId,
 ) -> omne_app_server_protocol::ArtifactWriteParams {
-    let structured =
-        omne_workflow_spec::FanOutLinkageIssueClearStructuredData::new(fan_in_artifact_id.to_string());
-    let structured_json = serde_json::to_string_pretty(&structured).unwrap_or_else(|_| "{}".to_string());
+    let structured = omne_workflow_spec::FanOutLinkageIssueClearStructuredData::new(
+        fan_in_artifact_id.to_string(),
+    );
+    let structured_json =
+        serde_json::to_string_pretty(&structured).unwrap_or_else(|_| "{}".to_string());
     let text = format!(
         "# Fan-out Linkage Issue Cleared\n\n- fan_in_summary_artifact_id: `{fan_in_artifact_id}`\n\n## Structured Data\n\n```json\n{structured_json}\n```\n"
     );
@@ -1027,14 +1075,12 @@ pub(super) async fn try_write_fan_out_linkage_issue_artifact(
     fan_in_artifact_id: omne_protocol::ArtifactId,
     linkage_issue: &str,
 ) -> Option<ArtifactId> {
-    let Some(params) =
-        fan_out_linkage_issue_artifact_write_params(
-            parent_thread_id,
-            parent_turn_id,
-            fan_in_artifact_id,
-            linkage_issue,
-        )
-    else {
+    let Some(params) = fan_out_linkage_issue_artifact_write_params(
+        parent_thread_id,
+        parent_turn_id,
+        fan_in_artifact_id,
+        linkage_issue,
+    ) else {
         return None;
     };
     match app.artifact_write(params).await {
@@ -1052,12 +1098,11 @@ pub(super) async fn try_clear_fan_out_linkage_issue_marker(
     parent_turn_id: Option<TurnId>,
     fan_in_artifact_id: omne_protocol::ArtifactId,
 ) -> Option<ArtifactId> {
-    let params =
-        fan_out_linkage_issue_clear_artifact_write_params(
-            parent_thread_id,
-            parent_turn_id,
-            fan_in_artifact_id,
-        );
+    let params = fan_out_linkage_issue_clear_artifact_write_params(
+        parent_thread_id,
+        parent_turn_id,
+        fan_in_artifact_id,
+    );
     match app.artifact_write(params).await {
         Ok(response) => Some(response.artifact_id),
         Err(err) => {
@@ -1148,9 +1193,7 @@ pub(super) async fn write_fan_out_approval_blocked_artifact(
 }
 
 pub(super) fn parse_task_header(line: &str) -> Option<(String, String)> {
-    let trimmed = line
-        .trim_end_matches(&['\r', '\n'][..])
-        .trim_start();
+    let trimmed = line.trim_end_matches(&['\r', '\n'][..]).trim_start();
     let rest = trimmed.strip_prefix("## Task:")?.trim();
     if rest.is_empty() {
         return None;
@@ -1172,7 +1215,10 @@ pub(super) fn parse_task_header(line: &str) -> Option<(String, String)> {
     Some((id.to_string(), title.to_string()))
 }
 
-pub(super) async fn resolve_thread_cwd(app: &mut App, thread_id: ThreadId) -> anyhow::Result<String> {
+pub(super) async fn resolve_thread_cwd(
+    app: &mut App,
+    thread_id: ThreadId,
+) -> anyhow::Result<String> {
     let state = app.thread_state(thread_id).await?;
     let cwd = state
         .cwd
@@ -1328,7 +1374,10 @@ pub(super) fn render_fan_in_summary_markdown(
             text.push_str(&format!("- result_artifact_error: {}\n", error));
         }
         if let Some(error_artifact_id) = result.result_artifact_error_id {
-            text.push_str(&format!("- result_artifact_error_id: {}\n", error_artifact_id));
+            text.push_str(&format!(
+                "- result_artifact_error_id: {}\n",
+                error_artifact_id
+            ));
             text.push_str(&format!(
                 "- result_error_read_cmd: `{}`\n",
                 fan_out_result_read_command(thread_id, error_artifact_id)
@@ -1355,7 +1404,11 @@ pub(super) fn render_fan_in_summary_markdown(
             text.push_str(&format!("- reason: {}\n", reason));
         }
         if let Some(pending) = result.pending_approval.as_ref() {
-            if let Some(summary) = pending.summary.as_deref().filter(|value| !value.trim().is_empty()) {
+            if let Some(summary) = pending
+                .summary
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+            {
                 text.push_str(&format!(
                     "- pending_approval: action={} approval_id={} summary={}\n",
                     pending.action, pending.approval_id, summary
@@ -1374,7 +1427,11 @@ pub(super) fn render_fan_in_summary_markdown(
                 text.push_str(&format!("- deny_cmd: `{deny_cmd}`\n"));
             }
         }
-        if let Some(msg) = result.assistant_text.as_deref().filter(|v| !v.trim().is_empty()) {
+        if let Some(msg) = result
+            .assistant_text
+            .as_deref()
+            .filter(|v| !v.trim().is_empty())
+        {
             text.push('\n');
             text.push_str("```text\n");
             text.push_str(&truncate_chars(msg, 8_000));
@@ -1387,9 +1444,7 @@ pub(super) fn render_fan_in_summary_markdown(
 
     text.push_str("## Structured Data\n\n```json\n");
     text.push_str(&render_fan_in_summary_structured_json(
-        thread_id,
-        results,
-        scheduling,
+        thread_id, results, scheduling,
     ));
     text.push_str("\n```\n\n");
 
