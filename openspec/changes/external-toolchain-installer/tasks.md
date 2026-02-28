@@ -8,7 +8,7 @@
 
 ## 1. 文档与仓库准备
 
-- [ ] 在 `p/` 下创建独立仓库 `omne-toolchain-installer`。
+- [ ] 在 `p/` 下创建独立仓库 `toolchain-installer`。
 - [ ] 新仓库补齐 README（做什么/为什么做/怎么做/验收标准）。
 - [ ] 新仓库补齐接口契约文档（CLI 入参、JSON 输出、退出码）。
 - [ ] 新仓库文档明确“调用方无关（caller-agnostic）”边界与可复用范围。
@@ -49,10 +49,10 @@
 - [ ] 外部安装器接入扫描：  
   `rg -n "toolchain-installer|OMNE_TOOLCHAIN_INSTALLER" crates/toolchain-runtime crates/agent-cli`
 - [ ] 调用方无关约束扫描（应无输出）：  
-  `rg -n "only for omne-agent|omne-agent only|专供 omne-agent|专属 omne-agent" /root/autodl-tmp/zjj/p/omne-toolchain-installer`
+  `rg -n "only for omne-agent|omne-agent only|专供 omne-agent|专属 omne-agent" /root/autodl-tmp/zjj/p/toolchain-installer`
 - [ ] app-server 边界扫描（应无输出）：  
   `rg -n "install_(git|gh)|toolchain bootstrap|fetch_latest_github_release|download_with_candidates" crates/app-server`
 - [ ] 反滥用关键字扫描：  
-  `rg -n "allowlist|whitelist|no open proxy|no \\?url=|rate limit|redirect" /root/autodl-tmp/zjj/p/omne-toolchain-installer`
+  `rg -n "allowlist|whitelist|no open proxy|no \\?url=|rate limit|redirect" /root/autodl-tmp/zjj/p/toolchain-installer`
 - [ ] CLI 契约字段扫描：  
-  `rg -n "\"schema_version\"|\"target_triple\"|\"items\"|\"status\"" /root/autodl-tmp/zjj/p/omne-toolchain-installer`
+  `rg -n "\"schema_version\"|\"target_triple\"|\"items\"|\"status\"" /root/autodl-tmp/zjj/p/toolchain-installer`

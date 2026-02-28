@@ -12,6 +12,7 @@
 - OpenSpec：新增 `openspec/changes/external-toolchain-installer/tasks.md`，明确分阶段落地顺序、测试项与边界自检命令。
 - OpenSpec：新增 `openspec/changes/external-toolchain-installer/specs/toolchain/spec.md`，固化外部安装器调用契约与网关“非开放代理”要求。
 - OpenSpec：修正 `external-toolchain-installer` 口径为“通用可复用安装器”，`omne-agent` 仅作为调用方之一，避免专用耦合。
+- OpenSpec：将计划中的独立仓库命名统一为 `toolchain-installer`（去掉 `omne` 前缀），避免产品级耦合命名。
 - `omne init` 默认写入最小 workflow command 模板（`.omne_data/spec/commands/plan.md`、`.omne_data/spec/commands/fanout-review.md`），用于快速启动 `omne command {list,show,run}` / `--fan-out` 路径；可通过 `--no-command-templates` 跳过，`--force` 可覆盖现有模板。
 - `omne init` 默认新增 spec 配置空模板：`.omne_data/spec/workspace.yaml`（workspace lifecycle hooks）、`.omne_data/spec/hooks.yaml`（session/tool hooks）与 `.omne_data/spec/modes.yaml`（mode catalog）；可通过 `--no-workspace-template` / `--no-hooks-template` / `--no-modes-template` 单独跳过，或 `--no-spec-templates`（等价 `--minimal`）一键全部跳过；`--force` 可覆盖现有模板。
 - `omne preset list`：新增 preset 发现/校验命令（支持文本或 `--json` 输出），扫描 `<omne_root>/spec/preset.{yaml,yml}` 与 `<omne_root>/spec/presets/*.{yaml,yml}`；解析失败条目会以错误摘要返回（不阻断其它 preset 展示）。
