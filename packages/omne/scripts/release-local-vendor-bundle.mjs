@@ -15,6 +15,7 @@ function usage(message = "") {
       "  node ./scripts/release-local-vendor-bundle.mjs " +
       "[--version <tag>] [--workspace-root <repo-root>] [--profile <debug|release>] " +
       "[--target <triple>] [--target-dir <dir>] [--path-dir <dir>] " +
+      "[--git-cli <bin>] [--gh-cli <bin>] " +
       "[--vendor-out <dir>] [--dist-out <dir>] [--release-out <dir>] [--clean]\n"
   );
 }
@@ -27,6 +28,8 @@ function parseArgs(argv) {
     target: "",
     targetDir: "",
     pathDir: "",
+    gitCli: "",
+    ghCli: "",
     vendorOut: path.join(packageRoot, "vendor"),
     distOut: path.join(packageRoot, "dist"),
     releaseOut: path.join(packageRoot, "dist", "releases"),
@@ -46,6 +49,8 @@ function parseArgs(argv) {
     else if (key === "--target") args.target = val;
     else if (key === "--target-dir") args.targetDir = val;
     else if (key === "--path-dir") args.pathDir = val;
+    else if (key === "--git-cli") args.gitCli = val;
+    else if (key === "--gh-cli") args.ghCli = val;
     else if (key === "--vendor-out") args.vendorOut = val;
     else if (key === "--dist-out") args.distOut = val;
     else if (key === "--release-out") args.releaseOut = val;
@@ -79,6 +84,12 @@ function buildReleaseHostArgs(args) {
   }
   if (args.pathDir && String(args.pathDir).trim()) {
     cmd.push("--path-dir", path.resolve(args.pathDir));
+  }
+  if (args.gitCli && String(args.gitCli).trim()) {
+    cmd.push("--git-cli", path.resolve(args.gitCli));
+  }
+  if (args.ghCli && String(args.ghCli).trim()) {
+    cmd.push("--gh-cli", path.resolve(args.ghCli));
   }
   if (args.clean) cmd.push("--clean");
   return cmd;

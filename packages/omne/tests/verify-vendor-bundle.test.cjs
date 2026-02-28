@@ -20,7 +20,7 @@ function writeFile(filePath, content = "x") {
   fs.writeFileSync(filePath, content);
 }
 
-function makeBundleFixture() {
+function makeBundleFixture(options = {}) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "omne-verify-"));
   const srcRoot = path.join(tmp, "src");
   const vendorOut = path.join(tmp, "vendor-out");
@@ -31,8 +31,13 @@ function makeBundleFixture() {
   const appServerSrc = path.join(srcRoot, "omne-app-server");
   writeFile(omneSrc, "omne-bin");
   writeFile(appServerSrc, "app-server-bin");
+  const pathDir = path.join(srcRoot, "path");
+  if (options.includeCliFeatures) {
+    writeFile(path.join(pathDir, "git"), "git-bin");
+    writeFile(path.join(pathDir, "gh"), "gh-bin");
+  }
 
-  const build = runScript(buildScript, [
+  const buildArgs = [
     "--target",
     target,
     "--omne",
@@ -44,7 +49,11 @@ function makeBundleFixture() {
     "--dist-out",
     distOut,
     "--clean",
-  ]);
+  ];
+  if (options.includeCliFeatures) {
+    buildArgs.push("--path-dir", pathDir);
+  }
+  const build = runScript(buildScript, buildArgs);
   assert.equal(build.status, 0, `stderr: ${build.stderr}`);
   return {
     bundleRoot: path.join(distOut, `vendor-bundle-${target}`),
@@ -72,4 +81,15 @@ test("verify-vendor-bundle fails on tampered file", () => {
   const res = runScript(verifyScript, ["--bundle", fixture.bundleRoot]);
   assert.notEqual(res.status, 0);
   assert.match(res.stderr, /mismatch/);
+});
+
+test("verify-vendor-bundle fails on declared cli feature without binary", () => {
+  const fixture = makeBundleFixture();
+  const manifestPath = path.join(fixture.bundleRoot, "manifest.json");
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  manifest.features = ["git-cli"];
+  fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  const res = runScript(verifyScript, ["--bundle", fixture.bundleRoot]);
+  assert.notEqual(res.status, 0);
+  assert.match(res.stderr, /feature mismatch: git-cli declared but missing/);
 });

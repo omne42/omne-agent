@@ -11,7 +11,7 @@
 - 目标：在本机用 Rust 跑通“多 task 并发 + 临时目录隔离 + git 分支流水线 + 合并 + hook”的最小闭环。
 - 当前已实现：repo 注入（bare/mirror）、task 并发、任务 workspace、Rust fmt/check gate、push 分支、顺序 merge、session 存储与查询、Smart HTTP（loopback-only）。
 - 当前未实现：真实 AI Coder/Reviewer/Merger、冲突自动修复、GitHub PR、分布式 worker、可配置的多语言 checks。
-- 前置依赖：`git`、Rust toolchain（workspace 需要 `rustc >= 1.85`）、可选 `curl`（用于调用 HTTP API 示例）。
+- 前置依赖：Rust toolchain（workspace 需要 `rustc >= 1.85`）、可选 `curl`（用于调用 HTTP API 示例）；`git` 可由 `packages/omne` 的 `git-cli` feature 在安装期补齐（若 bundle 已内置）。
 
 ---
 

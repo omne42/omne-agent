@@ -114,6 +114,7 @@ test("buildSpawnEnv prepends vendor path only for vendored binary", () => {
   const target = "x86_64-unknown-linux-gnu";
   const vendorBin = path.join(tmp, "vendor", target, "omne", "omne");
   const vendorPath = path.join(tmp, "vendor", target, "path");
+  const managedPath = path.join(tmp, "managed-toolchain");
   fs.mkdirSync(path.dirname(vendorBin), { recursive: true });
   fs.mkdirSync(vendorPath, { recursive: true });
   fs.writeFileSync(vendorBin, "bin");
@@ -122,6 +123,7 @@ test("buildSpawnEnv prepends vendor path only for vendored binary", () => {
     baseEnv: { PATH: "/usr/bin" },
     pkgRoot: tmp,
     targetTriple: target,
+    managedToolchainDir: managedPath,
     existsSync: fs.existsSync,
   });
   assert.equal(env.PATH, `${vendorPath}${path.delimiter}/usr/bin`);
@@ -130,7 +132,25 @@ test("buildSpawnEnv prepends vendor path only for vendored binary", () => {
     baseEnv: { PATH: "/usr/bin" },
     pkgRoot: tmp,
     targetTriple: target,
+    managedToolchainDir: managedPath,
     existsSync: fs.existsSync,
   });
   assert.equal(noChange.PATH, "/usr/bin");
+});
+
+test("buildSpawnEnv appends managed toolchain dir when present", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "omne-launcher-"));
+  const target = "x86_64-unknown-linux-gnu";
+  const managedPath = path.join(tmp, "managed", "bin");
+  fs.mkdirSync(managedPath, { recursive: true });
+  fs.writeFileSync(path.join(managedPath, "git"), "git-bin");
+
+  const env = buildSpawnEnv("/abs/non-vendor/omne", {
+    baseEnv: { PATH: "/usr/bin" },
+    pkgRoot: tmp,
+    targetTriple: target,
+    managedToolchainDir: managedPath,
+    existsSync: fs.existsSync,
+  });
+  assert.equal(env.PATH, `/usr/bin${path.delimiter}${managedPath}`);
 });

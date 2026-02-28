@@ -34,6 +34,8 @@ test("build-vendor-bundle builds bundle directory and manifest", () => {
   writeFile(omneSrc, "omne-bin");
   writeFile(appServerSrc, "app-server-bin");
   writeFile(path.join(pathDir, "rg"), "rg-bin");
+  writeFile(path.join(pathDir, "git"), "git-bin");
+  writeFile(path.join(pathDir, "gh"), "gh-bin");
 
   const stale = path.join(distOut, `vendor-bundle-${target}`, "stale.txt");
   writeFile(stale, "stale");
@@ -65,6 +67,7 @@ test("build-vendor-bundle builds bundle directory and manifest", () => {
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
   assert.equal(manifest.schema_version, 1);
   assert.equal(manifest.target, target);
+  assert.deepEqual(manifest.features, ["gh-cli", "git-cli"]);
   assert.ok(Array.isArray(manifest.files));
 
   const listed = new Map(manifest.files.map((item) => [item.path, item]));

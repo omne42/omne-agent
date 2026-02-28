@@ -17,10 +17,23 @@ Vendored layout (optional):
 - `vendor/<target-triple>/omne/omne[.exe]`
 - `vendor/<target-triple>/omne/omne-app-server[.exe]`
 - `vendor/<target-triple>/path/` (optional extra PATH tools, auto-prepended when vendored binary is used)
+- `vendor/<target-triple>/features.json` (bundled toolchain feature flags, e.g. `git-cli` / `gh-cli`)
+
+Install-time toolchain bootstrap:
+
+- `npm install` triggers `postinstall` script (`scripts/postinstall-toolchain.mjs`).
+- It detects `git`/`gh` on PATH.
+- If missing and bundle feature exists (`git-cli` / `gh-cli`), bundled CLI is installed to:
+  - `~/.omne/toolchain/<target-triple>/bin` (override: `OMNE_MANAGED_TOOLCHAIN_DIR`)
+- Launcher will append this managed directory to child-process PATH.
 
 Assemble vendor tree:
 
 - `node ./packages/omne/scripts/assemble-vendor.mjs --target x86_64-unknown-linux-gnu --omne ./target/debug/omne --app-server ./target/debug/omne-app-server --clean`
+- Optional bundled CLI injection:
+  - `--git-cli <path-to-git-binary>`
+  - `--gh-cli <path-to-gh-binary>`
+  - Or place `git`/`gh` directly under `--path-dir` and features will be auto-detected.
 
 Build distributable vendor bundle (with `manifest.json`):
 
@@ -33,6 +46,9 @@ Verify bundle integrity from `manifest.json`:
 Create versioned release output (bundle + `RELEASE.json` + `SHA256SUMS`):
 
 - `node ./packages/omne/scripts/release-vendor-bundle.mjs --target x86_64-unknown-linux-gnu --version v0.3.0-test --omne ./target/debug/omne --app-server ./target/debug/omne-app-server --clean`
+- Optional bundled CLI injection is supported through the same flags:
+  - `--git-cli <path-to-git-binary>`
+  - `--gh-cli <path-to-gh-binary>`
 
 Host-target release driver (auto-resolve binaries from local `target/`):
 

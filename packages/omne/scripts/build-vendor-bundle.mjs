@@ -15,7 +15,8 @@ function usage(message = "") {
     "Usage:\n" +
       "  node ./scripts/build-vendor-bundle.mjs " +
       "--target <triple> --omne <bin> --app-server <bin> " +
-      "[--path-dir <dir>] [--vendor-out <dir>] [--dist-out <dir>] [--clean]\n"
+      "[--path-dir <dir>] [--git-cli <bin>] [--gh-cli <bin>] " +
+      "[--vendor-out <dir>] [--dist-out <dir>] [--clean]\n"
   );
 }
 
@@ -25,6 +26,8 @@ function parseArgs(argv) {
     omne: "",
     appServer: "",
     pathDir: "",
+    gitCli: "",
+    ghCli: "",
     vendorOut: path.join(packageRoot, "vendor"),
     distOut: path.join(packageRoot, "dist"),
     clean: false,
@@ -42,6 +45,8 @@ function parseArgs(argv) {
     else if (key === "--omne") args.omne = val;
     else if (key === "--app-server") args.appServer = val;
     else if (key === "--path-dir") args.pathDir = val;
+    else if (key === "--git-cli") args.gitCli = val;
+    else if (key === "--gh-cli") args.ghCli = val;
     else if (key === "--vendor-out") args.vendorOut = val;
     else if (key === "--dist-out") args.distOut = val;
     else throw new Error(`unknown argument: ${key}`);
@@ -81,7 +86,22 @@ async function sha256File(filePath) {
   return crypto.createHash("sha256").update(buf).digest("hex");
 }
 
-async function buildManifest(bundleRoot, target) {
+async function readFeatures(vendorTargetRoot) {
+  const featuresPath = path.join(vendorTargetRoot, "features.json");
+  try {
+    const text = await fs.readFile(featuresPath, "utf8");
+    const parsed = JSON.parse(text);
+    if (!parsed || !Array.isArray(parsed.features)) return [];
+    return parsed.features
+      .map((item) => String(item || "").trim())
+      .filter(Boolean)
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+async function buildManifest(bundleRoot, target, features) {
   const files = await walkFiles(bundleRoot);
   const entries = [];
   for (const abs of files) {
@@ -96,6 +116,7 @@ async function buildManifest(bundleRoot, target) {
   return {
     schema_version: 1,
     target,
+    features,
     generated_at: new Date().toISOString(),
     files: entries,
   };
@@ -115,6 +136,12 @@ function runAssembleVendor(args) {
   ];
   if (args.pathDir && String(args.pathDir).trim()) {
     cmdArgs.push("--path-dir", args.pathDir);
+  }
+  if (args.gitCli && String(args.gitCli).trim()) {
+    cmdArgs.push("--git-cli", args.gitCli);
+  }
+  if (args.ghCli && String(args.ghCli).trim()) {
+    cmdArgs.push("--gh-cli", args.ghCli);
   }
   if (args.clean) cmdArgs.push("--clean");
 
@@ -154,7 +181,8 @@ async function main() {
   await fs.mkdir(path.dirname(vendorDst), { recursive: true });
   await fs.cp(vendorTargetRoot, vendorDst, { recursive: true });
 
-  const manifest = await buildManifest(bundleRoot, target);
+  const features = await readFeatures(vendorTargetRoot);
+  const manifest = await buildManifest(bundleRoot, target, features);
   const manifestPath = path.join(bundleRoot, "manifest.json");
   await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
   process.stdout.write(`built vendor bundle: ${bundleRoot}\n`);

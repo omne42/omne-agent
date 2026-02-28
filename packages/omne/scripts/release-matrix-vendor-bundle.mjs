@@ -25,6 +25,7 @@ function usage(message = "") {
       "  node ./scripts/release-matrix-vendor-bundle.mjs " +
       "[--version <tag>] [--targets <t1,t2,...>] [--workspace-root <repo-root>] " +
       "[--target-dir <dir>] [--profile <debug|release>] [--path-dir <dir>] " +
+      "[--git-cli <bin>] [--gh-cli <bin>] " +
       "[--vendor-out <dir>] [--dist-out <dir>] [--release-out <dir>] [--clean]\n"
   );
 }
@@ -46,6 +47,8 @@ function parseArgs(argv) {
     targetDir: "",
     profile: "debug",
     pathDir: "",
+    gitCli: "",
+    ghCli: "",
     vendorOut: path.join(packageRoot, "vendor"),
     distOut: path.join(packageRoot, "dist"),
     releaseOut: path.join(packageRoot, "dist", "releases"),
@@ -65,6 +68,8 @@ function parseArgs(argv) {
     else if (key === "--target-dir") args.targetDir = val;
     else if (key === "--profile") args.profile = val;
     else if (key === "--path-dir") args.pathDir = val;
+    else if (key === "--git-cli") args.gitCli = val;
+    else if (key === "--gh-cli") args.ghCli = val;
     else if (key === "--vendor-out") args.vendorOut = val;
     else if (key === "--dist-out") args.distOut = val;
     else if (key === "--release-out") args.releaseOut = val;
@@ -102,6 +107,12 @@ function buildTargetArgs(baseArgs, target, clean) {
   }
   if (baseArgs.pathDir && String(baseArgs.pathDir).trim()) {
     args.push("--path-dir", path.resolve(baseArgs.pathDir));
+  }
+  if (baseArgs.gitCli && String(baseArgs.gitCli).trim()) {
+    args.push("--git-cli", path.resolve(baseArgs.gitCli));
+  }
+  if (baseArgs.ghCli && String(baseArgs.ghCli).trim()) {
+    args.push("--gh-cli", path.resolve(baseArgs.ghCli));
   }
   if (clean) args.push("--clean");
   return args;

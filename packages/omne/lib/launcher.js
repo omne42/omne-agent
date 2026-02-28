@@ -1,6 +1,7 @@
 "use strict";
 
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 
 function detectTargetTriple(options = {}) {
@@ -73,10 +74,61 @@ function resolvePathKey(env) {
   return "PATH";
 }
 
+function addPathEntry(env, entry, mode = "prepend") {
+  const normalizedEntry = path.resolve(String(entry));
+  const pathKey = resolvePathKey(env);
+  const currentPath = String(env[pathKey] || "");
+  const entries = currentPath
+    ? currentPath.split(path.delimiter).filter(Boolean)
+    : [];
+  const alreadyIncluded = entries.some(
+    (item) => path.resolve(item) === normalizedEntry
+  );
+  if (alreadyIncluded) return env;
+
+  if (!currentPath) {
+    env[pathKey] = normalizedEntry;
+    return env;
+  }
+  env[pathKey] =
+    mode === "append"
+      ? `${currentPath}${path.delimiter}${normalizedEntry}`
+      : `${normalizedEntry}${path.delimiter}${currentPath}`;
+  return env;
+}
+
+function resolveManagedToolchainDir(options = {}) {
+  const env = options.env || process.env;
+  const directOverride =
+    options.managedToolchainDir !== undefined
+      ? options.managedToolchainDir
+      : env.OMNE_MANAGED_TOOLCHAIN_DIR;
+  if (directOverride && String(directOverride).trim() !== "") {
+    return path.resolve(String(directOverride).trim());
+  }
+
+  const targetTriple = options.targetTriple || detectTargetTriple(options);
+  if (!targetTriple) return null;
+  const homeDir = options.homeDir || os.homedir();
+  if (!homeDir || String(homeDir).trim() === "") return null;
+  return path.join(homeDir, ".omne", "toolchain", targetTriple, "bin");
+}
+
 function buildSpawnEnv(binPath, options = {}) {
   const env = Object.assign({}, options.baseEnv || process.env);
   const pkgRoot = options.pkgRoot || path.resolve(__dirname, "..");
   const targetTriple = options.targetTriple || detectTargetTriple(options);
+  const existsSync = options.existsSync || fs.existsSync;
+
+  const managedToolchainDir = resolveManagedToolchainDir({
+    env: options.env || process.env,
+    managedToolchainDir: options.managedToolchainDir,
+    homeDir: options.homeDir,
+    targetTriple,
+  });
+  if (managedToolchainDir && existsSync(managedToolchainDir)) {
+    addPathEntry(env, managedToolchainDir, "append");
+  }
   if (!binPath || !targetTriple) return env;
 
   const vendorBinDir = path.resolve(pkgRoot, "vendor", targetTriple, "omne");
@@ -87,29 +139,19 @@ function buildSpawnEnv(binPath, options = {}) {
   if (!underVendorBinDir) return env;
 
   const vendorPathDir = path.resolve(pkgRoot, "vendor", targetTriple, "path");
-  const existsSync = options.existsSync || fs.existsSync;
   if (!existsSync(vendorPathDir)) return env;
-
-  const pathKey = resolvePathKey(env);
-  const currentPath = String(env[pathKey] || "");
-  const entries = currentPath
-    ? currentPath.split(path.delimiter).filter(Boolean)
-    : [];
-  const alreadyIncluded = entries.some(
-    (entry) => path.resolve(entry) === vendorPathDir
-  );
-  if (alreadyIncluded) return env;
-  env[pathKey] = currentPath
-    ? `${vendorPathDir}${path.delimiter}${currentPath}`
-    : vendorPathDir;
+  addPathEntry(env, vendorPathDir, "prepend");
   return env;
 }
 
 module.exports = {
+  addPathEntry,
   buildSpawnEnv,
   detectTargetTriple,
   resolveBinary,
+  resolveManagedToolchainDir,
   resolveInvocation,
   resolveVendoredBinary,
+  resolvePathKey,
   targetBinaryExt,
 };

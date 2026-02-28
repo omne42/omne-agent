@@ -4,8 +4,9 @@
   "version": "0.0.0",
   "description": "OmneAgent Node launcher (thin wrapper around Rust binaries).",
   "scripts": {
-    "check": "node --check ./bin/omne.js && node --check ./lib/launcher.js && node --check ./scripts/assemble-vendor.mjs && node --check ./scripts/build-vendor-bundle.mjs && node --check ./scripts/verify-vendor-bundle.mjs && node --check ./scripts/update-release-index.mjs && node --check ./scripts/release-vendor-bundle.mjs && node --check ./scripts/release-host-vendor-bundle.mjs && node --check ./scripts/release-local-vendor-bundle.mjs && node --check ./scripts/release-matrix-vendor-bundle.mjs && node --check ./scripts/validate-tag-release-artifacts.mjs && node --check ./scripts/package-tag-release-assets.mjs && node --check ./scripts/verify-tag-release-tarballs.mjs",
+    "check": "node --check ./bin/omne.js && node --check ./lib/launcher.js && node --check ./scripts/postinstall-toolchain.mjs && node --check ./scripts/assemble-vendor.mjs && node --check ./scripts/build-vendor-bundle.mjs && node --check ./scripts/verify-vendor-bundle.mjs && node --check ./scripts/update-release-index.mjs && node --check ./scripts/release-vendor-bundle.mjs && node --check ./scripts/release-host-vendor-bundle.mjs && node --check ./scripts/release-local-vendor-bundle.mjs && node --check ./scripts/release-matrix-vendor-bundle.mjs && node --check ./scripts/validate-tag-release-artifacts.mjs && node --check ./scripts/package-tag-release-assets.mjs && node --check ./scripts/verify-tag-release-tarballs.mjs",
     "test": "node --test ./tests/*.test.cjs",
+    "postinstall": "node ./scripts/postinstall-toolchain.mjs",
     "vendor:assemble": "node ./scripts/assemble-vendor.mjs",
     "vendor:bundle": "node ./scripts/build-vendor-bundle.mjs",
     "vendor:verify": "node ./scripts/verify-vendor-bundle.mjs",

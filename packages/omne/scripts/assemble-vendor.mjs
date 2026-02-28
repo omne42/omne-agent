@@ -11,7 +11,8 @@ function usage(message = "") {
   process.stderr.write(
     "Usage:\n" +
       "  node ./scripts/assemble-vendor.mjs " +
-      "--target <triple> --omne <bin> --app-server <bin> [--path-dir <dir>] [--out <vendor-root>] [--clean]\n"
+      "--target <triple> --omne <bin> --app-server <bin> " +
+      "[--path-dir <dir>] [--git-cli <bin>] [--gh-cli <bin>] [--out <vendor-root>] [--clean]\n"
   );
 }
 
@@ -21,6 +22,8 @@ function parseArgs(argv) {
     omne: "",
     appServer: "",
     pathDir: "",
+    gitCli: "",
+    ghCli: "",
     out: path.join(packageRoot, "vendor"),
     clean: false,
   };
@@ -38,6 +41,8 @@ function parseArgs(argv) {
     else if (key === "--omne") args.omne = val;
     else if (key === "--app-server") args.appServer = val;
     else if (key === "--path-dir") args.pathDir = val;
+    else if (key === "--git-cli") args.gitCli = val;
+    else if (key === "--gh-cli") args.ghCli = val;
     else if (key === "--out") args.out = val;
     else throw new Error(`unknown argument: ${key}`);
     i += 1;
@@ -58,6 +63,35 @@ async function copyExecutable(src, dst) {
   await fs.chmod(dst, 0o755).catch(() => {});
 }
 
+async function pathExists(targetPath) {
+  try {
+    await fs.access(targetPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function ensureBundledTool({
+  explicitSrc,
+  toolName,
+  ext,
+  pathDst,
+  featureName,
+  features,
+}) {
+  const toolPath = path.join(pathDst, `${toolName}${ext}`);
+  if (explicitSrc && explicitSrc.trim()) {
+    const src = path.resolve(explicitSrc.trim());
+    await copyExecutable(src, toolPath);
+    features.add(featureName);
+    return;
+  }
+  if (await pathExists(toolPath)) {
+    features.add(featureName);
+  }
+}
+
 async function main() {
   let args;
   try {
@@ -71,6 +105,7 @@ async function main() {
   const outRoot = path.resolve(args.out);
   const targetRoot = path.join(outRoot, target);
   const binaryRoot = path.join(targetRoot, "omne");
+  const pathDst = path.join(targetRoot, "path");
   const ext = binaryExtFromTarget(target);
 
   if (args.clean) {
@@ -85,10 +120,38 @@ async function main() {
 
   if (args.pathDir && args.pathDir.trim()) {
     const pathSrc = path.resolve(args.pathDir);
-    const pathDst = path.join(targetRoot, "path");
     await fs.rm(pathDst, { recursive: true, force: true });
     await fs.cp(pathSrc, pathDst, { recursive: true });
   }
+
+  const features = new Set();
+  await ensureBundledTool({
+    explicitSrc: args.gitCli,
+    toolName: "git",
+    ext,
+    pathDst,
+    featureName: "git-cli",
+    features,
+  });
+  await ensureBundledTool({
+    explicitSrc: args.ghCli,
+    toolName: "gh",
+    ext,
+    pathDst,
+    featureName: "gh-cli",
+    features,
+  });
+
+  const featuresMeta = {
+    schema_version: 1,
+    target,
+    features: Array.from(features).sort(),
+  };
+  await fs.writeFile(
+    path.join(targetRoot, "features.json"),
+    `${JSON.stringify(featuresMeta, null, 2)}\n`,
+    "utf8"
+  );
 
   process.stdout.write(`assembled vendor target: ${targetRoot}\n`);
 }

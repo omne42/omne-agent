@@ -33,6 +33,10 @@ function parseArgs(argv) {
   return args;
 }
 
+function targetBinaryExt(targetTriple) {
+  return String(targetTriple || "").includes("windows") ? ".exe" : "";
+}
+
 async function sha256File(filePath) {
   const buf = await fs.readFile(filePath);
   return crypto.createHash("sha256").update(buf).digest("hex");
@@ -48,6 +52,9 @@ async function verifyBundle(bundleRoot) {
   if (!Array.isArray(manifest.files)) {
     throw new Error("invalid manifest: files must be an array");
   }
+  const features = Array.isArray(manifest.features)
+    ? manifest.features.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
 
   for (const entry of manifest.files) {
     const relPath = String(entry?.path || "").trim();
@@ -73,6 +80,25 @@ async function verifyBundle(bundleRoot) {
       throw new Error(
         `sha256 mismatch for ${relPath}: expected=${expectedSha} actual=${actualSha}`
       );
+    }
+  }
+
+  const target = String(manifest.target || "").trim();
+  const ext = targetBinaryExt(target);
+  if (features.includes("git-cli")) {
+    const gitPath = path.join(bundleRoot, "vendor", target, "path", `git${ext}`);
+    try {
+      await fs.access(gitPath);
+    } catch {
+      throw new Error(`feature mismatch: git-cli declared but missing ${path.relative(bundleRoot, gitPath)}`);
+    }
+  }
+  if (features.includes("gh-cli")) {
+    const ghPath = path.join(bundleRoot, "vendor", target, "path", `gh${ext}`);
+    try {
+      await fs.access(ghPath);
+    } catch {
+      throw new Error(`feature mismatch: gh-cli declared but missing ${path.relative(bundleRoot, ghPath)}`);
     }
   }
 }
