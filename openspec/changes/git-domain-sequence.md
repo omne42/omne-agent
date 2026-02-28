@@ -28,6 +28,10 @@
 - 目标：E2E 收口与交接标准固化，确保可持续接力。
 - 文档：`openspec/changes/git-domain-e2e-handoff-hardening/proposal.md`
 
+7. `git-domain-gix-backend-foundation`
+- 目标：在 runtime 引入 `gix` 后端，明确 `fetch/pull` 支持边界并逐步去除系统 git 硬依赖。
+- 文档：`openspec/changes/git-domain-gix-backend-foundation/proposal.md`
+
 ## 交接要求
 
 - 每个变更必须包含：`做什么`、`为什么做`、`怎么做`、`验收标准`。
