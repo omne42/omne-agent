@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 const DEFAULT_GITHUB_API_BASE: &str = "https://api.github.com";
 const DEFAULT_HTTP_TIMEOUT_SECONDS: u64 = 15;
+const DEFAULT_EXTERNAL_INSTALLER_BIN: &str = "toolchain-installer";
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -115,8 +116,135 @@ struct GithubReleaseAsset {
     digest: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct ExternalBootstrapResult {
+    schema_version: u32,
+    target_triple: String,
+    managed_dir: String,
+    items: Vec<ExternalBootstrapItem>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ExternalBootstrapItem {
+    tool: String,
+    status: String,
+    source: Option<String>,
+    destination: Option<String>,
+    detail: Option<String>,
+}
+
 pub fn has_bootstrap_failure(items: &[ToolchainBootstrapItem]) -> bool {
     items.iter().any(|item| !item.status.is_success())
+}
+
+fn external_installer_bin_name() -> String {
+    std::env::var("OMNE_TOOLCHAIN_INSTALLER_BIN")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_EXTERNAL_INSTALLER_BIN.to_string())
+}
+
+fn external_installer_tools() -> Vec<String> {
+    let configured = std::env::var("OMNE_TOOLCHAIN_INSTALLER_TOOLS")
+        .ok()
+        .map(|value| {
+            value
+                .split(',')
+                .map(str::trim)
+                .filter(|part| !part.is_empty())
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if configured.is_empty() {
+        vec!["git".to_string(), "gh".to_string()]
+    } else {
+        configured
+    }
+}
+
+fn try_external_installer(
+    request: &ToolchainBootstrapRequest,
+    target_triple: &str,
+    managed_dir: &std::path::Path,
+) -> anyhow::Result<Option<ToolchainBootstrapResult>> {
+    let installer_bin = external_installer_bin_name();
+    let mut cmd = std::process::Command::new(&installer_bin);
+    cmd.arg("--json")
+        .arg("--target-triple")
+        .arg(target_triple)
+        .arg("--managed-dir")
+        .arg(managed_dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    for tool in external_installer_tools() {
+        cmd.arg("--tool").arg(tool);
+    }
+
+    let output = match cmd.output() {
+        Ok(output) => output,
+        Err(err) => {
+            if err.kind() == std::io::ErrorKind::NotFound {
+                return Ok(None);
+            }
+            return Err(err)
+                .with_context(|| format!("spawn external installer binary `{installer_bin}`"));
+        }
+    };
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        anyhow::bail!(
+            "external installer `{installer_bin}` failed: status={} stderr={} stdout={}",
+            output.status,
+            stderr.trim(),
+            stdout.trim()
+        );
+    }
+
+    let parsed: ExternalBootstrapResult = serde_json::from_slice(&output.stdout)
+        .with_context(|| format!("parse external installer `{installer_bin}` JSON stdout"))?;
+    Ok(Some(map_external_result(parsed, request)))
+}
+
+fn map_external_result(
+    external: ExternalBootstrapResult,
+    request: &ToolchainBootstrapRequest,
+) -> ToolchainBootstrapResult {
+    let items = external
+        .items
+        .into_iter()
+        .map(|item| ToolchainBootstrapItem {
+            tool: item.tool,
+            status: map_external_status(&item.status),
+            detail: item.detail,
+            source: item.source,
+            destination: item.destination,
+        })
+        .collect::<Vec<_>>();
+    let bundled_dir =
+        resolve_bundled_toolchain_dir(request.bundled_dir.as_deref(), &external.target_triple)
+            .map(|path| path.display().to_string());
+    ToolchainBootstrapResult {
+        schema_version: external.schema_version,
+        target_triple: external.target_triple,
+        managed_dir: external.managed_dir,
+        bundled_dir,
+        items,
+    }
+}
+
+fn map_external_status(status: &str) -> ToolchainBootstrapStatus {
+    match status {
+        "present" => ToolchainBootstrapStatus::Present,
+        "installed" => ToolchainBootstrapStatus::InstalledPublic,
+        "unsupported" => ToolchainBootstrapStatus::MissingWithoutFeature,
+        "failed" => ToolchainBootstrapStatus::InstallFailed,
+        _ => ToolchainBootstrapStatus::InstallFailed,
+    }
 }
 
 pub async fn bootstrap_toolchain(
@@ -128,6 +256,18 @@ pub async fn bootstrap_toolchain(
         .ok_or_else(|| {
             anyhow::anyhow!("cannot resolve managed toolchain directory (missing HOME/USERPROFILE)")
         })?;
+
+    if let Some(external_result) = try_external_installer(request, &target_triple, &managed_dir)
+        .with_context(|| {
+            format!(
+                "invoke external installer fallback (`{}`)",
+                external_installer_bin_name()
+            )
+        })?
+    {
+        return Ok(external_result);
+    }
+
     let bundled_dir = resolve_bundled_toolchain_dir(request.bundled_dir.as_deref(), &target_triple);
     let bundled_features = load_bundled_features(bundled_dir.as_deref());
     let public_cfg = PublicBootstrapConfig::from_env();

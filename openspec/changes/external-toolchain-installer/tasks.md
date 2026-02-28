@@ -16,7 +16,9 @@
 
 ## 2. 新仓库实现（安装器）
 
-- [ ] 实现 `toolchain bootstrap` 能力（至少覆盖 `git`、`gh`）。
+- [ ] 实现通用安装基建：`release`、`system_package`、`pip`。
+- [ ] 实现 `plan` 执行能力（安装对象由调用方定义）。
+- [ ] 实现 `toolchain bootstrap` 兼容能力（作为 `git`、`gh` 的预置调用方配置）。
 - [ ] 实现平台识别与目标资产选择（Linux/macOS/Windows）。
 - [ ] 实现公共来源候选顺序与失败重试。
 - [ ] 实现完整性校验（哈希或等价可验证机制）。
