@@ -7,7 +7,6 @@ version.workspace = true
 [dependencies]
 anyhow.workspace = true
 tokio.workspace = true
-gix = "0.80"
 
 [dev-dependencies]
 tempfile.workspace = true

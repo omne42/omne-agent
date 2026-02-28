@@ -11,48 +11,6 @@ pub const MAX_STDERR_BYTES: u64 = 32 * 1024;
 
 pub const DEFAULT_ISOLATED_PATCH_MAX_BYTES: u64 = 2 * 1024 * 1024;
 pub const DEFAULT_ISOLATED_PATCH_TIMEOUT_MS: u64 = 5_000;
-pub const GIT_RUNTIME_BACKEND_ENV: &str = "OMNE_GIT_RUNTIME_BACKEND";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GitBackend {
-    Cli,
-    Gix,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GitBackendCapabilities {
-    pub fetch: bool,
-    pub pull: bool,
-    pub push: bool,
-}
-
-pub fn parse_git_backend(value: &str) -> Option<GitBackend> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "" | "cli" => Some(GitBackend::Cli),
-        "gix" => Some(GitBackend::Gix),
-        _ => None,
-    }
-}
-
-pub fn configured_git_backend() -> GitBackend {
-    let value = std::env::var(GIT_RUNTIME_BACKEND_ENV).unwrap_or_default();
-    parse_git_backend(value.as_str()).unwrap_or(GitBackend::Cli)
-}
-
-pub fn git_backend_capabilities(backend: GitBackend) -> GitBackendCapabilities {
-    match backend {
-        GitBackend::Cli => GitBackendCapabilities {
-            fetch: true,
-            pull: true,
-            push: true,
-        },
-        GitBackend::Gix => GitBackendCapabilities {
-            fetch: true,
-            pull: true,
-            push: false,
-        },
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SnapshotLimits {
@@ -250,32 +208,11 @@ pub async fn run_git_apply_with_patch_stdin(
     );
 }
 
-async fn ensure_repository_available_with_gix(repo_cwd: &str) -> anyhow::Result<()> {
-    let repo_cwd = repo_cwd.trim().to_string();
-    if repo_cwd.is_empty() {
-        anyhow::bail!("repository path is empty");
-    }
-
-    tokio::task::spawn_blocking(move || {
-        gix::open(repo_cwd.as_str())
-            .with_context(|| format!("open repository with gix in {}", repo_cwd))?;
-        Ok::<(), anyhow::Error>(())
-    })
-    .await
-    .context("wait gix repository open task")??;
-
-    Ok(())
-}
-
 pub async fn create_detached_worktree(
     source_repo_cwd: &str,
     worktree_path: &str,
     reference: Option<&str>,
 ) -> anyhow::Result<()> {
-    if configured_git_backend() == GitBackend::Gix {
-        ensure_repository_available_with_gix(source_repo_cwd).await?;
-    }
-
     let reference = reference
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -630,22 +567,6 @@ mod tests {
                 wait_seconds: MAX_WAIT_SECONDS,
             }
         );
-    }
-
-    #[test]
-    fn parse_git_backend_accepts_cli_and_gix() {
-        assert_eq!(parse_git_backend("cli"), Some(GitBackend::Cli));
-        assert_eq!(parse_git_backend("gix"), Some(GitBackend::Gix));
-        assert_eq!(parse_git_backend("  GIX "), Some(GitBackend::Gix));
-        assert_eq!(parse_git_backend("unknown"), None);
-    }
-
-    #[test]
-    fn gix_capabilities_include_fetch_and_pull_but_not_push() {
-        let caps = git_backend_capabilities(GitBackend::Gix);
-        assert!(caps.fetch);
-        assert!(caps.pull);
-        assert!(!caps.push);
     }
 
     #[test]
