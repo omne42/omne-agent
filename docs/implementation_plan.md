@@ -25,7 +25,7 @@
 1. **Responses-only**：第一阶段只支持 OpenAI `POST /v1/responses`。
 2. **可控执行层**：shell/file/network 都走统一 tool runtime，具备 `Run/Deny/Escalate` 的审批语义。
 3. **事件化与回放**：所有 side effects 进入事件流并落盘，能 `list/show/export/replay`。
-4. **并发与隔离**：多 task 并发时，每个 task 有独立 workspace（先 `/tmp`，后续可扩展为 worktree 等目录级隔离方案）。
+4. **并发与隔离**：多 task 并发时，每个 task 有独立 workspace（当前默认 `git worktree` 优先、失败回退 copy；不依赖本地 Git 服务）。
 5. **workspace 生命周期脚本化**：至少支持 `setup/run/archive(或 teardown)` 三段，并落盘 stdout/stderr。
 6. **RTS 控制面最小集**：`pause/resume/interrupt/cancel` + “Attention/Inbox”视图（列出需要人介入的点）。
 7. **交付通道（先不绑定 git）**：默认 `patch-only`（产出可应用 patch + artifacts），git 分支交付放后面。

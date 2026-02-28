@@ -14,6 +14,7 @@
 - 目标终态中，`omne-agent/crates/app-server` 不实现 Git 领域过程逻辑。
 - `app-server` 允许存在的仅有：编排、策略选择、协议字段映射、诊断信息组装。
 - Git 领域实现（worktree、snapshot、apply、lifecycle）统一下沉到 Git runtime crate。
+- `isolated_write` 的 Git 能力只通过本地 Git CLI 调用实现；不启动本地 Git 服务（无 daemon/smart-http 依赖）。
 
 ## 阶段路线（全链路）
 
@@ -35,7 +36,7 @@
 
 - 做什么：`prepare_isolated_workspace` 默认走 `git worktree add --detach`。
 - 为什么做：对齐 Claude Code 并行 worktree 实践，降低复制成本。
-- 怎么做：worktree first；失败自动 copy fallback；不中断子任务。
+- 怎么做：worktree first；失败自动 copy fallback；不中断子任务；不引入本地 Git 服务进程。
 - 验收标准：
   - Git 仓库场景默认 worktree；
   - 非 Git 场景自动回退 copy；

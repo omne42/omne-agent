@@ -67,7 +67,7 @@ cargo run -p omne -- init
 
 我希望实现这样的功能（仅 Rust）：
 
-1. 创建本地的git服务
+1. 不再要求创建本地 Git 服务（历史方案已废弃；当前隔离写使用本地 `git worktree`/copy）
 2. 注入仓库
 3. 可以异步同时处理多个ai task，会在/tmp/{repo*name}*{session_id}中进行开发并保存到本地git。需要format和check和commit并提交pr
 4. 使用一个ai服务来妥善的合并多个pr。我们需要有自己的agent。
@@ -120,7 +120,7 @@ cargo run -p omne -- init --minimal
 cargo run -p omne -- repo inject <repo_path_or_url> --name <repo_name>
 ```
 
-启动本地 Git Smart HTTP（Phase 2，可选）：
+启动本地 Git Smart HTTP（Phase 2，可选；与 `isolated_write` 默认链路无关）：
 
 ```bash
 cargo run -p omne -- serve --addr 127.0.0.1:9417
