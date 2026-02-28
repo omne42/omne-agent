@@ -24,8 +24,15 @@ Install-time toolchain bootstrap:
 - Binary-first entrypoint: `omne toolchain bootstrap` (works without npm).
 - `npm install` triggers `postinstall` script (`scripts/postinstall-toolchain.mjs`) which only forwards to:
   - `omne toolchain bootstrap`
-- If missing and bundle feature exists (`git-cli` / `gh-cli`), bundled CLI is installed to:
-  - `~/.omne/toolchain/<target-triple>/bin` (override: `OMNE_MANAGED_TOOLCHAIN_DIR`)
+- Bootstrap order:
+  - system PATH
+  - managed dir (`~/.omne/toolchain/<target-triple>/bin`, override: `OMNE_MANAGED_TOOLCHAIN_DIR`)
+  - bundled vendor path (`git-cli` / `gh-cli` feature)
+  - public upstream install (official GitHub release metadata/assets)
+- Optional public mirror prefixes (public resources only):
+  - `OMNE_TOOLCHAIN_MIRROR_PREFIXES` (comma-separated; each prefix is prepended to the canonical URL)
+  - `OMNE_TOOLCHAIN_GITHUB_API_BASES` (comma-separated API base list, default `https://api.github.com`)
+  - `OMNE_TOOLCHAIN_HTTP_TIMEOUT_SECONDS` (default: `15`)
 - Launcher appends this managed directory to child-process PATH.
 
 Assemble vendor tree:

@@ -112,6 +112,7 @@ enum Command {
 #[derive(Subcommand, Clone)]
 enum ToolchainCommand {
     /// Detect and bootstrap required CLI tools (git/gh) for OmneAgent runtime.
+    /// Order: PATH -> managed dir -> bundled vendor -> public upstream.
     Bootstrap(ToolchainBootstrapArgs),
 }
 
