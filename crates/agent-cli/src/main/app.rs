@@ -8,6 +8,9 @@ async fn main() -> anyhow::Result<()> {
     if let Some(command) = take_preconnect_command(&mut cli) {
         match command {
             PreConnectCommand::Init(args) => return run_init(args).await,
+            PreConnectCommand::ToolchainBootstrap(args) => {
+                return run_toolchain_bootstrap(args).await;
+            }
             PreConnectCommand::Reference(command) => return run_reference(&cli, command).await,
             PreConnectCommand::PresetList { json } => return run_preset_list(&cli, json).await,
             PreConnectCommand::PresetShow { file, name, json } => {
@@ -46,6 +49,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Command::Cli) => run_repl(&mut app).await?,
         Some(Command::Init(_)) => unreachable!("handled before App::connect"),
+        Some(Command::Toolchain { .. }) => unreachable!("handled before App::connect"),
         Some(Command::Reference { .. }) => unreachable!("handled before App::connect"),
         Some(Command::Preset { ref command }) => {
             run_preset(&cli, &mut app, command.clone()).await?;
@@ -702,6 +706,7 @@ async fn main() -> anyhow::Result<()> {
 
 enum PreConnectCommand {
     Init(InitArgs),
+    ToolchainBootstrap(ToolchainBootstrapArgs),
     Reference(ReferenceCommand),
     PresetList { json: bool },
     PresetShow {
@@ -729,6 +734,9 @@ fn take_preconnect_command(cli: &mut Cli) -> Option<PreConnectCommand> {
 
     match command {
         Command::Init(args) => Some(PreConnectCommand::Init(args)),
+        Command::Toolchain { command } => match command {
+            ToolchainCommand::Bootstrap(args) => Some(PreConnectCommand::ToolchainBootstrap(args)),
+        },
         Command::Reference { command } => Some(PreConnectCommand::Reference(command)),
         Command::Preset { command } => match command {
             PresetCommand::List { json } => Some(PreConnectCommand::PresetList { json }),
@@ -1123,6 +1131,22 @@ mod app_preconnect_tests {
                 assert!(args.no_spec_templates);
             }
             _ => anyhow::bail!("expected PreConnectCommand::Init"),
+        }
+        assert!(cli.command.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn preconnect_command_extracts_toolchain_bootstrap() -> anyhow::Result<()> {
+        let mut cli = Cli::try_parse_from(["omne", "toolchain", "bootstrap", "--json"])?;
+        let preconnect = take_preconnect_command(&mut cli);
+        match preconnect {
+            Some(PreConnectCommand::ToolchainBootstrap(args)) => {
+                assert!(args.json);
+                assert!(!args.strict);
+                assert!(args.target_triple.is_none());
+            }
+            _ => anyhow::bail!("expected PreConnectCommand::ToolchainBootstrap"),
         }
         assert!(cli.command.is_none());
         Ok(())

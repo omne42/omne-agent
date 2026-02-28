@@ -13,5 +13,6 @@ include!("main/preset.rs");
 include!("main/reference.rs");
 include!("main/repl.rs");
 include!("main/tui.rs");
+include!("main/toolchain.rs");
 include!("main/watch_inbox.rs");
 include!("main/process_and_utils.rs");

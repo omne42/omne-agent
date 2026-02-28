@@ -21,11 +21,12 @@ Vendored layout (optional):
 
 Install-time toolchain bootstrap:
 
-- `npm install` triggers `postinstall` script (`scripts/postinstall-toolchain.mjs`).
-- It detects `git`/`gh` on PATH.
+- Binary-first entrypoint: `omne toolchain bootstrap` (works without npm).
+- `npm install` triggers `postinstall` script (`scripts/postinstall-toolchain.mjs`) which only forwards to:
+  - `omne toolchain bootstrap`
 - If missing and bundle feature exists (`git-cli` / `gh-cli`), bundled CLI is installed to:
   - `~/.omne/toolchain/<target-triple>/bin` (override: `OMNE_MANAGED_TOOLCHAIN_DIR`)
-- Launcher will append this managed directory to child-process PATH.
+- Launcher appends this managed directory to child-process PATH.
 
 Assemble vendor tree:
 

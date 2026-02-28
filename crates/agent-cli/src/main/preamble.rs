@@ -53,6 +53,10 @@ fn thread_event_kind_value_parser(raw: &str) -> Result<ThreadEventKindTag, Strin
 enum Command {
     /// Initialize `./.omne_data/` in the current project.
     Init(InitArgs),
+    Toolchain {
+        #[command(subcommand)]
+        command: ToolchainCommand,
+    },
     Reference {
         #[command(subcommand)]
         command: ReferenceCommand,
@@ -103,6 +107,31 @@ enum Command {
         #[command(subcommand)]
         command: ArtifactCommand,
     },
+}
+
+#[derive(Subcommand, Clone)]
+enum ToolchainCommand {
+    /// Detect and bootstrap required CLI tools (git/gh) for OmneAgent runtime.
+    Bootstrap(ToolchainBootstrapArgs),
+}
+
+#[derive(clap::Args, Clone, Debug)]
+struct ToolchainBootstrapArgs {
+    /// Emit machine-readable JSON output.
+    #[arg(long, default_value_t = false)]
+    json: bool,
+    /// Exit non-zero if any required tool cannot be prepared.
+    #[arg(long, default_value_t = false)]
+    strict: bool,
+    /// Override target triple used for bundled toolchain lookup.
+    #[arg(long)]
+    target_triple: Option<String>,
+    /// Override bundled toolchain directory (expects git/gh binaries and optional features.json).
+    #[arg(long)]
+    bundled_dir: Option<PathBuf>,
+    /// Override managed install directory for bootstrapped tools.
+    #[arg(long)]
+    managed_dir: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]
