@@ -113,6 +113,26 @@ fn is_usage_counter_key(key: &str) -> bool {
     )
 }
 
+fn is_usage_detail_counter_key(key: &str) -> bool {
+    // These are usage breakdown counters, not secrets. Keep them as numbers so downstream
+    // accounting (e.g. thread usage) can compute cache/reasoning ratios.
+    matches!(
+        key.trim().to_ascii_lowercase().as_str(),
+        "cached_tokens" | "reasoning_tokens"
+    )
+}
+
+fn is_usage_detail_container_key(key: &str) -> bool {
+    // These contain usage breakdown counters (e.g. OpenAI `*_tokens_details`), but are not secrets.
+    matches!(
+        key.trim().to_ascii_lowercase().as_str(),
+        "input_tokens_details"
+            | "output_tokens_details"
+            | "prompt_tokens_details"
+            | "completion_tokens_details"
+    )
+}
+
 fn redact_token_usage_value(value: &mut Value) {
     match value {
         Value::Null | Value::Bool(_) | Value::Number(_) => {}
@@ -126,11 +146,13 @@ fn redact_token_usage_value(value: &mut Value) {
         }
         Value::Object(map) => {
             for (k, v) in map.iter_mut() {
-                if is_usage_counter_key(k) {
+                if is_usage_counter_key(k) || is_usage_detail_counter_key(k) {
                     match v {
                         Value::Null | Value::Number(_) => {}
                         _ => redact_json_value(v),
                     }
+                } else if is_usage_detail_container_key(k) {
+                    redact_token_usage_value(v);
                 } else if is_sensitive_key(k) {
                     *v = Value::String(REDACTED.to_string());
                 } else {
@@ -438,7 +460,9 @@ mod tests {
             token_usage: Some(serde_json::json!({
                 "total_tokens": 120,
                 "input_tokens": 90,
+                "input_tokens_details": { "cached_tokens": 34 },
                 "output_tokens": 30,
+                "output_tokens_details": { "reasoning_tokens": 12 },
                 "cache_input_tokens": 55,
                 "cache_creation_input_tokens": 8,
                 "api_token": "shhh",
@@ -465,6 +489,22 @@ mod tests {
                 .get("cache_creation_input_tokens")
                 .and_then(Value::as_u64),
             Some(8)
+        );
+        assert_eq!(
+            usage
+                .get("input_tokens_details")
+                .and_then(Value::as_object)
+                .and_then(|details| details.get("cached_tokens"))
+                .and_then(Value::as_u64),
+            Some(34)
+        );
+        assert_eq!(
+            usage
+                .get("output_tokens_details")
+                .and_then(Value::as_object)
+                .and_then(|details| details.get("reasoning_tokens"))
+                .and_then(Value::as_u64),
+            Some(12)
         );
         assert_eq!(
             usage.get("api_token").and_then(Value::as_str),

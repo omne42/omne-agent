@@ -541,12 +541,46 @@ fn usage_cache_input_tokens(usage: &serde_json::Value) -> Option<u64> {
     usage
         .get("cache_input_tokens")
         .and_then(serde_json::Value::as_u64)
+        .or_else(|| {
+            // OpenAI Responses API: usage.input_tokens_details.cached_tokens
+            usage.get("input_tokens_details")
+                .and_then(serde_json::Value::as_object)
+                .and_then(|details| details.get("cached_tokens"))
+                .and_then(serde_json::Value::as_u64)
+        })
+        .or_else(|| {
+            // OpenAI Chat Completions API: usage.prompt_tokens_details.cached_tokens
+            usage.get("prompt_tokens_details")
+                .and_then(serde_json::Value::as_object)
+                .and_then(|details| details.get("cached_tokens"))
+                .and_then(serde_json::Value::as_u64)
+        })
 }
 
 fn usage_cache_creation_input_tokens(usage: &serde_json::Value) -> Option<u64> {
     usage
         .get("cache_creation_input_tokens")
         .and_then(serde_json::Value::as_u64)
+        .or_else(|| {
+            usage.get("input_tokens_details")
+                .and_then(serde_json::Value::as_object)
+                .and_then(|details| {
+                    details
+                        .get("cache_creation_input_tokens")
+                        .or_else(|| details.get("cache_creation_tokens"))
+                })
+                .and_then(serde_json::Value::as_u64)
+        })
+        .or_else(|| {
+            usage.get("prompt_tokens_details")
+                .and_then(serde_json::Value::as_object)
+                .and_then(|details| {
+                    details
+                        .get("cache_creation_input_tokens")
+                        .or_else(|| details.get("cache_creation_tokens"))
+                })
+                .and_then(serde_json::Value::as_u64)
+        })
 }
 
 #[cfg(test)]
@@ -860,6 +894,62 @@ mod tests {
                     "input_tokens": 40,
                     "output_tokens": 10,
                     "cache_input_tokens": 16
+                })),
+            },
+        )?;
+
+        assert_eq!(state.total_tokens_used, 50);
+        assert_eq!(state.input_tokens_used, 40);
+        assert_eq!(state.output_tokens_used, 10);
+        assert_eq!(state.cache_input_tokens_used, 16);
+        assert_eq!(state.cache_creation_input_tokens_used, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn token_usage_counts_cached_tokens_from_openai_responses_shape() -> anyhow::Result<()> {
+        let thread_id = ThreadId::new();
+        let mut state = ThreadState::new(thread_id);
+        let mut seq = 1u64;
+
+        fn apply(
+            state: &mut ThreadState,
+            thread_id: ThreadId,
+            seq: &mut u64,
+            kind: ThreadEventKind,
+        ) -> anyhow::Result<()> {
+            let event = ThreadEvent {
+                seq: EventSeq(*seq),
+                timestamp: OffsetDateTime::now_utc(),
+                thread_id,
+                kind,
+            };
+            *seq += 1;
+            state.apply(&event)?;
+            Ok(())
+        }
+
+        apply(
+            &mut state,
+            thread_id,
+            &mut seq,
+            ThreadEventKind::ThreadCreated {
+                cwd: "/tmp".to_string(),
+            },
+        )?;
+        apply(
+            &mut state,
+            thread_id,
+            &mut seq,
+            ThreadEventKind::AssistantMessage {
+                turn_id: None,
+                text: "final".to_string(),
+                model: Some("gpt-5".to_string()),
+                response_id: Some("resp_cached_details".to_string()),
+                token_usage: Some(serde_json::json!({
+                    "input_tokens": 40,
+                    "input_tokens_details": { "cached_tokens": 16 },
+                    "output_tokens": 10,
                 })),
             },
         )?;
