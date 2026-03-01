@@ -3,9 +3,12 @@ tmp/
 data/
 repos/
 threads/
+threads.bak-*/
 locks/
 logs/
 daemon.sock
+keys/
+keys.bak-*/
 
 # Local overrides (do not commit)
 config_local.toml
@@ -13,4 +16,3 @@ config_local.toml
 # Secrets (do not commit)
 .env
 reference/
-
