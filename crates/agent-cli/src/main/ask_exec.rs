@@ -105,6 +105,8 @@ async fn run_ask(app: &mut App, args: AskArgs) -> anyhow::Result<()> {
             let _ = interrupt_tx.send(()).await;
         }
     });
+    let mut handled_approvals = std::collections::HashSet::<ApprovalId>::new();
+    let mut decided_approvals = std::collections::HashSet::<ApprovalId>::new();
 
     loop {
         if interrupt_rx.try_recv().is_ok() {
@@ -121,10 +123,24 @@ async fn run_ask(app: &mut App, args: AskArgs) -> anyhow::Result<()> {
             .thread_subscribe(thread_id, since_seq, Some(10_000), Some(1_000))
             .await?;
         since_seq = resp.last_seq;
+        let decided_in_batch = resp
+            .events
+            .iter()
+            .filter_map(|event| match &event.kind {
+                omne_protocol::ThreadEventKind::ApprovalDecided { approval_id, .. } => {
+                    Some(*approval_id)
+                }
+                _ => None,
+            })
+            .collect::<std::collections::HashSet<_>>();
 
         for event in &resp.events {
             let did_stream = saw_delta.load(Ordering::Relaxed);
             render_event_for_ask(event, did_stream);
+            if let omne_protocol::ThreadEventKind::ApprovalDecided { approval_id, .. } = &event.kind
+            {
+                decided_approvals.insert(*approval_id);
+            }
             if let omne_protocol::ThreadEventKind::ApprovalRequested {
                 approval_id,
                 turn_id: Some(approval_turn_id),
@@ -132,20 +148,31 @@ async fn run_ask(app: &mut App, args: AskArgs) -> anyhow::Result<()> {
                 params,
             } = &event.kind
                 && *approval_turn_id == turn_id
+                && !handled_approvals.contains(approval_id)
+                && !decided_approvals.contains(approval_id)
+                && !decided_in_batch.contains(approval_id)
             {
+                handled_approvals.insert(*approval_id);
                 if did_stream {
                     println!();
                     std::io::stdout().flush().ok();
                 }
                 let decision = prompt_approval(thread_id, approval_id, action, params)?;
-                app.approval_decide(
-                    thread_id,
-                    *approval_id,
-                    decision.decision,
-                    decision.remember,
-                    decision.reason,
-                )
-                .await?;
+                if let Err(err) = app
+                    .approval_decide(
+                        thread_id,
+                        *approval_id,
+                        decision.decision,
+                        decision.remember,
+                        decision.reason,
+                    )
+                    .await
+                {
+                    if is_approval_already_decided_error(&err) {
+                        continue;
+                    }
+                    return Err(err);
+                }
             }
             if let omne_protocol::ThreadEventKind::TurnCompleted { turn_id: id, .. } = &event.kind
                 && *id == turn_id
@@ -264,6 +291,8 @@ where
             let _ = interrupt_tx.send(()).await;
         }
     });
+    let mut handled_approvals = std::collections::HashSet::<ApprovalId>::new();
+    let mut decided_approvals = std::collections::HashSet::<ApprovalId>::new();
 
     loop {
         if interrupt_rx.try_recv().is_ok() {
@@ -282,10 +311,24 @@ where
             .thread_subscribe(thread_id, since_seq, Some(10_000), Some(1_000))
             .await?;
         since_seq = resp.last_seq;
+        let decided_in_batch = resp
+            .events
+            .iter()
+            .filter_map(|event| match &event.kind {
+                omne_protocol::ThreadEventKind::ApprovalDecided { approval_id, .. } => {
+                    Some(*approval_id)
+                }
+                _ => None,
+            })
+            .collect::<std::collections::HashSet<_>>();
 
         for event in &resp.events {
             let did_stream = saw_delta.load(Ordering::Relaxed);
             render_event_for_ask(event, did_stream);
+            if let omne_protocol::ThreadEventKind::ApprovalDecided { approval_id, .. } = &event.kind
+            {
+                decided_approvals.insert(*approval_id);
+            }
             if let omne_protocol::ThreadEventKind::ApprovalRequested {
                 approval_id,
                 turn_id: Some(approval_turn_id),
@@ -293,20 +336,31 @@ where
                 params,
             } = &event.kind
                 && *approval_turn_id == turn_id
+                && !handled_approvals.contains(approval_id)
+                && !decided_approvals.contains(approval_id)
+                && !decided_in_batch.contains(approval_id)
             {
+                handled_approvals.insert(*approval_id);
                 if did_stream {
                     println!();
                     std::io::stdout().flush().ok();
                 }
                 let decision = prompt_approval(thread_id, approval_id, action, params)?;
-                app.approval_decide(
-                    thread_id,
-                    *approval_id,
-                    decision.decision,
-                    decision.remember,
-                    decision.reason,
-                )
-                .await?;
+                if let Err(err) = app
+                    .approval_decide(
+                        thread_id,
+                        *approval_id,
+                        decision.decision,
+                        decision.remember,
+                        decision.reason,
+                    )
+                    .await
+                {
+                    if is_approval_already_decided_error(&err) {
+                        continue;
+                    }
+                    return Err(err);
+                }
             }
             if let omne_protocol::ThreadEventKind::TurnCompleted { turn_id: id, .. } = &event.kind
                 && *id == turn_id
@@ -329,6 +383,11 @@ where
             continue;
         }
     }
+}
+
+fn is_approval_already_decided_error(err: &anyhow::Error) -> bool {
+    err.chain()
+        .any(|cause| cause.to_string().contains("approval already decided"))
 }
 
 async fn run_exec(app: &mut App, args: ExecArgs) -> anyhow::Result<i32> {
@@ -378,6 +437,7 @@ async fn run_exec(app: &mut App, args: ExecArgs) -> anyhow::Result<i32> {
     });
 
     let mut handled_approvals = std::collections::HashSet::<ApprovalId>::new();
+    let mut decided_approvals = std::collections::HashSet::<ApprovalId>::new();
     let mut assistant_text: Option<String> = None;
     let mut assistant_model: Option<String> = None;
     let mut assistant_response_id: Option<String> = None;
@@ -394,6 +454,16 @@ async fn run_exec(app: &mut App, args: ExecArgs) -> anyhow::Result<i32> {
             .thread_subscribe(thread_id, since_seq, Some(10_000), Some(1_000))
             .await?;
         since_seq = resp.last_seq;
+        let decided_in_batch = resp
+            .events
+            .iter()
+            .filter_map(|event| match &event.kind {
+                omne_protocol::ThreadEventKind::ApprovalDecided { approval_id, .. } => {
+                    Some(*approval_id)
+                }
+                _ => None,
+            })
+            .collect::<std::collections::HashSet<_>>();
 
         for event in &resp.events {
             match &event.kind {
@@ -414,7 +484,11 @@ async fn run_exec(app: &mut App, args: ExecArgs) -> anyhow::Result<i32> {
                     turn_id: Some(approval_turn_id),
                     action,
                     params,
-                } if *approval_turn_id == turn_id && !handled_approvals.contains(approval_id) => {
+                } if *approval_turn_id == turn_id
+                    && !handled_approvals.contains(approval_id)
+                    && !decided_approvals.contains(approval_id)
+                    && !decided_in_batch.contains(approval_id) =>
+                {
                     handled_approvals.insert(*approval_id);
                     match args.on_approval {
                         CliOnApproval::Fail => {
@@ -444,26 +518,41 @@ async fn run_exec(app: &mut App, args: ExecArgs) -> anyhow::Result<i32> {
                             eprintln!("{}", serde_json::to_string_pretty(params)?);
                         }
                         CliOnApproval::Approve => {
-                            app.approval_decide(
-                                thread_id,
-                                *approval_id,
-                                ApprovalDecision::Approved,
-                                args.remember,
-                                Some("auto-approved by omne exec".to_string()),
-                            )
-                            .await?;
+                            if let Err(err) = app
+                                .approval_decide(
+                                    thread_id,
+                                    *approval_id,
+                                    ApprovalDecision::Approved,
+                                    args.remember,
+                                    Some("auto-approved by omne exec".to_string()),
+                                )
+                                .await
+                            {
+                                if !is_approval_already_decided_error(&err) {
+                                    return Err(err);
+                                }
+                            }
                         }
                         CliOnApproval::Deny => {
-                            app.approval_decide(
-                                thread_id,
-                                *approval_id,
-                                ApprovalDecision::Denied,
-                                args.remember,
-                                Some("auto-denied by omne exec".to_string()),
-                            )
-                            .await?;
+                            if let Err(err) = app
+                                .approval_decide(
+                                    thread_id,
+                                    *approval_id,
+                                    ApprovalDecision::Denied,
+                                    args.remember,
+                                    Some("auto-denied by omne exec".to_string()),
+                                )
+                                .await
+                            {
+                                if !is_approval_already_decided_error(&err) {
+                                    return Err(err);
+                                }
+                            }
                         }
                     }
+                }
+                omne_protocol::ThreadEventKind::ApprovalDecided { approval_id, .. } => {
+                    decided_approvals.insert(*approval_id);
                 }
                 omne_protocol::ThreadEventKind::TurnCompleted {
                     turn_id: id,
