@@ -13,7 +13,7 @@
 ## 1) 目录结构（v0.2.x 约定）
 
 ```
-<project_root>/
+  <project_root>/
   .omne_data/
     config.toml
     config_local.toml
@@ -32,8 +32,11 @@
       <thread_id>/
         events.jsonl
         events.jsonl.lock
-        artifacts/
+        readable_history.jsonl
+        openai_responses_history.jsonl
+        runtime/
           processes/<process_id>/{stdout.log,stderr.log,...}
+        artifacts/
           user/<artifact_id>.md
           user/<artifact_id>.metadata.json
 ```
@@ -54,6 +57,9 @@
 - `locks/`：运行时数据（预留；例如跨进程锁；不提交）。
 - `logs/`：运行时数据（预留；不提交）。
 - `threads/`：线程/事件/产物（运行时数据；不提交）。
+  - `readable_history.jsonl`：线程内可读文本历史（`role=user/assistant` 的纯文本条目）。
+  - `openai_responses_history.jsonl`：Responses raw item 历史（用于续跑/compact，可能含 `reasoning.encrypted_content` 这类 **OpenAI 返回的加密推理块**；本地不可解密，不影响可读历史）。
+  - `runtime/processes/`：进程 stdout/stderr 日志（运行时）。
 
 ---
 
