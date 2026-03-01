@@ -69,17 +69,17 @@ hook 本质上是“自动触发的执行 + 可选的上下文注入”。
 
 要求：
 
-- hook 的执行必须落盘（等价于普通 tool/process 事件：started/completed + stdout/stderr artifacts）。
+- hook 的执行必须落盘（等价于普通 tool/process 事件：started/completed + stdout/stderr runtime logs）。
 - hook 的每一步命令执行仍走 `process/start`，并受 `execpolicy` 约束（别把 hook 当特权通道）。
 - `additional_context` 的注入发生在 **下一次模型请求** 的上下文构建阶段（同一 turn 内也可以），而不是“去改写已经发生的 tool call”。
 - 超时（写死默认）：单条 hook 命令等待进程退出的超时由 `OMNE_HOOK_PROCESS_TIMEOUT_SECS` 控制（默认 `3`，最大 `60`）；超时会 kill 并记失败，但不阻断主流程。
 
 ### 3.2 输入与输出（可审计）
 
-建议把 hook 输入/输出都落到 thread artifacts 下，避免大 JSON 塞进事件；并且写盘前必须先做脱敏（见 `docs/redaction.md`）：
+建议把 hook 输入/输出都落到 thread runtime 下，避免大 JSON 塞进事件；并且写盘前必须先做脱敏（见 `docs/redaction.md`）：
 
-- input：`<thread_dir>/artifacts/hooks/<hook_id>.input.json`
-- output：`<thread_dir>/artifacts/hooks/<hook_id>.output.json`
+- input：`<thread_dir>/runtime/hooks/<hook_id>.input.json`
+- output：`<thread_dir>/runtime/hooks/<hook_id>.output.json`
 
 并通过 env 把路径传给 hook 命令：
 
@@ -95,7 +95,7 @@ hook 本质上是“自动触发的执行 + 可选的上下文注入”。
 如果 hook 需要注入 `additional_context`（例如安全提醒）：
 
 1. hook 写入 `output.json`：`{"additional_context": "...", "summary": "..."}`。
-2. 系统把 `additional_context` 写入 `<thread_dir>/artifacts/hooks/<hook_id>.additional_context.md`，并在 `tool=hook/run` 的结果里记录路径。
+2. 系统把 `additional_context` 写入 `<thread_dir>/runtime/hooks/<hook_id>.additional_context.md`，并在 `tool=hook/run` 的结果里记录路径。
 3. 模型输入引用这份 `additional_context` 的内容（或其摘要），从而保证：
    - 注入内容可在历史里被定位/审计
    - 注入内容可以走统一脱敏（见 `docs/redaction.md`）
