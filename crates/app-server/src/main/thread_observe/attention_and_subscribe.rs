@@ -1240,7 +1240,7 @@ async fn list_thread_artifact_metadata(
 mod attention_marker_tests {
     use super::*;
 
-    static TOKEN_BUDGET_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    static TOKEN_BUDGET_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
     struct ScopedEnvVar {
         key: &'static str,
@@ -1743,9 +1743,7 @@ mod attention_marker_tests {
     #[tokio::test]
     async fn thread_runtime_token_budget_marker_sequence_tracks_threshold_and_limit_changes()
     -> anyhow::Result<()> {
-        let _env_lock = TOKEN_BUDGET_ENV_LOCK
-            .lock()
-            .expect("token budget test env lock should not be poisoned");
+        let _env_lock = TOKEN_BUDGET_ENV_LOCK.lock().await;
         let limit_env = ScopedEnvVar::set("OMNE_AGENT_MAX_TOTAL_TOKENS", "100");
 
         let tmp = tempfile::tempdir()?;

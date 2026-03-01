@@ -3,8 +3,8 @@ fn rel_path_is_secret(rel_path: &Path) -> bool {
 }
 
 enum FileModeApprovalGate {
-    Allowed(omne_core::modes::ModeDef),
-    Denied(Value),
+    Allowed(Box<omne_core::modes::ModeDef>),
+    Denied(Box<Value>),
 }
 
 struct FileModeApprovalContext<'a> {
@@ -49,7 +49,7 @@ where
                 result.clone(),
             )
             .await?;
-            return Ok(FileModeApprovalGate::Denied(result));
+            return Ok(FileModeApprovalGate::Denied(Box::new(result)));
         }
     };
 
@@ -66,7 +66,7 @@ where
             result.clone(),
         )
         .await?;
-        return Ok(FileModeApprovalGate::Denied(result));
+        return Ok(FileModeApprovalGate::Denied(Box::new(result)));
     }
 
     if mode_decision.decision == omne_core::modes::Decision::Prompt {
@@ -97,16 +97,16 @@ where
                     result.clone(),
                 )
                 .await?;
-                return Ok(FileModeApprovalGate::Denied(result));
+                return Ok(FileModeApprovalGate::Denied(Box::new(result)));
             }
             ApprovalGate::NeedsApproval { approval_id } => {
                 let result = file_needs_approval_response(approval_id)?;
-                return Ok(FileModeApprovalGate::Denied(result));
+                return Ok(FileModeApprovalGate::Denied(Box::new(result)));
             }
         }
     }
 
-    Ok(FileModeApprovalGate::Allowed(mode))
+    Ok(FileModeApprovalGate::Allowed(Box::new(mode)))
 }
 
 async fn resolve_reference_repo_root(thread_root: &Path) -> anyhow::Result<PathBuf> {

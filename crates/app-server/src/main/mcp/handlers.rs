@@ -39,7 +39,7 @@ async fn handle_mcp_list_servers(server: &Server, params: McpListServersParams) 
     .await?
     {
         McpModeGate::Allowed { mode_decision, .. } => mode_decision,
-        McpModeGate::Denied(result) => return Ok(result),
+        McpModeGate::Denied(result) => return Ok(*result),
     };
 
     if mode_decision.decision == omne_core::modes::Decision::Prompt {
@@ -191,10 +191,10 @@ async fn handle_mcp_call(server: &Server, params: McpCallParams) -> anyhow::Resu
 
 enum McpModeGate {
     Allowed {
-        mode: omne_core::modes::ModeDef,
+        mode: Box<omne_core::modes::ModeDef>,
         mode_decision: ModeDecisionAudit,
     },
-    Denied(Value),
+    Denied(Box<Value>),
 }
 
 struct McpModeGateContext<'a> {
@@ -256,7 +256,7 @@ where
                 result.clone(),
             )
             .await?;
-            return Ok(McpModeGate::Denied(result));
+            return Ok(McpModeGate::Denied(Box::new(result)));
         }
     };
 
@@ -274,11 +274,11 @@ where
             result.clone(),
         )
         .await?;
-        return Ok(McpModeGate::Denied(result));
+        return Ok(McpModeGate::Denied(Box::new(result)));
     }
 
     Ok(McpModeGate::Allowed {
-        mode,
+        mode: Box::new(mode),
         mode_decision,
     })
 }
@@ -425,7 +425,7 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
             mode,
             mode_decision,
         } => (mode, mode_decision),
-        McpModeGate::Denied(result) => return Ok(result),
+        McpModeGate::Denied(result) => return Ok(*result),
     };
 
     let mut effective_exec_policy = server.exec_policy.clone();

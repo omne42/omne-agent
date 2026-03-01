@@ -671,13 +671,11 @@ async fn main() -> anyhow::Result<()> {
                     let result = serde_json::to_value(result)
                         .context("serialize artifact/versions response")?;
                     print_json_or_pretty(true, &result)?;
+                } else if result.versions.is_empty() {
+                    println!("(no versions)");
                 } else {
-                    if result.versions.is_empty() {
-                        println!("(no versions)");
-                    } else {
-                        for version in result.versions {
-                            println!("{version}");
-                        }
+                    for version in result.versions {
+                        println!("{version}");
                     }
                 }
             }

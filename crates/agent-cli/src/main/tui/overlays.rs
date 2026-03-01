@@ -1052,15 +1052,15 @@
             return;
         };
 
-        if view.versions_for == Some(artifact_id) {
-            if versions_match_latest(&view.versions, latest_version) {
-                if view.selected_version >= view.versions.len() {
-                    view.selected_version = 0;
-                }
-                view.selected_version_cache
-                    .insert(artifact_id, view.selected_version);
-                return;
+        if view.versions_for == Some(artifact_id)
+            && versions_match_latest(&view.versions, latest_version)
+        {
+            if view.selected_version >= view.versions.len() {
+                view.selected_version = 0;
             }
+            view.selected_version_cache
+                .insert(artifact_id, view.selected_version);
+            return;
         }
 
         if activate_cached_versions_for_artifact(view, artifact_id, latest_version) {

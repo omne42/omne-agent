@@ -32,10 +32,14 @@
       <thread_id>/
         events.jsonl
         events.jsonl.lock
+        readable_history.jsonl
         artifacts/
-          processes/<process_id>/{stdout.log,stderr.log,...}
           user/<artifact_id>.md
           user/<artifact_id>.metadata.json
+        runtime/
+          processes/<process_id>/{stdout.log,stderr.log,...}
+          llm_stream/<turn_id>.jsonl
+          llm_stream/<turn_id>.request_body.json
 ```
 
 说明：
@@ -53,7 +57,7 @@
 - `keys/`：本地加密密钥材料（例如 Responses raw history 的本地密钥文件）；运行时数据，**永远不提交**。
 - `locks/`：运行时数据（预留；例如跨进程锁；不提交）。
 - `logs/`：运行时数据（预留；不提交）。
-- `threads/`：线程/事件/产物（运行时数据；不提交）。
+- `threads/`：线程/事件/产物（运行时数据；不提交）。每个 thread 目录包含 `events.jsonl`（真相源）与派生的 `readable_history.jsonl`（用户可读对话），以及 `artifacts/`（用户产物）与 `runtime/`（内部运行时落盘，如 process logs/LLM debug）。
 
 ---
 

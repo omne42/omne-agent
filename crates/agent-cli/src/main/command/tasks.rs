@@ -1075,14 +1075,12 @@ pub(super) async fn try_write_fan_out_linkage_issue_artifact(
     fan_in_artifact_id: omne_protocol::ArtifactId,
     linkage_issue: &str,
 ) -> Option<ArtifactId> {
-    let Some(params) = fan_out_linkage_issue_artifact_write_params(
+    let params = fan_out_linkage_issue_artifact_write_params(
         parent_thread_id,
         parent_turn_id,
         fan_in_artifact_id,
         linkage_issue,
-    ) else {
-        return None;
-    };
+    )?;
     match app.artifact_write(params).await {
         Ok(response) => Some(response.artifact_id),
         Err(err) => {

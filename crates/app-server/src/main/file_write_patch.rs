@@ -87,7 +87,7 @@ async fn handle_file_write(server: &Server, params: FileWriteParams) -> anyhow::
     .await?
     {
         FileModeApprovalGate::Allowed(mode) => mode,
-        FileModeApprovalGate::Denied(result) => return Ok(result),
+        FileModeApprovalGate::Denied(result) => return Ok(*result),
     };
 
     thread_rt
@@ -279,7 +279,7 @@ async fn handle_file_patch(server: &Server, params: FilePatchParams) -> anyhow::
     .await?
     {
         FileModeApprovalGate::Allowed(mode) => mode,
-        FileModeApprovalGate::Denied(result) => return Ok(result),
+        FileModeApprovalGate::Denied(result) => return Ok(*result),
     };
 
     thread_rt

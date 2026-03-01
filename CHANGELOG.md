@@ -30,6 +30,8 @@
 - 新增 Agent-first 重新开发流程文档：`docs/development_process.md`。
 - 新增 vNext 目标态“RTS 风格使用流程”文档：`docs/rts_workflow.md`。
 - 新增 OpenAI-compatible chat 模式 history 与复用（用于 cache）说明文档：`docs/openai_compatible_chat_history.md`。
+- `omne-core::threads`：追加派生落盘 `readable_history.jsonl`（仅 `user/assistant` 纯文本），用于用户可读历史与后续上下文复用。
+- `omne-app-server`：新增 `OMNE_DEBUG_LLM_STREAM=1` 调试开关，在 thread `runtime/llm_stream/` 下落盘 OpenAI-compatible streaming 的 debug 记录（含脱敏 request body）。
 - 新增 v0.2.x 文档索引与 v0.2.0 口径补充（approval/attention/event model/runtime/execpolicy 等，详见 `docs/README.md`）。
 - 新增 Ditto-LLM 方案草案：`docs/ditto_llm.md`；并将 `ditto-llm` 拆为独立仓库（本地 checkout：`../ditto-llm`，OmneAgent 通过 path 依赖引用）。
 - 新增 Ditto-LLM TODO 跟踪文档：`docs/ditto_llm_todos.md`。
@@ -207,11 +209,13 @@
 ### Changed
 - `omne-app-server`：移除 legacy project config 字段 `openai.base_url`/`openai.auth_command`/`openai.model_reasoning_effort`；改用 `openai.providers.<profile>.base_url`/`openai.providers.<profile>.auth` 与 `openai.models."<pattern>".thinking`。
 - `omne-app-server`：agent loop 的 LLM 调用改为通过 `ditto-llm`（`LanguageModel`）；默认 OpenAI Responses，可通过 provider capabilities 切换到 OpenAI-compatible Chat Completions。
+- `omne-app-server process logs`：stdout/stderr 现在写入 thread `runtime/processes/<process_id>/`（不再归类为 `artifacts/`）；`artifacts/` 仅保留面向用户的 Markdown/图表等产物。
 
 ### Fixed
 - docs：`docs/v0.2.0_parity.md` 更新 Transformers 状态，标记 ditto-llm 接入已落地。
 - docs(research)：修正 `docs/research/claude-code-router.md` 中对 CCR 文档的引用路径，指向 `example/claude-code-router/...` 快照目录。
 - `omne-agent`：修复与本地 path 依赖（`mcp-kit`/`ditto-llm`/`safe-fs-tools`）的 API 兼容问题（包名映射、MCP config accessor、OpenAI raw request 字段、`Notification.params` 可选值处理），恢复 `cargo check/clippy/test` 全绿。
+- `omne-app-server`：修复 OpenAI-compatible streaming 在部分 provider（如 LiteLLM+Gemini）返回空 delta 时 `omne ask` 无输出/不落盘 `assistant_message` 的问题；现自动 fallback 到 non-streaming `generate`，确保输出链路与 history 复用可用。
 - `omne` TUI：启动阶段先渲染 “connecting...” 并将 `thread/start`/`thread/resume` 启动上限固定为 5s（`OMNE_TUI_STARTUP_TIMEOUT_MS` 仅允许缩短），避免卡死黑屏。
 - `omne` TUI：状态栏信息移至底部并移除全局/主视图边框，呈现终端式布局。
 - `omne` TUI：状态栏仅在错误时使用红色，避免 `loading models...` 等正常状态出现红字。

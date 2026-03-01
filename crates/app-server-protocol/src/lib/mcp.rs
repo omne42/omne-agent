@@ -211,5 +211,5 @@ pub struct McpActionArtifactResponse {
 #[serde(untagged)]
 pub enum McpActionResponse {
     Inline(McpActionInlineResponse),
-    Artifact(McpActionArtifactResponse),
+    Artifact(Box<McpActionArtifactResponse>),
 }

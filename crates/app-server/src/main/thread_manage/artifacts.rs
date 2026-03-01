@@ -4,46 +4,6 @@ async fn handle_thread_clear_artifacts(
 ) -> anyhow::Result<omne_app_server_protocol::ThreadClearArtifactsResponse> {
     let thread_rt = server.get_or_load_thread(params.thread_id).await?;
 
-    let mut running = Vec::<ProcessId>::new();
-    let mut to_kill = Vec::<ProcessEntry>::new();
-    {
-        let entries = {
-            let entries = server.processes.lock().await;
-            entries
-                .iter()
-                .map(|(process_id, entry)| (*process_id, entry.clone()))
-                .collect::<Vec<_>>()
-        };
-        for (process_id, entry) in entries {
-            let info = entry.info.lock().await;
-            if info.thread_id != params.thread_id {
-                continue;
-            }
-            if matches!(info.status, ProcessStatus::Running) {
-                running.push(process_id);
-                to_kill.push(entry.clone());
-            }
-        }
-    }
-
-    if !running.is_empty() && !params.force {
-        anyhow::bail!(
-            "refusing to clear artifacts with running processes (use force=true): {:?}",
-            running
-        );
-    }
-
-    if params.force {
-        for entry in to_kill {
-            let _ = entry
-                .cmd_tx
-                .send(ProcessCommand::Kill {
-                    reason: Some("artifacts cleared".to_string()),
-                })
-                .await;
-        }
-    }
-
     let tool_id = omne_protocol::ToolId::new();
     thread_rt
         .append_event(omne_protocol::ThreadEventKind::ToolStarted {

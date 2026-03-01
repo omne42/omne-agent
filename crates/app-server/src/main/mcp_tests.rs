@@ -1,9 +1,9 @@
 #[cfg(test)]
 mod mcp_tests {
     use super::*;
-    use std::sync::Mutex;
+    use tokio::sync::Mutex;
 
-    static MCP_TEST_MUTEX: Mutex<()> = Mutex::new(());
+    static MCP_TEST_MUTEX: Mutex<()> = Mutex::const_new(());
 
     struct McpEnabledOverrideGuard;
 
@@ -102,7 +102,7 @@ mod mcp_tests {
 
     #[tokio::test]
     async fn mcp_list_servers_denied_by_tool_override_reports_decision_source() -> anyhow::Result<()> {
-        let _lock = MCP_TEST_MUTEX.lock().expect("lock mcp test mutex");
+        let _lock = MCP_TEST_MUTEX.lock().await;
         let _guard = McpEnabledOverrideGuard::new(Some(true));
 
         let tmp = tempfile::tempdir()?;
@@ -142,7 +142,7 @@ modes:
 
     #[tokio::test]
     async fn mcp_list_servers_success_returns_typed_response() -> anyhow::Result<()> {
-        let _lock = MCP_TEST_MUTEX.lock().expect("lock mcp test mutex");
+        let _lock = MCP_TEST_MUTEX.lock().await;
         let _guard = McpEnabledOverrideGuard::new(Some(true));
 
         let tmp = tempfile::tempdir()?;
@@ -172,7 +172,7 @@ modes:
 
     #[tokio::test]
     async fn mcp_list_servers_denied_by_mode_permission_reports_decision_source() -> anyhow::Result<()> {
-        let _lock = MCP_TEST_MUTEX.lock().expect("lock mcp test mutex");
+        let _lock = MCP_TEST_MUTEX.lock().await;
         let _guard = McpEnabledOverrideGuard::new(Some(true));
 
         let tmp = tempfile::tempdir()?;
@@ -210,7 +210,7 @@ modes:
 
     #[tokio::test]
     async fn mcp_list_servers_denied_by_allowed_tools_uses_typed_payload() -> anyhow::Result<()> {
-        let _lock = MCP_TEST_MUTEX.lock().expect("lock mcp test mutex");
+        let _lock = MCP_TEST_MUTEX.lock().await;
         let _guard = McpEnabledOverrideGuard::new(Some(true));
 
         let tmp = tempfile::tempdir()?;
@@ -261,7 +261,7 @@ modes:
 
     #[tokio::test]
     async fn mcp_list_tools_denied_by_tool_override_reports_decision_source() -> anyhow::Result<()> {
-        let _lock = MCP_TEST_MUTEX.lock().expect("lock mcp test mutex");
+        let _lock = MCP_TEST_MUTEX.lock().await;
         let _guard = McpEnabledOverrideGuard::new(Some(true));
 
         let tmp = tempfile::tempdir()?;
@@ -307,7 +307,7 @@ modes:
 
     #[tokio::test]
     async fn mcp_list_resources_denied_by_tool_override_reports_decision_source() -> anyhow::Result<()> {
-        let _lock = MCP_TEST_MUTEX.lock().expect("lock mcp test mutex");
+        let _lock = MCP_TEST_MUTEX.lock().await;
         let _guard = McpEnabledOverrideGuard::new(Some(true));
 
         let tmp = tempfile::tempdir()?;
@@ -353,7 +353,7 @@ modes:
 
     #[tokio::test]
     async fn mcp_call_denied_by_tool_override_reports_decision_source() -> anyhow::Result<()> {
-        let _lock = MCP_TEST_MUTEX.lock().expect("lock mcp test mutex");
+        let _lock = MCP_TEST_MUTEX.lock().await;
         let _guard = McpEnabledOverrideGuard::new(Some(true));
 
         let tmp = tempfile::tempdir()?;

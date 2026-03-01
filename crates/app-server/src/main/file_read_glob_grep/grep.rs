@@ -65,7 +65,7 @@ async fn handle_file_grep(server: &Server, params: FileGrepParams) -> anyhow::Re
     )
     .await?
     {
-        return Ok(result);
+        return Ok(*result);
     }
 
     thread_rt

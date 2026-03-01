@@ -10,7 +10,7 @@ fn apply_plan_parallel_tool_call_overrides(
     }
 }
 
-fn resolve_turn_role_for_routing<'a>(has_plan_directive: bool, thread_mode: &'a str) -> &'a str {
+fn resolve_turn_role_for_routing(has_plan_directive: bool, thread_mode: &str) -> &str {
     if has_plan_directive {
         "architect"
     } else {
@@ -151,9 +151,9 @@ pub async fn run_agent_turn(
             "provider does not support tools: provider={provider} (omne requires tool calling; set [openai.providers.{provider}.capabilities.tools]=true)"
         );
     }
-    if !provider_capabilities.streaming {
+    if provider_capabilities.reasoning && !provider_capabilities.streaming {
         anyhow::bail!(
-            "provider does not support streaming: provider={provider} (set [openai.providers.{provider}.capabilities.streaming]=true or choose a streaming-capable provider)"
+            "provider does not support streaming (required for reasoning providers): provider={provider} (set [openai.providers.{provider}.capabilities.streaming]=true or choose a streaming-capable provider)"
         );
     }
 

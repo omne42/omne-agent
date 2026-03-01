@@ -32,7 +32,7 @@ fn normalize_thread_event_kinds_param(
     id: serde_json::Value,
     kinds: Option<Vec<String>>,
     method: &'static str,
-) -> Result<Option<Vec<omne_protocol::ThreadEventKindTag>>, JsonRpcResponse> {
+) -> Result<Option<Vec<omne_protocol::ThreadEventKindTag>>, Box<JsonRpcResponse>> {
     let Some(kinds) = kinds else {
         return Ok(None);
     };
@@ -42,7 +42,7 @@ fn normalize_thread_event_kinds_param(
             values.sort_by_key(|kind| kind.as_str());
             Ok(Some(values))
         }
-        Err(invalid) => Err(JsonRpcResponse::err(
+        Err(invalid) => Err(Box::new(JsonRpcResponse::err(
             id,
             JSONRPC_INVALID_PARAMS,
             "invalid params",
@@ -53,7 +53,7 @@ fn normalize_thread_event_kinds_param(
                 ),
                 "supported_kinds": omne_protocol::THREAD_EVENT_KIND_TAGS,
             })),
-        )),
+        ))),
     }
 }
 
@@ -61,10 +61,10 @@ fn parse_thread_stream_params(
     id: serde_json::Value,
     params: serde_json::Value,
     method: &'static str,
-) -> Result<ParsedThreadStreamParams, JsonRpcResponse> {
+) -> Result<ParsedThreadStreamParams, Box<JsonRpcResponse>> {
     let raw = match serde_json::from_value::<ThreadStreamParamsRaw>(params) {
         Ok(raw) => raw,
-        Err(err) => return Err(invalid_params(id, err)),
+        Err(err) => return Err(Box::new(invalid_params(id, err))),
     };
     let kinds = normalize_thread_event_kinds_param(id, raw.kinds, method)?;
     Ok(ParsedThreadStreamParams {
@@ -151,7 +151,7 @@ pub(super) async fn read_thread_events_since_or_not_found(
 fn parse_thread_events_params(
     id: serde_json::Value,
     params: serde_json::Value,
-) -> Result<ThreadEventsParams, JsonRpcResponse> {
+) -> Result<ThreadEventsParams, Box<JsonRpcResponse>> {
     let parsed = parse_thread_stream_params(id, params, "thread/events")?;
 
     Ok(ThreadEventsParams {
@@ -165,7 +165,7 @@ fn parse_thread_events_params(
 fn parse_thread_subscribe_params(
     id: serde_json::Value,
     params: serde_json::Value,
-) -> Result<ThreadSubscribeParams, JsonRpcResponse> {
+) -> Result<ThreadSubscribeParams, Box<JsonRpcResponse>> {
     let parsed = parse_thread_stream_params(id, params, "thread/subscribe")?;
 
     Ok(ThreadSubscribeParams {
@@ -219,17 +219,19 @@ fn thread_usage_token_budget_warning_snapshot(
     })
 }
 
-pub(super) fn thread_token_budget_snapshot_with_limit(
-    total_tokens_used: u64,
-    token_budget_limit: Option<u64>,
-    warning_threshold_ratio: f64,
-) -> (
+type TokenBudgetSnapshot = (
     Option<u64>,
     Option<u64>,
     Option<f64>,
     Option<bool>,
     Option<bool>,
-) {
+);
+
+pub(super) fn thread_token_budget_snapshot_with_limit(
+    total_tokens_used: u64,
+    token_budget_limit: Option<u64>,
+    warning_threshold_ratio: f64,
+) -> TokenBudgetSnapshot {
     let (token_budget_remaining, token_budget_utilization, token_budget_exceeded) =
         token_budget_snapshot(total_tokens_used, token_budget_limit);
     let token_budget_warning_active = thread_usage_token_budget_warning_snapshot(
@@ -249,13 +251,7 @@ pub(super) fn thread_token_budget_snapshot_with_limit(
 pub(super) fn thread_token_budget_snapshot(
     total_tokens_used: u64,
     warning_threshold_ratio: f64,
-) -> (
-    Option<u64>,
-    Option<u64>,
-    Option<f64>,
-    Option<bool>,
-    Option<bool>,
-) {
+) -> TokenBudgetSnapshot {
     thread_token_budget_snapshot_with_limit(
         total_tokens_used,
         configured_total_token_budget_limit(),
@@ -449,7 +445,7 @@ async fn handle_thread_events_request(
 ) -> JsonRpcResponse {
     let params = match parse_thread_events_params(id.clone(), params) {
         Ok(params) => params,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let since = EventSeq(params.since_seq);
     let result = read_thread_events_since_or_not_found(server, params.thread_id, since)
@@ -473,12 +469,13 @@ async fn handle_thread_subscribe_request(
 ) -> JsonRpcResponse {
     let params = match parse_thread_subscribe_params(id.clone(), params) {
         Ok(params) => params,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     jsonrpc_ok_or_internal(id, handle_thread_subscribe(server, params).await)
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod thread_usage_budget_tests {
     use super::*;
 

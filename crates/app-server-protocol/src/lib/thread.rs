@@ -927,7 +927,7 @@ pub enum ThreadGitSnapshotRpcResponse {
     NeedsApproval(ThreadGitSnapshotNeedsApprovalResponse),
     Denied(ThreadGitSnapshotDeniedResponse),
     TimedOut(ThreadGitSnapshotTimedOutResponse),
-    Ok(ThreadGitSnapshotResponse),
+    Ok(Box<ThreadGitSnapshotResponse>),
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]

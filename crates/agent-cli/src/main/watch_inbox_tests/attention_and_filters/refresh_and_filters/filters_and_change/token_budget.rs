@@ -15,8 +15,8 @@ fn apply_inbox_filters_only_token_budget_exceeded_keeps_marked_threads() {
     let filtered =
         apply_inbox_filters(threads, false, false, false, false, true, false, 0.9, false);
     assert_eq!(filtered.len(), 2);
-    assert!(filtered.get(&t1.thread_id).is_some());
-    assert!(filtered.get(&t3.thread_id).is_some());
+    assert!(filtered.contains_key(&t1.thread_id));
+    assert!(filtered.contains_key(&t3.thread_id));
 }
 
 #[test]
@@ -44,7 +44,7 @@ fn apply_inbox_filters_only_token_budget_warning_keeps_warning_threads() {
     let filtered =
         apply_inbox_filters(threads, false, false, false, false, false, true, 0.9, false);
     assert_eq!(filtered.len(), 1);
-    assert!(filtered.get(&t1.thread_id).is_some());
+    assert!(filtered.contains_key(&t1.thread_id));
 }
 
 #[test]
@@ -68,7 +68,7 @@ fn apply_inbox_filters_only_token_budget_warning_prefers_server_flag() {
     let filtered =
         apply_inbox_filters(threads, false, false, false, false, false, true, 0.9, false);
     assert_eq!(filtered.len(), 1);
-    assert!(filtered.get(&t1.thread_id).is_some());
+    assert!(filtered.contains_key(&t1.thread_id));
 }
 
 #[test]

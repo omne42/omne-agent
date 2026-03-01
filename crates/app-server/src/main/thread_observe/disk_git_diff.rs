@@ -148,7 +148,7 @@ fn build_thread_disk_report_markdown(
     }
 
     report.push_str("\n## Cleanup\n");
-    report.push_str("- Use `thread/clear_artifacts` to remove `artifacts/` (requires force=true if processes are running).\n");
+    report.push_str("- Use `thread/clear_artifacts` to remove `artifacts/`.\n");
     report.push_str("- Use `thread/delete` to remove the entire thread directory (requires force=true if processes are running).\n");
 
     report
@@ -479,7 +479,7 @@ pub(super) async fn handle_thread_git_snapshot(
         artifact,
     };
     Ok(omne_app_server_protocol::ThreadGitSnapshotRpcResponse::Ok(
-        response,
+        Box::new(response),
     ))
 }
 

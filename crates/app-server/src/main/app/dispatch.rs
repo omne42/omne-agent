@@ -91,8 +91,8 @@ pub(super) fn jsonrpc_ok_or_internal<T: serde::Serialize>(
 pub(super) fn parse_jsonrpc_params<T: serde::de::DeserializeOwned>(
     id: &serde_json::Value,
     params: serde_json::Value,
-) -> Result<T, JsonRpcResponse> {
-    serde_json::from_value(params).map_err(|err| invalid_params(id.clone(), err))
+) -> Result<T, Box<JsonRpcResponse>> {
+    serde_json::from_value(params).map_err(|err| Box::new(invalid_params(id.clone(), err)))
 }
 
 pub(super) async fn dispatch_jsonrpc_request<P, R, F, Fut>(
@@ -108,7 +108,7 @@ where
 {
     match parse_jsonrpc_params::<P>(id, params) {
         Ok(params) => jsonrpc_ok_or_internal(id, handler(params).await),
-        Err(response) => response,
+        Err(response) => *response,
     }
 }
 

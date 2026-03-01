@@ -110,7 +110,7 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
     .await?
     {
         FileModeApprovalGate::Allowed(mode) => mode,
-        FileModeApprovalGate::Denied(result) => return Ok(result),
+        FileModeApprovalGate::Denied(result) => return Ok(*result),
     };
 
     thread_rt

@@ -68,7 +68,7 @@ async fn handle_fs_mkdir(server: &Server, params: FsMkdirParams) -> anyhow::Resu
     .await?
     {
         FileModeApprovalGate::Allowed(mode) => mode,
-        FileModeApprovalGate::Denied(result) => return Ok(result),
+        FileModeApprovalGate::Denied(result) => return Ok(*result),
     };
 
     thread_rt

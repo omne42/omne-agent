@@ -97,7 +97,7 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
     .await?
     {
         FileModeApprovalGate::Allowed(mode) => mode,
-        FileModeApprovalGate::Denied(result) => return Ok(result),
+        FileModeApprovalGate::Denied(result) => return Ok(*result),
     };
 
     thread_rt
@@ -323,7 +323,7 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
     .await?
     {
         FileModeApprovalGate::Allowed(mode) => mode,
-        FileModeApprovalGate::Denied(result) => return Ok(result),
+        FileModeApprovalGate::Denied(result) => return Ok(*result),
     };
 
     thread_rt

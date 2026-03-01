@@ -27,7 +27,7 @@ async fn handle_process_list_request(
 ) -> JsonRpcResponse {
     let params = match parse_jsonrpc_params::<ProcessListParams>(id, params) {
         Ok(params) => params,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
 
     if let Some(thread_id) = params.thread_id {

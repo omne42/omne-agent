@@ -130,7 +130,7 @@ async fn handle_process_start_inner(
     )
     .await?
     {
-        ProcessModeGate::Denied(result) => return Ok(result),
+        ProcessModeGate::Denied(result) => return Ok(*result),
         ProcessModeGate::Allowed {
             mode,
             mode_decision,
@@ -287,7 +287,7 @@ async fn handle_process_start_inner(
     let process_id = ProcessId::new();
     let thread_dir = server.thread_store.thread_dir(params.thread_id);
     let process_dir = thread_dir
-        .join("artifacts")
+        .join("runtime")
         .join("processes")
         .join(process_id.to_string());
     tokio::fs::create_dir_all(&process_dir)

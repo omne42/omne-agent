@@ -22,10 +22,10 @@ async fn resolve_process_info(server: &Server, process_id: ProcessId) -> anyhow:
 
 enum ProcessModeGate {
     Allowed {
-        mode: omne_core::modes::ModeDef,
+        mode: Box<omne_core::modes::ModeDef>,
         mode_decision: ModeDecisionAudit,
     },
-    Denied(Value),
+    Denied(Box<Value>),
 }
 
 struct ProcessModeApprovalContext<'a> {
@@ -70,7 +70,7 @@ where
                 result.clone(),
             )
             .await?;
-            return Ok(ProcessModeGate::Denied(result));
+            return Ok(ProcessModeGate::Denied(Box::new(result)));
         }
     };
 
@@ -88,11 +88,11 @@ where
             result.clone(),
         )
         .await?;
-        return Ok(ProcessModeGate::Denied(result));
+        return Ok(ProcessModeGate::Denied(Box::new(result)));
     }
 
     Ok(ProcessModeGate::Allowed {
-        mode,
+        mode: Box::new(mode),
         mode_decision,
     })
 }
@@ -106,7 +106,7 @@ where
     F: Fn(&omne_core::modes::ModeDef) -> omne_core::modes::Decision,
 {
     let mode_decision = match enforce_process_mode_gate(&ctx, base_decision_for_mode).await? {
-        ProcessModeGate::Denied(result) => return Ok(Some(result)),
+        ProcessModeGate::Denied(result) => return Ok(Some(*result)),
         ProcessModeGate::Allowed { mode_decision, .. } => mode_decision,
     };
 

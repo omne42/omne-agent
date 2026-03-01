@@ -1,0 +1,8 @@
+# OmneAgent clippy configuration.
+#
+# We run clippy with `-D warnings`. The default `too-many-arguments-threshold` (7)
+# is too aggressive for our CLI/server glue code where "parameter structs" would
+# often reduce readability more than it helps. Keep the lint enabled, but raise
+# the threshold to a value that still catches outliers.
+too-many-arguments-threshold = 12
+

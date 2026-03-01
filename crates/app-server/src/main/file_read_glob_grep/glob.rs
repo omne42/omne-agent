@@ -49,7 +49,7 @@ async fn handle_file_glob(server: &Server, params: FileGlobParams) -> anyhow::Re
     )
     .await?
     {
-        return Ok(result);
+        return Ok(*result);
     }
 
     thread_rt

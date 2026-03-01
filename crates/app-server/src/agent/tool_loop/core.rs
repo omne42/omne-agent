@@ -343,17 +343,30 @@ impl ToolLoop {
 
                 attempts += 1;
                 let _permit = LlmWorkerPool::global().acquire(turn_priority).await?;
-                match run_llm_stream_once(
-                    runtime.client.clone(),
-                    thread_rt.clone(),
-                    thread_id,
-                    turn_id,
-                    emit_deltas,
-                    req,
-                    cfg.max_openai_request_duration,
-                )
-                .await
-                {
+                let llm_attempt = if runtime.capabilities.streaming {
+                    run_llm_stream_once(
+                        runtime.client.clone(),
+                        thread_rt.clone(),
+                        thread_id,
+                        turn_id,
+                        emit_deltas,
+                        req,
+                        cfg.max_openai_request_duration,
+                    )
+                    .await
+                } else {
+                    run_llm_generate_once(
+                        runtime.client.clone(),
+                        thread_rt.clone(),
+                        thread_id,
+                        turn_id,
+                        emit_deltas,
+                        req,
+                        cfg.max_openai_request_duration,
+                    )
+                    .await
+                };
+                match llm_attempt {
                     Ok(resp) => {
                         active_provider_idx = provider_index;
                         break resp;

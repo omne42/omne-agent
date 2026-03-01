@@ -8,6 +8,75 @@ use omne_protocol::{EventSeq, ProcessId, ThreadEvent, ThreadEventKind, ThreadId,
 use crate::PmPaths;
 
 const EVENTS_LOG_FILE_NAME: &str = "events.jsonl";
+const READABLE_HISTORY_FILE_NAME: &str = "readable_history.jsonl";
+
+async fn ensure_readable_history_file_permissions(path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perm = std::fs::Permissions::from_mode(0o600);
+        if let Err(err) = tokio::fs::set_permissions(path, perm).await {
+            tracing::debug!(
+                path = %path.display(),
+                error = %err,
+                "failed to tighten readable history permissions"
+            );
+        }
+    }
+}
+
+fn readable_history_path_from_log_path(log_path: &Path) -> PathBuf {
+    let thread_dir = log_path.parent().unwrap_or(log_path);
+    thread_dir.join(READABLE_HISTORY_FILE_NAME)
+}
+
+async fn append_readable_history_event(log_path: &Path, event: &ThreadEvent) -> anyhow::Result<()> {
+    let timestamp = event
+        .timestamp
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap_or_else(|_| event.timestamp.to_string());
+    let record = match &event.kind {
+        ThreadEventKind::TurnStarted { turn_id, input, .. } => serde_json::json!({
+            "seq": event.seq,
+            "timestamp": timestamp,
+            "turn_id": turn_id,
+            "role": "user",
+            "text": input,
+        }),
+        ThreadEventKind::AssistantMessage {
+            turn_id,
+            text,
+            model,
+            response_id,
+            token_usage,
+        } => serde_json::json!({
+            "seq": event.seq,
+            "timestamp": timestamp,
+            "turn_id": turn_id,
+            "role": "assistant",
+            "text": text,
+            "model": model,
+            "response_id": response_id,
+            "token_usage": token_usage,
+        }),
+        _ => return Ok(()),
+    };
+
+    let record = serde_json::to_string(&record).context("serialize readable history record")?;
+    let path = readable_history_path_from_log_path(log_path);
+    let mut file = tokio::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .await
+        .with_context(|| format!("open {}", path.display()))?;
+    ensure_readable_history_file_permissions(&path).await;
+
+    use tokio::io::AsyncWriteExt;
+    file.write_all(record.as_bytes()).await?;
+    file.write_all(b"\n").await?;
+    Ok(())
+}
 
 #[derive(Clone, Debug)]
 pub struct ThreadStore {
@@ -223,6 +292,15 @@ impl ThreadHandle {
 
         let event = self.writer.append(kind).await?;
         self.state.apply(&event)?;
+
+        if let Err(err) = append_readable_history_event(self.writer.log_path(), &event).await {
+            tracing::debug!(
+                thread_id = %self.thread_id,
+                error = %err,
+                "failed to append readable history record"
+            );
+        }
+
         Ok(event)
     }
 
@@ -308,6 +386,77 @@ mod tests {
                 reason: Some(_),
             } if *got == turn_id
         ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn appends_readable_history_for_user_and_assistant() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let store = ThreadStore::new(PmPaths::new(dir.path().join(".omne_data")));
+
+        let mut thread = store.create_thread(PathBuf::from("/tmp")).await?;
+        let thread_id = thread.thread_id();
+        let turn_id = omne_protocol::TurnId::new();
+
+        thread
+            .append(ThreadEventKind::TurnStarted {
+                turn_id,
+                input: "hello".to_string(),
+                context_refs: None,
+                attachments: None,
+                directives: None,
+                priority: omne_protocol::TurnPriority::Foreground,
+            })
+            .await?;
+        thread
+            .append(ThreadEventKind::AssistantMessage {
+                turn_id: Some(turn_id),
+                text: "world".to_string(),
+                model: Some("m".to_string()),
+                response_id: Some("r".to_string()),
+                token_usage: Some(serde_json::json!({"input_tokens": 1})),
+            })
+            .await?;
+        drop(thread);
+
+        let path = store.thread_dir(thread_id).join(READABLE_HISTORY_FILE_NAME);
+        let raw = tokio::fs::read_to_string(&path)
+            .await
+            .with_context(|| format!("read {}", path.display()))?;
+        let lines = raw
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>();
+        assert_eq!(lines.len(), 2);
+
+        let user = serde_json::from_str::<serde_json::Value>(lines[0])?;
+        assert_eq!(user.get("role").and_then(|v| v.as_str()), Some("user"));
+        assert_eq!(user.get("text").and_then(|v| v.as_str()), Some("hello"));
+        assert!(user.get("timestamp").and_then(|v| v.as_str()).is_some());
+
+        let assistant = serde_json::from_str::<serde_json::Value>(lines[1])?;
+        assert_eq!(
+            assistant.get("role").and_then(|v| v.as_str()),
+            Some("assistant")
+        );
+        assert_eq!(
+            assistant.get("text").and_then(|v| v.as_str()),
+            Some("world")
+        );
+        assert_eq!(assistant.get("model").and_then(|v| v.as_str()), Some("m"));
+        assert_eq!(
+            assistant.get("response_id").and_then(|v| v.as_str()),
+            Some("r")
+        );
+        assert!(assistant.get("token_usage").is_some());
+        assert!(
+            assistant
+                .get("timestamp")
+                .and_then(|v| v.as_str())
+                .is_some()
+        );
+
         Ok(())
     }
 }

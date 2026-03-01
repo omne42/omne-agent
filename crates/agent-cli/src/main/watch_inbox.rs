@@ -540,14 +540,12 @@ async fn run_watch(app: &mut App, args: WatchArgs) -> anyhow::Result<()> {
                 } else {
                     (None, SummarySource::None)
                 }
+            } else if let Some(summary) =
+                previous_snapshot.and_then(|value| value.subagent_pending.clone())
+            {
+                (Some(summary), SummarySource::Previous)
             } else {
-                if let Some(summary) =
-                    previous_snapshot.and_then(|value| value.subagent_pending.clone())
-                {
-                    (Some(summary), SummarySource::Previous)
-                } else {
-                    (None, SummarySource::None)
-                }
+                (None, SummarySource::None)
             };
             let snapshot = WatchDetailSummarySnapshot {
                 auto_apply: auto_apply_summary.clone(),
@@ -1205,7 +1203,7 @@ async fn render_inbox_once(
         render_thread_row(thread);
         if details {
             let att = thread_attention_cached(app, attention_cache, thread.thread_id).await?;
-            render_thread_details(&att, warning_threshold_ratio);
+            render_thread_details(att, warning_threshold_ratio);
             if let Some(summary) = thread.fan_out_auto_apply.as_ref() {
                 println!("  {}", format_fan_out_auto_apply_summary(summary));
             } else if let Some(summary) =
@@ -1215,7 +1213,7 @@ async fn render_inbox_once(
                 println!("  {}", format_fan_out_auto_apply_summary(&summary));
             }
             if let Some(summary) = thread.fan_in_dependency_blocker.as_ref() {
-                println!("  {}", format_fan_in_dependency_blocked_summary(&summary));
+                println!("  {}", format_fan_in_dependency_blocked_summary(summary));
             } else if !thread.has_fan_in_dependency_blocked {
                 // list_meta already says there is no blocked fan-in summary; skip fallback reads.
             } else if let Some(summary) = latest_fan_in_dependency_blocked_summary_with_attention(
@@ -1423,7 +1421,7 @@ async fn render_inbox_changes(
         render_thread_row(meta);
         if details {
             let att = thread_attention_cached(app, attention_cache, *thread_id).await?;
-            render_thread_details(&att, warning_threshold_ratio);
+            render_thread_details(att, warning_threshold_ratio);
             if let Some(summary) = auto_apply_summaries.get(thread_id) {
                 println!("  {}", format_fan_out_auto_apply_summary(summary));
             }

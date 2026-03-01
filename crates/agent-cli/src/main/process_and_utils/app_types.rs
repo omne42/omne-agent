@@ -19,6 +19,13 @@ enum McpActionOrFailedResponse {
 
 type ThreadConfigExplainResponse = omne_app_server_protocol::ThreadConfigExplainResponse;
 
+type ParsedTurnInput = (
+    String,
+    Vec<omne_protocol::ContextRef>,
+    Vec<omne_protocol::TurnAttachment>,
+    Vec<omne_protocol::TurnDirective>,
+);
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct ThreadSpawnResponse {
     thread_id: ThreadId,
@@ -29,12 +36,7 @@ struct ThreadSpawnResponse {
 
 fn split_special_directives(
     input: &str,
-) -> anyhow::Result<(
-    String,
-    Vec<omne_protocol::ContextRef>,
-    Vec<omne_protocol::TurnAttachment>,
-    Vec<omne_protocol::TurnDirective>,
-)> {
+) -> anyhow::Result<ParsedTurnInput> {
     let mut refs = Vec::<omne_protocol::ContextRef>::new();
     let mut attachments = Vec::<omne_protocol::TurnAttachment>::new();
     let mut directives = Vec::<omne_protocol::TurnDirective>::new();

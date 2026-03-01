@@ -198,18 +198,16 @@ async fn resolve_pending_approval_proxy(
 
     let mut proxy: Option<SubagentApprovalProxy> = None;
     for event in events {
-        match event.kind {
-            omne_protocol::ThreadEventKind::ApprovalRequested {
-                approval_id: got,
-                params,
-                ..
-            } => {
-                if got != approval_id {
-                    continue;
-                }
-                proxy = parse_subagent_approval_proxy(&params);
+        if let omne_protocol::ThreadEventKind::ApprovalRequested {
+            approval_id: got,
+            params,
+            ..
+        } = event.kind
+        {
+            if got != approval_id {
+                continue;
             }
-            _ => {}
+            proxy = parse_subagent_approval_proxy(&params);
         }
     }
 

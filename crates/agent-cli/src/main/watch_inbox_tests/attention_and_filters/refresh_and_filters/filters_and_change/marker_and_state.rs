@@ -11,7 +11,7 @@ fn apply_inbox_filters_only_fan_out_linkage_issue_keeps_marked_threads() {
     let filtered =
         apply_inbox_filters(threads, true, false, false, false, false, false, 0.9, false);
     assert_eq!(filtered.len(), 1);
-    assert!(filtered.get(&t1.thread_id).is_some());
+    assert!(filtered.contains_key(&t1.thread_id));
 }
 
 #[test]
@@ -65,7 +65,7 @@ fn apply_inbox_filters_only_fan_out_auto_apply_error_keeps_marked_threads() {
     let filtered =
         apply_inbox_filters(threads, false, true, false, false, false, false, 0.9, false);
     assert_eq!(filtered.len(), 1);
-    assert!(filtered.get(&t1.thread_id).is_some());
+    assert!(filtered.contains_key(&t1.thread_id));
 }
 
 #[test]
@@ -80,7 +80,7 @@ fn apply_inbox_filters_with_both_marker_filters_requires_both_markers() {
 
     let filtered = apply_inbox_filters(threads, true, true, false, false, false, false, 0.9, false);
     assert_eq!(filtered.len(), 1);
-    assert!(filtered.get(&t1.thread_id).is_some());
+    assert!(filtered.contains_key(&t1.thread_id));
 }
 
 #[test]
@@ -96,8 +96,8 @@ fn apply_inbox_filters_only_fan_in_dependency_blocked_keeps_marked_threads() {
     let filtered =
         apply_inbox_filters(threads, false, false, true, false, false, false, 0.9, false);
     assert_eq!(filtered.len(), 2);
-    assert!(filtered.get(&t1.thread_id).is_some());
-    assert!(filtered.get(&t3.thread_id).is_some());
+    assert!(filtered.contains_key(&t1.thread_id));
+    assert!(filtered.contains_key(&t3.thread_id));
 }
 
 #[test]
@@ -115,8 +115,8 @@ fn apply_inbox_filters_only_subagent_proxy_approval_keeps_marked_threads() {
     let filtered =
         apply_inbox_filters(threads, false, false, false, false, false, false, 0.9, true);
     assert_eq!(filtered.len(), 2);
-    assert!(filtered.get(&t1.thread_id).is_some());
-    assert!(filtered.get(&t3.thread_id).is_some());
+    assert!(filtered.contains_key(&t1.thread_id));
+    assert!(filtered.contains_key(&t3.thread_id));
 }
 
 #[test]
@@ -134,6 +134,6 @@ fn apply_inbox_filters_only_fan_in_result_diagnostics_keeps_marked_threads() {
     let filtered =
         apply_inbox_filters(threads, false, false, false, true, false, false, 0.9, false);
     assert_eq!(filtered.len(), 2);
-    assert!(filtered.get(&t1.thread_id).is_some());
-    assert!(filtered.get(&t3.thread_id).is_some());
+    assert!(filtered.contains_key(&t1.thread_id));
+    assert!(filtered.contains_key(&t3.thread_id));
 }

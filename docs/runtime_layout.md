@@ -38,16 +38,18 @@
     <thread_id>/
       events.jsonl
       events.jsonl.lock
+      readable_history.jsonl
 ```
 
 说明：
 
 - `events.jsonl`：append-only 事件流（每行一个 `ThreadEvent` JSON）。
 - `events.jsonl.lock`：写入锁（避免并发写坏 log）。
+- `readable_history.jsonl`：用户可读对话（仅 `user/assistant` 文本行；由事件派生写入，可删除重建）。
 
 ---
 
-## 2) artifacts 目录（大内容都在这）
+## 2) artifacts 目录（用户可见产物）
 
 thread 下的 artifacts 根目录：
 
@@ -55,26 +57,7 @@ thread 下的 artifacts 根目录：
 <omne_root>/threads/<thread_id>/artifacts/
 ```
 
-### 2.1 process logs（stdout/stderr）
-
-每个 process 一个目录：
-
-```
-<omne_root>/threads/<thread_id>/artifacts/processes/<process_id>/
-  stdout.log
-  stdout.segment-0001.log        # 超过阈值后 rotate
-  stdout.part-0001.log           # 兼容命名（如出现）
-  stderr.log
-  stderr.segment-0001.log
-  stderr.part-0001.log           # 兼容命名（如出现）
-```
-
-要点：
-
-- `process/start` 会在事件里落盘 `ProcessStarted{stdout_path,stderr_path}`，并在返回值里直接带路径。
-- rotate 阈值默认 `8MiB`，可用 `OMNE_PROCESS_LOG_MAX_BYTES_PER_PART` 覆盖。
-
-### 2.2 user artifacts（`artifact/write`）
+### 2.1 user artifacts（`artifact/write`）
 
 用户可见的文档产物（markdown + metadata）：
 
@@ -88,7 +71,45 @@ metadata 字段模型：`omne_protocol::ArtifactMetadata`（见 `crates/agent-pr
 
 ---
 
-## 3) 如何“从 ID 定位到文件”
+## 3) runtime 目录（内部运行时落盘）
+
+thread 下的 runtime 根目录：
+
+```
+<omne_root>/threads/<thread_id>/runtime/
+```
+
+### 3.1 process logs（stdout/stderr）
+
+每个 process 一个目录：
+
+```
+<omne_root>/threads/<thread_id>/runtime/processes/<process_id>/
+  stdout.log
+  stdout.segment-0001.log        # 超过阈值后 rotate
+  stdout.part-0001.log           # 兼容命名（如出现）
+  stderr.log
+  stderr.segment-0001.log
+  stderr.part-0001.log           # 兼容命名（如出现）
+```
+
+要点：
+
+- `process/start` 会在事件里落盘 `ProcessStarted{stdout_path,stderr_path}`，并在返回值里直接带路径。
+- rotate 阈值默认 `8MiB`，可用 `OMNE_PROCESS_LOG_MAX_BYTES_PER_PART` 覆盖。
+
+### 3.2 LLM stream debug（可选）
+
+当开启 `OMNE_DEBUG_LLM_STREAM=1` 时：
+
+```
+<omne_root>/threads/<thread_id>/runtime/llm_stream/<turn_id>.jsonl
+<omne_root>/threads/<thread_id>/runtime/llm_stream/<turn_id>.request_body.json
+```
+
+---
+
+## 4) 如何“从 ID 定位到文件”
 
 - 已知 `thread_id`：
   - `omne thread events <thread_id>`（或 JSON-RPC `thread/subscribe`）看 `events.jsonl` 的回放结果
@@ -101,8 +122,7 @@ metadata 字段模型：`omne_protocol::ArtifactMetadata`（见 `crates/agent-pr
 
 ---
 
-## 4) 清理行为（危险但必要）
+## 5) 清理行为（危险但必要）
 
-- `thread/clear_artifacts` 会删除 `<thread_dir>/artifacts`：
-  - 若存在 running process，默认拒绝；`force=true` 会先 kill 再删。
+- `thread/clear_artifacts` 会删除 `<thread_dir>/artifacts`（不影响 running processes）。
 - `thread/delete` 会删除整个 `<thread_dir>`（包括 events 与 artifacts）。
