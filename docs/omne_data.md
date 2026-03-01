@@ -112,7 +112,7 @@ OMNE_OPENAI_MODEL=gpt-4.1
 # 可选：逗号分隔的 fallback provider 列表（优先级高于 config.toml 的 `openai.fallback_providers`）
 OMNE_OPENAI_FALLBACK_PROVIDERS=openai-auth-command,openai-codex-apikey
 
-# 可选：Responses raw history 存储编码（默认 encrypted）
+# 可选：Responses raw history 存储编码（默认 plaintext；显式设为 encrypted 才加密）
 OMNE_OPENAI_RESPONSES_HISTORY_CODEC=encrypted
 # 可选：显式覆盖 Responses raw history 密钥（建议使用 base64）
 OMNE_OPENAI_RESPONSES_HISTORY_KEY_B64=...

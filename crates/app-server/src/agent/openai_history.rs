@@ -70,20 +70,20 @@ enum OpenAiResponsesHistoryCodecMode {
 
 fn openai_responses_history_codec_mode() -> OpenAiResponsesHistoryCodecMode {
     match std::env::var(OPENAI_RESPONSES_HISTORY_CODEC_ENV)
-        .unwrap_or_else(|_| "encrypted".to_string())
+        .unwrap_or_else(|_| "plaintext".to_string())
         .trim()
         .to_ascii_lowercase()
         .as_str()
     {
-        "plaintext" | "plain" | "off" => OpenAiResponsesHistoryCodecMode::Plaintext,
-        "encrypted" | "encrypt" | "" => OpenAiResponsesHistoryCodecMode::Encrypted,
+        "plaintext" | "plain" | "off" | "" => OpenAiResponsesHistoryCodecMode::Plaintext,
+        "encrypted" | "encrypt" => OpenAiResponsesHistoryCodecMode::Encrypted,
         value => {
             tracing::warn!(
                 env = OPENAI_RESPONSES_HISTORY_CODEC_ENV,
                 value,
-                "unknown openai history codec; defaulting to encrypted"
+                "unknown openai history codec; defaulting to plaintext"
             );
-            OpenAiResponsesHistoryCodecMode::Encrypted
+            OpenAiResponsesHistoryCodecMode::Plaintext
         }
     }
 }
