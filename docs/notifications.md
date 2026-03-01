@@ -117,7 +117,7 @@ Attention 的派生语义与状态集合见：
 最小可实现规格（不引入复杂 UI）：
 
 - 检测条件（任意满足）：
-  - running process 在 `idle_window` 内无新输出（以 stdout/stderr artifacts 的 mtime 近似）
+  - running process 在 `idle_window` 内无新输出（以 stdout/stderr runtime logs 的 mtime 近似）
 - 行为：
   - `thread/attention` 输出 `stale_processes=[{process_id, idle_seconds, last_update_at, stdout_path, stderr_path}]`
   - `omne inbox --bell` / `omne watch --bell` 在 `stale_processes` 从空变非空时提醒一次（节流同上）
@@ -127,7 +127,7 @@ Attention 的派生语义与状态集合见：
 
 - 对每个 running process：
   - 用文件 mtime 作为“最近输出”的近似，但必须考虑 rotate 分片：
-    - 取 `stdout_path/stderr_path` 的父目录作为 process artifacts 目录
+    - 取 `stdout_path/stderr_path` 的父目录作为 process runtime logs 目录
     - `last_stdout_at = max(mtime(stdout.log), mtime(stdout.segment-*.log), mtime(stdout.part-*.log))`
     - `last_stderr_at = max(mtime(stderr.log), mtime(stderr.segment-*.log), mtime(stderr.part-*.log))`
     - `last_update_at = max(last_stdout_at, last_stderr_at)`
