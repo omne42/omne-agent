@@ -180,6 +180,22 @@ fn user_artifacts_dir_for_thread(server: &Server, thread_id: ThreadId) -> PathBu
     omne_artifact_store::user_artifacts_dir_for_thread(&server.thread_store.thread_dir(thread_id))
 }
 
+fn runtime_dir_for_thread(server: &Server, thread_id: ThreadId) -> PathBuf {
+    server.thread_store.thread_dir(thread_id).join("runtime")
+}
+
+fn process_runtime_dir_for_thread(server: &Server, thread_id: ThreadId) -> PathBuf {
+    runtime_dir_for_thread(server, thread_id).join("processes")
+}
+
+fn process_runtime_dir_for_process(
+    server: &Server,
+    thread_id: ThreadId,
+    process_id: ProcessId,
+) -> PathBuf {
+    process_runtime_dir_for_thread(server, thread_id).join(process_id.to_string())
+}
+
 fn user_artifact_paths(
     server: &Server,
     thread_id: ThreadId,

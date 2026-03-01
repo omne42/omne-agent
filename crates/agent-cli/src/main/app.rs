@@ -388,9 +388,7 @@ async fn main() -> anyhow::Result<()> {
                 if json {
                     println!("{}", serde_json::to_string(&result)?);
                 } else {
-                    let value = serde_json::to_value(result)
-                        .context("serialize thread/events response")?;
-                    print_json_or_pretty(false, &value)?;
+                    print_thread_events_plain(&result);
                 }
             }
             ThreadCommand::Loaded { json } => {
@@ -940,6 +938,82 @@ fn artifact_list_plain_lines(
 fn print_thread_list_meta_plain(result: &omne_app_server_protocol::ThreadListMetaResponse) {
     for line in thread_list_meta_plain_lines(result) {
         println!("{line}");
+    }
+}
+
+fn truncate_for_display(input: &str, max_chars: usize) -> String {
+    if max_chars == 0 {
+        return String::new();
+    }
+    let mut chars = input.chars();
+    let mut out = String::new();
+    for _ in 0..max_chars {
+        if let Some(ch) = chars.next() {
+            out.push(ch);
+        } else {
+            return out;
+        }
+    }
+    if chars.next().is_some() {
+        out.push_str("...");
+    }
+    out
+}
+
+fn print_thread_events_plain(result: &omne_app_server_protocol::ThreadEventsResponse) {
+    println!(
+        "thread events: count={} last_seq={} thread_last_seq={} has_more={}",
+        result.events.len(),
+        result.last_seq,
+        result.thread_last_seq,
+        result.has_more
+    );
+    if result.events.is_empty() {
+        println!("(no events)");
+        return;
+    }
+
+    for event in &result.events {
+        let ts = event
+            .timestamp
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap_or_else(|_| "<time>".to_string());
+        let seq = event.seq.0;
+
+        match &event.kind {
+            omne_protocol::ThreadEventKind::AssistantMessage { text, model, .. } => {
+                let model = model.as_deref().unwrap_or("unknown");
+                let preview = truncate_for_display(text.trim(), 240);
+                println!("[seq={seq}] [{ts}] assistant (model={model}): {preview}");
+                continue;
+            }
+            omne_protocol::ThreadEventKind::TurnStarted { input, .. } => {
+                let preview = truncate_for_display(input.trim(), 240);
+                println!("[seq={seq}] [{ts}] user: {preview}");
+                continue;
+            }
+            _ => {}
+        }
+
+        let mut buffered = Vec::<u8>::new();
+        render_event_to(&mut buffered, ts.clone(), &event.kind);
+        let text = String::from_utf8_lossy(&buffered);
+        let lines = text
+            .trim_end()
+            .lines()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>();
+        if lines.is_empty() {
+            println!("[seq={seq}] [{ts}] {}", event.kind.tag());
+            continue;
+        }
+        for (idx, line) in lines.iter().enumerate() {
+            if idx == 0 {
+                println!("[seq={seq}] {line}");
+            } else {
+                println!("         {line}");
+            }
+        }
     }
 }
 

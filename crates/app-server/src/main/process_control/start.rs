@@ -285,11 +285,7 @@ async fn handle_process_start_inner(
     }
 
     let process_id = ProcessId::new();
-    let thread_dir = server.thread_store.thread_dir(params.thread_id);
-    let process_dir = thread_dir
-        .join("artifacts")
-        .join("processes")
-        .join(process_id.to_string());
+    let process_dir = process_runtime_dir_for_process(server, params.thread_id, process_id);
     tokio::fs::create_dir_all(&process_dir)
         .await
         .with_context(|| format!("create dir {}", process_dir.display()))?;
