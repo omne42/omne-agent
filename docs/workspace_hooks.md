@@ -54,7 +54,8 @@ omne thread hook-run <thread_id> archive
 
 - config 不存在：`{ ok: true, skipped: true, reason: "...", searched: [...] }`
 - hook 未配置：`{ ok: true, skipped: true, reason: "...", config_path: "..." }`
-- 成功启动：`{ ok: true, process_id, stdout_path, stderr_path, ... }`
+- 成功完成（等待进程退出）：`{ ok: true, process_id, exit_code: 0, stdout_path, stderr_path, ... }`
+- 失败（等待进程退出）：`{ ok: false, process_id, exit_code, reason, stdout_path, stderr_path, ... }`
 - 需要审批：返回 `{ needs_approval: true, approval_id, thread_id, hook }`
   - CLI 会报错并提示：先 `omne approval decide ... --approve`，然后带 `--approval-id <id>` 重跑。
 - 被拒绝：返回 `{ denied: true, thread_id, hook, error_code, detail }`（`error_code` 与 `process/start` 拒绝分类一致，如 `sandbox_policy_denied` / `allowed_tools_denied` / `mode_denied` / `approval_denied`）。
@@ -67,9 +68,9 @@ omne thread hook-run <thread_id> archive
 
 `auto_hook` 结构（概要）：
 
-- 成功启动：`{ hook, ok: true, process_id, stdout_path, stderr_path }`
+- 成功完成：`{ hook, ok: true, process_id, exit_code: 0, stdout_path, stderr_path }`
 - 跳过：`{ hook, ok: true, skipped: true, reason, ... }`
-- 失败：`{ hook, ok: false, error }`
+- 失败：`{ hook, ok: false, exit_code, reason, ... }`
 
 ---
 

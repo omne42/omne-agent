@@ -484,7 +484,7 @@ mod thread_manage_tests {
             config_dir.join("workspace.yaml"),
             r#"
 hooks:
-  setup: ["sh", "-c", "exit 0"]
+  setup: ["sh", "-c", "echo hook-stdout; echo hook-stderr 1>&2; exit 0"]
 "#,
         )
         .await?;
@@ -509,33 +509,42 @@ hooks:
             other => anyhow::bail!("expected ThreadHookRunResponse::Ok, got {other:?}"),
         };
         assert!(result.ok);
+        assert_eq!(result.exit_code, Some(0));
         assert_eq!(result.hook, "setup");
         let process_id = result
             .process_id
             .ok_or_else(|| anyhow::anyhow!("missing process_id"))?;
+        let stdout_path = result
+            .stdout_path
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("missing stdout_path"))?;
+        let stderr_path = result
+            .stderr_path
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("missing stderr_path"))?;
 
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
-        loop {
-            let status = {
-                let entry = {
-                    let processes = server.processes.lock().await;
-                    processes
-                        .get(&process_id)
-                        .cloned()
-                        .ok_or_else(|| anyhow::anyhow!("missing process entry"))?
-                };
-                let info = entry.info.lock().await;
-                info.status.clone()
+        let status = {
+            let entry = {
+                let processes = server.processes.lock().await;
+                processes
+                    .get(&process_id)
+                    .cloned()
+                    .ok_or_else(|| anyhow::anyhow!("missing process entry"))?
             };
+            let info = entry.info.lock().await;
+            (info.status.clone(), info.exit_code)
+        };
+        assert!(matches!(status.0, ProcessStatus::Exited));
+        assert_eq!(status.1, Some(0));
 
-            if matches!(status, ProcessStatus::Exited) {
-                break;
-            }
-            if tokio::time::Instant::now() > deadline {
-                anyhow::bail!("process did not exit in time");
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+        let stdout = tokio::fs::read_to_string(&stdout_path)
+            .await
+            .with_context(|| format!("read stdout {}", stdout_path))?;
+        let stderr = tokio::fs::read_to_string(&stderr_path)
+            .await
+            .with_context(|| format!("read stderr {}", stderr_path))?;
+        assert!(stdout.contains("hook-stdout"));
+        assert!(stderr.contains("hook-stderr"));
 
         Ok(())
     }
@@ -996,7 +1005,7 @@ hooks:
             config_dir.join("workspace.yaml"),
             r#"
 hooks:
-  setup: ["sh", "-c", "exit 0"]
+  setup: ["sh", "-c", "echo auto-stdout; echo auto-stderr 1>&2; exit 0"]
 "#,
         )
         .await?;
@@ -1013,10 +1022,31 @@ hooks:
         let result = response
             .result
             .ok_or_else(|| anyhow::anyhow!("missing thread/start result"))?;
-        assert!(result["thread_id"].is_string());
-        assert_eq!(result["auto_hook"]["hook"].as_str().unwrap_or(""), "setup");
-        assert!(result["auto_hook"]["ok"].as_bool().unwrap_or(false));
-        assert!(result["auto_hook"]["process_id"].is_string());
+        let result = serde_json::from_value::<omne_app_server_protocol::ThreadStartResponse>(result)?;
+        let auto_hook = match result.auto_hook {
+            omne_app_server_protocol::ThreadAutoHookResponse::Ok(response) => response,
+            other => anyhow::bail!("expected thread/start auto_hook ok, got {other:?}"),
+        };
+        assert_eq!(auto_hook.hook, "setup");
+        assert!(auto_hook.ok);
+        assert_eq!(auto_hook.exit_code, Some(0));
+        assert!(auto_hook.process_id.is_some());
+        let stdout_path = auto_hook
+            .stdout_path
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("missing stdout_path"))?;
+        let stderr_path = auto_hook
+            .stderr_path
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("missing stderr_path"))?;
+        let stdout = tokio::fs::read_to_string(&stdout_path)
+            .await
+            .with_context(|| format!("read stdout {}", stdout_path))?;
+        let stderr = tokio::fs::read_to_string(&stderr_path)
+            .await
+            .with_context(|| format!("read stderr {}", stderr_path))?;
+        assert!(stdout.contains("auto-stdout"));
+        assert!(stderr.contains("auto-stderr"));
 
         Ok(())
     }

@@ -1145,6 +1145,9 @@ pub struct ThreadHookRunResponse {
     pub process_id: Option<omne_protocol::ProcessId>,
     #[serde(default)]
     #[ts(optional)]
+    pub exit_code: Option<i32>,
+    #[serde(default)]
+    #[ts(optional)]
     pub stdout_path: Option<String>,
     #[serde(default)]
     #[ts(optional)]

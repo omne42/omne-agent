@@ -443,7 +443,13 @@ pub(super) fn ensure_auto_hook_ready(
     auto_hook: &omne_app_server_protocol::ThreadAutoHookResponse,
 ) -> anyhow::Result<()> {
     match auto_hook {
-        omne_app_server_protocol::ThreadAutoHookResponse::Ok(_) => Ok(()),
+        omne_app_server_protocol::ThreadAutoHookResponse::Ok(response) => {
+            if response.ok {
+                return Ok(());
+            }
+            let detail = serde_json::to_string(response).unwrap_or_else(|_| format!("{response:?}"));
+            anyhow::bail!("{action} {hook_context} failed: {detail}");
+        }
         omne_app_server_protocol::ThreadAutoHookResponse::NeedsApproval(response) => {
             eprintln!(
                 "[{action}] {hook_context} needs approval: hook={} thread_id={} approval_id={} approve_cmd=`omne approval decide {} {} --approve` deny_cmd=`omne approval decide {} {} --deny`",

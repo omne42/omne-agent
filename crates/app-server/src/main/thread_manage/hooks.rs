@@ -70,6 +70,7 @@ async fn run_workspace_hook_inner(
                         config_path: None,
                         argv: None,
                         process_id: None,
+                        exit_code: None,
                         stdout_path: None,
                         stderr_path: None,
                     };
@@ -104,6 +105,7 @@ async fn run_workspace_hook_inner(
             config_path: Some(config_path.display().to_string()),
             argv: None,
             process_id: None,
+            exit_code: None,
             stdout_path: None,
             stderr_path: None,
         };
@@ -169,8 +171,8 @@ async fn run_workspace_hook_inner(
     let process_id = obj
         .get("process_id")
         .cloned()
-        .map(serde_json::from_value::<ProcessId>)
-        .transpose()
+        .ok_or_else(|| anyhow::anyhow!("thread/hook_run missing process_id"))?;
+    let process_id = serde_json::from_value::<ProcessId>(process_id)
         .context("parse thread/hook_run process_id response field")?;
     let stdout_path = obj
         .get("stdout_path")
@@ -180,21 +182,111 @@ async fn run_workspace_hook_inner(
         .get("stderr_path")
         .and_then(serde_json::Value::as_str)
         .map(ToOwned::to_owned);
+
+    // `thread/hook_run` must not return before the hook process exits; callers commonly spawn
+    // `omne-app-server` in stdio mode for a single RPC, and disconnecting would terminate the
+    // server (dropping the process actor and losing stdout/stderr + exit_code persistence).
+    let exit_code = match wait_for_workspace_hook_exit(server, process_id).await {
+        Ok(code) => code,
+        Err(err) => {
+            let response = omne_app_server_protocol::ThreadHookRunResponse {
+                ok: false,
+                skipped: false,
+                hook: key.to_string(),
+                reason: Some(err.to_string()),
+                searched: None,
+                config_path: Some(config_path.display().to_string()),
+                argv: Some(argv),
+                process_id: Some(process_id),
+                exit_code: None,
+                stdout_path,
+                stderr_path,
+            };
+            return Ok(omne_app_server_protocol::ThreadHookRunRpcResponse::Ok(
+                response,
+            ));
+        }
+    };
+
+    let (ok, reason) = match exit_code {
+        Some(0) => (true, None),
+        Some(code) => (
+            false,
+            Some(format!("workspace hook process exited with code {code}")),
+        ),
+        None => (
+            false,
+            Some("workspace hook process exited without an exit code".to_string()),
+        ),
+    };
     let response = omne_app_server_protocol::ThreadHookRunResponse {
-        ok: true,
+        ok,
         skipped: false,
         hook: key.to_string(),
-        reason: None,
+        reason,
         searched: None,
         config_path: Some(config_path.display().to_string()),
         argv: Some(argv),
-        process_id,
+        process_id: Some(process_id),
+        exit_code,
         stdout_path,
         stderr_path,
     };
     Ok(omne_app_server_protocol::ThreadHookRunRpcResponse::Ok(
         response,
     ))
+}
+
+fn workspace_hook_process_timeout() -> Option<Duration> {
+    // 0 means "no timeout". Keep the default off; workspace hooks are user-defined and may run
+    // longer than our advisory hook dispatch (which has a short cap).
+    let value = std::env::var("OMNE_WORKSPACE_HOOK_PROCESS_TIMEOUT_SECS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or(0);
+    if value == 0 {
+        None
+    } else {
+        // Clamp to avoid accidentally waiting "forever" due to a typo (e.g. ms vs secs).
+        Some(Duration::from_secs(value.min(24 * 60 * 60)))
+    }
+}
+
+async fn wait_for_workspace_hook_exit(
+    server: &Server,
+    process_id: ProcessId,
+) -> anyhow::Result<Option<i32>> {
+    let deadline = workspace_hook_process_timeout().map(|timeout| tokio::time::Instant::now() + timeout);
+    loop {
+        let entry = {
+            let processes = server.processes.lock().await;
+            processes.get(&process_id).cloned()
+        };
+        let Some(entry) = entry else {
+            return Ok(None);
+        };
+
+        let (status, exit_code) = {
+            let info = entry.info.lock().await;
+            (info.status.clone(), info.exit_code)
+        };
+
+        if matches!(status, ProcessStatus::Exited | ProcessStatus::Abandoned) {
+            return Ok(exit_code);
+        }
+
+        if deadline.is_some_and(|deadline| tokio::time::Instant::now() >= deadline) {
+            let _ = entry
+                .cmd_tx
+                .send(ProcessCommand::Kill {
+                    reason: Some("workspace hook timeout".to_string()),
+                })
+                .await;
+            anyhow::bail!("workspace hook process timed out: {}", process_id);
+        }
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 }
 
 async fn run_auto_workspace_hook(
