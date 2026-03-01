@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- `omne-app-server process/start`：新增 `agent-exec-gateway` 接入，在实际 `spawn` 前统一执行 gateway policy + 隔离能力判定（fail-closed），并把每次判定落盘到进程目录 `exec_gateway_audit.jsonl`；默认策略按当前 `sandbox_policy` 映射隔离等级（`workspace_write -> best_effort`，`danger_full_access -> none`），并支持 `OMNE_EXEC_GATEWAY_POLICY_PATH` 覆盖策略文件。
 - OpenSpec：新增 `openspec/changes/external-toolchain-installer/proposal.md`，定义“独立辅助安装仓库 + omne-agent 调用 + 反滥用边界”的目标与验收口径。
 - OpenSpec：新增 `openspec/changes/external-toolchain-installer/tasks.md`，明确分阶段落地顺序、测试项与边界自检命令。
 - OpenSpec：新增 `openspec/changes/external-toolchain-installer/specs/toolchain/spec.md`，固化外部安装器调用契约与网关“非开放代理”要求。

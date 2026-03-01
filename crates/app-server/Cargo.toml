@@ -17,6 +17,7 @@ ditto-llm = { path = "../../../ditto-llm" }
 notify-kit = { path = "../../../notify-kit/crates/notify-kit" }
 omne-mcp-kit = { package = "mcp-kit", path = "../../../mcp-kit/crates/mcp-kit" }
 omne-jsonrpc = { package = "mcp-jsonrpc", path = "../../../mcp-kit/crates/jsonrpc" }
+agent-exec-gateway = { path = "../../../agent-exec-gateway" }
 omne-artifact-store = { path = "../artifact-store" }
 omne-core = { path = "../core" }
 omne-eventlog = { path = "../eventlog" }

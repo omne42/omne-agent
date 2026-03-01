@@ -368,6 +368,53 @@ async fn handle_process_start_inner(
     }
     let effective_env_summary = apply_child_process_hardening(&mut cmd, combined_env_opt)
         .context("apply child process hardening")?;
+
+    let gateway_policy = match build_process_exec_gateway_policy(&process_dir, sandbox_policy) {
+        Ok(policy) => policy,
+        Err(err) => {
+            let result = process_denied_response(tool_id, params.thread_id, None)?;
+            emit_process_tool_denied(
+                &thread_rt,
+                tool_id,
+                params.turn_id,
+                "process/start",
+                &start_tool_params,
+                format!("failed to build exec gateway policy: {err}"),
+                result.clone(),
+            )
+            .await?;
+            return Ok(result);
+        }
+    };
+    let gateway = agent_exec_gateway::ExecGateway::with_policy(gateway_policy);
+    let gateway_request = agent_exec_gateway::ExecRequest::new(
+        params.argv[0].clone(),
+        params.argv.iter().skip(1).cloned(),
+        cwd_path.clone(),
+        sandbox_policy_to_gateway_isolation(sandbox_policy),
+        thread_root.clone(),
+    );
+    let (gateway_event, gateway_prepare_result) =
+        gateway.prepare_command(&gateway_request, cmd.as_std_mut());
+    if let Err(err) = gateway_prepare_result {
+        let result = process_denied_response(tool_id, params.thread_id, None)?;
+        let gateway_reason = gateway_event.reason.unwrap_or_else(|| "prepare_failed".to_string());
+        emit_process_tool_denied(
+            &thread_rt,
+            tool_id,
+            params.turn_id,
+            "process/start",
+            &start_tool_params,
+            format!("exec gateway denied command ({gateway_reason}): {err}"),
+            result.clone(),
+        )
+        .await?;
+        if let Some(gate) = execve_gate.take() {
+            shutdown_execve_gate(gate).await;
+        }
+        return Ok(result);
+    }
+
     let mut child = match cmd.spawn() {
         Ok(child) => child,
         Err(err) => {
@@ -469,6 +516,48 @@ async fn handle_process_start_inner(
         timeout_ms: params.timeout_ms,
     };
     serde_json::to_value(response).context("serialize process/start response")
+}
+
+fn sandbox_policy_to_gateway_isolation(
+    sandbox_policy: omne_protocol::SandboxPolicy,
+) -> agent_exec_gateway::IsolationLevel {
+    match sandbox_policy {
+        omne_protocol::SandboxPolicy::DangerFullAccess => agent_exec_gateway::IsolationLevel::None,
+        omne_protocol::SandboxPolicy::WorkspaceWrite => {
+            agent_exec_gateway::IsolationLevel::WorkspaceBestEffort
+        }
+        omne_protocol::SandboxPolicy::ReadOnly => {
+            agent_exec_gateway::IsolationLevel::WorkspaceBestEffort
+        }
+    }
+}
+
+fn build_process_exec_gateway_policy(
+    process_dir: &Path,
+    sandbox_policy: omne_protocol::SandboxPolicy,
+) -> anyhow::Result<agent_exec_gateway::policy::GatewayPolicy> {
+    let policy = agent_exec_gateway::policy::GatewayPolicy {
+        allow_isolation_none: matches!(sandbox_policy, omne_protocol::SandboxPolicy::DangerFullAccess),
+        // process/start currently has no explicit mutation-intent field, so mutation routing
+        // remains at existing mode/approval/execpolicy layers in this integration step.
+        enforce_fs_tool_for_mutation: false,
+        audit_log_path: Some(process_dir.join("exec_gateway_audit.jsonl")),
+        ..agent_exec_gateway::policy::GatewayPolicy::default()
+    };
+
+    if let Ok(path) = std::env::var("OMNE_EXEC_GATEWAY_POLICY_PATH") {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            let mut loaded = agent_exec_gateway::policy::GatewayPolicy::load_json(trimmed)
+                .with_context(|| format!("load OMNE_EXEC_GATEWAY_POLICY_PATH={trimmed}"))?;
+            if loaded.audit_log_path.is_none() {
+                loaded.audit_log_path = policy.audit_log_path.clone();
+            }
+            return Ok(loaded);
+        }
+    }
+
+    Ok(policy)
 }
 
 async fn resolve_execpolicy_rule_paths(
@@ -713,6 +802,66 @@ mod process_start_tests {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn process_start_writes_exec_gateway_audit_log() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+        write_executable_sh(repo_dir.join("ok.sh").as_path(), "#!/bin/sh\nexit 0\n").await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let thread_id = create_test_thread_shared(&server, repo_dir).await?;
+
+        let result = handle_process_start(
+            &server,
+            ProcessStartParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                argv: vec!["./ok.sh".to_string()],
+                cwd: None,
+                timeout_ms: None,
+            },
+        )
+        .await?;
+
+        let process_id: ProcessId = result["process_id"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing process_id"))?
+            .parse()?;
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            let status = {
+                let entry = {
+                    let processes = server.processes.lock().await;
+                    processes
+                        .get(&process_id)
+                        .cloned()
+                        .ok_or_else(|| anyhow::anyhow!("missing process entry"))?
+                };
+                let info = entry.info.lock().await;
+                info.status.clone()
+            };
+
+            if matches!(status, ProcessStatus::Exited) {
+                break;
+            }
+            if tokio::time::Instant::now() > deadline {
+                anyhow::bail!("process did not exit in time");
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+
+        let process_dir = process_runtime_dir_for_process(&server, thread_id, process_id);
+        let audit_path = process_dir.join("exec_gateway_audit.jsonl");
+        let audit = tokio::fs::read_to_string(&audit_path)
+            .await
+            .with_context(|| format!("read audit {}", audit_path.display()))?;
+        assert!(audit.contains("\"decision\":\"run\""));
         Ok(())
     }
 
