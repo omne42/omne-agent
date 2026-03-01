@@ -81,9 +81,9 @@ omne thread patch <thread_id> --max-bytes 4194304 --wait-seconds 30
 
 ---
 
-## 2) process artifacts（stdout/stderr）
+## 2) process runtime logs（stdout/stderr）
 
-`process/start` 会把 stdout/stderr 实时追加写入 artifacts，并支持 rotate：
+`process/start` 会把 stdout/stderr 实时追加写入 **runtime/processes**，并支持 rotate：
 
 - rotate 默认阈值 `8MiB`，可用 `OMNE_PROCESS_LOG_MAX_BYTES_PER_PART` 覆盖
 - attach（只读）：`process/tail`、`process/follow`
@@ -236,7 +236,7 @@ app-server 默认推断规则（写入/覆盖 artifact 时填充 `preview`）：
 
 安全边界（建议写死）：
 
-- bounded history 仅针对 user artifacts（`artifact/*`），不影响 process logs。
+- bounded history 仅针对 user artifacts（`artifact/*`），不影响 process runtime logs（`runtime/processes/`）。
 - 删除 artifact 时必须级联删除 history（避免“以为删了但旧版本还在”）。
 
 ### 4.4 CLI/API（当前实现）
