@@ -1,6 +1,6 @@
 # Workspace Hooks（setup/run/archive）（v0.2.0 口径）
 
-> 目标：把 workspace 生命周期脚本化为可版本化配置，并把执行结果落到 `process/*` 的可观测/可回放通道里（stdout/stderr artifacts）。
+> 目标：把 workspace 生命周期脚本化为可版本化配置，并把执行结果落到 `process/*` 的可观测/可回放通道里（stdout/stderr runtime logs）。
 >
 > v0.2.0 实现的是“最小可用”：按 argv 执行命令，不做 stdin/PTY 交互，执行仍受 `mode/sandbox/execpolicy/approvals` 约束。
 
