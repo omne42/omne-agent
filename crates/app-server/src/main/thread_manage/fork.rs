@@ -33,6 +33,7 @@ async fn handle_thread_fork(
     let forked_id = forked.thread_id();
     let mut skipped_active_turn_approvals =
         std::collections::HashSet::<omne_protocol::ApprovalId>::new();
+    let mut readable_entries = Vec::<ReadableHistoryEntry>::new();
 
     for event in events {
         let kind = event.kind;
@@ -43,7 +44,10 @@ async fn handle_thread_fork(
             | omne_protocol::ThreadEventKind::ThreadPaused { .. }
             | omne_protocol::ThreadEventKind::ThreadUnpaused { .. } => {}
             kind @ omne_protocol::ThreadEventKind::ThreadConfigUpdated { .. } => {
-                forked.append(kind).await?;
+                let event = forked.append(kind).await?;
+                if let Some(entry) = readable_history_entry_from_event(&event) {
+                    readable_entries.push(entry);
+                }
             }
             omne_protocol::ThreadEventKind::TurnStarted { turn_id, .. } if active_turn_id == Some(turn_id) => {}
             omne_protocol::ThreadEventKind::ModelRouted { turn_id, .. } if active_turn_id == Some(turn_id) => {}
@@ -76,7 +80,10 @@ async fn handle_thread_fork(
             | kind @ omne_protocol::ThreadEventKind::AttentionMarkerSet { .. }
             | kind @ omne_protocol::ThreadEventKind::AttentionMarkerCleared { .. }
             | kind @ omne_protocol::ThreadEventKind::AssistantMessage { .. } => {
-                forked.append(kind).await?;
+                let event = forked.append(kind).await?;
+                if let Some(entry) = readable_history_entry_from_event(&event) {
+                    readable_entries.push(entry);
+                }
             }
             omne_protocol::ThreadEventKind::ToolStarted { .. }
             | omne_protocol::ThreadEventKind::ToolCompleted { .. }
@@ -98,6 +105,16 @@ async fn handle_thread_fork(
         server.notify_tx.clone(),
         server.thread_store.clone(),
     ));
+    for entry in readable_entries {
+        if let Err(err) = rt.append_readable_history_entry(&entry).await {
+            tracing::warn!(
+                thread_id = %entry.thread_id,
+                role = ?entry.role,
+                error = %err,
+                "failed to append readable history entry for forked thread"
+            );
+        }
+    }
     server.threads.lock().await.insert(forked_id, rt);
 
     Ok(omne_app_server_protocol::ThreadHandleResponse {

@@ -9,4 +9,5 @@ include!("thread_manage/delete.rs");
 include!("thread_manage/artifacts.rs");
 include!("thread_manage/checkpoints.rs");
 include!("thread_manage/worktree_lifecycle_tests.rs");
+include!("thread_manage/fork_tests.rs");
 include!("thread_manage/tests.rs");
