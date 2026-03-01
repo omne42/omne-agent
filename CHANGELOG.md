@@ -29,6 +29,7 @@
 - `thread/events`：新增可选 `kinds` 过滤（CLI: `omne thread events --kind <event_type>` 可重复；MCP: `omne.thread.events` 支持 `kinds: string[]`），便于只轮询 `attention_marker_set/attention_marker_cleared` 等关键信号。
 - 新增 Agent-first 重新开发流程文档：`docs/development_process.md`。
 - 新增 vNext 目标态“RTS 风格使用流程”文档：`docs/rts_workflow.md`。
+- 新增 OpenAI-compatible chat 模式 history 与复用（用于 cache）说明文档：`docs/openai_compatible_chat_history.md`。
 - 新增 v0.2.x 文档索引与 v0.2.0 口径补充（approval/attention/event model/runtime/execpolicy 等，详见 `docs/README.md`）。
 - 新增 Ditto-LLM 方案草案：`docs/ditto_llm.md`；并将 `ditto-llm` 拆为独立仓库（本地 checkout：`../ditto-llm`，OmneAgent 通过 path 依赖引用）。
 - 新增 Ditto-LLM TODO 跟踪文档：`docs/ditto_llm_todos.md`。
