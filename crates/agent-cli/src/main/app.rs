@@ -267,6 +267,12 @@ async fn main() -> anyhow::Result<()> {
                 let result =
                     serde_json::to_value(result).context("serialize thread/spawn response")?;
                 print_json_or_pretty(json, &result)?;
+                // `thread spawn` uses `turn/start` with background priority. In stdio (non-daemon)
+                // mode the app-server exits when the CLI disconnects, which would cancel the
+                // spawned turn. Keep the connection open until the child turn completes.
+                if let Ok(parsed) = serde_json::from_value::<ThreadSpawnResponse>(result) {
+                    wait_for_turn_completed(&mut app, parsed.thread_id, parsed.turn_id, parsed.last_seq).await?;
+                }
             }
             ThreadCommand::Archive {
                 thread_id,
@@ -700,6 +706,42 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+async fn wait_for_turn_completed(
+    app: &mut App,
+    thread_id: ThreadId,
+    turn_id: TurnId,
+    mut since_seq: u64,
+) -> anyhow::Result<()> {
+    loop {
+        let resp = app
+            .thread_subscribe(thread_id, since_seq, Some(10_000), Some(1_000))
+            .await?;
+        since_seq = resp.last_seq;
+
+        for event in &resp.events {
+            if let omne_protocol::ThreadEventKind::TurnCompleted {
+                turn_id: completed_turn_id,
+                status,
+                reason,
+            } = &event.kind
+                && *completed_turn_id == turn_id
+            {
+                eprintln!(
+                    "spawned turn completed: thread_id={} turn_id={} status={status:?} reason={}",
+                    thread_id,
+                    turn_id,
+                    reason.as_deref().unwrap_or("")
+                );
+                return Ok(());
+            }
+        }
+
+        if resp.timed_out || resp.has_more {
+            continue;
+        }
+    }
 }
 
 enum PreConnectCommand {
