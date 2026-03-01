@@ -9,7 +9,7 @@
 - **append-only**：事件只追加，不覆盖；回放（replay）必须能重建状态。
 - **单调序号**：同一 thread 内 `EventSeq` 单调递增，用于订阅续传与去重。
 - **订阅是优化，不是正确性前提**：掉线/lag 后用 `since_seq` 重放补齐（at-least-once，客户端按 `seq` 去重）。
-- **不把大内容塞进事件**：文件内容/patch/diff/长日志属于 artifacts；事件只记录元信息（path/bytes/ids/paths）。
+- **不把大内容塞进事件**：文件内容/patch/diff 属于 user artifacts；stdout/stderr 等长日志属于 `runtime/processes/`；事件只记录元信息（path/bytes/ids/paths）。
 - **允许并发导致的事件交错**：read-only tool calls 可能并发执行，`ToolStarted/ToolCompleted` 的出现顺序可能交错；以 `seq` 排序回放即可（并发口径见 `docs/tool_parallelism.md`）。
 
 ---
@@ -42,7 +42,7 @@ Turn 的边界：
 | delta（文本流） | JSON-RPC `item/delta` | 来自 Responses SSE `response.output_text.delta`；断线不影响最终 `AssistantMessage` 落盘 |
 | tool | `ToolStarted` / `ToolCompleted` | 只记录工具名与参数元信息；结果写入 `result`（避免大 payload） |
 | approval | `ApprovalRequested` / `ApprovalDecided` | `ApprovalId` 为 join key；自动决策也落盘 |
-| process | `ProcessStarted` / `ProcessExited` / `ProcessInterruptRequested` / `ProcessKillRequested` | stdout/stderr 路径是 artifacts；支持 `tail/follow`（只读 attach） |
+| process | `ProcessStarted` / `ProcessExited` / `ProcessInterruptRequested` / `ProcessKillRequested` | stdout/stderr 路径在 `runtime/processes/`；支持 `tail/follow`（只读 attach） |
 | attention marker | `AttentionMarkerSet` / `AttentionMarkerCleared` | 结构化“需要人介入”信号；当前 `plan_ready/diff_ready`（artifact/write）、`test_failed`（测试进程失败）、`fan_out_linkage_issue`（artifact_type=`fan_out_linkage_issue`）、`fan_out_auto_apply_error`（`fan_out_result` 结构化字段 `isolated_write_auto_apply.error`）以及 `token_budget_warning/token_budget_exceeded`（由 token budget 利用率/超限状态变化触发）显式落盘；`fan_out_linkage_issue` 可由 `artifact_type=\"fan_out_linkage_issue_clear\"` 显式清除，`fan_out_auto_apply_error` 在后续无错误 fan-out 结果或新 turn 开始时清除（此外 `plan_ready/diff_ready/fan_out_linkage_issue` 在新 turn 开始时清除，`test_failed` 在测试成功后清除，token budget 两个 marker 在状态回落时自动清除）；`thread/attention` 优先消费事件并对历史线程回退推断 |
 | file edit | `ToolStarted/Completed`（`file/write|edit|patch|delete|fs/mkdir`） | 事件记录 `path/bytes/...`，**不记录文件内容**；真实内容在 workspace，可用 diff 工具生成产物 |
 | diff | `thread/diff` / `thread/patch` + artifact | v0.2.0 已支持 `thread/diff` 与 `thread/patch`，输出为 user artifact（`artifact_type="diff"` / `artifact_type="patch"`，预览类型见 `docs/artifacts.md`） |
