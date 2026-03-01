@@ -1095,7 +1095,11 @@ impl Server {
             .await?
             .ok_or_else(|| anyhow::anyhow!("thread not found: {thread_id}"))?;
 
-        let rt = Arc::new(ThreadRuntime::new(handle, self.notify_tx.clone()));
+        let rt = Arc::new(ThreadRuntime::new(
+            handle,
+            self.notify_tx.clone(),
+            self.thread_store.clone(),
+        ));
         threads.insert(thread_id, rt.clone());
         Ok(rt)
     }
@@ -1139,6 +1143,57 @@ struct ThreadRuntime {
     handle: tokio::sync::Mutex<omne_core::ThreadHandle>,
     active_turn: tokio::sync::Mutex<Option<ActiveTurn>>,
     notify_tx: broadcast::Sender<String>,
+    thread_store: ThreadStore,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ReadableHistoryRole {
+    User,
+    Assistant,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct ReadableHistoryEntry {
+    thread_id: ThreadId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    turn_id: Option<TurnId>,
+    role: ReadableHistoryRole,
+    #[serde(with = "time::serde::rfc3339")]
+    ts: OffsetDateTime,
+    text: String,
+}
+
+fn readable_history_entry_from_event(event: &ThreadEvent) -> Option<ReadableHistoryEntry> {
+    match &event.kind {
+        omne_protocol::ThreadEventKind::TurnStarted { turn_id, input, .. } => {
+            let text = input.trim();
+            if text.is_empty() {
+                return None;
+            }
+            Some(ReadableHistoryEntry {
+                thread_id: event.thread_id,
+                turn_id: Some(turn_id.to_owned()),
+                role: ReadableHistoryRole::User,
+                ts: event.timestamp,
+                text: text.to_string(),
+            })
+        }
+        omne_protocol::ThreadEventKind::AssistantMessage { turn_id, text, .. } => {
+            let text = text.trim();
+            if text.is_empty() {
+                return None;
+            }
+            Some(ReadableHistoryEntry {
+                thread_id: event.thread_id,
+                turn_id: turn_id.to_owned(),
+                role: ReadableHistoryRole::Assistant,
+                ts: event.timestamp,
+                text: text.to_string(),
+            })
+        }
+        _ => None,
+    }
 }
 
 fn validate_context_refs(refs: &[omne_protocol::ContextRef]) -> anyhow::Result<()> {
@@ -1247,12 +1302,43 @@ fn validate_turn_directives(directives: &[omne_protocol::TurnDirective]) -> anyh
 }
 
 impl ThreadRuntime {
-    fn new(handle: omne_core::ThreadHandle, notify_tx: broadcast::Sender<String>) -> Self {
+    fn new(
+        handle: omne_core::ThreadHandle,
+        notify_tx: broadcast::Sender<String>,
+        thread_store: ThreadStore,
+    ) -> Self {
         Self {
             handle: tokio::sync::Mutex::new(handle),
             active_turn: tokio::sync::Mutex::new(None),
             notify_tx,
+            thread_store,
         }
+    }
+
+    async fn append_readable_history_entry(&self, entry: &ReadableHistoryEntry) -> anyhow::Result<()> {
+        let path = self.thread_store.readable_history_path(entry.thread_id);
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .with_context(|| format!("create dir {}", parent.display()))?;
+        }
+        let mut file = tokio::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .await
+            .with_context(|| format!("open {}", path.display()))?;
+        let mut line = serde_json::to_vec(entry).context("serialize readable history entry")?;
+        line.push(b'\n');
+        file.write_all(&line)
+            .await
+            .with_context(|| format!("append {}", path.display()))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = tokio::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).await;
+        }
+        Ok(())
     }
 
     fn emit_notification<T>(&self, method: &'static str, params: &T)
@@ -1429,6 +1515,16 @@ impl ThreadRuntime {
             })
             .await?;
         drop(handle);
+        if let Some(entry) = readable_history_entry_from_event(&event) {
+            if let Err(err) = self.append_readable_history_entry(&entry).await {
+                tracing::warn!(
+                    thread_id = %entry.thread_id,
+                    role = ?entry.role,
+                    error = %err,
+                    "failed to append readable history entry"
+                );
+            }
+        }
         self.emit_event_notifications(&clear_plan_event).await;
         self.emit_event_notifications(&clear_diff_event).await;
         self.emit_event_notifications(&clear_fan_out_linkage_issue_event)
@@ -1472,6 +1568,16 @@ impl ThreadRuntime {
         let event = handle.append(kind).await?;
         let total_tokens_used = handle.state().total_tokens_used;
         drop(handle);
+        if let Some(entry) = readable_history_entry_from_event(&event) {
+            if let Err(err) = self.append_readable_history_entry(&entry).await {
+                tracing::warn!(
+                    thread_id = %entry.thread_id,
+                    role = ?entry.role,
+                    error = %err,
+                    "failed to append readable history entry"
+                );
+            }
+        }
         self.emit_event_notifications(&event).await;
         Ok((event, total_tokens_used))
     }

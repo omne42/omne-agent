@@ -23,6 +23,10 @@ impl ThreadStore {
         self.paths.thread_dir(thread_id)
     }
 
+    pub fn readable_history_path(&self, thread_id: ThreadId) -> PathBuf {
+        self.thread_dir(thread_id).join("readable_history.jsonl")
+    }
+
     pub fn events_log_path(&self, thread_id: ThreadId) -> PathBuf {
         self.thread_dir(thread_id).join(EVENTS_LOG_FILE_NAME)
     }

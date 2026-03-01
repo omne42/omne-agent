@@ -2538,6 +2538,7 @@ dependencies = [
  "libc",
  "memchr",
  "regex",
+ "same-file",
  "serde",
  "tempfile",
  "thiserror 1.0.69",

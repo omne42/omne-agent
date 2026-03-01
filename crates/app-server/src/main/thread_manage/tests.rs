@@ -19,6 +19,149 @@ mod thread_manage_tests {
     }
 
     #[tokio::test]
+    async fn readable_history_is_separate_from_raw_history_and_keeps_text_only_entries(
+    ) -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let rt = server.get_or_load_thread(thread_id).await?;
+        let turn_id = TurnId::new();
+        rt.append_event(omne_protocol::ThreadEventKind::TurnStarted {
+            turn_id,
+            input: "  hello readable history  ".to_string(),
+            context_refs: None,
+            attachments: None,
+            directives: None,
+            priority: omne_protocol::TurnPriority::Foreground,
+        })
+        .await?;
+        rt.append_event(omne_protocol::ThreadEventKind::AssistantMessage {
+            turn_id: Some(turn_id),
+            text: "\nassistant reply\n".to_string(),
+            model: Some("gpt-5".to_string()),
+            response_id: Some("resp_readable_history".to_string()),
+            token_usage: None,
+        })
+        .await?;
+        rt.append_event(omne_protocol::ThreadEventKind::TurnCompleted {
+            turn_id,
+            status: omne_protocol::TurnStatus::Completed,
+            reason: None,
+        })
+        .await?;
+        rt.append_event(omne_protocol::ThreadEventKind::TurnStarted {
+            turn_id: TurnId::new(),
+            input: "   ".to_string(),
+            context_refs: None,
+            attachments: None,
+            directives: None,
+            priority: omne_protocol::TurnPriority::Foreground,
+        })
+        .await?;
+        rt.append_event(omne_protocol::ThreadEventKind::AssistantMessage {
+            turn_id: None,
+            text: "\n\n".to_string(),
+            model: None,
+            response_id: None,
+            token_usage: None,
+        })
+        .await?;
+
+        let readable_history_path = server.thread_store.readable_history_path(thread_id);
+        let raw = tokio::fs::read_to_string(&readable_history_path).await?;
+        let lines = raw.lines().filter(|line| !line.trim().is_empty()).collect::<Vec<_>>();
+        assert_eq!(lines.len(), 2, "only non-empty user/assistant text should persist");
+
+        let first: serde_json::Value = serde_json::from_str(lines[0])?;
+        let second: serde_json::Value = serde_json::from_str(lines[1])?;
+
+        let thread_id_text = thread_id.to_string();
+        assert_eq!(
+            first.get("thread_id").and_then(|v| v.as_str()),
+            Some(thread_id_text.as_str())
+        );
+        assert_eq!(first.get("role").and_then(|v| v.as_str()), Some("user"));
+        assert_eq!(
+            first.get("text").and_then(|v| v.as_str()),
+            Some("hello readable history")
+        );
+
+        assert_eq!(
+            second.get("thread_id").and_then(|v| v.as_str()),
+            Some(thread_id_text.as_str())
+        );
+        assert_eq!(second.get("role").and_then(|v| v.as_str()), Some("assistant"));
+        assert_eq!(
+            second.get("text").and_then(|v| v.as_str()),
+            Some("assistant reply")
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn turn_start_appends_user_text_to_readable_history() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let rt = server.get_or_load_thread(thread_id).await?;
+        let input = "  hello from turn/start  ".to_string();
+        let rt_for_turn = rt.clone();
+        let server_for_turn = server.clone();
+
+        // `turn/start` spawns a local task, so the test must run under a `LocalSet`.
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async move {
+                rt_for_turn.start_turn(
+                    server_for_turn,
+                    input,
+                    None,
+                    None,
+                    None,
+                    omne_protocol::TurnPriority::Foreground,
+                )
+                .await
+            })
+            .await?;
+
+        let readable_history_path = server.thread_store.readable_history_path(thread_id);
+        let raw = tokio::fs::read_to_string(&readable_history_path).await?;
+        let lines = raw
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .collect::<Vec<_>>();
+
+        let entries = lines
+            .iter()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line))
+            .collect::<Result<Vec<_>, _>>()?;
+        let user_entry = entries
+            .iter()
+            .find(|v| v.get("role").and_then(|v| v.as_str()) == Some("user"))
+            .ok_or_else(|| anyhow::anyhow!("missing user readable history entry"))?;
+
+        assert_eq!(
+            user_entry.get("text").and_then(|v| v.as_str()),
+            Some("hello from turn/start")
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn thread_state_includes_cache_token_aggregates() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");
@@ -2388,7 +2531,11 @@ modes:
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         let thread_id_string = thread_id.to_string();
-        let runtime = Arc::new(ThreadRuntime::new(handle, server.notify_tx.clone()));
+        let runtime = Arc::new(ThreadRuntime::new(
+            handle,
+            server.notify_tx.clone(),
+            server.thread_store.clone(),
+        ));
         server.threads.lock().await.insert(thread_id, runtime);
 
         let list_null = handle_thread_request(
@@ -2490,7 +2637,11 @@ hooks:
         let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
-        let rt = Arc::new(ThreadRuntime::new(handle, server.notify_tx.clone()));
+        let rt = Arc::new(ThreadRuntime::new(
+            handle,
+            server.notify_tx.clone(),
+            server.thread_store.clone(),
+        ));
         server.threads.lock().await.insert(thread_id, rt);
 
         let result = handle_thread_archive(

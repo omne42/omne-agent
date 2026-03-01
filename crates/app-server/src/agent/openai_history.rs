@@ -421,6 +421,29 @@ async fn load_openai_responses_history_key(
     ))
 }
 
+async fn try_load_openai_responses_history_key(
+    thread_store: &omne_core::ThreadStore,
+    thread_id: omne_protocol::ThreadId,
+) -> anyhow::Result<Option<[u8; OPENAI_RESPONSES_HISTORY_KEY_LEN]>> {
+    if let Some(material) = parse_env_history_key_material()? {
+        return Ok(Some(derive_openai_responses_history_key(thread_id, &material)));
+    }
+
+    let path = openai_responses_history_key_path(thread_store, thread_id);
+    let bytes = match tokio::fs::read(&path).await {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err).with_context(|| format!("read {}", path.display())),
+    };
+    let local_secret = parse_local_history_secret(&bytes)
+        .with_context(|| format!("parse {}", path.display()))?;
+    ensure_openai_responses_history_key_file_permissions(&path).await;
+    Ok(Some(derive_openai_responses_history_key(
+        thread_id,
+        &local_secret,
+    )))
+}
+
 async fn append_openai_responses_history_items(
     thread_store: &omne_core::ThreadStore,
     thread_id: omne_protocol::ThreadId,
@@ -513,11 +536,12 @@ async fn read_openai_responses_history(
         Err(err) => return Err(err).with_context(|| format!("open {}", path.display())),
     };
 
-    let codec = OpenAiResponsesHistoryCodec::for_thread(thread_store, thread_id).await?;
+    let mut codec = OpenAiResponsesHistoryCodec::for_thread(thread_store, thread_id).await?;
     let mut lines = BufReader::new(file).lines();
     let mut history = Vec::<serde_json::Value>::new();
     let mut idx: usize = 0;
-    let mut saw_legacy_records = false;
+    let mut saw_unsealed_records = false;
+    let mut saw_sealed_records = false;
     while let Some(line) = lines
         .next_line()
         .await
@@ -528,14 +552,28 @@ async fn read_openai_responses_history(
         if line.is_empty() {
             continue;
         }
-        let record =
-            serde_json::from_str::<OpenAiResponsesHistoryStoredRecord>(line).with_context(
+        let stored = serde_json::from_str::<OpenAiResponsesHistoryStoredRecord>(line).with_context(
             || format!("parse openai history record: {} (line={idx})", path.display()),
         )?;
-        let (record, legacy) = codec
-            .decode_record(thread_id, record)
+
+        let stored_is_sealed = matches!(stored, OpenAiResponsesHistoryStoredRecord::Sealed { .. });
+        saw_sealed_records |= stored_is_sealed;
+        saw_unsealed_records |= !stored_is_sealed;
+
+        // Users may switch codec mode between runs. We always attempt to decode sealed records
+        // when a key is available, even if the current mode is plaintext.
+        if stored_is_sealed && codec.key.is_none() {
+            match try_load_openai_responses_history_key(thread_store, thread_id).await? {
+                Some(key) => codec.key = Some(key),
+                None => anyhow::bail!(
+                    "openai responses history contains sealed records but no key is available (missing key file/env)"
+                ),
+            }
+        }
+
+        let (record, _legacy) = codec
+            .decode_record(thread_id, stored)
             .with_context(|| format!("decode openai history record: {} (line={idx})", path.display()))?;
-        saw_legacy_records |= legacy;
 
         match record {
             OpenAiResponsesHistoryLogicalRecord::Item { item } => history.push(item),
@@ -545,7 +583,14 @@ async fn read_openai_responses_history(
         }
     }
 
-    if codec.is_encrypted() && saw_legacy_records {
+    // Keep the on-disk file format consistent with the current codec mode:
+    // - when encrypted: rewrite any legacy plaintext records into a single sealed compaction
+    // - when plaintext: rewrite any sealed records into a single plaintext compaction
+    if codec.is_encrypted() && saw_unsealed_records {
+        rewrite_openai_responses_history_as_compacted(thread_store, thread_id, &history, &codec)
+            .await?;
+    }
+    if !codec.is_encrypted() && saw_sealed_records {
         rewrite_openai_responses_history_as_compacted(thread_store, thread_id, &history, &codec)
             .await?;
     }
@@ -579,9 +624,43 @@ async fn compact_openai_responses_history(
 mod tests {
     use super::*;
     use tempfile::tempdir;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("env lock should not be poisoned")
+    }
+
+    struct EnvVarGuard {
+        key: &'static str,
+        prev: Option<String>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let prev = std::env::var(key).ok();
+            // SAFETY: test-only helper guarded by `env_lock()`.
+            unsafe { std::env::set_var(key, value) };
+            Self { key, prev }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match self.prev.as_deref() {
+                // SAFETY: test-only helper guarded by `env_lock()`.
+                Some(value) => unsafe { std::env::set_var(self.key, value) },
+                // SAFETY: test-only helper guarded by `env_lock()`.
+                None => unsafe { std::env::remove_var(self.key) },
+            }
+        }
+    }
 
     #[tokio::test]
     async fn openai_history_replays_compaction_replacement() -> anyhow::Result<()> {
+        let _lock = env_lock();
         let dir = tempdir()?;
         let thread_store = omne_core::ThreadStore::new(omne_core::PmPaths::new(
             dir.path().join(".omne_data"),
@@ -627,6 +706,7 @@ mod tests {
     #[tokio::test]
     async fn openai_history_reads_legacy_plaintext_and_migrates_when_encrypted() -> anyhow::Result<()>
     {
+        let _lock = env_lock();
         let dir = tempdir()?;
         let thread_store = omne_core::ThreadStore::new(omne_core::PmPaths::new(
             dir.path().join(".omne_data"),
@@ -655,6 +735,55 @@ mod tests {
             assert!(raw.contains("\"type\":\"sealed\""));
             assert!(!raw.contains("\"type\":\"item\""));
         }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn openai_history_plaintext_decodes_sealed_and_rewrites_to_plaintext() -> anyhow::Result<()> {
+        let _lock = env_lock();
+        let _codec_env = EnvVarGuard::set(OPENAI_RESPONSES_HISTORY_CODEC_ENV, "plaintext");
+
+        let dir = tempdir()?;
+        let thread_store = omne_core::ThreadStore::new(omne_core::PmPaths::new(
+            dir.path().join(".omne_data"),
+        ));
+
+        let handle = thread_store
+            .create_thread(std::path::PathBuf::from("/tmp"))
+            .await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        // Prepare a sealed record (encrypted codec) written into history, then ensure that
+        // plaintext mode can still decode it as long as the key material is present.
+        let local_secret = load_or_create_local_openai_history_secret(&thread_store, thread_id).await?;
+        let key = derive_openai_responses_history_key(thread_id, &local_secret);
+        let codec = OpenAiResponsesHistoryCodec {
+            mode: OpenAiResponsesHistoryCodecMode::Encrypted,
+            key: Some(key),
+        };
+
+        let item = serde_json::json!({"type":"message","role":"user","content":[{"type":"input_text","text":"sealed"}]});
+        let stored = codec.encode_record_ref(
+            thread_id,
+            &OpenAiResponsesHistoryLogicalRecordRef::Item { item: &item },
+        )?;
+        assert!(
+            matches!(stored, OpenAiResponsesHistoryStoredRecord::Sealed { .. }),
+            "encoded record should be sealed when codec is encrypted"
+        );
+
+        let path = openai_responses_history_path(&thread_store, thread_id);
+        let line = serde_json::to_string(&stored)?;
+        tokio::fs::write(&path, format!("{line}\n")).await?;
+
+        let history = read_openai_responses_history(&thread_store, thread_id).await?;
+        assert_eq!(history, vec![item]);
+
+        let raw = tokio::fs::read_to_string(&path).await?;
+        assert!(raw.contains("\"type\":\"compacted\""));
+        assert!(!raw.contains("\"type\":\"sealed\""));
 
         Ok(())
     }

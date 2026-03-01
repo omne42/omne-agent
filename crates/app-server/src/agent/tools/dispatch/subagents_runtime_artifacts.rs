@@ -181,7 +181,11 @@ async fn create_new_thread(server: &super::Server, cwd: &str) -> anyhow::Result<
     let log_path = handle.log_path().display().to_string();
     let last_seq = handle.last_seq().0;
 
-    let rt = Arc::new(crate::ThreadRuntime::new(handle, server.notify_tx.clone()));
+    let rt = Arc::new(crate::ThreadRuntime::new(
+        handle,
+        server.notify_tx.clone(),
+        server.thread_store.clone(),
+    ));
     server.threads.lock().await.insert(thread_id, rt);
 
     Ok(SpawnedThread {

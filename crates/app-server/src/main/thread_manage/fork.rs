@@ -93,7 +93,11 @@ async fn handle_thread_fork(
     let log_path = forked.log_path().display().to_string();
     let last_seq = forked.last_seq().0;
 
-    let rt = Arc::new(ThreadRuntime::new(forked, server.notify_tx.clone()));
+    let rt = Arc::new(ThreadRuntime::new(
+        forked,
+        server.notify_tx.clone(),
+        server.thread_store.clone(),
+    ));
     server.threads.lock().await.insert(forked_id, rt);
 
     Ok(omne_app_server_protocol::ThreadHandleResponse {

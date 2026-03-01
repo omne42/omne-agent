@@ -79,7 +79,11 @@ mod thread_manage_worktree_lifecycle_tests {
             .create_thread(worktree_dir.clone())
             .await?;
         let thread_id = handle.thread_id();
-        let rt = Arc::new(ThreadRuntime::new(handle, server.notify_tx.clone()));
+        let rt = Arc::new(ThreadRuntime::new(
+            handle,
+            server.notify_tx.clone(),
+            server.thread_store.clone(),
+        ));
         server.threads.lock().await.insert(thread_id, rt);
 
         let result = handle_thread_archive(
@@ -168,7 +172,11 @@ mod thread_manage_worktree_lifecycle_tests {
             .create_thread(broken_worktree.clone())
             .await?;
         let thread_id = handle.thread_id();
-        let rt = Arc::new(ThreadRuntime::new(handle, server.notify_tx.clone()));
+        let rt = Arc::new(ThreadRuntime::new(
+            handle,
+            server.notify_tx.clone(),
+            server.thread_store.clone(),
+        ));
         server.threads.lock().await.insert(thread_id, rt);
 
         let result = handle_thread_archive(

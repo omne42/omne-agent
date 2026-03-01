@@ -318,7 +318,11 @@ async fn handle_thread_start(
     let thread_id = handle.thread_id();
     let log_path = handle.log_path().display().to_string();
     let last_seq = handle.last_seq().0;
-    let rt = Arc::new(ThreadRuntime::new(handle, server.notify_tx.clone()));
+    let rt = Arc::new(ThreadRuntime::new(
+        handle,
+        server.notify_tx.clone(),
+        server.thread_store.clone(),
+    ));
     server.threads.lock().await.insert(thread_id, rt);
     let auto_hook = run_auto_workspace_hook(server, thread_id, WorkspaceHookName::Setup).await;
     Ok(omne_app_server_protocol::ThreadStartResponse {
