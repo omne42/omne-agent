@@ -38,29 +38,27 @@
     <thread_id>/
       events.jsonl
       events.jsonl.lock
+      readable_history.jsonl
+      openai_responses_history.jsonl
+      runtime/
+      artifacts/
 ```
 
 说明：
 
 - `events.jsonl`：append-only 事件流（每行一个 `ThreadEvent` JSON）。
 - `events.jsonl.lock`：写入锁（避免并发写坏 log）。
+- `readable_history.jsonl`：线程内“可读历史”（仅 `user/assistant` 纯文本；用于快速浏览与 UI 投影）。
+- `openai_responses_history.jsonl`：Responses raw history（用于续跑/compact；可能包含 `reasoning.encrypted_content`，也可能按配置做本地加密；**不保证人类可读**）。
 
 ---
 
-## 2) artifacts 目录（大内容都在这）
-
-thread 下的 artifacts 根目录：
-
-```
-<omne_root>/threads/<thread_id>/artifacts/
-```
+## 2) runtime（运行时日志与内部数据）
 
 ### 2.1 process logs（stdout/stderr）
 
-每个 process 一个目录：
-
 ```
-<omne_root>/threads/<thread_id>/artifacts/processes/<process_id>/
+<omne_root>/threads/<thread_id>/runtime/processes/<process_id>/
   stdout.log
   stdout.segment-0001.log        # 超过阈值后 rotate
   stdout.part-0001.log           # 兼容命名（如出现）
@@ -74,7 +72,17 @@ thread 下的 artifacts 根目录：
 - `process/start` 会在事件里落盘 `ProcessStarted{stdout_path,stderr_path}`，并在返回值里直接带路径。
 - rotate 阈值默认 `8MiB`，可用 `OMNE_PROCESS_LOG_MAX_BYTES_PER_PART` 覆盖。
 
-### 2.2 user artifacts（`artifact/write`）
+---
+
+## 3) artifacts（用户可见的文档产物）
+
+thread 下的 artifacts 根目录：
+
+```
+<omne_root>/threads/<thread_id>/artifacts/
+```
+
+### 3.1 user artifacts（`artifact/write`）
 
 用户可见的文档产物（markdown + metadata）：
 
@@ -103,6 +111,6 @@ metadata 字段模型：`omne_protocol::ArtifactMetadata`（见 `crates/agent-pr
 
 ## 4) 清理行为（危险但必要）
 
-- `thread/clear_artifacts` 会删除 `<thread_dir>/artifacts`：
+- `thread/clear_artifacts` 会删除 `<thread_dir>/artifacts`（仅用户可见产物）：
   - 若存在 running process，默认拒绝；`force=true` 会先 kill 再删。
-- `thread/delete` 会删除整个 `<thread_dir>`（包括 events 与 artifacts）。
+- `thread/delete` 会删除整个 `<thread_dir>`（包括 events/history/runtime/artifacts）。
