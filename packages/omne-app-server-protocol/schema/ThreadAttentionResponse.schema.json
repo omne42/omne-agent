@@ -201,7 +201,7 @@
       }
     },
     "sandbox_policy": {
-      "$ref": "#/definitions/SandboxPolicy"
+      "$ref": "#/definitions/WriteScope"
     },
     "stale_processes": {
       "default": [],
@@ -255,18 +255,9 @@
       "type": "string",
       "enum": [
         "auto_approve",
-        "on_request",
         "manual",
         "unless_trusted",
         "auto_deny"
-      ]
-    },
-    "SandboxPolicy": {
-      "type": "string",
-      "enum": [
-        "read_only",
-        "workspace_write",
-        "danger_full_access"
       ]
     },
     "ThreadApprovalActionId": {
@@ -882,6 +873,14 @@
         "failed",
         "cancelled",
         "stuck"
+      ]
+    },
+    "WriteScope": {
+      "type": "string",
+      "enum": [
+        "read_only",
+        "workspace_write",
+        "full_access"
       ]
     }
   }

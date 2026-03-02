@@ -362,7 +362,7 @@
           ]
         },
         "sandbox_policy": {
-          "$ref": "#/definitions/SandboxPolicy"
+          "$ref": "#/definitions/WriteScope"
         },
         "tool_id": {
           "type": "string",
@@ -422,14 +422,6 @@
       "enum": [
         "deny",
         "allow"
-      ]
-    },
-    "SandboxPolicy": {
-      "type": "string",
-      "enum": [
-        "read_only",
-        "workspace_write",
-        "danger_full_access"
       ]
     },
     "ThreadAutoHookResponse": {
@@ -630,6 +622,14 @@
         {
           "$ref": "#/definitions/ProcessDeniedResponse"
         }
+      ]
+    },
+    "WriteScope": {
+      "type": "string",
+      "enum": [
+        "read_only",
+        "workspace_write",
+        "full_access"
       ]
     }
   }

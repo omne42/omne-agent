@@ -22,3 +22,4 @@
 当前重点：
 
 - `git-domain`：在 `omne-agent` 内定义并逐步下沉专属 Git runtime 领域归属，不迁移到 `safe-fs-tools`。
+- `tool-surface`：收敛默认模型工具面到聚合入口（`<=5`），采用 help-first 渐进披露，并明确在 `main` 上持续小步开发；后续推进 role/mode 正交与策略加固。

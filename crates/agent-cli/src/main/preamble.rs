@@ -650,6 +650,8 @@ struct ThreadConfigureArgs {
     #[arg(long)]
     mode: Option<String>,
     #[arg(long)]
+    role: Option<String>,
+    #[arg(long)]
     model: Option<String>,
     #[arg(long)]
     openai_base_url: Option<String>,
@@ -952,7 +954,6 @@ struct WatchArgs {
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum CliApprovalPolicy {
     AutoApprove,
-    OnRequest,
     Manual,
     UnlessTrusted,
     AutoDeny,
@@ -962,7 +963,6 @@ impl From<CliApprovalPolicy> for ApprovalPolicy {
     fn from(value: CliApprovalPolicy) -> Self {
         match value {
             CliApprovalPolicy::AutoApprove => Self::AutoApprove,
-            CliApprovalPolicy::OnRequest => Self::OnRequest,
             CliApprovalPolicy::Manual => Self::Manual,
             CliApprovalPolicy::UnlessTrusted => Self::UnlessTrusted,
             CliApprovalPolicy::AutoDeny => Self::AutoDeny,
@@ -974,7 +974,7 @@ impl From<CliApprovalPolicy> for ApprovalPolicy {
 enum CliSandboxPolicy {
     ReadOnly,
     WorkspaceWrite,
-    DangerFullAccess,
+    FullAccess,
 }
 
 impl From<CliSandboxPolicy> for SandboxPolicy {
@@ -982,7 +982,7 @@ impl From<CliSandboxPolicy> for SandboxPolicy {
         match value {
             CliSandboxPolicy::ReadOnly => Self::ReadOnly,
             CliSandboxPolicy::WorkspaceWrite => Self::WorkspaceWrite,
-            CliSandboxPolicy::DangerFullAccess => Self::DangerFullAccess,
+            CliSandboxPolicy::FullAccess => Self::FullAccess,
         }
     }
 }

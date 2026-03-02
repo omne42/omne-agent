@@ -36,6 +36,31 @@ mod agent_spawn_guard_tests {
         }
     }
 
+    async fn set_thread_mode(
+        server: &super::super::Server,
+        thread_id: ThreadId,
+        mode: &str,
+    ) -> anyhow::Result<()> {
+        let thread_rt = server.get_or_load_thread(thread_id).await?;
+        thread_rt
+            .append_event(omne_protocol::ThreadEventKind::ThreadConfigUpdated {
+                approval_policy: omne_protocol::ApprovalPolicy::AutoApprove,
+                sandbox_policy: None,
+                sandbox_writable_roots: None,
+                sandbox_network_access: None,
+                mode: Some(mode.to_string()),
+                role: None,
+                model: None,
+                thinking: None,
+                show_thinking: None,
+                openai_base_url: None,
+                allowed_tools: None,
+                execpolicy_rules: None,
+            })
+            .await?;
+        Ok(())
+    }
+
     #[tokio::test]
     async fn isolated_workspace_copy_skips_runtime_dirs() -> anyhow::Result<()> {
         let _lock = ISOLATED_BACKEND_ENV_LOCK.lock().await;
@@ -204,6 +229,7 @@ mod agent_spawn_guard_tests {
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
+        set_thread_mode(&server, thread_id, "coder").await?;
 
         let result = run_tool_call_once(
             &server,
@@ -256,6 +282,7 @@ modes:
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
+        set_thread_mode(&server, thread_id, "coder").await?;
 
         let result = run_tool_call_once(
             &server,
@@ -376,6 +403,22 @@ modes:
         let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
         let mut parent = server.thread_store.create_thread(repo_dir.clone()).await?;
         let thread_id = parent.thread_id();
+        parent
+            .append(omne_protocol::ThreadEventKind::ThreadConfigUpdated {
+                approval_policy: omne_protocol::ApprovalPolicy::AutoApprove,
+                sandbox_policy: None,
+                sandbox_writable_roots: None,
+                sandbox_network_access: None,
+                mode: Some("coder".to_string()),
+                role: None,
+                model: None,
+                thinking: None,
+                show_thinking: None,
+                openai_base_url: None,
+                allowed_tools: None,
+                execpolicy_rules: None,
+            })
+            .await?;
 
         let mut child = server.thread_store.create_thread(repo_dir.clone()).await?;
         let child_id = child.thread_id();
@@ -467,6 +510,22 @@ modes:
         let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
         let mut parent = server.thread_store.create_thread(repo_dir.clone()).await?;
         let thread_id = parent.thread_id();
+        parent
+            .append(omne_protocol::ThreadEventKind::ThreadConfigUpdated {
+                approval_policy: omne_protocol::ApprovalPolicy::AutoApprove,
+                sandbox_policy: None,
+                sandbox_writable_roots: None,
+                sandbox_network_access: None,
+                mode: Some("coder".to_string()),
+                role: None,
+                model: None,
+                thinking: None,
+                show_thinking: None,
+                openai_base_url: None,
+                allowed_tools: None,
+                execpolicy_rules: None,
+            })
+            .await?;
 
         for _ in 0..4 {
             let mut child = server.thread_store.create_thread(repo_dir.clone()).await?;
@@ -556,6 +615,22 @@ modes:
         let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
         let mut parent = server.thread_store.create_thread(repo_dir.clone()).await?;
         let thread_id = parent.thread_id();
+        parent
+            .append(omne_protocol::ThreadEventKind::ThreadConfigUpdated {
+                approval_policy: omne_protocol::ApprovalPolicy::AutoApprove,
+                sandbox_policy: None,
+                sandbox_writable_roots: None,
+                sandbox_network_access: None,
+                mode: Some("coder".to_string()),
+                role: None,
+                model: None,
+                thinking: None,
+                show_thinking: None,
+                openai_base_url: None,
+                allowed_tools: None,
+                execpolicy_rules: None,
+            })
+            .await?;
 
         for _ in 0..4 {
             let mut child = server.thread_store.create_thread(repo_dir.clone()).await?;
@@ -649,6 +724,7 @@ modes:
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
+        set_thread_mode(&server, thread_id, "coder").await?;
 
         let _result = run_tool_call_once(
             &server,
@@ -1896,6 +1972,7 @@ modes:
                 sandbox_writable_roots: None,
                 sandbox_network_access: None,
                 mode: Some("coder".to_string()),
+                role: None,
                 model: None,
                 thinking: None,
                 show_thinking: None,
@@ -1991,6 +2068,7 @@ modes:
                 sandbox_writable_roots: None,
                 sandbox_network_access: None,
                 mode: Some("coder".to_string()),
+                role: None,
                 model: None,
                 thinking: None,
                 show_thinking: None,
@@ -2187,6 +2265,7 @@ modes:
                 sandbox_writable_roots: None,
                 sandbox_network_access: None,
                 mode: Some("coder".to_string()),
+                role: None,
                 model: None,
                 thinking: None,
                 show_thinking: None,
@@ -2330,6 +2409,7 @@ modes:
                 sandbox_writable_roots: None,
                 sandbox_network_access: None,
                 mode: Some("coder".to_string()),
+                role: None,
                 model: None,
                 thinking: None,
                 show_thinking: None,
@@ -2447,6 +2527,7 @@ modes:
                 sandbox_writable_roots: None,
                 sandbox_network_access: None,
                 mode: Some("coder".to_string()),
+                role: None,
                 model: None,
                 thinking: None,
                 show_thinking: None,
@@ -2837,6 +2918,7 @@ modes:
                 sandbox_writable_roots: None,
                 sandbox_network_access: None,
                 mode: Some("coder".to_string()),
+                role: None,
                 model: None,
                 thinking: None,
                 show_thinking: None,
@@ -2975,6 +3057,7 @@ modes:
                 sandbox_writable_roots: None,
                 sandbox_network_access: None,
                 mode: Some("coder".to_string()),
+                role: None,
                 model: None,
                 thinking: None,
                 show_thinking: None,
@@ -3077,6 +3160,7 @@ modes:
                 sandbox_writable_roots: None,
                 sandbox_network_access: None,
                 mode: Some("coder".to_string()),
+                role: None,
                 model: None,
                 thinking: None,
                 show_thinking: None,
@@ -3188,6 +3272,7 @@ modes:
                 sandbox_writable_roots: None,
                 sandbox_network_access: None,
                 mode: Some("coder".to_string()),
+                role: None,
                 model: None,
                 thinking: None,
                 show_thinking: None,
@@ -3301,6 +3386,7 @@ modes:
                 sandbox_writable_roots: None,
                 sandbox_network_access: None,
                 mode: Some("coder".to_string()),
+                role: None,
                 model: None,
                 thinking: None,
                 show_thinking: None,
@@ -3462,6 +3548,7 @@ modes:
                 sandbox_writable_roots: None,
                 sandbox_network_access: None,
                 mode: Some("coder".to_string()),
+                role: None,
                 model: None,
                 thinking: None,
                 show_thinking: None,
@@ -3534,6 +3621,7 @@ modes:
                 sandbox_writable_roots: None,
                 sandbox_network_access: None,
                 mode: Some("coder".to_string()),
+                role: None,
                 model: None,
                 thinking: None,
                 show_thinking: None,

@@ -7,6 +7,7 @@ pub mod modes;
 pub mod orchestrator;
 pub mod paths;
 pub mod redaction;
+pub mod roles;
 pub mod router;
 pub mod sandbox;
 pub mod storage;

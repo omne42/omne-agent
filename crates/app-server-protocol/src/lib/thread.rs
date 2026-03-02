@@ -184,6 +184,7 @@ pub struct ThreadStateResponse {
     pub sandbox_writable_roots: Vec<String>,
     pub sandbox_network_access: omne_protocol::SandboxNetworkAccess,
     pub mode: String,
+    pub role: String,
     #[serde(default)]
     #[ts(optional)]
     pub model: Option<String>,
@@ -1217,6 +1218,9 @@ pub struct ThreadConfigureParams {
     pub mode: Option<String>,
     #[serde(default)]
     #[ts(optional)]
+    pub role: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
     pub model: Option<String>,
     #[serde(default)]
     #[ts(optional)]
@@ -1265,6 +1269,7 @@ pub struct ThreadConfigExplainEffective {
     pub sandbox_writable_roots: Vec<String>,
     pub sandbox_network_access: omne_protocol::SandboxNetworkAccess,
     pub mode: String,
+    pub role: String,
     pub model: String,
     pub thinking: String,
     pub show_thinking: bool,
@@ -1274,6 +1279,11 @@ pub struct ThreadConfigExplainEffective {
     pub allowed_tools: Option<Vec<String>>,
     #[serde(default)]
     pub execpolicy_rules: Vec<String>,
+    #[serde(default)]
+    pub permission_mode: String,
+    #[serde(default)]
+    #[ts(optional)]
+    pub effective_permissions: Option<Vec<String>>,
     #[serde(default)]
     #[ts(optional)]
     pub model_context_window: Option<u64>,

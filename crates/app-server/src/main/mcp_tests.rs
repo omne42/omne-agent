@@ -229,6 +229,7 @@ modes:
                 sandbox_writable_roots: None,
                 sandbox_network_access: None,
                 mode: None,
+                role: None,
                 model: None,
                 thinking: None,
                 show_thinking: None,

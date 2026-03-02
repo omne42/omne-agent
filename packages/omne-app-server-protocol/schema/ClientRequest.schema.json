@@ -1403,7 +1403,6 @@
       "type": "string",
       "enum": [
         "auto_approve",
-        "on_request",
         "manual",
         "unless_trusted",
         "auto_deny"
@@ -2758,14 +2757,6 @@
         "allow"
       ]
     },
-    "SandboxPolicy": {
-      "type": "string",
-      "enum": [
-        "read_only",
-        "workspace_write",
-        "danger_full_access"
-      ]
-    },
     "ThreadArchiveParams": {
       "type": "object",
       "required": [
@@ -2951,6 +2942,13 @@
             "null"
           ]
         },
+        "role": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "sandbox_network_access": {
           "default": null,
           "anyOf": [
@@ -2966,7 +2964,7 @@
           "default": null,
           "anyOf": [
             {
-              "$ref": "#/definitions/SandboxPolicy"
+              "$ref": "#/definitions/WriteScope"
             },
             {
               "type": "null"
@@ -3611,6 +3609,14 @@
         "setup",
         "run",
         "archive"
+      ]
+    },
+    "WriteScope": {
+      "type": "string",
+      "enum": [
+        "read_only",
+        "workspace_write",
+        "full_access"
       ]
     }
   }

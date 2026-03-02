@@ -309,19 +309,12 @@ pub enum AttentionMarkerKind {
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalPolicy {
     AutoApprove,
-    OnRequest,
     Manual,
     UnlessTrusted,
     AutoDeny,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub enum SandboxPolicy {
-    ReadOnly,
-    WorkspaceWrite,
-    DangerFullAccess,
-}
+pub use policy_meta::WriteScope as SandboxPolicy;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
@@ -598,6 +591,8 @@ pub enum ThreadEventKind {
         sandbox_network_access: Option<SandboxNetworkAccess>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         mode: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        role: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         model: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]

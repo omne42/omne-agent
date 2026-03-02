@@ -142,6 +142,7 @@ impl FanOutScheduler {
                 sandbox_writable_roots: None,
                 sandbox_network_access: None,
                 mode: Some("reviewer".to_string()),
+                role: None,
                 model: None,
                 thinking: None,
                 show_thinking: None,

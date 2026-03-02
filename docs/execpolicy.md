@@ -15,7 +15,7 @@
 ExecPolicy 只负责 `process/start` 的**命令前缀规则**：
 
 - `forbidden`：硬拒绝（不走审批）
-- `prompt_strict`：需要审批，且**强制人工审批**（不能被 `auto_approve/on_request/unless_trusted` 自动放行；见 `docs/approvals.md`）
+- `prompt_strict`：需要审批，且**强制人工审批**（不能被 `auto_approve/unless_trusted` 自动放行；见 `docs/approvals.md`）
 - `prompt`：需要审批（由 `ApprovalPolicy` 决定人工/自动）
 - `allow`：ExecPolicy 不拦截（仍可能被 mode/sandbox 拦截或要求审批）
 
@@ -38,14 +38,14 @@ ExecPolicy 只负责 `process/start` 的**命令前缀规则**：
 ### 1.2 `prompt_strict`
 
 - 当最终决策为 `prompt_strict` 时，需要审批，且强制人工：
-  - `ApprovalPolicy=manual|auto_approve|on_request|unless_trusted`：返回 `needs_approval=true` + `approval_id`，进入 `NeedApproval`（不启动进程）。
+  - `ApprovalPolicy=manual|auto_approve|unless_trusted`：返回 `needs_approval=true` + `approval_id`，进入 `NeedApproval`（不启动进程）。
   - `ApprovalPolicy=auto_deny`：自动落盘 `ApprovalRequested + ApprovalDecided(Denied, ...)` 并拒绝执行。
 
 ### 1.3 `prompt`
 
 - 当最终决策为 `prompt` 时，需要审批（见 `docs/approvals.md`）：
   - `ApprovalPolicy=manual`：返回 `needs_approval=true` + `approval_id`，进入 `NeedApproval`（不启动进程）。
-  - `ApprovalPolicy=auto_approve|on_request`：自动落盘 `ApprovalRequested + ApprovalDecided(Approved, ...)` 并继续启动进程（不会进入 `NeedApproval`）。
+  - `ApprovalPolicy=auto_approve`：自动落盘 `ApprovalRequested + ApprovalDecided(Approved, ...)` 并继续启动进程（不会进入 `NeedApproval`）。
   - `ApprovalPolicy=auto_deny`：自动落盘 `ApprovalRequested + ApprovalDecided(Denied, ...)` 并拒绝执行。
 
 ### 1.4 `allow`

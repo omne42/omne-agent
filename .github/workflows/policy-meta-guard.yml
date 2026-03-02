@@ -1,0 +1,40 @@
+name: policy-meta-guard
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "crates/**"
+      - "docs/**"
+      - "packages/omne-app-server-protocol/**"
+      - ".github/workflows/policy-meta-guard.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "crates/**"
+      - "docs/**"
+      - "packages/omne-app-server-protocol/**"
+      - ".github/workflows/policy-meta-guard.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  reject-legacy-approval-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Reject legacy on_request policy tokens
+        shell: bash
+        run: |
+          set -euo pipefail
+          if rg -n --hidden -S '\bon_request\b|\bOnRequest\b' \
+            --glob '!**/target/**' \
+            --glob '!CHANGELOG.md' \
+            crates docs packages/omne-app-server-protocol; then
+            echo "::error::Found legacy approval policy token: on_request/OnRequest"
+            exit 1
+          fi

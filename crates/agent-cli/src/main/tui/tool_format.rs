@@ -62,7 +62,70 @@
         matches!(tool, "process/inspect" | "process/tail" | "process/follow")
     }
 
+    fn non_empty_json_str<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
+        value
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    }
+
+    fn format_facade_mapping_brief(tool: &str, payload: Option<&Value>) -> Option<String> {
+        let payload = payload?;
+        let facade_tool = non_empty_json_str(payload, "facade_tool").or_else(|| {
+            tool.strip_prefix("facade/")
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        })?;
+        let op = non_empty_json_str(payload, "op")?;
+        let mapped_action = non_empty_json_str(payload, "mapped_action")?;
+        Some(format!("{facade_tool}.{op} -> {mapped_action}"))
+    }
+
+    fn summarize_facade_result_payload(result: &Value) -> String {
+        match result {
+            Value::Object(map) => {
+                let mut filtered = serde_json::Map::new();
+                for (key, value) in map {
+                    if matches!(key.as_str(), "facade_tool" | "op" | "mapped_action") {
+                        continue;
+                    }
+                    filtered.insert(key.clone(), value.clone());
+                }
+                summarize_tool_kv(&Value::Object(filtered))
+            }
+            _ => summarize_tool_kv(result),
+        }
+    }
+
+    fn format_tool_status_line(
+        tool: &str,
+        status: ToolStatus,
+        error: Option<&str>,
+        result: Option<&Value>,
+    ) -> String {
+        let mut line = format!("{tool} {}", tool_status_str(status));
+        if let Some(mapping) = format_facade_mapping_brief(tool, result) {
+            line.push_str(&format!(" ({mapping})"));
+        }
+        if let Some(err) = error.map(str::trim).filter(|value| !value.is_empty()) {
+            line.push_str(": ");
+            line.push_str(err);
+        }
+        line
+    }
+
     fn format_tool_started_line(tool: &str, params: Option<&Value>) -> Option<String> {
+        if let Some(mapping) = format_facade_mapping_brief(tool, params) {
+            let args_summary = params
+                .and_then(|value| value.get("args"))
+                .map(summarize_tool_kv)
+                .unwrap_or_default();
+            if args_summary.trim().is_empty() {
+                return Some(mapping);
+            }
+            return Some(format!("{mapping} {args_summary}"));
+        }
         let line = match tool {
             "file/read" => format_file_action("read", params),
             "file/write" => format_file_action("write", params),
@@ -103,6 +166,13 @@
     fn format_tool_result_line(tool: &str, result: &Value) -> Option<String> {
         if should_suppress_tool_completed(tool) || tool == "process/start" {
             return None;
+        }
+        if let Some(mapping) = format_facade_mapping_brief(tool, Some(result)) {
+            let summary = summarize_facade_result_payload(result);
+            if summary.trim().is_empty() {
+                return Some(mapping);
+            }
+            return Some(format!("{mapping} {summary}"));
         }
         let summary = summarize_tool_kv(result);
         if summary.trim().is_empty() {
@@ -344,5 +414,60 @@
             format!("ref:{path}")
         } else {
             path.to_string()
+        }
+    }
+
+    #[cfg(test)]
+    mod tool_format_tests {
+        use super::*;
+
+        #[test]
+        fn format_tool_started_line_formats_facade_mapping() {
+            let line = format_tool_started_line(
+                "facade/workspace",
+                Some(&serde_json::json!({
+                    "facade_tool": "workspace",
+                    "op": "read",
+                    "mapped_action": "file/read",
+                    "args": {
+                        "path": "README.md"
+                    }
+                })),
+            )
+            .expect("line");
+            assert!(line.contains("workspace.read -> file/read"));
+            assert!(line.contains("path=README.md"));
+        }
+
+        #[test]
+        fn format_tool_result_line_formats_facade_mapping() {
+            let line = format_tool_result_line(
+                "facade/thread",
+                &serde_json::json!({
+                    "facade_tool": "thread",
+                    "op": "close",
+                    "mapped_action": "subagent/close",
+                    "success": true
+                }),
+            )
+            .expect("line");
+            assert!(line.contains("thread.close -> subagent/close"));
+            assert!(line.contains("success=true"));
+        }
+
+        #[test]
+        fn format_tool_status_line_includes_facade_mapping() {
+            let line = format_tool_status_line(
+                "facade/thread",
+                ToolStatus::Denied,
+                None,
+                Some(&serde_json::json!({
+                    "facade_tool": "thread",
+                    "op": "send_input",
+                    "mapped_action": "subagent/send_input"
+                })),
+            );
+            assert!(line.contains("facade/thread denied"));
+            assert!(line.contains("(thread.send_input -> subagent/send_input)"));
         }
     }

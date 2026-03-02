@@ -3,8 +3,10 @@ use crate::model_limits::resolve_model_limits;
 #[derive(Debug)]
 enum ThreadConfigureSpecError {
     UnknownMode { mode: String, available: String },
+    UnknownRole { role: String, available: String },
     UnknownAllowedTool { tool: String, known: String },
     AllowedToolDeniedByMode { mode: String, tool: String },
+    AllowedToolDeniedByRole { role: String, permission_mode: String, tool: String },
     AllowedToolDecisionMappingMissing { tool: String },
 }
 
@@ -12,8 +14,10 @@ impl ThreadConfigureSpecError {
     fn error_code(&self) -> &'static str {
         match self {
             Self::UnknownMode { .. } => "mode_unknown",
+            Self::UnknownRole { .. } => "role_unknown",
             Self::UnknownAllowedTool { .. } => "allowed_tools_unknown_tool",
             Self::AllowedToolDeniedByMode { .. } => "allowed_tools_mode_denied",
+            Self::AllowedToolDeniedByRole { .. } => "allowed_tools_mode_denied",
             Self::AllowedToolDecisionMappingMissing { .. } => "allowed_tools_mapping_missing",
         }
     }
@@ -25,11 +29,24 @@ impl std::fmt::Display for ThreadConfigureSpecError {
             Self::UnknownMode { mode, available } => {
                 write!(f, "unknown mode: {mode} (available: {available})")
             }
+            Self::UnknownRole { role, available } => {
+                write!(f, "unknown role: {role} (available: {available})")
+            }
             Self::UnknownAllowedTool { tool, known } => {
                 write!(f, "unknown tool in allowed_tools: {tool} (known tools: {known})")
             }
             Self::AllowedToolDeniedByMode { mode, tool } => {
                 write!(f, "allowed_tools tool is denied by mode: mode={mode} tool={tool}")
+            }
+            Self::AllowedToolDeniedByRole {
+                role,
+                permission_mode,
+                tool,
+            } => {
+                write!(
+                    f,
+                    "allowed_tools tool is denied by role: role={role} permission_mode={permission_mode} tool={tool}"
+                )
             }
             Self::AllowedToolDecisionMappingMissing { tool } => {
                 write!(f, "tool decision mapping is missing for allowed_tools entry: {tool}")
@@ -99,6 +116,46 @@ fn validate_thread_configure_mode(
     .into())
 }
 
+fn validate_thread_configure_role(
+    role: &str,
+    role_catalog: &omne_core::roles::RoleCatalog,
+    mode_catalog: &omne_core::modes::ModeCatalog,
+) -> anyhow::Result<()> {
+    if role_catalog.role(role).is_some() || mode_catalog.mode(role).is_some() {
+        return Ok(());
+    }
+    let available = available_role_names(role_catalog, mode_catalog);
+    Err(ThreadConfigureSpecError::UnknownRole {
+        role: role.to_string(),
+        available,
+    }
+    .into())
+}
+
+fn available_role_names(
+    role_catalog: &omne_core::roles::RoleCatalog,
+    mode_catalog: &omne_core::modes::ModeCatalog,
+) -> String {
+    let mut names = std::collections::BTreeSet::<String>::new();
+    for role in role_catalog.role_names() {
+        names.insert(role.to_string());
+    }
+    for mode in mode_catalog.mode_names() {
+        names.insert(mode.to_string());
+    }
+    names.into_iter().collect::<Vec<_>>().join(", ")
+}
+
+fn resolve_role_permission_mode_name(
+    role_name: &str,
+    role_catalog: &omne_core::roles::RoleCatalog,
+) -> String {
+    role_catalog
+        .permission_mode_name(role_name)
+        .unwrap_or(role_name)
+        .to_string()
+}
+
 fn normalize_thread_configure_allowed_tools(tools: Vec<String>) -> anyhow::Result<Vec<String>> {
     let mut out = Vec::<String>::new();
     let mut seen = std::collections::BTreeSet::<String>::new();
@@ -140,29 +197,57 @@ fn parse_thread_configure_thinking(thinking: Option<String>) -> anyhow::Result<O
     Err(ThreadConfigureInputError::InvalidThinking { value }.into())
 }
 
-fn validate_thread_configure_allowed_tools_for_mode(
+fn validate_thread_configure_allowed_tools_for_mode_and_role(
     mode_name: &str,
+    role_name: &str,
     tools: &[String],
-    catalog: &omne_core::modes::ModeCatalog,
+    role_catalog: &omne_core::roles::RoleCatalog,
+    mode_catalog: &omne_core::modes::ModeCatalog,
 ) -> anyhow::Result<()> {
-    let mode = catalog.mode(mode_name).ok_or_else(|| {
-        let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
+    let mode = mode_catalog.mode(mode_name).ok_or_else(|| {
+        let available = mode_catalog.mode_names().collect::<Vec<_>>().join(", ");
         anyhow::anyhow!(ThreadConfigureSpecError::UnknownMode {
             mode: mode_name.to_string(),
             available,
         })
     })?;
+    let permission_mode_name = resolve_role_permission_mode_name(role_name, role_catalog);
+    let role_permission_mode = mode_catalog.mode(&permission_mode_name).ok_or_else(|| {
+        let available = available_role_names(role_catalog, mode_catalog);
+        anyhow::anyhow!(ThreadConfigureSpecError::UnknownRole {
+            role: role_name.to_string(),
+            available,
+        })
+    })?;
 
     for tool in tools {
-        let decision = omne_core::allowed_tools::effective_mode_decision_for_tool(mode, tool)
+        let mode_decision = omne_core::allowed_tools::effective_mode_decision_for_tool(mode, tool)
             .ok_or_else(|| {
                 anyhow::anyhow!(ThreadConfigureSpecError::AllowedToolDecisionMappingMissing {
                     tool: tool.clone(),
                 })
             })?;
-        if decision == omne_core::modes::Decision::Deny {
+        if mode_decision == omne_core::modes::Decision::Deny {
             return Err(ThreadConfigureSpecError::AllowedToolDeniedByMode {
                 mode: mode_name.to_string(),
+                tool: tool.clone(),
+            }
+            .into());
+        }
+
+        let role_decision = omne_core::allowed_tools::effective_mode_decision_for_tool(
+            role_permission_mode,
+            tool,
+        )
+        .ok_or_else(|| {
+            anyhow::anyhow!(ThreadConfigureSpecError::AllowedToolDecisionMappingMissing {
+                tool: tool.clone(),
+            })
+        })?;
+        if role_decision == omne_core::modes::Decision::Deny {
+            return Err(ThreadConfigureSpecError::AllowedToolDeniedByRole {
+                role: role_name.to_string(),
+                permission_mode: permission_mode_name.clone(),
                 tool: tool.clone(),
             }
             .into());
@@ -183,6 +268,7 @@ async fn handle_thread_configure(
         current_sandbox_writable_roots,
         current_sandbox_network_access,
         current_mode,
+        current_role,
         current_model,
         current_thinking,
         current_show_thinking,
@@ -198,6 +284,7 @@ async fn handle_thread_configure(
             state.sandbox_writable_roots.clone(),
             state.sandbox_network_access,
             state.mode.clone(),
+            state.role.clone(),
             state.model.clone(),
             state.thinking.clone(),
             state.show_thinking,
@@ -242,8 +329,17 @@ async fn handle_thread_configure(
         .mode
         .map(|m| m.trim().to_string())
         .filter(|m| !m.is_empty());
+    let role = params
+        .role
+        .map(|r| r.trim().to_string())
+        .filter(|r| !r.is_empty());
     let allowed_tools_requested = matches!(params.allowed_tools, Some(Some(_)));
-    let mode_catalog = if mode.is_some() || allowed_tools_requested {
+    let role_catalog = if role.is_some() || allowed_tools_requested {
+        Some(omne_core::roles::RoleCatalog::builtin())
+    } else {
+        None
+    };
+    let mode_catalog = if mode.is_some() || role.is_some() || allowed_tools_requested {
         Some(omne_core::modes::ModeCatalog::load(&thread_root).await)
     } else {
         None
@@ -253,6 +349,15 @@ async fn handle_thread_configure(
             .as_ref()
             .expect("mode catalog must be loaded when mode is provided");
         validate_thread_configure_mode(mode_name, catalog)?;
+    }
+    if let Some(role_name) = role.as_deref() {
+        let modes = mode_catalog
+            .as_ref()
+            .expect("mode catalog must be loaded when role is provided");
+        let roles = role_catalog
+            .as_ref()
+            .expect("role catalog must be loaded when role is provided");
+        validate_thread_configure_role(role_name, roles, modes)?;
     }
     let model = params.model.filter(|s| !s.trim().is_empty());
     let thinking = parse_thread_configure_thinking(params.thinking)?;
@@ -264,11 +369,21 @@ async fn handle_thread_configure(
         Some(Some(tools)) => {
             let tools = normalize_thread_configure_allowed_tools(tools)?;
             let effective_mode_name = mode.as_deref().unwrap_or(current_mode.as_str());
-            let catalog = mode_catalog
+            let effective_role_name = role.as_deref().unwrap_or(current_role.as_str());
+            let modes = mode_catalog
                 .as_ref()
                 .expect("mode catalog must be loaded when allowed_tools are provided");
-            validate_thread_configure_mode(effective_mode_name, catalog)?;
-            validate_thread_configure_allowed_tools_for_mode(effective_mode_name, &tools, catalog)?;
+            let roles = role_catalog
+                .as_ref()
+                .expect("role catalog must be loaded when allowed_tools are provided");
+            validate_thread_configure_role(effective_role_name, roles, modes)?;
+            validate_thread_configure_allowed_tools_for_mode_and_role(
+                effective_mode_name,
+                effective_role_name,
+                &tools,
+                roles,
+                modes,
+            )?;
             Some(Some(tools))
         }
     };
@@ -292,6 +407,7 @@ async fn handle_thread_configure(
         || sandbox_network_access
             .is_some_and(|access| access != current_sandbox_network_access)
         || mode.as_ref().is_some_and(|m| m != &current_mode)
+        || role.as_ref().is_some_and(|r| r != &current_role)
         || model.as_ref() != current_model.as_ref()
         || thinking.as_ref() != current_thinking.as_ref()
         || show_thinking != current_show_thinking
@@ -306,6 +422,7 @@ async fn handle_thread_configure(
             sandbox_writable_roots,
             sandbox_network_access,
             mode,
+            role,
             model,
             thinking,
             show_thinking,
@@ -337,11 +454,13 @@ async fn handle_thread_config_explain(
         .ok_or_else(|| anyhow::anyhow!("thread cwd is missing: {}", params.thread_id))?;
     let thread_root = omne_core::resolve_dir(Path::new(&thread_cwd), Path::new(".")).await?;
     let mode_catalog = omne_core::modes::ModeCatalog::load(&thread_root).await;
+    let role_catalog = omne_core::roles::RoleCatalog::builtin();
 
     let default_model = "gpt-4.1".to_string();
     let default_openai_provider = "openai-codex-apikey".to_string();
     let default_openai_base_url = "https://api.openai.com/v1".to_string();
-    let default_mode = "coder".to_string();
+    let default_mode = "code".to_string();
+    let default_role = "coder".to_string();
     let default_thinking = thinking_label(ditto_llm::ThinkingIntensity::default()).to_string();
     let default_show_thinking = true;
 
@@ -350,6 +469,7 @@ async fn handle_thread_config_explain(
     let mut effective_sandbox_writable_roots = Vec::<String>::new();
     let mut effective_sandbox_network_access = omne_protocol::SandboxNetworkAccess::Deny;
     let mut effective_mode = default_mode.clone();
+    let mut effective_role = default_role.clone();
     let mut effective_openai_provider = default_openai_provider.clone();
     let mut effective_model = default_model.clone();
     let mut effective_thinking = default_thinking.clone();
@@ -364,6 +484,7 @@ async fn handle_thread_config_explain(
         "sandbox_writable_roots": effective_sandbox_writable_roots,
         "sandbox_network_access": effective_sandbox_network_access,
         "mode": effective_mode,
+        "role": effective_role,
         "openai_provider": effective_openai_provider,
         "model": effective_model,
         "thinking": effective_thinking,
@@ -508,6 +629,7 @@ async fn handle_thread_config_explain(
             sandbox_writable_roots,
             sandbox_network_access,
             mode,
+            role,
             model,
             thinking,
             show_thinking,
@@ -533,6 +655,9 @@ async fn handle_thread_config_explain(
                     effective_show_thinking = mode_show_thinking_for_mode(&effective_mode)
                         .unwrap_or(project_show_thinking_default);
                 }
+            }
+            if let Some(role) = role {
+                effective_role = role;
             }
             if let Some(model) = model {
                 effective_model = model;
@@ -566,6 +691,7 @@ async fn handle_thread_config_explain(
                 "sandbox_writable_roots": effective_sandbox_writable_roots,
                 "sandbox_network_access": effective_sandbox_network_access,
                 "mode": effective_mode,
+                "role": effective_role,
                 "openai_provider": effective_openai_provider,
                 "model": effective_model,
                 "thinking": effective_thinking,
@@ -576,6 +702,41 @@ async fn handle_thread_config_explain(
             }));
         }
     }
+
+    let effective_role_permission_mode =
+        resolve_role_permission_mode_name(&effective_role, &role_catalog);
+    let effective_permissions = mode_catalog
+        .mode(&effective_mode)
+        .and_then(|mode| {
+            mode_catalog
+                .mode(&effective_role_permission_mode)
+                .map(|role_permission_mode| {
+                    omne_core::allowed_tools::effective_permissions_for_mode_and_role(
+                        mode,
+                        role_permission_mode,
+                        effective_allowed_tools.as_deref(),
+                    )
+                })
+        });
+    let role_resolution_source = if role_catalog.role(&effective_role).is_some() {
+        "role_catalog"
+    } else if mode_catalog.mode(&effective_role).is_some() {
+        "mode_compat"
+    } else {
+        "unresolved"
+    };
+    let available_roles = role_catalog
+        .role_names()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    layers.push(serde_json::json!({
+        "source": "role_catalog",
+        "catalog_source": "builtin",
+        "effective_role": effective_role.clone(),
+        "permission_mode": effective_role_permission_mode.clone(),
+        "resolution_source": role_resolution_source,
+        "available_roles": available_roles,
+    }));
 
     let (mode_catalog_source, mode_catalog_path) = match &mode_catalog.source {
         omne_core::modes::ModeCatalogSource::Builtin => ("builtin", None),
@@ -629,12 +790,15 @@ async fn handle_thread_config_explain(
             sandbox_writable_roots: effective_sandbox_writable_roots,
             sandbox_network_access: effective_sandbox_network_access,
             mode: effective_mode,
+            role: effective_role,
             model: effective_model,
             thinking: effective_thinking,
             show_thinking: effective_show_thinking,
             openai_base_url: effective_openai_base_url,
             allowed_tools: effective_allowed_tools,
             execpolicy_rules: effective_execpolicy_rules,
+            permission_mode: effective_role_permission_mode,
+            effective_permissions,
             model_context_window: limits.context_window,
             auto_compact_token_limit: limits.auto_compact_token_limit,
         },

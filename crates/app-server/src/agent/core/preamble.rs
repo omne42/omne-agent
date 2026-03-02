@@ -665,6 +665,13 @@ fn tool_specs_to_ditto_tools(specs: &[Value]) -> anyhow::Result<Vec<ditto_llm::T
     Ok(out)
 }
 
+fn tool_specs_total_json_bytes(specs: &[Value]) -> usize {
+    specs
+        .iter()
+        .map(|spec| serde_json::to_vec(spec).map(|bytes| bytes.len()).unwrap_or(0))
+        .sum()
+}
+
 fn log_llm_warnings(thread_id: ThreadId, turn_id: TurnId, warnings: &[ditto_llm::Warning]) {
     if warnings.is_empty() {
         return;

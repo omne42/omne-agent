@@ -166,8 +166,8 @@ thread_config:
 
 字段与协议类型对齐（snake_case）：
 
-- `approval_policy`: `auto_approve|on_request|manual|unless_trusted|auto_deny`
-- `sandbox_policy`: `read_only|workspace_write|danger_full_access`
+- `approval_policy`: `auto_approve|manual|unless_trusted|auto_deny`
+- `sandbox_policy`: `read_only|workspace_write|full_access`
 - `sandbox_network_access`: `deny|allow`
 
 可选字段（TODO，先别承诺实现）：

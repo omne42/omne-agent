@@ -57,7 +57,7 @@
       "default": null,
       "anyOf": [
         {
-          "$ref": "#/definitions/SandboxPolicy"
+          "$ref": "#/definitions/WriteScope"
         },
         {
           "type": "null"
@@ -80,20 +80,20 @@
     }
   },
   "definitions": {
-    "SandboxPolicy": {
-      "type": "string",
-      "enum": [
-        "read_only",
-        "workspace_write",
-        "danger_full_access"
-      ]
-    },
     "ThreadCheckpointDecision": {
       "type": "string",
       "enum": [
         "allow",
         "prompt",
         "deny"
+      ]
+    },
+    "WriteScope": {
+      "type": "string",
+      "enum": [
+        "read_only",
+        "workspace_write",
+        "full_access"
       ]
     }
   }

@@ -16,18 +16,9 @@
       "type": "string",
       "enum": [
         "auto_approve",
-        "on_request",
         "manual",
         "unless_trusted",
         "auto_deny"
-      ]
-    },
-    "SandboxPolicy": {
-      "type": "string",
-      "enum": [
-        "read_only",
-        "workspace_write",
-        "danger_full_access"
       ]
     },
     "ThreadAttentionArtifactMarker": {
@@ -544,7 +535,7 @@
           "minimum": 0.0
         },
         "sandbox_policy": {
-          "$ref": "#/definitions/SandboxPolicy"
+          "$ref": "#/definitions/WriteScope"
         },
         "thread_id": {
           "type": "string",
@@ -609,6 +600,14 @@
         "failed",
         "cancelled",
         "stuck"
+      ]
+    },
+    "WriteScope": {
+      "type": "string",
+      "enum": [
+        "read_only",
+        "workspace_write",
+        "full_access"
       ]
     }
   }

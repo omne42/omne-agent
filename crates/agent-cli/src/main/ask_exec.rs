@@ -20,6 +20,28 @@ fn print_json_or_pretty(json: bool, value: &Value) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn json_non_empty_string<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn format_facade_mapping_suffix(tool: &str, payload: Option<&Value>) -> Option<String> {
+    let payload = payload?;
+    let facade_tool = json_non_empty_string(payload, "facade_tool").or_else(|| {
+        tool.strip_prefix("facade/")
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    })?;
+    let op = json_non_empty_string(payload, "op")?;
+    let mapped_action = json_non_empty_string(payload, "mapped_action")?;
+    Some(format!(
+        " facade={facade_tool} op={op} mapped_action={mapped_action}"
+    ))
+}
+
 async fn run_ask(app: &mut App, args: AskArgs) -> anyhow::Result<()> {
     let (thread_id, mut since_seq) = if let Some(thread_id) = args.thread_id {
         let resumed = app.thread_resume(thread_id).await?;
@@ -44,6 +66,7 @@ async fn run_ask(app: &mut App, args: AskArgs) -> anyhow::Result<()> {
             sandbox_writable_roots: None,
             sandbox_network_access: None,
             mode: args.mode,
+        role: None,
             model: args.model,
             openai_base_url: args.openai_base_url,
             thinking: None,
@@ -220,6 +243,7 @@ where
             sandbox_writable_roots: None,
             sandbox_network_access: None,
             mode: args.mode,
+        role: None,
             model: args.model,
             openai_base_url: args.openai_base_url,
             thinking: None,
@@ -389,6 +413,7 @@ async fn run_exec(app: &mut App, args: ExecArgs) -> anyhow::Result<i32> {
             sandbox_writable_roots: None,
             sandbox_network_access: None,
             mode: args.mode,
+        role: None,
             model: args.model,
             openai_base_url: args.openai_base_url,
             thinking: None,
@@ -646,6 +671,7 @@ fn render_event_to<W: std::io::Write>(
             sandbox_writable_roots,
             sandbox_network_access,
             mode,
+            role,
             model,
             thinking,
             show_thinking,
@@ -655,8 +681,9 @@ fn render_event_to<W: std::io::Write>(
         } => {
             let _ = writeln!(
                 writer,
-                "[{ts}] config approval_policy={approval_policy:?} sandbox_policy={sandbox_policy:?} sandbox_writable_roots={sandbox_writable_roots:?} sandbox_network_access={sandbox_network_access:?} mode={} model={} thinking={} show_thinking={} openai_base_url={} allowed_tools={allowed_tools:?} execpolicy_rules={execpolicy_rules:?}",
+                "[{ts}] config approval_policy={approval_policy:?} sandbox_policy={sandbox_policy:?} sandbox_writable_roots={sandbox_writable_roots:?} sandbox_network_access={sandbox_network_access:?} mode={} role={} model={} thinking={} show_thinking={} openai_base_url={} allowed_tools={allowed_tools:?} execpolicy_rules={execpolicy_rules:?}",
                 mode.as_deref().unwrap_or(""),
+                role.as_deref().unwrap_or(""),
                 model.as_deref().unwrap_or(""),
                 thinking.as_deref().unwrap_or(""),
                 show_thinking
@@ -699,14 +726,23 @@ fn render_event_to<W: std::io::Write>(
                 reason.as_deref().unwrap_or("")
             );
         }
-        omne_protocol::ThreadEventKind::ToolStarted { tool, .. } => {
-            let _ = writeln!(writer, "[{ts}] tool started {tool}");
+        omne_protocol::ThreadEventKind::ToolStarted { tool, params, .. } => {
+            let mapping = format_facade_mapping_suffix(tool, params.as_ref()).unwrap_or_default();
+            let _ = writeln!(writer, "[{ts}] tool started {tool}{mapping}");
         }
-        omne_protocol::ThreadEventKind::ToolCompleted { status, error, .. } => {
+        omne_protocol::ThreadEventKind::ToolCompleted {
+            status,
+            error,
+            result,
+            ..
+        } => {
+            let mapping = format_facade_mapping_suffix("", result.as_ref()).unwrap_or_default();
             let _ = writeln!(
                 writer,
-                "[{ts}] tool completed status={status:?} error={}",
+                "[{ts}] tool completed status={status:?} error={}{}",
                 error.as_deref().unwrap_or("")
+                ,
+                mapping
             );
         }
         omne_protocol::ThreadEventKind::ProcessStarted {
@@ -939,5 +975,47 @@ mod ask_exec_tests {
         };
         let lines = approval_quick_command_lines(&summary);
         assert!(lines.is_empty());
+    }
+
+    #[test]
+    fn render_event_to_includes_facade_mapping_for_tool_started() {
+        let mut buffer = Vec::<u8>::new();
+        let kind = omne_protocol::ThreadEventKind::ToolStarted {
+            tool_id: omne_protocol::ToolId::new(),
+            turn_id: None,
+            tool: "facade/workspace".to_string(),
+            params: Some(serde_json::json!({
+                "facade_tool": "workspace",
+                "op": "read",
+                "mapped_action": "file/read"
+            })),
+        };
+        render_event_to(&mut buffer, "2026-03-02T00:00:00Z".to_string(), &kind);
+        let output = String::from_utf8(buffer).expect("utf8");
+        assert!(output.contains("tool started facade/workspace"));
+        assert!(output.contains("facade=workspace"));
+        assert!(output.contains("op=read"));
+        assert!(output.contains("mapped_action=file/read"));
+    }
+
+    #[test]
+    fn render_event_to_includes_facade_mapping_for_tool_completed() {
+        let mut buffer = Vec::<u8>::new();
+        let kind = omne_protocol::ThreadEventKind::ToolCompleted {
+            tool_id: omne_protocol::ToolId::new(),
+            status: omne_protocol::ToolStatus::Denied,
+            error: None,
+            result: Some(serde_json::json!({
+                "facade_tool": "thread",
+                "op": "send_input",
+                "mapped_action": "subagent/send_input"
+            })),
+        };
+        render_event_to(&mut buffer, "2026-03-02T00:00:00Z".to_string(), &kind);
+        let output = String::from_utf8(buffer).expect("utf8");
+        assert!(output.contains("tool completed status=Denied"));
+        assert!(output.contains("facade=thread"));
+        assert!(output.contains("op=send_input"));
+        assert!(output.contains("mapped_action=subagent/send_input"));
     }
 }

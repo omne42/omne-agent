@@ -18,7 +18,7 @@
       ]
     },
     "sandbox_policy": {
-      "$ref": "#/definitions/SandboxPolicy"
+      "$ref": "#/definitions/WriteScope"
     },
     "tool_id": {
       "type": "string",
@@ -26,12 +26,12 @@
     }
   },
   "definitions": {
-    "SandboxPolicy": {
+    "WriteScope": {
       "type": "string",
       "enum": [
         "read_only",
         "workspace_write",
-        "danger_full_access"
+        "full_access"
       ]
     }
   }

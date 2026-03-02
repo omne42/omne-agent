@@ -12,11 +12,11 @@ fn approval_action_label_unknown_id_falls_back_to_raw_action() {
 #[test]
 fn approval_summary_from_params_extracts_path_and_requirement() {
     let params = serde_json::json!({
-        "approval": { "requirement": "on_request" },
+        "approval": { "requirement": "prompt" },
         "target_path": "/tmp/ws/main.rs"
     });
     let summary = approval_summary_from_params(&params).expect("summary");
-    assert_eq!(summary.requirement.as_deref(), Some("on_request"));
+    assert_eq!(summary.requirement.as_deref(), Some("prompt"));
     assert_eq!(summary.path.as_deref(), Some("/tmp/ws/main.rs"));
 }
 

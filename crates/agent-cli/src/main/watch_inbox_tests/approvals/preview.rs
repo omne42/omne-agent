@@ -84,7 +84,7 @@ fn pending_approval_preview_surfaces_subagent_child_ids() {
         params: None,
         summary: Some(
             omne_app_server_protocol::ThreadAttentionPendingApprovalSummary {
-                requirement: Some("on_request".to_string()),
+                requirement: Some("prompt".to_string()),
                 argv: None,
                 cwd: None,
                 process_id: None,

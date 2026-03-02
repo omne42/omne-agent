@@ -108,6 +108,20 @@ impl ModeCatalog {
             ".omne_data/repos/**".to_string(),
             ".omne_data/reference/**".to_string(),
         ];
+        let coder_spawn_allowed_modes = Some(vec![
+            "architect".to_string(),
+            "reviewer".to_string(),
+            "builder".to_string(),
+            "code".to_string(),
+            "chat".to_string(),
+            "roleplay".to_string(),
+            "author".to_string(),
+            "doc_organizer".to_string(),
+            "chatter".to_string(),
+            "default".to_string(),
+            "codder".to_string(),
+            "coder".to_string(),
+        ]);
 
         modes.insert(
             "architect".to_string(),
@@ -135,11 +149,230 @@ impl ModeCatalog {
                     subagent: SubagentPermissions {
                         spawn: SubagentSpawnPermissions {
                             decision: Decision::Prompt,
-                            allowed_modes: Some(vec![
-                                "architect".to_string(),
-                                "reviewer".to_string(),
-                                "builder".to_string(),
-                            ]),
+                            allowed_modes: coder_spawn_allowed_modes.clone(),
+                            max_threads: None,
+                        },
+                    },
+                },
+            ),
+        );
+
+        modes.insert(
+            "code".to_string(),
+            ModeDef::builtin(
+                "Coding scenario mode; same permissions as coder.",
+                ModePermissions {
+                    read: Decision::Allow,
+                    edit: builtin_edit_permissions(
+                        Decision::Prompt,
+                        Vec::new(),
+                        default_deny_globs.clone(),
+                    ),
+                    command: Decision::Prompt,
+                    process: ProcessPermissions {
+                        inspect: Decision::Allow,
+                        kill: Decision::Prompt,
+                        interact: Decision::Deny,
+                    },
+                    artifact: Decision::Allow,
+                    browser: Decision::Prompt,
+                    subagent: SubagentPermissions {
+                        spawn: SubagentSpawnPermissions {
+                            decision: Decision::Prompt,
+                            allowed_modes: coder_spawn_allowed_modes.clone(),
+                            max_threads: None,
+                        },
+                    },
+                },
+            ),
+        );
+
+        modes.insert(
+            "chat".to_string(),
+            ModeDef::builtin(
+                "Chat scenario mode; no code execution or file edits.",
+                ModePermissions {
+                    read: Decision::Allow,
+                    edit: builtin_edit_permissions(
+                        Decision::Deny,
+                        Vec::new(),
+                        default_deny_globs.clone(),
+                    ),
+                    command: Decision::Deny,
+                    process: ProcessPermissions {
+                        inspect: Decision::Deny,
+                        kill: Decision::Deny,
+                        interact: Decision::Deny,
+                    },
+                    artifact: Decision::Allow,
+                    browser: Decision::Allow,
+                    subagent: SubagentPermissions::default(),
+                },
+            ),
+        );
+
+        modes.insert(
+            "roleplay".to_string(),
+            ModeDef::builtin(
+                "Roleplay scenario mode; conversational with no execution/edit permissions.",
+                ModePermissions {
+                    read: Decision::Allow,
+                    edit: builtin_edit_permissions(
+                        Decision::Deny,
+                        Vec::new(),
+                        default_deny_globs.clone(),
+                    ),
+                    command: Decision::Deny,
+                    process: ProcessPermissions {
+                        inspect: Decision::Deny,
+                        kill: Decision::Deny,
+                        interact: Decision::Deny,
+                    },
+                    artifact: Decision::Allow,
+                    browser: Decision::Allow,
+                    subagent: SubagentPermissions::default(),
+                },
+            ),
+        );
+
+        modes.insert(
+            "author".to_string(),
+            ModeDef::builtin(
+                "Author scenario mode; focused writing permissions for docs/markdown.",
+                ModePermissions {
+                    read: Decision::Allow,
+                    edit: builtin_edit_permissions(
+                        Decision::Prompt,
+                        vec![
+                            "docs/**".to_string(),
+                            "**/*.md".to_string(),
+                            "**/*.mdx".to_string(),
+                            "README.md".to_string(),
+                            "CHANGELOG.md".to_string(),
+                        ],
+                        default_deny_globs.clone(),
+                    ),
+                    command: Decision::Deny,
+                    process: ProcessPermissions {
+                        inspect: Decision::Deny,
+                        kill: Decision::Deny,
+                        interact: Decision::Deny,
+                    },
+                    artifact: Decision::Allow,
+                    browser: Decision::Allow,
+                    subagent: SubagentPermissions::default(),
+                },
+            ),
+        );
+
+        modes.insert(
+            "doc_organizer".to_string(),
+            ModeDef::builtin(
+                "Documentation organizer mode; docs-focused editing with prompts.",
+                ModePermissions {
+                    read: Decision::Allow,
+                    edit: builtin_edit_permissions(
+                        Decision::Prompt,
+                        vec![
+                            "docs/**".to_string(),
+                            "**/*.md".to_string(),
+                            "**/*.mdx".to_string(),
+                            "README.md".to_string(),
+                            "CHANGELOG.md".to_string(),
+                            "AGENTS.md".to_string(),
+                        ],
+                        default_deny_globs.clone(),
+                    ),
+                    command: Decision::Deny,
+                    process: ProcessPermissions {
+                        inspect: Decision::Deny,
+                        kill: Decision::Deny,
+                        interact: Decision::Deny,
+                    },
+                    artifact: Decision::Allow,
+                    browser: Decision::Allow,
+                    subagent: SubagentPermissions::default(),
+                },
+            ),
+        );
+        if let Some(mode) = modes.get("author").cloned() {
+            modes.insert("作者".to_string(), mode);
+        }
+        if let Some(mode) = modes.get("doc_organizer").cloned() {
+            modes.insert("文档整理者".to_string(), mode);
+        }
+
+        modes.insert(
+            "chatter".to_string(),
+            ModeDef::builtin(
+                "Role profile for light conversation and browsing; no edits or commands.",
+                ModePermissions {
+                    read: Decision::Allow,
+                    edit: builtin_edit_permissions(
+                        Decision::Deny,
+                        Vec::new(),
+                        default_deny_globs.clone(),
+                    ),
+                    command: Decision::Deny,
+                    process: ProcessPermissions {
+                        inspect: Decision::Deny,
+                        kill: Decision::Deny,
+                        interact: Decision::Deny,
+                    },
+                    artifact: Decision::Allow,
+                    browser: Decision::Allow,
+                    subagent: SubagentPermissions::default(),
+                },
+            ),
+        );
+
+        modes.insert(
+            "default".to_string(),
+            ModeDef::builtin(
+                "Role profile for balanced assistance; edits and commands require approvals.",
+                ModePermissions {
+                    read: Decision::Allow,
+                    edit: builtin_edit_permissions(
+                        Decision::Prompt,
+                        Vec::new(),
+                        default_deny_globs.clone(),
+                    ),
+                    command: Decision::Prompt,
+                    process: ProcessPermissions {
+                        inspect: Decision::Allow,
+                        kill: Decision::Deny,
+                        interact: Decision::Deny,
+                    },
+                    artifact: Decision::Allow,
+                    browser: Decision::Prompt,
+                    subagent: SubagentPermissions::default(),
+                },
+            ),
+        );
+
+        modes.insert(
+            "codder".to_string(),
+            ModeDef::builtin(
+                "Role profile for implementation-heavy work; broad coding permissions.",
+                ModePermissions {
+                    read: Decision::Allow,
+                    edit: builtin_edit_permissions(
+                        Decision::Prompt,
+                        Vec::new(),
+                        default_deny_globs.clone(),
+                    ),
+                    command: Decision::Prompt,
+                    process: ProcessPermissions {
+                        inspect: Decision::Allow,
+                        kill: Decision::Prompt,
+                        interact: Decision::Deny,
+                    },
+                    artifact: Decision::Allow,
+                    browser: Decision::Prompt,
+                    subagent: SubagentPermissions {
+                        spawn: SubagentSpawnPermissions {
+                            decision: Decision::Prompt,
+                            allowed_modes: coder_spawn_allowed_modes,
                             max_threads: None,
                         },
                     },
@@ -798,6 +1031,16 @@ modes:
         let catalog = ModeCatalog::load(root).await;
         assert!(matches!(catalog.source, ModeCatalogSource::Project(_)));
         assert!(catalog.mode("coder").is_some());
+        assert!(catalog.mode("code").is_some());
+        assert!(catalog.mode("chat").is_some());
+        assert!(catalog.mode("roleplay").is_some());
+        assert!(catalog.mode("author").is_some());
+        assert!(catalog.mode("doc_organizer").is_some());
+        assert!(catalog.mode("作者").is_some());
+        assert!(catalog.mode("文档整理者").is_some());
+        assert!(catalog.mode("chatter").is_some());
+        assert!(catalog.mode("default").is_some());
+        assert!(catalog.mode("codder").is_some());
         assert!(catalog.mode("debugger").is_some());
         assert!(catalog.mode("merger").is_some());
         let docs_only = catalog.mode("docs-only").expect("custom mode present");

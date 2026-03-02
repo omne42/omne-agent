@@ -1,6 +1,38 @@
 #[cfg(test)]
 mod reference_repo_file_tools_tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static DYNAMIC_TOOL_ENV_MUTEX: Mutex<()> = Mutex::new(());
+
+    struct ScopedEnvVar {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl ScopedEnvVar {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var(key).ok();
+            unsafe { std::env::set_var(key, value) };
+            Self { key, previous }
+        }
+
+        fn unset(key: &'static str) -> Self {
+            let previous = std::env::var(key).ok();
+            unsafe { std::env::remove_var(key) };
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for ScopedEnvVar {
+        fn drop(&mut self) {
+            if let Some(previous) = self.previous.as_deref() {
+                unsafe { std::env::set_var(self.key, previous) };
+            } else {
+                unsafe { std::env::remove_var(self.key) };
+            }
+        }
+    }
 
     async fn append_plan_turn_started(
         server: &super::super::Server,
@@ -34,6 +66,7 @@ mod reference_repo_file_tools_tests {
                 sandbox_writable_roots: None,
                 sandbox_network_access: None,
                 mode: None,
+                role: None,
                 model: None,
                 thinking: None,
                 show_thinking: None,
@@ -58,12 +91,63 @@ mod reference_repo_file_tools_tests {
                 sandbox_writable_roots: None,
                 sandbox_network_access: None,
                 mode: Some(mode.to_string()),
+                role: None,
                 model: None,
                 thinking: None,
                 show_thinking: None,
                 openai_base_url: None,
                 allowed_tools: None,
                 execpolicy_rules: None,
+            })
+            .await?;
+        Ok(())
+    }
+
+    async fn append_thread_allowed_tools(
+        server: &super::super::Server,
+        thread_id: ThreadId,
+        allowed_tools: Vec<String>,
+    ) -> anyhow::Result<()> {
+        let thread_rt = server.get_or_load_thread(thread_id).await?;
+        thread_rt
+            .append_event(omne_protocol::ThreadEventKind::ThreadConfigUpdated {
+                approval_policy: omne_protocol::ApprovalPolicy::Manual,
+                sandbox_policy: None,
+                sandbox_writable_roots: None,
+                sandbox_network_access: None,
+                mode: None,
+                role: None,
+                model: None,
+                thinking: None,
+                show_thinking: None,
+                openai_base_url: None,
+                allowed_tools: Some(Some(allowed_tools)),
+                execpolicy_rules: None,
+            })
+            .await?;
+        Ok(())
+    }
+
+    async fn append_thread_execpolicy_rules(
+        server: &super::super::Server,
+        thread_id: ThreadId,
+        execpolicy_rules: Vec<String>,
+    ) -> anyhow::Result<()> {
+        let thread_rt = server.get_or_load_thread(thread_id).await?;
+        thread_rt
+            .append_event(omne_protocol::ThreadEventKind::ThreadConfigUpdated {
+                approval_policy: omne_protocol::ApprovalPolicy::Manual,
+                sandbox_policy: None,
+                sandbox_writable_roots: None,
+                sandbox_network_access: None,
+                mode: None,
+                role: None,
+                model: None,
+                thinking: None,
+                show_thinking: None,
+                openai_base_url: None,
+                allowed_tools: None,
+                execpolicy_rules: Some(execpolicy_rules),
             })
             .await?;
         Ok(())
@@ -199,6 +283,387 @@ mod reference_repo_file_tools_tests {
             err.to_string().contains("reference repo root")
                 || err.to_string().contains(".omne_data/reference/repo")
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn facade_workspace_read_respects_allowed_tools_denial_path() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let project_dir = tmp.path().join("project");
+        tokio::fs::create_dir_all(&project_dir).await?;
+        tokio::fs::write(project_dir.join("hello.txt"), "hello\n").await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
+        let handle = server.thread_store.create_thread(project_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        append_thread_allowed_tools(&server, thread_id, vec!["repo/search".to_string()]).await?;
+
+        let result = run_tool_call_once(
+            &server,
+            thread_id,
+            None,
+            "workspace",
+            serde_json::json!({
+                "op": "read",
+                "args": {
+                    "path": "hello.txt"
+                }
+            }),
+            None,
+        )
+        .await?;
+
+        assert_eq!(result["facade_tool"].as_str(), Some("workspace"));
+        assert_eq!(result["op"].as_str(), Some("read"));
+        assert_eq!(result["mapped_action"].as_str(), Some("file/read"));
+        assert_eq!(result["denied"].as_bool(), Some(true));
+        assert!(result["error_code"].as_str().is_some());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn facade_process_start_mode_denied_path_preserves_error_code() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let project_dir = tmp.path().join("project");
+        tokio::fs::create_dir_all(&project_dir).await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
+        let handle = server.thread_store.create_thread(project_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        append_thread_mode(&server, thread_id, "chat").await?;
+
+        let result = run_tool_call_once(
+            &server,
+            thread_id,
+            None,
+            "process",
+            serde_json::json!({
+                "op": "start",
+                "args": {
+                    "argv": ["echo", "blocked"]
+                }
+            }),
+            None,
+        )
+        .await?;
+
+        assert_eq!(result["facade_tool"].as_str(), Some("process"));
+        assert_eq!(result["op"].as_str(), Some("start"));
+        assert_eq!(result["mapped_action"].as_str(), Some("process/start"));
+        assert_eq!(result["denied"].as_bool(), Some(true));
+        assert_eq!(result["error_code"].as_str(), Some("mode_denied"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn facade_process_start_execpolicy_denied_path_preserves_error_code()
+    -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let project_dir = tmp.path().join("project");
+        tokio::fs::create_dir_all(project_dir.join("rules")).await?;
+        tokio::fs::write(
+            project_dir.join("rules/thread.rules"),
+            r#"
+prefix_rule(
+    pattern = ["./tool"],
+    decision = "forbidden",
+)
+"#,
+        )
+        .await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
+        let handle = server.thread_store.create_thread(project_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        append_thread_execpolicy_rules(&server, thread_id, vec!["rules/thread.rules".to_string()])
+            .await?;
+
+        let result = run_tool_call_once(
+            &server,
+            thread_id,
+            None,
+            "process",
+            serde_json::json!({
+                "op": "start",
+                "args": {
+                    "argv": ["./tool"]
+                }
+            }),
+            None,
+        )
+        .await?;
+
+        assert_eq!(result["facade_tool"].as_str(), Some("process"));
+        assert_eq!(result["op"].as_str(), Some("start"));
+        assert_eq!(result["mapped_action"].as_str(), Some("process/start"));
+        assert_eq!(result["denied"].as_bool(), Some(true));
+        assert_eq!(result["error_code"].as_str(), Some("execpolicy_denied"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn facade_process_start_approval_denied_path_preserves_error_code()
+    -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let project_dir = tmp.path().join("project");
+        tokio::fs::create_dir_all(&project_dir).await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
+        let handle = server.thread_store.create_thread(project_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        append_thread_mode(&server, thread_id, "code").await?;
+        append_thread_approval_policy(&server, thread_id, omne_protocol::ApprovalPolicy::AutoDeny)
+            .await?;
+
+        let denied = run_tool_call_once(
+            &server,
+            thread_id,
+            None,
+            "process",
+            serde_json::json!({
+                "op": "start",
+                "args": {
+                    "argv": ["echo", "approval-check"]
+                }
+            }),
+            None,
+        )
+        .await?;
+
+        assert_eq!(denied["facade_tool"].as_str(), Some("process"));
+        assert_eq!(denied["op"].as_str(), Some("start"));
+        assert_eq!(denied["mapped_action"].as_str(), Some("process/start"));
+        assert_eq!(denied["denied"].as_bool(), Some(true));
+        assert_eq!(denied["error_code"].as_str(), Some("approval_denied"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn facade_thread_send_input_allowed_tools_denied_path_preserves_error_code()
+    -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let project_dir = tmp.path().join("project");
+        tokio::fs::create_dir_all(&project_dir).await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
+        let handle = server.thread_store.create_thread(project_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        append_thread_allowed_tools(&server, thread_id, vec!["thread/events".to_string()]).await?;
+
+        let denied = run_tool_call_once(
+            &server,
+            thread_id,
+            None,
+            "thread",
+            serde_json::json!({
+                "op": "send_input",
+                "args": {
+                    "id": thread_id.to_string(),
+                    "message": "hello from lifecycle test"
+                }
+            }),
+            None,
+        )
+        .await?;
+
+        assert_eq!(denied["facade_tool"].as_str(), Some("thread"));
+        assert_eq!(denied["op"].as_str(), Some("send_input"));
+        assert_eq!(
+            denied["mapped_action"].as_str(),
+            Some("subagent/send_input")
+        );
+        assert_eq!(denied["denied"].as_bool(), Some(true));
+        assert_eq!(denied["error_code"].as_str(), Some("allowed_tools_denied"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn facade_thread_send_input_mode_denied_path_preserves_error_code() -> anyhow::Result<()>
+    {
+        let tmp = tempfile::tempdir()?;
+        let project_dir = tmp.path().join("project");
+        tokio::fs::create_dir_all(&project_dir).await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
+        let handle = server.thread_store.create_thread(project_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        append_thread_mode(&server, thread_id, "chat").await?;
+
+        let denied = run_tool_call_once(
+            &server,
+            thread_id,
+            None,
+            "thread",
+            serde_json::json!({
+                "op": "send_input",
+                "args": {
+                    "id": thread_id.to_string(),
+                    "message": "hello from lifecycle test"
+                }
+            }),
+            None,
+        )
+        .await?;
+
+        assert_eq!(denied["facade_tool"].as_str(), Some("thread"));
+        assert_eq!(denied["op"].as_str(), Some("send_input"));
+        assert_eq!(
+            denied["mapped_action"].as_str(),
+            Some("subagent/send_input")
+        );
+        assert_eq!(denied["denied"].as_bool(), Some(true));
+        assert_eq!(denied["error_code"].as_str(), Some("mode_denied"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn facade_thread_send_input_approval_denied_path_preserves_error_code()
+    -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let project_dir = tmp.path().join("project");
+        tokio::fs::create_dir_all(&project_dir).await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
+        let handle = server.thread_store.create_thread(project_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        append_thread_mode(&server, thread_id, "code").await?;
+        append_thread_approval_policy(&server, thread_id, omne_protocol::ApprovalPolicy::AutoDeny)
+            .await?;
+
+        let denied = run_tool_call_once(
+            &server,
+            thread_id,
+            None,
+            "thread",
+            serde_json::json!({
+                "op": "send_input",
+                "args": {
+                    "id": thread_id.to_string(),
+                    "message": "hello from lifecycle test"
+                }
+            }),
+            None,
+        )
+        .await?;
+
+        assert_eq!(denied["facade_tool"].as_str(), Some("thread"));
+        assert_eq!(denied["op"].as_str(), Some("send_input"));
+        assert_eq!(
+            denied["mapped_action"].as_str(),
+            Some("subagent/send_input")
+        );
+        assert_eq!(denied["denied"].as_bool(), Some(true));
+        assert_eq!(denied["error_code"].as_str(), Some("approval_denied"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn facade_thread_subagent_lifecycle_ops_work_end_to_end() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let project_dir = tmp.path().join("project");
+        tokio::fs::create_dir_all(&project_dir).await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
+        let parent = server.thread_store.create_thread(project_dir.clone()).await?;
+        let parent_thread_id = parent.thread_id();
+        drop(parent);
+        let child = server.thread_store.create_thread(project_dir).await?;
+        let child_thread_id = child.thread_id();
+        drop(child);
+        let child_thread_id_str = child_thread_id.to_string();
+
+        append_thread_mode(&server, parent_thread_id, "code").await?;
+        append_thread_approval_policy(
+            &server,
+            parent_thread_id,
+            omne_protocol::ApprovalPolicy::AutoApprove,
+        )
+        .await?;
+
+        let send = tokio::task::LocalSet::new()
+            .run_until(async {
+                run_tool_call_once(
+                    &server,
+                    parent_thread_id,
+                    None,
+                    "thread",
+                    serde_json::json!({
+                        "op": "send_input",
+                        "args": {
+                            "id": child_thread_id_str.clone(),
+                            "message": "ping child lifecycle"
+                        }
+                    }),
+                    None,
+                )
+                .await
+            })
+            .await?;
+        assert_eq!(send["facade_tool"].as_str(), Some("thread"));
+        assert_eq!(send["op"].as_str(), Some("send_input"));
+        assert_eq!(send["mapped_action"].as_str(), Some("subagent/send_input"));
+        assert_eq!(send["thread_id"].as_str(), Some(child_thread_id_str.as_str()));
+        assert!(send["turn_id"].as_str().is_some());
+
+        let wait = run_tool_call_once(
+            &server,
+            parent_thread_id,
+            None,
+            "thread",
+            serde_json::json!({
+                "op": "wait",
+                "args": {
+                    "ids": [child_thread_id_str.clone()],
+                    "timeout_ms": 10_000
+                }
+            }),
+            None,
+        )
+        .await?;
+        assert_eq!(wait["facade_tool"].as_str(), Some("thread"));
+        assert_eq!(wait["op"].as_str(), Some("wait"));
+        assert_eq!(wait["mapped_action"].as_str(), Some("subagent/wait"));
+        assert!(
+            wait["status"]
+                .as_object()
+                .and_then(|status| status.get(child_thread_id_str.as_str()))
+                .is_some()
+        );
+
+        let close = run_tool_call_once(
+            &server,
+            parent_thread_id,
+            None,
+            "thread",
+            serde_json::json!({
+                "op": "close",
+                "args": {
+                    "id": child_thread_id_str.clone(),
+                    "reason": "facade close lifecycle test"
+                }
+            }),
+            None,
+        )
+        .await?;
+        assert_eq!(close["facade_tool"].as_str(), Some("thread"));
+        assert_eq!(close["op"].as_str(), Some("close"));
+        assert_eq!(close["mapped_action"].as_str(), Some("subagent/close"));
+        assert_eq!(close["thread_id"].as_str(), Some(child_thread_id_str.as_str()));
+        assert_eq!(close["archived"].as_bool(), Some(true));
         Ok(())
     }
 
@@ -1712,6 +2177,110 @@ modes:
         assert_eq!(result["decision"].as_str(), Some("deny"));
         assert_eq!(result["decision_source"].as_str(), Some("tool_override"));
         assert_eq!(result["tool_override_hit"].as_bool(), Some(true));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn dynamic_registry_tool_dispatches_to_mapped_read_only_tool() -> anyhow::Result<()> {
+        let _lock = DYNAMIC_TOOL_ENV_MUTEX.lock().expect("lock env");
+        let _enabled = ScopedEnvVar::set("OMNE_TOOL_DYNAMIC_REGISTRY_ENABLED", "1");
+        let _path = ScopedEnvVar::unset("OMNE_TOOL_DYNAMIC_REGISTRY_PATH");
+
+        let tmp = tempfile::tempdir()?;
+        let project = tmp.path().join("project");
+        tokio::fs::create_dir_all(project.join(".omne_data/spec")).await?;
+        tokio::fs::write(project.join("README.md"), "hello dynamic\n").await?;
+        tokio::fs::write(
+            project.join(".omne_data/spec/tool_registry.json"),
+            serde_json::json!({
+                "version": 1,
+                "tools": [
+                    {
+                        "name": "dyn_readme",
+                        "description": "read README dynamically",
+                        "mapped_tool": "file_read",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "path": { "type": "string" }
+                            },
+                            "required": ["path"],
+                            "additionalProperties": false
+                        },
+                        "fixed_args": {
+                            "root": "workspace"
+                        },
+                        "read_only": true
+                    }
+                ]
+            })
+            .to_string(),
+        )
+        .await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
+        let handle = server.thread_store.create_thread(project).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let result = run_tool_call_once(
+            &server,
+            thread_id,
+            None,
+            "dyn_readme",
+            serde_json::json!({ "path": "README.md" }),
+            None,
+        )
+        .await?;
+
+        assert_eq!(result["dynamic_tool"].as_str(), Some("dyn_readme"));
+        assert_eq!(result["mapped_tool"].as_str(), Some("file_read"));
+        assert_eq!(result["mapped_action"].as_str(), Some("file/read"));
+        assert_eq!(result["text"].as_str(), Some("hello dynamic\n"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn dynamic_registry_tool_rejects_non_object_args() -> anyhow::Result<()> {
+        let _lock = DYNAMIC_TOOL_ENV_MUTEX.lock().expect("lock env");
+        let _enabled = ScopedEnvVar::set("OMNE_TOOL_DYNAMIC_REGISTRY_ENABLED", "1");
+        let _path = ScopedEnvVar::unset("OMNE_TOOL_DYNAMIC_REGISTRY_PATH");
+
+        let tmp = tempfile::tempdir()?;
+        let project = tmp.path().join("project");
+        tokio::fs::create_dir_all(project.join(".omne_data/spec")).await?;
+        tokio::fs::write(
+            project.join(".omne_data/spec/tool_registry.json"),
+            serde_json::json!({
+                "version": 1,
+                "tools": [
+                    {
+                        "name": "dyn_readme",
+                        "mapped_tool": "file_read",
+                        "read_only": true
+                    }
+                ]
+            })
+            .to_string(),
+        )
+        .await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
+        let handle = server.thread_store.create_thread(project).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let result = run_tool_call_once(
+            &server,
+            thread_id,
+            None,
+            "dyn_readme",
+            serde_json::json!("bad-args"),
+            None,
+        )
+        .await?;
+
+        assert_eq!(result["error_code"].as_str(), Some("dynamic_invalid_params"));
         Ok(())
     }
 }

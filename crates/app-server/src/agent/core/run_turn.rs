@@ -18,6 +18,16 @@ fn resolve_turn_role_for_routing(has_plan_directive: bool, thread_mode: &str) ->
     }
 }
 
+fn resolve_role_permission_mode_name(
+    role_name: &str,
+    role_catalog: &omne_core::roles::RoleCatalog,
+) -> String {
+    role_catalog
+        .permission_mode_name(role_name)
+        .unwrap_or(role_name)
+        .to_string()
+}
+
 fn summarize_plan_artifact(text: &str) -> String {
     let first_line = text
         .lines()
@@ -71,6 +81,7 @@ pub async fn run_agent_turn(
     let (
         thread_id,
         thread_mode,
+        thread_role,
         thread_model,
         thread_openai_base_url,
         thread_show_thinking,
@@ -82,6 +93,7 @@ pub async fn run_agent_turn(
         (
             handle.thread_id(),
             state.mode.clone(),
+            state.role.clone(),
             state.model.clone(),
             state.openai_base_url.clone(),
             state.show_thinking,
@@ -93,6 +105,27 @@ pub async fn run_agent_turn(
     let thread_root = match thread_cwd.as_deref() {
         Some(thread_cwd) => Some(omne_core::resolve_dir(Path::new(thread_cwd), Path::new(".")).await?),
         None => None,
+    };
+    let effective_allowed_tools = if let Some(thread_root) = thread_root.as_deref() {
+        let mode_catalog = omne_core::modes::ModeCatalog::load(thread_root).await;
+        let role_catalog = omne_core::roles::RoleCatalog::builtin();
+        let role_permission_mode_name =
+            resolve_role_permission_mode_name(&thread_role, &role_catalog);
+        match (
+            mode_catalog.mode(&thread_mode),
+            mode_catalog.mode(&role_permission_mode_name),
+        ) {
+            (Some(mode), Some(role_permission_mode)) => {
+                Some(omne_core::allowed_tools::effective_permissions_for_mode_and_role(
+                    mode,
+                    role_permission_mode,
+                    allowed_tools.as_deref(),
+                ))
+            }
+            _ => allowed_tools.clone(),
+        }
+    } else {
+        allowed_tools.clone()
     };
 
     let (mut project_overrides, project_ui) = if let Some(thread_root) = thread_root.as_deref() {
@@ -258,9 +291,6 @@ pub async fn run_agent_turn(
     let provider_candidates = build_provider_candidates(&provider, fallbacks);
     let mut provider_cache = std::collections::BTreeMap::<String, ProviderRuntime>::new();
     provider_cache.insert(provider.clone(), provider_runtime);
-
-    let tool_specs = build_tools();
-    let tools = tool_specs_to_ditto_tools(&tool_specs).context("parse tool schemas")?;
 
     let max_agent_steps = parse_env_usize(
         "OMNE_AGENT_MAX_STEPS",
@@ -475,7 +505,7 @@ pub async fn run_agent_turn(
         resolve_turn_attachments(
             thread_root.as_deref(),
             thread_mode.as_str(),
-            allowed_tools.as_deref(),
+            effective_allowed_tools.as_deref(),
             &attachments,
             max_attachment_bytes,
         )
@@ -522,6 +552,24 @@ pub async fn run_agent_turn(
             );
         }
     }
+    let effective_tool_schema_model = tool_model.as_deref().unwrap_or(final_model.as_str());
+    let tool_specs = build_tools_for_turn(
+        effective_allowed_tools.as_deref(),
+        Some(effective_tool_schema_model),
+        Some(thread_role.as_str()),
+        thread_root.as_deref(),
+    );
+    let tool_count = tool_specs.len();
+    let tool_schema_bytes = tool_specs_total_json_bytes(&tool_specs);
+    tracing::info!(
+        thread_id = %thread_id,
+        turn_id = %turn_id,
+        model = %effective_tool_schema_model,
+        tool_count,
+        tool_schema_bytes,
+        "prepared tool schemas"
+    );
+    let tools = tool_specs_to_ditto_tools(&tool_specs).context("parse tool schemas")?;
 
     let model_fallbacks = std::env::var("OMNE_AGENT_FALLBACK_MODELS")
         .ok()

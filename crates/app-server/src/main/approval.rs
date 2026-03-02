@@ -563,7 +563,7 @@ async fn gate_approval_with_deps(
     }
 
     match approval_policy {
-        omne_protocol::ApprovalPolicy::AutoApprove | omne_protocol::ApprovalPolicy::OnRequest => {
+        omne_protocol::ApprovalPolicy::AutoApprove => {
             let approval_id = omne_protocol::ApprovalId::new();
             thread_rt
                 .append_event(omne_protocol::ThreadEventKind::ApprovalRequested {

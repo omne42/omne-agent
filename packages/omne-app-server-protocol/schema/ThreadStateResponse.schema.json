@@ -8,6 +8,7 @@
     "last_seq",
     "mode",
     "paused",
+    "role",
     "sandbox_network_access",
     "sandbox_policy",
     "thread_id",
@@ -152,11 +153,14 @@
         "null"
       ]
     },
+    "role": {
+      "type": "string"
+    },
     "sandbox_network_access": {
       "$ref": "#/definitions/SandboxNetworkAccess"
     },
     "sandbox_policy": {
-      "$ref": "#/definitions/SandboxPolicy"
+      "$ref": "#/definitions/WriteScope"
     },
     "sandbox_writable_roots": {
       "default": [],
@@ -215,7 +219,6 @@
       "type": "string",
       "enum": [
         "auto_approve",
-        "on_request",
         "manual",
         "unless_trusted",
         "auto_deny"
@@ -228,14 +231,6 @@
         "allow"
       ]
     },
-    "SandboxPolicy": {
-      "type": "string",
-      "enum": [
-        "read_only",
-        "workspace_write",
-        "danger_full_access"
-      ]
-    },
     "TurnStatus": {
       "type": "string",
       "enum": [
@@ -244,6 +239,14 @@
         "failed",
         "cancelled",
         "stuck"
+      ]
+    },
+    "WriteScope": {
+      "type": "string",
+      "enum": [
+        "read_only",
+        "workspace_write",
+        "full_access"
       ]
     }
   }

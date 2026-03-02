@@ -46,6 +46,7 @@ mod thread_diff_tests {
             sandbox_writable_roots: None,
             sandbox_network_access: None,
             mode: None,
+                role: None,
             model: None,
             thinking: None,
             show_thinking: None,

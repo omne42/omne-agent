@@ -189,13 +189,14 @@
 - `omne-eventlog ThreadState`：增加 `archived/archived_at/archived_reason` 与 `last_turn_id/last_turn_status/last_turn_reason`；`omne-app-server thread/state`/`thread/attention` 返回归档与 last turn 信息，并派生 `attention_state`（含 `archived`）。
 - `omne-app-server thread/configure`：`approval_policy` 现在可选（省略时沿用当前），并支持设置 `model`/`openai_base_url`（thread override）。
 - `omne-protocol`/`omne-eventlog`/`omne-app-server`/`omne`：thread config 新增 `sandbox_writable_roots`/`sandbox_network_access`；`file/write|patch|edit|delete` 与 `fs/mkdir` 在非 `danger-full-access` 下支持写入额外 roots（仍硬防 `..`/symlink 逃逸）。
-- `omne-protocol`/`omne`/`omne-app-server approvals`：`approval_policy` 新增 `on_request`/`unless_trusted`（`unless_trusted` 对 `process/start` 在 execpolicy=allow 时自动批准，否则要求人工批准）。
+- `omne-protocol`/`omne`/`omne-app-server approvals`：`approval_policy` 当前口径收敛为 `auto_approve|manual|unless_trusted|auto_deny`（`unless_trusted` 对 `process/start` 在 execpolicy=allow 时自动批准，否则要求人工批准）。
+- （breaking）移除 `approval_policy=on_request`：协议枚举、CLI/TUI 可选项、REPL 解析、协议导出 types/schema 与文档口径统一删除；新增 `.github/workflows/policy-meta-guard.yml` 防止 `on_request` 语义回流。
 - `omne-app-server`：当 `approval_policy=manual` 时，`file/write`/`file/delete`/`fs/mkdir`/`process/start` 会返回 `needs_approval` 并写入 `ApprovalRequested`；提供 `approval_id` 且已 `approval/decide` 后才会执行。
 - `omne-app-server`：当 `sandbox_policy=read_only` 时，`file/write`/`file/patch`/`file/edit`/`file/delete`/`fs/mkdir`/`process/start` 会直接拒绝（ToolStatus=Denied）。
 - `omne-app-server approvals`：`approval/decide` 支持 `remember=true`（session 内记忆 approve/deny），同类操作无需重复弹审批；拒绝也会被记住并直接拦截。
 - `omne-app-server process/start`：引入 `omne-execpolicy` gate（`prefix_rule`）：`forbidden` 直接拒绝并写入 `ToolStatus::Denied`；`manual` 策略下仅当 `prompt`/未匹配时才要求 approval（用 allowlist 降低骚扰）。
 - `omne-app-server process/start`：当启动 `bash` 且设置 `OMNE_EXECVE_WRAPPER` 时，启用 patched bash 的 `BASH_EXEC_WRAPPER` 机制并启动 per-process execve gate（MCP over unix socket）拦截 shell 内部 `execve`（新增 `omne-execve-wrapper`；见 `docs/execve_wrapper.md`）。
-- `omne-execpolicy`：新增 decision `prompt_strict`；`process/start` 命中后会触发 Escalate（强制人工审批，不受 `auto_approve/on_request/unless_trusted` 与 remembered approvals 影响）。
+- `omne-execpolicy`：新增 decision `prompt_strict`；`process/start` 命中后会触发 Escalate（强制人工审批，不受 `auto_approve/unless_trusted` 与 remembered approvals 影响）。
 - `omne-app-server turn/interrupt`：会先对同一 turn 下仍在运行的后台进程发送 `process/interrupt`（SIGINT，best-effort），随后再 fallback `process/kill`（避免直接硬杀导致环境残留）。
 - `omne-app-server turn/interrupt`：当 turn 被中断时，`TurnCompleted` 会携带 `reason`（与 `TurnInterruptRequested` 一致），便于 resume 拼合历史与审计。
 - `omne-app-server process/start`：默认 cwd 改为 thread 的 `cwd`，并对 `cwd` 做 root + symlink 边界校验（见 `omne-core::sandbox`）。
@@ -246,7 +247,7 @@
 - `omne` CLI：当 `process/*`/`artifact/*` 返回 `needs_approval` 时，现在可以通过 `--approval-id` 复跑同一命令（避免手动审批后陷入无限“再次请求 approval”）。
 - `omne-app-server process logs`：stdout/stderr rotate 文件命名从 `*.part-0001.log` 改为 `*.segment-0001.log`（仍兼容读取 legacy `*.part-*.log`），避免产生大量 “part” 文件名。
 - `omne-core::redaction`：修正 token 脱敏正则（Bearer/Google key），避免漏打码。
-- `omne-core::sandbox`/`omne-app-server`：`sandbox_policy=danger_full_access` 现在会使用 unrestricted 路径解析（允许绝对路径与系统 symlink，如 macOS `/tmp`），不再误报 “escapes root”。
+- `omne-core::sandbox`/`omne-app-server`：`sandbox_policy=full_access` 现在会使用 unrestricted 路径解析（允许绝对路径与系统 symlink，如 macOS `/tmp`），不再误报 “escapes root”。
 - Rust workspace：修复 `cargo clippy -- -D warnings` 下的告警（`omne-jsonrpc` 提取 pending type alias、`omne-openai` 使用 `std::io::Error::other`、`omne-protocol` 的 id newtype 实现 `Default`、`omne-eventlog` lockfile 显式 `truncate(false)`、以及 `omne-app-server` 若干 clippy cleanups）。
 - `omne ask`/`omne exec`：只会处理当前 turn 触发的 `ApprovalRequested`（避免误处理历史遗留 approval）。
 - `githooks/pre-commit`：默认禁止修改已发布版本的 changelog（仅允许改 `[Unreleased]`；发布时可设置 `OMNE_ALLOW_CHANGELOG_RELEASE_EDIT=1`）。

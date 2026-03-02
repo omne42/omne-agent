@@ -11,3 +11,5 @@ schemars.workspace = true
 time.workspace = true
 ts-rs.workspace = true
 uuid.workspace = true
+
+policy-meta = { path = "../../../policy-meta-spec/rust/policy-meta" }

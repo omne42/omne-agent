@@ -168,6 +168,7 @@
             let effective = &config.effective;
 
             self.header.mode = Some(effective.mode.trim().to_string()).filter(|s| !s.is_empty());
+            self.header.role = Some(effective.role.trim().to_string()).filter(|s| !s.is_empty());
 
             self.header.provider = Self::extract_openai_provider(&config);
             self.header.model = Some(effective.model.trim().to_string()).filter(|s| !s.is_empty());
@@ -325,11 +326,12 @@
                             });
                         }
                     } else {
-                        let mut line = format!("{name} {}", tool_status_str(*status));
-                        if let Some(err) = error.as_deref().filter(|s| !s.trim().is_empty()) {
-                            line.push_str(": ");
-                            line.push_str(err);
-                        }
+                        let line = format_tool_status_line(
+                            name,
+                            *status,
+                            error.as_deref(),
+                            result.as_ref(),
+                        );
                         self.push_transcript(TranscriptEntry {
                             role: TranscriptRole::Error,
                             text: line,
@@ -348,12 +350,16 @@
                 }
                 ThreadEventKind::ThreadConfigUpdated {
                     mode,
+                    role,
                     model,
                     thinking,
                     ..
                 } => {
                     if let Some(mode) = mode.as_deref().filter(|s| !s.trim().is_empty()) {
                         self.header.mode = Some(mode.to_string());
+                    }
+                    if let Some(role) = role.as_deref().filter(|s| !s.trim().is_empty()) {
+                        self.header.role = Some(role.to_string());
                     }
                     if let Some(model) = model.as_deref().filter(|s| !s.trim().is_empty()) {
                         self.header.model = Some(model.to_string());

@@ -81,6 +81,7 @@ fn render_event(event: &ThreadEvent) {
             sandbox_writable_roots,
             sandbox_network_access,
             mode,
+            role,
             model,
             thinking,
             show_thinking,
@@ -89,8 +90,9 @@ fn render_event(event: &ThreadEvent) {
             execpolicy_rules,
         } => {
             println!(
-                "[{ts}] config approval_policy={approval_policy:?} sandbox_policy={sandbox_policy:?} sandbox_writable_roots={sandbox_writable_roots:?} sandbox_network_access={sandbox_network_access:?} mode={} model={} thinking={} show_thinking={} openai_base_url={} allowed_tools={allowed_tools:?} execpolicy_rules={execpolicy_rules:?}",
+                "[{ts}] config approval_policy={approval_policy:?} sandbox_policy={sandbox_policy:?} sandbox_writable_roots={sandbox_writable_roots:?} sandbox_network_access={sandbox_network_access:?} mode={} role={} model={} thinking={} show_thinking={} openai_base_url={} allowed_tools={allowed_tools:?} execpolicy_rules={execpolicy_rules:?}",
                 mode.as_deref().unwrap_or(""),
+                role.as_deref().unwrap_or(""),
                 model.as_deref().unwrap_or(""),
                 thinking.as_deref().unwrap_or(""),
                 show_thinking
@@ -122,13 +124,21 @@ fn render_event(event: &ThreadEvent) {
                 reason.as_deref().unwrap_or("")
             );
         }
-        omne_protocol::ThreadEventKind::ToolStarted { tool, .. } => {
-            println!("[{ts}] tool started {tool}");
+        omne_protocol::ThreadEventKind::ToolStarted { tool, params, .. } => {
+            let mapping = format_facade_mapping_suffix(tool, params.as_ref()).unwrap_or_default();
+            println!("[{ts}] tool started {tool}{mapping}");
         }
-        omne_protocol::ThreadEventKind::ToolCompleted { status, error, .. } => {
+        omne_protocol::ThreadEventKind::ToolCompleted {
+            status,
+            error,
+            result,
+            ..
+        } => {
+            let mapping = format_facade_mapping_suffix("", result.as_ref()).unwrap_or_default();
             println!(
-                "[{ts}] tool completed status={status:?} error={}",
-                error.as_deref().unwrap_or("")
+                "[{ts}] tool completed status={status:?} error={}{}",
+                error.as_deref().unwrap_or(""),
+                mapping
             );
         }
         omne_protocol::ThreadEventKind::AgentStep {
@@ -284,5 +294,21 @@ mod event_render_tests {
         assert!(details.contains("child_approval_id="));
         assert!(details.contains(&child_approval_id.to_string()));
         assert!(details.contains("path=/tmp/ws/src/main.rs"));
+    }
+
+    #[test]
+    fn format_facade_mapping_suffix_extracts_fields() {
+        let suffix = format_facade_mapping_suffix(
+            "facade/thread",
+            Some(&serde_json::json!({
+                "facade_tool": "thread",
+                "op": "wait",
+                "mapped_action": "subagent/wait"
+            })),
+        )
+        .expect("facade mapping");
+        assert!(suffix.contains("facade=thread"));
+        assert!(suffix.contains("op=wait"));
+        assert!(suffix.contains("mapped_action=subagent/wait"));
     }
 }

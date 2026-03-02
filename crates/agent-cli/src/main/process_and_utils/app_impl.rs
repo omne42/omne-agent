@@ -50,12 +50,22 @@ impl App {
 
         let daemon_autostart =
             parse_env_bool("OMNE_RPC_AUTOSTART_DAEMON", true) && cfg!(unix);
+        let debug_connect = parse_env_bool("OMNE_RPC_DEBUG_CONNECT", false);
         let daemon_start_timeout = std::env::var("OMNE_RPC_DAEMON_START_TIMEOUT_MS")
             .ok()
             .and_then(|value| value.trim().parse::<u64>().ok())
             .filter(|value| *value > 0)
             .map(Duration::from_millis)
             .unwrap_or_else(|| Duration::from_millis(5000));
+        if debug_connect {
+            eprintln!(
+                "debug: rpc_connect daemon_autostart={} daemon_socket_stale={} socket_exists={} socket_path={}",
+                daemon_autostart,
+                daemon_socket_stale,
+                socket_path.exists(),
+                socket_path.display()
+            );
+        }
 
         // Keep a long-lived daemon connection whenever possible. This improves cache stickiness
         // for OpenAI-compatible gateways that keep prompt caches local to an upstream instance.
@@ -151,6 +161,13 @@ impl App {
             } else {
                 return Err(err);
             }
+        }
+        if debug_connect {
+            eprintln!(
+                "debug: rpc_connect selected_path={} init_timeout_ms={}",
+                if used_daemon { "daemon" } else { "direct_spawn" },
+                init_timeout.as_millis()
+            );
         }
         let notifications = rpc.take_notifications();
         Ok(Self { rpc, notifications })
@@ -297,6 +314,7 @@ impl App {
                 sandbox_writable_roots: None,
                 sandbox_network_access: None,
                 mode: None,
+                role: None,
                 model,
                 thinking: None,
                 show_thinking: None,
@@ -683,6 +701,7 @@ impl App {
             sandbox_writable_roots: args.sandbox_writable_roots,
             sandbox_network_access,
             mode: args.mode,
+            role: args.role,
             model: args.model,
             thinking: args.thinking,
             show_thinking: None,

@@ -10,6 +10,7 @@ mod thread_manage_tests {
             sandbox_writable_roots: None,
             sandbox_network_access: None,
             mode: None,
+            role: None,
             model: None,
             thinking: None,
             show_thinking: None,
@@ -899,7 +900,7 @@ hooks:
             r#"
 version: 1
 modes:
-  coder:
+  code:
     description: "deny commands in default mode"
     permissions:
       command:
@@ -931,7 +932,7 @@ modes:
                 match denied.detail {
                     omne_app_server_protocol::ThreadProcessDeniedDetail::ModeDenied(detail) => {
                         assert!(detail.denied);
-                        assert_eq!(detail.mode, "coder");
+                        assert_eq!(detail.mode, "code");
                         assert_eq!(
                             detail.decision,
                             omne_app_server_protocol::ProcessModeDecision::Deny
@@ -3252,6 +3253,143 @@ modes:
     }
 
     #[tokio::test]
+    async fn thread_configure_unknown_role_includes_error_code_data() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let response = handle_thread_request(
+            &server,
+            serde_json::json!(1),
+            "thread/configure",
+            serde_json::json!({
+                "thread_id": thread_id,
+                "role": "role-does-not-exist"
+            }),
+        )
+        .await;
+        let err = response
+            .error
+            .ok_or_else(|| anyhow::anyhow!("expected thread/configure unknown role failure"))?;
+        assert_eq!(err.code, JSONRPC_INTERNAL_ERROR);
+        let data = err
+            .data
+            .ok_or_else(|| anyhow::anyhow!("expected json-rpc error data"))?;
+        assert_eq!(data["error_code"].as_str(), Some("role_unknown"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn thread_configure_custom_mode_name_as_role_remains_compatible() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(repo_dir.join(".omne_data/spec")).await?;
+        tokio::fs::write(
+            repo_dir.join(".omne_data/spec/modes.yaml"),
+            r#"
+version: 1
+modes:
+  role-custom:
+    description: "custom role-like mode"
+    permissions:
+      read: { decision: allow }
+      edit: { decision: allow }
+      command: { decision: allow }
+      artifact: { decision: allow }
+"#,
+        )
+        .await?;
+
+        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let response = handle_thread_request(
+            &server,
+            serde_json::json!(1),
+            "thread/configure",
+            serde_json::json!({
+                "thread_id": thread_id,
+                "role": "role-custom",
+                "allowed_tools": ["process/start"]
+            }),
+        )
+        .await;
+
+        if let Some(err) = response.error {
+            anyhow::bail!("expected thread/configure to accept custom role-like mode, got: {err:?}");
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn thread_configure_mode_update_does_not_implicitly_overwrite_role()
+    -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let set_role = handle_thread_request(
+            &server,
+            serde_json::json!(1),
+            "thread/configure",
+            serde_json::json!({
+                "thread_id": thread_id,
+                "role": "chatter"
+            }),
+        )
+        .await;
+        if let Some(err) = set_role.error {
+            anyhow::bail!("set role failed unexpectedly: {err:?}");
+        }
+
+        let set_mode = handle_thread_request(
+            &server,
+            serde_json::json!(2),
+            "thread/configure",
+            serde_json::json!({
+                "thread_id": thread_id,
+                "mode": "code"
+            }),
+        )
+        .await;
+        if let Some(err) = set_mode.error {
+            anyhow::bail!("set mode failed unexpectedly: {err:?}");
+        }
+
+        let state_resp = handle_thread_request(
+            &server,
+            serde_json::json!(3),
+            "thread/state",
+            serde_json::json!({ "thread_id": thread_id }),
+        )
+        .await;
+        if let Some(err) = state_resp.error {
+            anyhow::bail!("thread/state failed unexpectedly: {err:?}");
+        }
+        let state: omne_app_server_protocol::ThreadStateResponse = serde_json::from_value(
+            state_resp
+                .result
+                .ok_or_else(|| anyhow::anyhow!("missing thread/state result"))?,
+        )?;
+
+        assert_eq!(state.mode, "code");
+        assert_eq!(state.role, "chatter");
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn thread_configure_unknown_allowed_tool_includes_error_code_data() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");
@@ -3305,6 +3443,7 @@ modes:
             serde_json::json!({
                 "thread_id": thread_id,
                 "mode": "reviewer",
+                "role": "reviewer",
                 "allowed_tools": ["file/write"]
             }),
         )
@@ -3312,6 +3451,41 @@ modes:
         let err = response
             .error
             .ok_or_else(|| anyhow::anyhow!("expected thread/configure mode denied failure"))?;
+        assert_eq!(err.code, JSONRPC_INTERNAL_ERROR);
+        let data = err
+            .data
+            .ok_or_else(|| anyhow::anyhow!("expected json-rpc error data"))?;
+        assert_eq!(data["error_code"].as_str(), Some("allowed_tools_mode_denied"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn thread_configure_allowed_tools_validates_mode_and_role_intersection()
+    -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let response = handle_thread_request(
+            &server,
+            serde_json::json!(1),
+            "thread/configure",
+            serde_json::json!({
+                "thread_id": thread_id,
+                "mode": "chat",
+                "role": "coder",
+                "allowed_tools": ["process/start"]
+            }),
+        )
+        .await;
+        let err = response
+            .error
+            .ok_or_else(|| anyhow::anyhow!("expected thread/configure mode-role denied failure"))?;
         assert_eq!(err.code, JSONRPC_INTERNAL_ERROR);
         let data = err
             .data
@@ -3417,6 +3591,173 @@ modes:
         let rules = explain.effective.execpolicy_rules;
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0], "rules/thread.rules");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn thread_config_explain_includes_role_catalog_layer_for_builtin_role()
+    -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        handle_thread_configure(
+            &server,
+            ThreadConfigureParams {
+                role: Some("chatter".to_string()),
+                ..thread_configure_defaults(thread_id)
+            },
+        )
+        .await?;
+
+        let explain =
+            handle_thread_config_explain(&server, ThreadConfigExplainParams { thread_id }).await?;
+        let role_layer = explain
+            .layers
+            .iter()
+            .find(|layer| layer.get("source").and_then(|v| v.as_str()) == Some("role_catalog"))
+            .ok_or_else(|| anyhow::anyhow!("missing role_catalog layer"))?;
+
+        assert_eq!(
+            role_layer
+                .get("effective_role")
+                .and_then(|v| v.as_str())
+                .unwrap_or(""),
+            "chatter"
+        );
+        assert_eq!(
+            role_layer
+                .get("permission_mode")
+                .and_then(|v| v.as_str())
+                .unwrap_or(""),
+            "chatter"
+        );
+        assert_eq!(
+            role_layer
+                .get("resolution_source")
+                .and_then(|v| v.as_str())
+                .unwrap_or(""),
+            "role_catalog"
+        );
+        let available_roles = role_layer
+            .get("available_roles")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| anyhow::anyhow!("missing available_roles"))?;
+        assert!(available_roles
+            .iter()
+            .any(|v| v.as_str() == Some("chatter")));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn thread_config_explain_role_catalog_layer_supports_mode_compat_role()
+    -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(repo_dir.join(".omne_data/spec")).await?;
+        tokio::fs::write(
+            repo_dir.join(".omne_data/spec/modes.yaml"),
+            r#"
+version: 1
+modes:
+  role-custom:
+    description: "custom role-like mode"
+    permissions:
+      read: { decision: allow }
+      edit: { decision: allow }
+      command: { decision: allow }
+      artifact: { decision: allow }
+"#,
+        )
+        .await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        handle_thread_configure(
+            &server,
+            ThreadConfigureParams {
+                role: Some("role-custom".to_string()),
+                ..thread_configure_defaults(thread_id)
+            },
+        )
+        .await?;
+
+        let explain =
+            handle_thread_config_explain(&server, ThreadConfigExplainParams { thread_id }).await?;
+        let role_layer = explain
+            .layers
+            .iter()
+            .find(|layer| layer.get("source").and_then(|v| v.as_str()) == Some("role_catalog"))
+            .ok_or_else(|| anyhow::anyhow!("missing role_catalog layer"))?;
+
+        assert_eq!(
+            role_layer
+                .get("effective_role")
+                .and_then(|v| v.as_str())
+                .unwrap_or(""),
+            "role-custom"
+        );
+        assert_eq!(
+            role_layer
+                .get("permission_mode")
+                .and_then(|v| v.as_str())
+                .unwrap_or(""),
+            "role-custom"
+        );
+        assert_eq!(
+            role_layer
+                .get("resolution_source")
+                .and_then(|v| v.as_str())
+                .unwrap_or(""),
+            "mode_compat"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn thread_config_explain_includes_effective_permissions_intersection()
+    -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        handle_thread_configure(
+            &server,
+            ThreadConfigureParams {
+                mode: Some("chat".to_string()),
+                role: Some("coder".to_string()),
+                allowed_tools: Some(Some(vec!["file/read".to_string()])),
+                ..thread_configure_defaults(thread_id)
+            },
+        )
+        .await?;
+
+        let explain =
+            handle_thread_config_explain(&server, ThreadConfigExplainParams { thread_id }).await?;
+        assert_eq!(explain.effective.permission_mode, "coder");
+        let effective_permissions = explain
+            .effective
+            .effective_permissions
+            .ok_or_else(|| anyhow::anyhow!("missing effective_permissions"))?;
+        assert!(effective_permissions
+            .iter()
+            .any(|tool| tool == "file/read"));
+        assert!(!effective_permissions
+            .iter()
+            .any(|tool| tool == "process/start"));
         Ok(())
     }
 

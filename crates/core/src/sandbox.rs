@@ -165,7 +165,7 @@ pub async fn resolve_dir_for_sandbox(
     input: &Path,
 ) -> anyhow::Result<PathBuf> {
     match sandbox_policy {
-        omne_protocol::SandboxPolicy::DangerFullAccess => {
+        omne_protocol::SandboxPolicy::FullAccess => {
             resolve_dir_unrestricted(thread_root, input).await
         }
         _ => resolve_dir(thread_root, input).await,
@@ -181,7 +181,7 @@ pub async fn resolve_file_for_sandbox(
     create_parent_dirs: bool,
 ) -> anyhow::Result<PathBuf> {
     match sandbox_policy {
-        omne_protocol::SandboxPolicy::DangerFullAccess => {
+        omne_protocol::SandboxPolicy::FullAccess => {
             resolve_file_unrestricted(thread_root, input, access, create_parent_dirs).await
         }
         _ => {

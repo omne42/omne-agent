@@ -654,7 +654,6 @@
 
         let policies = [
             super::CliApprovalPolicy::AutoApprove,
-            super::CliApprovalPolicy::OnRequest,
             super::CliApprovalPolicy::Manual,
             super::CliApprovalPolicy::UnlessTrusted,
             super::CliApprovalPolicy::AutoDeny,
@@ -675,7 +674,7 @@
         let policies = [
             super::CliSandboxPolicy::ReadOnly,
             super::CliSandboxPolicy::WorkspaceWrite,
-            super::CliSandboxPolicy::DangerFullAccess,
+            super::CliSandboxPolicy::FullAccess,
         ];
         for policy in policies {
             items.push(PaletteItem::new(
@@ -839,7 +838,6 @@
         let mut items = Vec::<PaletteItem>::new();
         let policies = [
             super::CliApprovalPolicy::AutoApprove,
-            super::CliApprovalPolicy::OnRequest,
             super::CliApprovalPolicy::Manual,
             super::CliApprovalPolicy::UnlessTrusted,
             super::CliApprovalPolicy::AutoDeny,
@@ -858,7 +856,7 @@
         let policies = [
             super::CliSandboxPolicy::ReadOnly,
             super::CliSandboxPolicy::WorkspaceWrite,
-            super::CliSandboxPolicy::DangerFullAccess,
+            super::CliSandboxPolicy::FullAccess,
         ];
         for policy in policies {
             items.push(PaletteItem::new(
@@ -937,7 +935,6 @@
     fn approval_policy_label(value: super::CliApprovalPolicy) -> &'static str {
         match value {
             super::CliApprovalPolicy::AutoApprove => "auto_approve",
-            super::CliApprovalPolicy::OnRequest => "on_request",
             super::CliApprovalPolicy::Manual => "manual",
             super::CliApprovalPolicy::UnlessTrusted => "unless_trusted",
             super::CliApprovalPolicy::AutoDeny => "auto_deny",
@@ -948,7 +945,7 @@
         match value {
             super::CliSandboxPolicy::ReadOnly => "read_only",
             super::CliSandboxPolicy::WorkspaceWrite => "workspace_write",
-            super::CliSandboxPolicy::DangerFullAccess => "danger_full_access",
+            super::CliSandboxPolicy::FullAccess => "full_access",
         }
     }
 
@@ -1078,6 +1075,7 @@
     #[derive(Debug, Clone, Default)]
     struct HeaderState {
         mode: Option<String>,
+        role: Option<String>,
         provider: Option<String>,
         model: Option<String>,
         thinking: Option<String>,

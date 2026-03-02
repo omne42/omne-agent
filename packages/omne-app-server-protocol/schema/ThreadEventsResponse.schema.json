@@ -77,7 +77,6 @@
       "type": "string",
       "enum": [
         "auto_approve",
-        "on_request",
         "manual",
         "unless_trusted",
         "auto_deny"
@@ -225,14 +224,6 @@
       "enum": [
         "deny",
         "allow"
-      ]
-    },
-    "SandboxPolicy": {
-      "type": "string",
-      "enum": [
-        "read_only",
-        "workspace_write",
-        "danger_full_access"
       ]
     },
     "ThreadEvent": {
@@ -533,6 +524,12 @@
                 "null"
               ]
             },
+            "role": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "sandbox_network_access": {
               "anyOf": [
                 {
@@ -546,7 +543,7 @@
             "sandbox_policy": {
               "anyOf": [
                 {
-                  "$ref": "#/definitions/SandboxPolicy"
+                  "$ref": "#/definitions/WriteScope"
                 },
                 {
                   "type": "null"
@@ -1219,6 +1216,14 @@
         "failed",
         "cancelled",
         "stuck"
+      ]
+    },
+    "WriteScope": {
+      "type": "string",
+      "enum": [
+        "read_only",
+        "workspace_write",
+        "full_access"
       ]
     }
   }

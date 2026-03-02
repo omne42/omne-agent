@@ -31,6 +31,7 @@ async fn run_repl(app: &mut App) -> anyhow::Result<()> {
         sandbox_writable_roots: None,
         sandbox_network_access: None,
         mode: None,
+        role: None,
         model: None,
         openai_base_url: None,
         thinking: None,
@@ -341,6 +342,7 @@ async fn repl_thread_start(
         sandbox_writable_roots: None,
         sandbox_network_access: None,
         mode: None,
+        role: None,
         model: None,
         openai_base_url: None,
         thinking: None,
@@ -411,6 +413,7 @@ async fn repl_cmd_set(app: &mut App, state: &mut ReplState, args: &[&str]) -> an
         sandbox_writable_roots: None,
         sandbox_network_access: None,
         mode: None,
+        role: None,
         model: None,
         openai_base_url: None,
         thinking: None,
@@ -477,7 +480,6 @@ fn parse_repl_approval_policy(raw: &str) -> anyhow::Result<CliApprovalPolicy> {
     let norm = raw.trim().to_lowercase().replace('-', "_");
     match norm.as_str() {
         "auto_approve" => Ok(CliApprovalPolicy::AutoApprove),
-        "on_request" => Ok(CliApprovalPolicy::OnRequest),
         "manual" => Ok(CliApprovalPolicy::Manual),
         "unless_trusted" => Ok(CliApprovalPolicy::UnlessTrusted),
         "auto_deny" => Ok(CliApprovalPolicy::AutoDeny),
@@ -490,7 +492,7 @@ fn parse_repl_sandbox_policy(raw: &str) -> anyhow::Result<CliSandboxPolicy> {
     match norm.as_str() {
         "read_only" => Ok(CliSandboxPolicy::ReadOnly),
         "workspace_write" => Ok(CliSandboxPolicy::WorkspaceWrite),
-        "danger_full_access" => Ok(CliSandboxPolicy::DangerFullAccess),
+        "full_access" => Ok(CliSandboxPolicy::FullAccess),
         _ => anyhow::bail!("unknown sandbox_policy: {raw}"),
     }
 }
@@ -648,8 +650,11 @@ fn format_repl_approval_line(
 }
 
 fn print_repl_help() {
-    println!(
-        r#"omne cli commands:
+    println!("{}", repl_help_text());
+}
+
+fn repl_help_text() -> &'static str {
+    r#"omne cli commands:
   /help                         show this help
   /exit | /quit                 exit cli
 
@@ -670,11 +675,15 @@ fn print_repl_help() {
   /approve <approval_id> [--remember] [--reason <text>]
   /deny <approval_id> [--remember] [--reason <text>]
 
+tooling (default model-facing):
+  - facade tools: workspace, process, thread, artifact (integration optional)
+  - each facade supports {"op":"help"} for quickstart + advanced usage
+  - topic help: {"op":"help","topic":"<op>"}
+
 input:
   - plain text is sent as the next turn
   - use '//' to send a message starting with '/' (e.g. '// /plan ...')
 "#
-    );
 }
 
 #[cfg(test)]
@@ -707,5 +716,13 @@ mod repl_tests {
         assert!(line.contains(&expected_approve));
         assert!(line.contains("deny_cmd="));
         assert!(line.contains(&expected_deny));
+    }
+
+    #[test]
+    fn repl_help_mentions_facade_help_first_usage() {
+        let help = repl_help_text();
+        assert!(help.contains("facade tools: workspace, process, thread, artifact"));
+        assert!(help.contains("{\"op\":\"help\"}"));
+        assert!(help.contains("{\"op\":\"help\",\"topic\":\"<op>\"}"));
     }
 }

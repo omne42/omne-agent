@@ -244,6 +244,7 @@ pub struct ThreadState {
     pub sandbox_writable_roots: Vec<String>,
     pub sandbox_network_access: SandboxNetworkAccess,
     pub mode: String,
+    pub role: String,
     pub model: Option<String>,
     pub thinking: Option<String>,
     pub show_thinking: Option<bool>,
@@ -282,7 +283,8 @@ impl ThreadState {
             sandbox_policy: SandboxPolicy::WorkspaceWrite,
             sandbox_writable_roots: Vec::new(),
             sandbox_network_access: SandboxNetworkAccess::Deny,
-            mode: "coder".to_string(),
+            mode: "code".to_string(),
+            role: "coder".to_string(),
             model: None,
             thinking: None,
             show_thinking: None,
@@ -353,6 +355,7 @@ impl ThreadState {
                 sandbox_writable_roots,
                 sandbox_network_access,
                 mode,
+                role,
                 model,
                 thinking,
                 show_thinking,
@@ -372,6 +375,9 @@ impl ThreadState {
                 }
                 if let Some(mode) = mode {
                     self.mode = mode.clone();
+                }
+                if let Some(role) = role {
+                    self.role = role.clone();
                 }
                 if let Some(model) = model {
                     self.model = Some(model.clone());

@@ -197,6 +197,120 @@ struct ArtifactDeleteArgs {
 }
 
 #[derive(Debug, Deserialize)]
+struct UpdatePlanStepArgs {
+    step: String,
+    status: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdatePlanArgs {
+    #[serde(default)]
+    explanation: Option<String>,
+    plan: Vec<UpdatePlanStepArgs>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RequestUserInputOptionArgs {
+    label: String,
+    description: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RequestUserInputQuestionArgs {
+    header: String,
+    id: String,
+    question: String,
+    options: Vec<RequestUserInputOptionArgs>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RequestUserInputArgs {
+    questions: Vec<RequestUserInputQuestionArgs>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WebSearchArgs {
+    query: String,
+    #[serde(default)]
+    max_results: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WebFetchArgs {
+    url: String,
+    #[serde(default)]
+    max_bytes: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ViewImageArgs {
+    #[serde(default)]
+    root: Option<crate::FileRoot>,
+    #[serde(default)]
+    path: Option<String>,
+    #[serde(default)]
+    url: Option<String>,
+    #[serde(default)]
+    max_bytes: Option<u64>,
+}
+
+const FACADE_ERROR_INVALID_PARAMS: &str = "facade_invalid_params";
+const FACADE_ERROR_UNSUPPORTED_OP: &str = "facade_unsupported_op";
+const FACADE_ERROR_POLICY_DENIED: &str = "facade_policy_denied";
+
+#[derive(Debug, Deserialize)]
+struct FacadeToolArgs {
+    #[serde(default)]
+    op: Option<String>,
+    #[serde(default)]
+    args: Option<serde_json::Value>,
+    #[serde(default)]
+    help: Option<bool>,
+    #[serde(default)]
+    topic: Option<String>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct FacadeQuickstartExample {
+    op: &'static str,
+    args: serde_json::Value,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct FacadeAdvancedTopic {
+    topic: &'static str,
+    summary: &'static str,
+    args_schema_hint: serde_json::Value,
+    error_examples: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct FacadeHelpResponse {
+    facade_tool: &'static str,
+    op: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    topic: Option<String>,
+    quickstart: Vec<FacadeQuickstartExample>,
+    advanced: Vec<FacadeAdvancedTopic>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct FacadeErrorBody {
+    code: &'static str,
+    message: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct FacadeErrorResponse {
+    facade_tool: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    op: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mapped_action: Option<String>,
+    error: FacadeErrorBody,
+}
+
+#[derive(Debug, Deserialize)]
 struct ThreadStateArgs {
     thread_id: String,
 }
@@ -301,4 +415,26 @@ struct AgentSpawnArgs {
     #[serde(default)]
     priority: Option<AgentSpawnTaskPriority>,
     tasks: Vec<AgentSpawnTaskArgs>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SubagentSendInputArgs {
+    id: String,
+    message: String,
+    #[serde(default)]
+    interrupt: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct SubagentWaitArgs {
+    ids: Vec<String>,
+    #[serde(default)]
+    timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SubagentCloseArgs {
+    id: String,
+    #[serde(default)]
+    reason: Option<String>,
 }

@@ -1205,6 +1205,7 @@ pub(super) async fn run_command_run(
         sandbox_writable_roots: None,
         sandbox_network_access: None,
         mode: Some(wf.frontmatter.mode.clone()),
+                role: None,
         model: None,
         thinking: None,
         show_thinking: wf.frontmatter.show_thinking,

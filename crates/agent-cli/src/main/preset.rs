@@ -401,6 +401,7 @@ mod preset {
             sandbox_writable_roots: Some(cfg.sandbox_writable_roots.clone()),
             sandbox_network_access: Some(cfg.sandbox_network_access),
             mode: Some(cfg.mode.clone()),
+                role: None,
             model: Some(cfg.model.clone()),
             thinking: None,
             show_thinking: None,

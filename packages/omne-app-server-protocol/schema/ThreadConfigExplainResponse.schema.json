@@ -32,7 +32,6 @@
       "type": "string",
       "enum": [
         "auto_approve",
-        "on_request",
         "manual",
         "unless_trusted",
         "auto_deny"
@@ -45,14 +44,6 @@
         "allow"
       ]
     },
-    "SandboxPolicy": {
-      "type": "string",
-      "enum": [
-        "read_only",
-        "workspace_write",
-        "danger_full_access"
-      ]
-    },
     "ThreadConfigExplainEffective": {
       "type": "object",
       "required": [
@@ -60,6 +51,7 @@
         "mode",
         "model",
         "openai_base_url",
+        "role",
         "sandbox_network_access",
         "sandbox_policy",
         "show_thinking",
@@ -88,6 +80,16 @@
           "format": "uint64",
           "minimum": 0.0
         },
+        "effective_permissions": {
+          "default": null,
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
         "execpolicy_rules": {
           "default": [],
           "type": "array",
@@ -113,11 +115,18 @@
         "openai_base_url": {
           "type": "string"
         },
+        "permission_mode": {
+          "default": "",
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        },
         "sandbox_network_access": {
           "$ref": "#/definitions/SandboxNetworkAccess"
         },
         "sandbox_policy": {
-          "$ref": "#/definitions/SandboxPolicy"
+          "$ref": "#/definitions/WriteScope"
         },
         "sandbox_writable_roots": {
           "default": [],
@@ -165,6 +174,14 @@
           "type": "string"
         }
       }
+    },
+    "WriteScope": {
+      "type": "string",
+      "enum": [
+        "read_only",
+        "workspace_write",
+        "full_access"
+      ]
     }
   }
 }

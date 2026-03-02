@@ -395,6 +395,7 @@ async fn handle_thread_state(
         sandbox_writable_roots: state.sandbox_writable_roots.clone(),
         sandbox_network_access: state.sandbox_network_access,
         mode: state.mode.clone(),
+        role: state.role.clone(),
         model: state.model.clone(),
         openai_base_url: state.openai_base_url.clone(),
         allowed_tools: state.allowed_tools.clone(),

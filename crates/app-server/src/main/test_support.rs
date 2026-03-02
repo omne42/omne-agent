@@ -40,6 +40,7 @@ async fn configure_test_thread_mode_shared(
             sandbox_writable_roots: None,
             sandbox_network_access: None,
             mode: Some(mode_name.to_string()),
+                role: None,
             model: None,
             thinking: None,
             show_thinking: None,

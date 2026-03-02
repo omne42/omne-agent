@@ -11,7 +11,7 @@
 范围（v0.2.0）：
 
 - 覆盖所有会产生 side-effect 的工具调用（`process/start`、`file/*`、`artifact/*`…）在需要审批时的事件化与回放语义。
-- 覆盖 `ApprovalPolicy` 五档策略与 `remember` 记忆规则（默认 scope=thread/session）。
+- 覆盖 `ApprovalPolicy` 四档策略与 `remember` 记忆规则（默认 scope=thread/session）。
 - 覆盖与 `mode gate / sandbox / execpolicy` 的合并顺序。
 
 非目标（v0.2.0）：
@@ -42,8 +42,6 @@
 
 - `auto_approve`
   - 写入 `ApprovalRequested`，立即写入 `ApprovalDecided(Approved, reason="auto-approved by policy")`，不中断执行。
-- `on_request`
-  - v0.2.0 行为与 `auto_approve` 等价（保留语义槽位，避免未来改名/破坏兼容）。
 - `manual`
   - 只写入 `ApprovalRequested`，返回 `needs_approval=true`（进入 `NeedApproval`）；等待人类追加 `ApprovalDecided`。
 - `unless_trusted`
@@ -103,7 +101,7 @@ key 的稳定性（v0.2.0 实现口径）：
 
 定义（建议）：`escalate = prompt_strict`
 
-- 语义：强制人工审批（不能被 `auto_approve/on_request/unless_trusted` 自动放行）。
+- 语义：强制人工审批（不能被 `auto_approve/unless_trusted` 自动放行）。
 - 不是“绕过 deny”：如果 `mode/sandbox/execpolicy` 的结果是 deny，仍然 deny。
 - 触发来源（v0.2.0）：
   - ExecPolicy 支持 decision=`prompt_strict`；当 `process/start` 命中该决策，会在 `ApprovalRequested.params` 写入 `approval.requirement="prompt_strict"`（见 `docs/execpolicy.md`）。
@@ -114,7 +112,7 @@ key 的稳定性（v0.2.0 实现口径）：
 - 在 `ApprovalRequested.params` 里加入一个稳定字段（建议命名空间化，避免污染 action params）：
   - `{"approval": {"requirement": "prompt" | "prompt_strict", "source": "execpolicy"}}`
 - `approval handling` 对 `prompt_strict` 的策略矩阵：
-  - `auto_approve/on_request/unless_trusted/manual`：一律进入人工审批（行为等价 `manual`）
+  - `auto_approve/unless_trusted/manual`：一律进入人工审批（行为等价 `manual`）
   - `auto_deny`：仍直接拒绝（并落盘 decided）
 - `remember`（写死实现口径）：当 `approval.requirement="prompt_strict"` 时，不会生成 remembered decision，也不会复用 remembered decision。
 
