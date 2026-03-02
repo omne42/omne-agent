@@ -2,4 +2,4 @@
 import type { SandboxPolicy } from "./SandboxPolicy";
 import type { ToolId } from "./ToolId";
 
-export type McpSandboxPolicyDeniedResponse = { tool_id: ToolId, denied: boolean, sandbox_policy: SandboxPolicy, };
+export type McpSandboxPolicyDeniedResponse = { tool_id: ToolId, denied: boolean, sandbox_policy: SandboxPolicy, error_code?: string, };

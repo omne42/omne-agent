@@ -1223,6 +1223,9 @@ pub struct ThreadConfigureParams {
     pub thinking: Option<String>,
     #[serde(default)]
     #[ts(optional)]
+    pub show_thinking: Option<bool>,
+    #[serde(default)]
+    #[ts(optional)]
     pub openai_base_url: Option<String>,
     #[serde(default)]
     #[ts(optional)]
@@ -1264,6 +1267,7 @@ pub struct ThreadConfigExplainEffective {
     pub mode: String,
     pub model: String,
     pub thinking: String,
+    pub show_thinking: bool,
     pub openai_base_url: String,
     #[serde(default)]
     #[ts(optional)]

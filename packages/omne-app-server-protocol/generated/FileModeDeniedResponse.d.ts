@@ -2,4 +2,4 @@
 import type { FileModeDecision } from "./FileModeDecision";
 import type { ToolId } from "./ToolId";
 
-export type FileModeDeniedResponse = { tool_id: ToolId, denied: boolean, mode: string, decision: FileModeDecision, decision_source: string, tool_override_hit: boolean, };
+export type FileModeDeniedResponse = { tool_id: ToolId, denied: boolean, mode: string, decision: FileModeDecision, decision_source: string, tool_override_hit: boolean, error_code?: string, };

@@ -246,6 +246,7 @@ pub struct ThreadState {
     pub mode: String,
     pub model: Option<String>,
     pub thinking: Option<String>,
+    pub show_thinking: Option<bool>,
     pub openai_base_url: Option<String>,
     pub allowed_tools: Option<Vec<String>>,
     pub execpolicy_rules: Vec<String>,
@@ -284,6 +285,7 @@ impl ThreadState {
             mode: "coder".to_string(),
             model: None,
             thinking: None,
+            show_thinking: None,
             openai_base_url: None,
             allowed_tools: None,
             execpolicy_rules: Vec::new(),
@@ -353,6 +355,7 @@ impl ThreadState {
                 mode,
                 model,
                 thinking,
+                show_thinking,
                 openai_base_url,
                 allowed_tools,
                 execpolicy_rules,
@@ -375,6 +378,9 @@ impl ThreadState {
                 }
                 if let Some(thinking) = thinking {
                     self.thinking = Some(thinking.clone());
+                }
+                if let Some(show_thinking) = show_thinking {
+                    self.show_thinking = Some(*show_thinking);
                 }
                 if let Some(openai_base_url) = openai_base_url {
                     self.openai_base_url = Some(openai_base_url.clone());

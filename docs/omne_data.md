@@ -76,6 +76,14 @@ enabled = false
 - `enabled=false`：忽略所选 config 文件中除开关本身以外的字段；同时忽略 `.omne_data/.env`。
 - `enabled=true`：允许用 config 文件 + `.env` 覆盖 base_url/model 等配置（secrets 只来自 `.env`）。
 
+可选 UI 配置：
+
+```toml
+[ui]
+# 是否把模型的 thinking/reasoning 流式展示给客户端（默认 true）
+show_thinking = true
+```
+
 OpenAI 配置示例（provider/profile + model-level thinking）：
 
 ```toml
@@ -116,7 +124,8 @@ OMNE_OPENAI_MODEL=gpt-4.1
 # 可选：逗号分隔的 fallback provider 列表（优先级高于 config.toml 的 `openai.fallback_providers`）
 OMNE_OPENAI_FALLBACK_PROVIDERS=openai-auth-command,openai-codex-apikey
 
-# 可选：Responses raw history 存储编码（默认 encrypted）
+# 可选：Responses raw history 存储编码（默认 plaintext；如需本地落盘加密可设为 encrypted）
+# OMNE_OPENAI_RESPONSES_HISTORY_CODEC=plaintext
 OMNE_OPENAI_RESPONSES_HISTORY_CODEC=encrypted
 # 可选：显式覆盖 Responses raw history 密钥（建议使用 base64）
 OMNE_OPENAI_RESPONSES_HISTORY_KEY_B64=...

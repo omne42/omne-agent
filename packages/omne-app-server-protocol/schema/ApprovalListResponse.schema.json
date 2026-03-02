@@ -1,0 +1,293 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ApprovalListResponse",
+  "type": "object",
+  "properties": {
+    "approvals": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/ApprovalListItem"
+      }
+    }
+  },
+  "definitions": {
+    "ApprovalDecision": {
+      "type": "string",
+      "enum": [
+        "approved",
+        "denied"
+      ]
+    },
+    "ApprovalDecisionInfo": {
+      "type": "object",
+      "required": [
+        "decided_at",
+        "decision"
+      ],
+      "properties": {
+        "decided_at": {
+          "type": "string"
+        },
+        "decision": {
+          "$ref": "#/definitions/ApprovalDecision"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "remember": {
+          "default": false,
+          "type": "boolean"
+        }
+      }
+    },
+    "ApprovalListItem": {
+      "type": "object",
+      "required": [
+        "request"
+      ],
+      "properties": {
+        "decision": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ApprovalDecisionInfo"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "request": {
+          "$ref": "#/definitions/ApprovalRequestInfo"
+        }
+      }
+    },
+    "ApprovalRequestInfo": {
+      "type": "object",
+      "required": [
+        "action",
+        "approval_id",
+        "requested_at"
+      ],
+      "properties": {
+        "action": {
+          "type": "string"
+        },
+        "action_id": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ThreadApprovalActionId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "approval_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "params": {
+          "default": null
+        },
+        "requested_at": {
+          "type": "string"
+        },
+        "summary": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ThreadAttentionPendingApprovalSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "turn_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      }
+    },
+    "ThreadApprovalActionId": {
+      "type": "string",
+      "enum": [
+        "artifact/write",
+        "artifact/list",
+        "artifact/read",
+        "artifact/versions",
+        "artifact/delete",
+        "file/read",
+        "file/write",
+        "file/edit",
+        "file/patch",
+        "file/delete",
+        "file/glob",
+        "file/grep",
+        "fs/mkdir",
+        "process/start",
+        "process/kill",
+        "process/interrupt",
+        "process/tail",
+        "process/follow",
+        "process/inspect",
+        "process/execve",
+        "repo/search",
+        "repo/index",
+        "repo/symbols",
+        "mcp/list_servers",
+        "mcp/list_tools",
+        "mcp/list_resources",
+        "mcp/call",
+        "thread/checkpoint/restore",
+        "subagent/proxy_approval",
+        "unknown"
+      ]
+    },
+    "ThreadAttentionPendingApprovalSummary": {
+      "type": "object",
+      "properties": {
+        "approve_cmd": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "argv": {
+          "default": null,
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "artifact_type": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "child_approval_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "child_attention_state": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "child_last_turn_status": {
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TurnStatus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "child_thread_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "child_turn_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "cwd": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "deny_cmd": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "hook": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "process_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "requirement": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "server": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tool": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "TurnStatus": {
+      "type": "string",
+      "enum": [
+        "completed",
+        "interrupted",
+        "failed",
+        "cancelled",
+        "stuck"
+      ]
+    }
+  }
+}

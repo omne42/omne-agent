@@ -1,0 +1,170 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ThreadConfigExplainResponse",
+  "type": "object",
+  "required": [
+    "effective",
+    "mode_catalog",
+    "thread_id"
+  ],
+  "properties": {
+    "effective": {
+      "$ref": "#/definitions/ThreadConfigExplainEffective"
+    },
+    "effective_mode_def": {
+      "default": null
+    },
+    "layers": {
+      "default": [],
+      "type": "array",
+      "items": true
+    },
+    "mode_catalog": {
+      "$ref": "#/definitions/ThreadConfigExplainModeCatalog"
+    },
+    "thread_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  },
+  "definitions": {
+    "ApprovalPolicy": {
+      "type": "string",
+      "enum": [
+        "auto_approve",
+        "on_request",
+        "manual",
+        "unless_trusted",
+        "auto_deny"
+      ]
+    },
+    "SandboxNetworkAccess": {
+      "type": "string",
+      "enum": [
+        "deny",
+        "allow"
+      ]
+    },
+    "SandboxPolicy": {
+      "type": "string",
+      "enum": [
+        "read_only",
+        "workspace_write",
+        "danger_full_access"
+      ]
+    },
+    "ThreadConfigExplainEffective": {
+      "type": "object",
+      "required": [
+        "approval_policy",
+        "mode",
+        "model",
+        "openai_base_url",
+        "sandbox_network_access",
+        "sandbox_policy",
+        "show_thinking",
+        "thinking"
+      ],
+      "properties": {
+        "allowed_tools": {
+          "default": null,
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "approval_policy": {
+          "$ref": "#/definitions/ApprovalPolicy"
+        },
+        "auto_compact_token_limit": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "execpolicy_rules": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "mode": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "model_context_window": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "openai_base_url": {
+          "type": "string"
+        },
+        "sandbox_network_access": {
+          "$ref": "#/definitions/SandboxNetworkAccess"
+        },
+        "sandbox_policy": {
+          "$ref": "#/definitions/SandboxPolicy"
+        },
+        "sandbox_writable_roots": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "show_thinking": {
+          "type": "boolean"
+        },
+        "thinking": {
+          "type": "string"
+        }
+      }
+    },
+    "ThreadConfigExplainModeCatalog": {
+      "type": "object",
+      "required": [
+        "source"
+      ],
+      "properties": {
+        "load_error": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "modes": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "path": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

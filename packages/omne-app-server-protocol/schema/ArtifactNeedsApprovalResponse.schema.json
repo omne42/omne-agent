@@ -4,6 +4,7 @@
   "type": "object",
   "required": [
     "approval_id",
+    "needs_approval",
     "thread_id"
   ],
   "properties": {
@@ -12,7 +13,6 @@
       "format": "uuid"
     },
     "needs_approval": {
-      "default": false,
       "type": "boolean"
     },
     "thread_id": {

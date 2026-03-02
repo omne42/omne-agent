@@ -19,11 +19,20 @@
             transcript_lines.extend(format_transcript_entry_lines(entry, width));
         }
         if let Some(streaming) = &state.streaming {
-            transcript_lines.extend(format_role_lines(
-                TranscriptRole::Assistant,
-                streaming.text.as_str(),
-                width,
-            ));
+            if !streaming.thinking.trim().is_empty() {
+                transcript_lines.extend(format_role_lines(
+                    TranscriptRole::Thinking,
+                    streaming.thinking.as_str(),
+                    width,
+                ));
+            }
+            if !streaming.output_text.trim().is_empty() {
+                transcript_lines.extend(format_role_lines(
+                    TranscriptRole::Assistant,
+                    streaming.output_text.as_str(),
+                    width,
+                ));
+            }
         }
         // 顶部固定留一行空白，避免首条输出把输入框顶线盖住。
         transcript_lines.insert(0, Line::from(Span::raw("")));
@@ -164,6 +173,7 @@
         let (prefix, prefix_style, content_style) = match role {
             TranscriptRole::User => ("user: ", Style::default().fg(Color::Yellow), None),
             TranscriptRole::Assistant => ("assistant: ", Style::default().fg(Color::Green), None),
+            TranscriptRole::Thinking => ("thinking: ", Style::default().fg(Color::Magenta), Some(Style::default().fg(Color::Magenta))),
             TranscriptRole::System => ("system: ", Style::default().fg(Color::Cyan), None),
             TranscriptRole::Error => ("error: ", Style::default().fg(Color::Red), None),
             TranscriptRole::Tool => ("tool: ", Style::default().fg(Color::Blue), Some(Style::default().fg(Color::Blue))),
@@ -483,4 +493,3 @@
             TurnStatus::Stuck => "stuck",
         }
     }
-

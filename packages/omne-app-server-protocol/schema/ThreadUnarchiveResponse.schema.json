@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ThreadUnarchiveResponse",
+  "type": "object",
+  "required": [
+    "already_unarchived",
+    "archived",
+    "thread_id"
+  ],
+  "properties": {
+    "already_unarchived": {
+      "type": "boolean"
+    },
+    "archived": {
+      "type": "boolean"
+    },
+    "thread_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

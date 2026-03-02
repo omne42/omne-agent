@@ -165,6 +165,7 @@ async fn run_openai_responses_codex_parity_loop(
         thread_id: ThreadId,
         turn_id: TurnId,
         emit_deltas: bool,
+        show_thinking: bool,
         request: ditto_llm::providers::openai::OpenAIResponsesRawRequest<'_>,
         max_openai_request_duration: Duration,
     ) -> Result<OpenAiRawLlmResponse, LlmAttemptFailure> {
@@ -209,12 +210,48 @@ async fn run_openai_responses_codex_parity_loop(
                             );
                         }
                     }
-                    ditto_llm::providers::openai::OpenAIResponsesRawEvent::ReasoningTextDelta(
-                        _,
-                    )
-                    | ditto_llm::providers::openai::OpenAIResponsesRawEvent::ReasoningSummaryTextDelta(
-                        _,
-                    ) => {}
+                    ditto_llm::providers::openai::OpenAIResponsesRawEvent::ReasoningTextDelta(delta) => {
+                        if delta.is_empty() {
+                            continue;
+                        }
+                        if emit_deltas && show_thinking {
+                            emitted_output = true;
+                            let delta = omne_core::redact_text(&delta);
+                            let response_id_snapshot = response_id.clone();
+                            thread_rt.emit_notification(
+                                "item/delta",
+                                &serde_json::json!({
+                                    "thread_id": thread_id,
+                                    "turn_id": turn_id,
+                                    "response_id": response_id_snapshot,
+                                    "kind": "thinking",
+                                    "thinking_kind": "text",
+                                    "delta": delta,
+                                }),
+                            );
+                        }
+                    }
+                    ditto_llm::providers::openai::OpenAIResponsesRawEvent::ReasoningSummaryTextDelta(delta) => {
+                        if delta.is_empty() {
+                            continue;
+                        }
+                        if emit_deltas && show_thinking {
+                            emitted_output = true;
+                            let delta = omne_core::redact_text(&delta);
+                            let response_id_snapshot = response_id.clone();
+                            thread_rt.emit_notification(
+                                "item/delta",
+                                &serde_json::json!({
+                                    "thread_id": thread_id,
+                                    "turn_id": turn_id,
+                                    "response_id": response_id_snapshot,
+                                    "kind": "thinking",
+                                    "thinking_kind": "summary",
+                                    "delta": delta,
+                                }),
+                            );
+                        }
+                    }
                     ditto_llm::providers::openai::OpenAIResponsesRawEvent::OutputItemDone(item) => {
                         emitted_output = true;
                         output_items.push(item);
@@ -556,6 +593,7 @@ async fn run_openai_responses_codex_parity_loop(
                 thread_id,
                 turn_id,
                 emit_deltas,
+                cfg.show_thinking,
                 request,
                 cfg.max_openai_request_duration,
             )

@@ -104,7 +104,12 @@
 ### 5.2 `ModeDef`
 
 - `description: string`
+- `ui?: Ui`（可选；影响客户端展示，不影响权限判定）
 - `permissions: Permissions`
+
+### 5.2.1 `Ui`
+
+- `show_thinking?: boolean`：是否展示模型 thinking/reasoning 流式（默认 true；thread/workflow 可覆盖）
 
 ### 5.3 `Permissions`（能力组 + per-tool override）
 

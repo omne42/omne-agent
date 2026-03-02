@@ -246,7 +246,8 @@
       "type": "object",
       "required": [
         "id",
-        "method"
+        "method",
+        "params"
       ],
       "properties": {
         "id": {
@@ -259,7 +260,7 @@
           ]
         },
         "params": {
-          "type": "null"
+          "$ref": "#/definitions/ThreadListParams"
         }
       }
     },
@@ -289,7 +290,8 @@
       "type": "object",
       "required": [
         "id",
-        "method"
+        "method",
+        "params"
       ],
       "properties": {
         "id": {
@@ -302,7 +304,7 @@
           ]
         },
         "params": {
-          "type": "null"
+          "$ref": "#/definitions/ThreadLoadedParams"
         }
       }
     },
@@ -369,6 +371,28 @@
         },
         "params": {
           "$ref": "#/definitions/ThreadStateParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "thread/usage"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadUsageParams"
         }
       }
     },
@@ -2959,6 +2983,13 @@
             "type": "string"
           }
         },
+        "show_thinking": {
+          "default": null,
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "thinking": {
           "default": null,
           "type": [
@@ -3197,6 +3228,12 @@
         }
       }
     },
+    "ThreadListParams": {
+      "type": "object"
+    },
+    "ThreadLoadedParams": {
+      "type": "object"
+    },
     "ThreadModelsParams": {
       "type": "object",
       "required": [
@@ -3316,6 +3353,16 @@
         "thread_id"
       ],
       "properties": {
+        "kinds": {
+          "default": null,
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/definitions/ThreadEventKindTag"
+          }
+        },
         "max_events": {
           "default": null,
           "type": [
@@ -3378,6 +3425,18 @@
             "null"
           ]
         },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "ThreadUsageParams": {
+      "type": "object",
+      "required": [
+        "thread_id"
+      ],
+      "properties": {
         "thread_id": {
           "type": "string",
           "format": "uuid"

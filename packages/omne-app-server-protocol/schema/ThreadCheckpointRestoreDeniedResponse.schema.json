@@ -33,6 +33,12 @@
     "denied": {
       "type": "boolean"
     },
+    "error_code": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "load_error": {
       "default": null,
       "type": [

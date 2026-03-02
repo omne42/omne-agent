@@ -16,6 +16,46 @@
       "format": "uint64",
       "minimum": 0.0
     },
+    "fan_in_summary": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/ArtifactFanInSummaryStructuredData"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "fan_out_linkage_issue": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/ArtifactFanOutLinkageIssueStructuredData"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "fan_out_linkage_issue_clear": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/ArtifactFanOutLinkageIssueClearStructuredData"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "fan_out_result": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/ArtifactFanOutResultStructuredData"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "historical": {
       "default": false,
       "type": "boolean"
@@ -70,6 +110,517 @@
     }
   },
   "definitions": {
+    "ArtifactFanInSummaryPendingApproval": {
+      "type": "object",
+      "required": [
+        "action",
+        "approval_id"
+      ],
+      "properties": {
+        "action": {
+          "type": "string"
+        },
+        "approval_id": {
+          "type": "string"
+        },
+        "approve_cmd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "deny_cmd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "summary": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "ArtifactFanInSummaryResultArtifactDiagnostics": {
+      "type": "object",
+      "required": [
+        "matched_completion_count",
+        "pending_matching_tool_ids",
+        "scan_last_seq"
+      ],
+      "properties": {
+        "matched_completion_count": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "pending_matching_tool_ids": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "scan_last_seq": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        }
+      }
+    },
+    "ArtifactFanInSummaryScheduling": {
+      "type": "object",
+      "required": [
+        "effective_concurrency_limit",
+        "env_max_concurrent_subagents",
+        "priority_aging_rounds"
+      ],
+      "properties": {
+        "effective_concurrency_limit": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "env_max_concurrent_subagents": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "priority_aging_rounds": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        }
+      }
+    },
+    "ArtifactFanInSummaryStructuredData": {
+      "type": "object",
+      "required": [
+        "scheduling",
+        "schema_version",
+        "task_count",
+        "thread_id"
+      ],
+      "properties": {
+        "scheduling": {
+          "$ref": "#/definitions/ArtifactFanInSummaryScheduling"
+        },
+        "schema_version": {
+          "type": "string"
+        },
+        "task_count": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "tasks": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ArtifactFanInSummaryTask"
+          }
+        },
+        "thread_id": {
+          "type": "string"
+        }
+      }
+    },
+    "ArtifactFanInSummaryTask": {
+      "type": "object",
+      "required": [
+        "status",
+        "task_id",
+        "title"
+      ],
+      "properties": {
+        "dependency_blocked": {
+          "default": false,
+          "type": "boolean"
+        },
+        "dependency_blocker_status": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "dependency_blocker_task_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pending_approval": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ArtifactFanInSummaryPendingApproval"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "result_artifact_diagnostics": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ArtifactFanInSummaryResultArtifactDiagnostics"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "result_artifact_error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "result_artifact_error_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "result_artifact_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "type": "string"
+        },
+        "task_id": {
+          "type": "string"
+        },
+        "thread_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "turn_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "ArtifactFanOutLinkageIssueClearStructuredData": {
+      "type": "object",
+      "required": [
+        "fan_in_summary_artifact_id",
+        "schema_version"
+      ],
+      "properties": {
+        "fan_in_summary_artifact_id": {
+          "type": "string"
+        },
+        "schema_version": {
+          "type": "string"
+        }
+      }
+    },
+    "ArtifactFanOutLinkageIssueStructuredData": {
+      "type": "object",
+      "required": [
+        "fan_in_summary_artifact_id",
+        "issue",
+        "schema_version"
+      ],
+      "properties": {
+        "fan_in_summary_artifact_id": {
+          "type": "string"
+        },
+        "issue": {
+          "type": "string"
+        },
+        "issue_truncated": {
+          "default": false,
+          "type": "boolean"
+        },
+        "schema_version": {
+          "type": "string"
+        }
+      }
+    },
+    "ArtifactFanOutResultIsolatedWriteAutoApplyFailureStage": {
+      "type": "string",
+      "enum": [
+        "precondition",
+        "capture_patch",
+        "check_patch",
+        "apply_patch",
+        "unknown"
+      ]
+    },
+    "ArtifactFanOutResultIsolatedWriteAutoApplyStructuredData": {
+      "type": "object",
+      "properties": {
+        "applied": {
+          "default": false,
+          "type": "boolean"
+        },
+        "apply_argv": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "attempted": {
+          "default": false,
+          "type": "boolean"
+        },
+        "check_argv": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "failure_stage": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ArtifactFanOutResultIsolatedWriteAutoApplyFailureStage"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "patch_artifact_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "patch_read_cmd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "recovery_commands": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ArtifactFanOutResultRecoveryCommandStructuredData"
+          }
+        },
+        "recovery_hint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "target_workspace_cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workspace_cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "ArtifactFanOutResultIsolatedWriteHandoffStructuredData": {
+      "type": "object",
+      "properties": {
+        "apply_patch_hint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "diff_argv": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "patch": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ArtifactFanOutResultIsolatedWritePatchStructuredData"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status_argv": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "workspace_cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "ArtifactFanOutResultIsolatedWritePatchStructuredData": {
+      "type": "object",
+      "properties": {
+        "artifact_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "artifact_type": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "read_cmd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "truncated": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "workspace_cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "ArtifactFanOutResultRecoveryCommandStructuredData": {
+      "type": "object",
+      "required": [
+        "label"
+      ],
+      "properties": {
+        "argv": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "label": {
+          "type": "string"
+        }
+      }
+    },
+    "ArtifactFanOutResultStructuredData": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "status",
+        "task_id",
+        "thread_id",
+        "turn_id",
+        "workspace_mode"
+      ],
+      "properties": {
+        "isolated_write_auto_apply": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ArtifactFanOutResultIsolatedWriteAutoApplyStructuredData"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "isolated_write_handoff": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ArtifactFanOutResultIsolatedWriteHandoffStructuredData"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "isolated_write_patch": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ArtifactFanOutResultIsolatedWritePatchStructuredData"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "schema_version": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "task_id": {
+          "type": "string"
+        },
+        "thread_id": {
+          "type": "string"
+        },
+        "turn_id": {
+          "type": "string"
+        },
+        "workspace_cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workspace_mode": {
+          "type": "string"
+        }
+      }
+    },
     "ArtifactMetadata": {
       "type": "object",
       "required": [

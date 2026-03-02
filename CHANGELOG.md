@@ -56,6 +56,7 @@
 - `omne-openai`：新增 Responses SSE 流式解析与 `Client::create_response_stream`（`response.output_text.delta`/`response.output_item.done`/`response.completed`），为 `item/delta` 与更强可观测性打底。
 - `omne-openai`：新增 `reasoning.effort`（`low|medium|high|xhigh`）请求字段支持；`omne-app-server` 可按模型配置下发（见 `openai.models."<pattern>".thinking`）。
 - `omne-openai`/`omne-app-server`：新增 `response_format` 支持（JSON schema），默认关闭，可通过 `OMNE_AGENT_RESPONSE_FORMAT_JSON` 启用。
+- `omne-app-server`/`omne`：新增 `show_thinking` UI 开关（默认开启），支持按 project config（`.omne_data/config*.toml`）、mode（`.omne_data/spec/modes.yaml`）、workflow frontmatter 与 per-thread configure 分层覆盖；OpenAI Responses 与 OpenAI-compatible streaming 的 reasoning/thinking 会按该开关向客户端流式输出。
 - `omne-openai`：SSE 事件强类型化：`TokenUsage`/`RateLimits`/`ApiError`，并支持 `response.failed` → `ResponseEvent::Failed`；`omne-app-server` agent loop 会消费 typed usage 并把 failed 作为错误返回。
 - `omne-app-server`：新增 OpenAI provider 选择（`openai.provider` / `OMNE_OPENAI_PROVIDER`），首个 provider `openai-codex-apikey`；并支持 `openai-auth-command`（运行外部命令返回 `{ "api_key": "..." }`，便于 Node 插件化 auth）。
 - 新增 `ditto-llm`：以 provider profile 为中心的 `auth/base_url/model whitelist` 配置与 OpenAI-compatible `/models` 发现；并支持 model-level `thinking`（`unsupported/small/medium/high/xhigh`，默认 `medium`），`omne-app-server` 用其派生 `reasoning.effort`。
@@ -148,6 +149,8 @@
 
 ### Changed
 - `omne`/`omne-app-server`：`omne_root` 默认目录改为 `./.omne_data/`（可用 `--omne-root` 或 `OMNE_ROOT` 覆盖）。
+- `omne-app-server`：OpenAI Responses raw-history 落盘默认改为明文（可用 `OMNE_OPENAI_RESPONSES_HISTORY_CODEC=encrypted` 启用本地加密落盘）。
+- `omne-app-server`：OpenAI-compatible chat 请求会默认携带 `prompt_cache_key=<thread_id>`，用于提升跨 turn 的 prompt cache 命中机会（是否命中取决于上游 provider/gateway 实现与配置）。
 - （breaking）project spec 目录固定为 `./.omne_data/spec/`（modes/workspace hooks/skills 等），不再支持 legacy `.omne/`/`.omne/` 路径。
 - UI 范围收敛：当前阶段仅保留 Rust TUI（`omne tui`），暂停 Web GUI 路线并移除仓库内 `packages/omne-gui` 实现；相关文档口径同步更新。
 - subagent fan-out：`fan_out_result` 结构化结果统一到 `schema_version=fan_out_result.v1`，`artifact/read` 提供机器可读字段；`workspace_mode=isolated_write` 文档同步为“已支持 patch handoff（人工回填）/未支持自动 apply 与冲突处理”；并移除仓库内自动生成 patch 样例 `docs/patches/bash-exec-wrapper.patch`（相关文档改为仅引用说明），同时将 `*.gitdiff|*.diff|*.patch` 加入 `.gitignore` 以避免后续污染。

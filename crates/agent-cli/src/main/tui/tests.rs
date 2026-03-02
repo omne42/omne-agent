@@ -186,7 +186,8 @@ Updated  Attn   Title   CWD    Message
             });
             state.streaming = Some(StreamingState {
                 turn_id,
-                text: "Streaming...".to_string(),
+                output_text: "Streaming...".to_string(),
+                thinking: String::new(),
             });
             state.input = "next".to_string();
             state.header.model_context_window = Some(100_000);

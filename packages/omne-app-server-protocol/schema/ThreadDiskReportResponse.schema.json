@@ -1,0 +1,306 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ThreadDiskReportResponse",
+  "type": "object",
+  "required": [
+    "artifact",
+    "disk_usage",
+    "thread_id"
+  ],
+  "properties": {
+    "artifact": {
+      "$ref": "#/definitions/ArtifactWriteResponse"
+    },
+    "disk_usage": {
+      "$ref": "#/definitions/ThreadDiskUsageSummary"
+    },
+    "thread_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  },
+  "definitions": {
+    "ArtifactMetadata": {
+      "type": "object",
+      "required": [
+        "artifact_id",
+        "artifact_type",
+        "content_path",
+        "created_at",
+        "size_bytes",
+        "summary",
+        "updated_at",
+        "version"
+      ],
+      "properties": {
+        "artifact_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "artifact_type": {
+          "type": "string"
+        },
+        "content_path": {
+          "type": "string"
+        },
+        "created_at": {
+          "type": "string"
+        },
+        "preview": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ArtifactPreview"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "provenance": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ArtifactProvenance"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "size_bytes": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "summary": {
+          "type": "string"
+        },
+        "updated_at": {
+          "type": "string"
+        },
+        "version": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        }
+      }
+    },
+    "ArtifactPreview": {
+      "type": "object",
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "$ref": "#/definitions/ArtifactPreviewKind"
+        },
+        "language": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "ArtifactPreviewKind": {
+      "type": "string",
+      "enum": [
+        "markdown",
+        "diff_unified",
+        "patch_unified",
+        "code",
+        "html",
+        "log"
+      ]
+    },
+    "ArtifactProvenance": {
+      "type": "object",
+      "required": [
+        "thread_id"
+      ],
+      "properties": {
+        "process_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "tool_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "turn_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      }
+    },
+    "ArtifactPruneReportVersionDetail": {
+      "type": "object",
+      "required": [
+        "version"
+      ],
+      "properties": {
+        "size_bytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "version": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        }
+      }
+    },
+    "ArtifactWriteHistory": {
+      "type": "object",
+      "required": [
+        "max_versions"
+      ],
+      "properties": {
+        "max_versions": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "prune_error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "prune_report_artifact_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "prune_report_error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pruned_version_details": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ArtifactPruneReportVersionDetail"
+          }
+        },
+        "pruned_versions": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0.0
+          }
+        },
+        "snapshotted_version": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        }
+      }
+    },
+    "ArtifactWriteResponse": {
+      "type": "object",
+      "required": [
+        "artifact_id",
+        "content_path",
+        "metadata",
+        "metadata_path",
+        "tool_id"
+      ],
+      "properties": {
+        "artifact_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "content_path": {
+          "type": "string"
+        },
+        "created": {
+          "default": false,
+          "type": "boolean"
+        },
+        "history": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ArtifactWriteHistory"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "metadata": {
+          "$ref": "#/definitions/ArtifactMetadata"
+        },
+        "metadata_path": {
+          "type": "string"
+        },
+        "tool_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "ThreadDiskUsageSummary": {
+      "type": "object",
+      "required": [
+        "artifacts_bytes",
+        "events_log_bytes",
+        "file_count",
+        "total_bytes"
+      ],
+      "properties": {
+        "artifacts_bytes": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "events_log_bytes": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "file_count": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "total_bytes": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        }
+      }
+    }
+  }
+}

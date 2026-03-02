@@ -403,6 +403,7 @@ mod preset {
             mode: Some(cfg.mode.clone()),
             model: Some(cfg.model.clone()),
             thinking: None,
+            show_thinking: None,
             openai_base_url: Some(cfg.openai_base_url.clone()),
             allowed_tools: cfg.allowed_tools.clone(),
             execpolicy_rules: Some(cfg.execpolicy_rules.clone()),

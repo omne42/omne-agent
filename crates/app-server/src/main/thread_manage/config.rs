@@ -185,6 +185,7 @@ async fn handle_thread_configure(
         current_mode,
         current_model,
         current_thinking,
+        current_show_thinking,
         current_openai_base_url,
         current_allowed_tools,
         current_execpolicy_rules,
@@ -199,6 +200,7 @@ async fn handle_thread_configure(
             state.mode.clone(),
             state.model.clone(),
             state.thinking.clone(),
+            state.show_thinking,
             state.openai_base_url.clone(),
             state.allowed_tools.clone(),
             state.execpolicy_rules.clone(),
@@ -254,6 +256,7 @@ async fn handle_thread_configure(
     }
     let model = params.model.filter(|s| !s.trim().is_empty());
     let thinking = parse_thread_configure_thinking(params.thinking)?;
+    let show_thinking = params.show_thinking;
     let openai_base_url = params.openai_base_url.filter(|s| !s.trim().is_empty());
     let allowed_tools = match params.allowed_tools {
         None => None,
@@ -291,6 +294,7 @@ async fn handle_thread_configure(
         || mode.as_ref().is_some_and(|m| m != &current_mode)
         || model.as_ref() != current_model.as_ref()
         || thinking.as_ref() != current_thinking.as_ref()
+        || show_thinking != current_show_thinking
         || openai_base_url.as_ref() != current_openai_base_url.as_ref()
         || allowed_tools_changed
         || execpolicy_rules_changed;
@@ -304,6 +308,7 @@ async fn handle_thread_configure(
             mode,
             model,
             thinking,
+            show_thinking,
             openai_base_url,
             allowed_tools,
             execpolicy_rules,
@@ -338,6 +343,7 @@ async fn handle_thread_config_explain(
     let default_openai_base_url = "https://api.openai.com/v1".to_string();
     let default_mode = "coder".to_string();
     let default_thinking = thinking_label(ditto_llm::ThinkingIntensity::default()).to_string();
+    let default_show_thinking = true;
 
     let mut effective_approval_policy = omne_protocol::ApprovalPolicy::AutoApprove;
     let mut effective_sandbox_policy = omne_protocol::SandboxPolicy::WorkspaceWrite;
@@ -347,6 +353,7 @@ async fn handle_thread_config_explain(
     let mut effective_openai_provider = default_openai_provider.clone();
     let mut effective_model = default_model.clone();
     let mut effective_thinking = default_thinking.clone();
+    let mut effective_show_thinking = default_show_thinking;
     let mut effective_openai_base_url = default_openai_base_url.clone();
     let mut effective_allowed_tools: Option<Vec<String>> = None;
     let mut effective_execpolicy_rules = Vec::<String>::new();
@@ -360,6 +367,7 @@ async fn handle_thread_config_explain(
         "openai_provider": effective_openai_provider,
         "model": effective_model,
         "thinking": effective_thinking,
+        "show_thinking": effective_show_thinking,
         "openai_base_url": effective_openai_base_url,
         "allowed_tools": effective_allowed_tools,
         "execpolicy_rules": effective_execpolicy_rules,
@@ -389,6 +397,7 @@ async fn handle_thread_config_explain(
             "openai_provider": effective_openai_provider,
             "model": effective_model,
             "thinking": effective_thinking,
+            "show_thinking": effective_show_thinking,
             "openai_base_url": effective_openai_base_url,
         }));
     }
@@ -403,6 +412,14 @@ async fn handle_thread_config_explain(
         } else {
             default_thinking.clone()
         }
+    };
+    let project_show_thinking_default = if project.enabled {
+        project.ui.show_thinking.unwrap_or(default_show_thinking)
+    } else {
+        default_show_thinking
+    };
+    let mode_show_thinking_for_mode = |mode: &str| -> Option<bool> {
+        mode_catalog.mode(mode).and_then(|mode| mode.ui.show_thinking)
     };
 
     if project.enabled {
@@ -431,6 +448,7 @@ async fn handle_thread_config_explain(
             }
         }
         effective_thinking = project_thinking_for_model(&effective_model);
+        effective_show_thinking = project_show_thinking_default;
         layers.push(serde_json::json!({
             "source": "project",
             "enabled": true,
@@ -443,6 +461,7 @@ async fn handle_thread_config_explain(
             "openai_provider": effective_openai_provider,
             "model": effective_model,
             "thinking": effective_thinking,
+            "show_thinking": effective_show_thinking,
             "openai_base_url": effective_openai_base_url,
         }));
     } else if project.config_present || project.load_error.is_some() {
@@ -455,6 +474,15 @@ async fn handle_thread_config_explain(
             "env_path": project.env_path.display().to_string(),
             "env_present": project.env_present,
             "load_error": project.load_error,
+        }));
+    }
+
+    if let Some(mode_override) = mode_show_thinking_for_mode(&effective_mode) {
+        effective_show_thinking = mode_override;
+        layers.push(serde_json::json!({
+            "source": "mode",
+            "mode": effective_mode.clone(),
+            "show_thinking": effective_show_thinking,
         }));
     }
 
@@ -472,6 +500,7 @@ async fn handle_thread_config_explain(
     }
 
     let mut thinking_override: Option<String> = None;
+    let mut show_thinking_override: Option<bool> = None;
     for event in events {
         if let omne_protocol::ThreadEventKind::ThreadConfigUpdated {
             approval_policy,
@@ -481,6 +510,7 @@ async fn handle_thread_config_explain(
             mode,
             model,
             thinking,
+            show_thinking,
             openai_base_url,
             allowed_tools,
             execpolicy_rules,
@@ -499,6 +529,10 @@ async fn handle_thread_config_explain(
             }
             if let Some(mode) = mode {
                 effective_mode = mode;
+                if show_thinking_override.is_none() {
+                    effective_show_thinking = mode_show_thinking_for_mode(&effective_mode)
+                        .unwrap_or(project_show_thinking_default);
+                }
             }
             if let Some(model) = model {
                 effective_model = model;
@@ -509,6 +543,10 @@ async fn handle_thread_config_explain(
             if let Some(thinking) = thinking {
                 effective_thinking = thinking.clone();
                 thinking_override = Some(thinking);
+            }
+            if let Some(show_thinking) = show_thinking {
+                effective_show_thinking = show_thinking;
+                show_thinking_override = Some(show_thinking);
             }
             if let Some(openai_base_url) = openai_base_url {
                 effective_openai_base_url = openai_base_url;
@@ -531,6 +569,7 @@ async fn handle_thread_config_explain(
                 "openai_provider": effective_openai_provider,
                 "model": effective_model,
                 "thinking": effective_thinking,
+                "show_thinking": effective_show_thinking,
                 "openai_base_url": effective_openai_base_url,
                 "allowed_tools": effective_allowed_tools,
                 "execpolicy_rules": effective_execpolicy_rules,
@@ -552,6 +591,9 @@ async fn handle_thread_config_explain(
         serde_json::json!({
             "name": effective_mode_name,
             "description": mode.description.as_str(),
+            "ui": {
+                "show_thinking": mode.ui.show_thinking,
+            },
             "permissions": {
                 "read": mode.permissions.read,
                 "edit": {
@@ -589,6 +631,7 @@ async fn handle_thread_config_explain(
             mode: effective_mode,
             model: effective_model,
             thinking: effective_thinking,
+            show_thinking: effective_show_thinking,
             openai_base_url: effective_openai_base_url,
             allowed_tools: effective_allowed_tools,
             execpolicy_rules: effective_execpolicy_rules,

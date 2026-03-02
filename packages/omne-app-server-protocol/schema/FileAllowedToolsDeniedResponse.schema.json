@@ -18,6 +18,13 @@
     "denied": {
       "type": "boolean"
     },
+    "error_code": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "tool": {
       "type": "string"
     },

@@ -1,0 +1,888 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ThreadAttentionResponse",
+  "type": "object",
+  "required": [
+    "approval_policy",
+    "archived",
+    "attention_markers",
+    "attention_state",
+    "last_seq",
+    "paused",
+    "sandbox_policy",
+    "thread_id"
+  ],
+  "properties": {
+    "active_turn_id": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
+    "active_turn_interrupt_requested": {
+      "default": false,
+      "type": "boolean"
+    },
+    "approval_policy": {
+      "$ref": "#/definitions/ApprovalPolicy"
+    },
+    "archived": {
+      "type": "boolean"
+    },
+    "archived_at": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "archived_reason": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "attention_markers": {
+      "$ref": "#/definitions/ThreadAttentionMarkers"
+    },
+    "attention_state": {
+      "type": "string"
+    },
+    "cwd": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "failed_processes": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      }
+    },
+    "fan_in_dependency_blocker": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/ThreadFanInDependencyBlockedSummary"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "fan_in_result_diagnostics": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/ThreadFanInResultDiagnosticsSummary"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "fan_out_auto_apply": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/ThreadFanOutAutoApplySummary"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "has_diff_ready": {
+      "default": false,
+      "type": "boolean"
+    },
+    "has_fan_in_dependency_blocked": {
+      "default": false,
+      "type": "boolean"
+    },
+    "has_fan_in_result_diagnostics": {
+      "default": false,
+      "type": "boolean"
+    },
+    "has_fan_out_auto_apply_error": {
+      "default": false,
+      "type": "boolean"
+    },
+    "has_fan_out_linkage_issue": {
+      "default": false,
+      "type": "boolean"
+    },
+    "has_plan_ready": {
+      "default": false,
+      "type": "boolean"
+    },
+    "has_test_failed": {
+      "default": false,
+      "type": "boolean"
+    },
+    "last_seq": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0.0
+    },
+    "last_turn_id": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
+    "last_turn_reason": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "last_turn_status": {
+      "default": null,
+      "anyOf": [
+        {
+          "$ref": "#/definitions/TurnStatus"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "model": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "openai_base_url": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "paused": {
+      "type": "boolean"
+    },
+    "paused_at": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "paused_reason": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "pending_approvals": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/ThreadAttentionPendingApproval"
+      }
+    },
+    "running_processes": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/ThreadAttentionRunningProcess"
+      }
+    },
+    "sandbox_policy": {
+      "$ref": "#/definitions/SandboxPolicy"
+    },
+    "stale_processes": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/ThreadAttentionStaleProcess"
+      }
+    },
+    "thread_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "token_budget_exceeded": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "token_budget_limit": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0.0
+    },
+    "token_budget_remaining": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0.0
+    },
+    "token_budget_utilization": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "format": "double"
+    },
+    "token_budget_warning_active": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    }
+  },
+  "definitions": {
+    "ApprovalPolicy": {
+      "type": "string",
+      "enum": [
+        "auto_approve",
+        "on_request",
+        "manual",
+        "unless_trusted",
+        "auto_deny"
+      ]
+    },
+    "SandboxPolicy": {
+      "type": "string",
+      "enum": [
+        "read_only",
+        "workspace_write",
+        "danger_full_access"
+      ]
+    },
+    "ThreadApprovalActionId": {
+      "type": "string",
+      "enum": [
+        "artifact/write",
+        "artifact/list",
+        "artifact/read",
+        "artifact/versions",
+        "artifact/delete",
+        "file/read",
+        "file/write",
+        "file/edit",
+        "file/patch",
+        "file/delete",
+        "file/glob",
+        "file/grep",
+        "fs/mkdir",
+        "process/start",
+        "process/kill",
+        "process/interrupt",
+        "process/tail",
+        "process/follow",
+        "process/inspect",
+        "process/execve",
+        "repo/search",
+        "repo/index",
+        "repo/symbols",
+        "mcp/list_servers",
+        "mcp/list_tools",
+        "mcp/list_resources",
+        "mcp/call",
+        "thread/checkpoint/restore",
+        "subagent/proxy_approval",
+        "unknown"
+      ]
+    },
+    "ThreadAttentionArtifactMarker": {
+      "type": "object",
+      "required": [
+        "artifact_id",
+        "artifact_type",
+        "set_at"
+      ],
+      "properties": {
+        "artifact_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "artifact_type": {
+          "type": "string"
+        },
+        "set_at": {
+          "type": "string"
+        },
+        "turn_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      }
+    },
+    "ThreadAttentionMarkers": {
+      "type": "object",
+      "properties": {
+        "diff_ready": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ThreadAttentionArtifactMarker"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "fan_out_auto_apply_error": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ThreadAttentionArtifactMarker"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "fan_out_linkage_issue": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ThreadAttentionArtifactMarker"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "plan_ready": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ThreadAttentionArtifactMarker"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "test_failed": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ThreadAttentionTestFailedMarker"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "token_budget_exceeded": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ThreadAttentionStateMarker"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "token_budget_warning": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ThreadAttentionStateMarker"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "ThreadAttentionPendingApproval": {
+      "type": "object",
+      "required": [
+        "approval_id"
+      ],
+      "properties": {
+        "action": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "action_id": {
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ThreadApprovalActionId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "approval_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "params": {
+          "default": null
+        },
+        "requested_at": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "summary": {
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ThreadAttentionPendingApprovalSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "turn_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      }
+    },
+    "ThreadAttentionPendingApprovalSummary": {
+      "type": "object",
+      "properties": {
+        "approve_cmd": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "argv": {
+          "default": null,
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "artifact_type": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "child_approval_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "child_attention_state": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "child_last_turn_status": {
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TurnStatus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "child_thread_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "child_turn_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "cwd": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "deny_cmd": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "hook": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "process_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "requirement": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "server": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tool": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "ThreadAttentionRunningProcess": {
+      "type": "object",
+      "required": [
+        "process_id"
+      ],
+      "properties": {
+        "argv": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "process_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "status": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "ThreadAttentionStaleProcess": {
+      "type": "object",
+      "required": [
+        "idle_seconds",
+        "last_update_at",
+        "process_id",
+        "stderr_path",
+        "stdout_path"
+      ],
+      "properties": {
+        "idle_seconds": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "last_update_at": {
+          "type": "string"
+        },
+        "process_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "stderr_path": {
+          "type": "string"
+        },
+        "stdout_path": {
+          "type": "string"
+        }
+      }
+    },
+    "ThreadAttentionStateMarker": {
+      "type": "object",
+      "required": [
+        "set_at"
+      ],
+      "properties": {
+        "set_at": {
+          "type": "string"
+        },
+        "turn_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      }
+    },
+    "ThreadAttentionTestFailedMarker": {
+      "type": "object",
+      "required": [
+        "process_id",
+        "set_at"
+      ],
+      "properties": {
+        "command": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "exit_code": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        },
+        "process_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "set_at": {
+          "type": "string"
+        },
+        "turn_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      }
+    },
+    "ThreadFanInDependencyBlockedSummary": {
+      "type": "object",
+      "required": [
+        "dependency_blocked_count",
+        "dependency_blocked_ratio",
+        "status",
+        "task_count",
+        "task_id"
+      ],
+      "properties": {
+        "blocker_status": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "blocker_task_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "dependency_blocked_count": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "dependency_blocked_ratio": {
+          "type": "number",
+          "format": "double"
+        },
+        "diagnostics_matched_completion_total": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "diagnostics_pending_matching_tool_ids_total": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "diagnostics_scan_last_seq_max": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "diagnostics_tasks": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "type": "string"
+        },
+        "task_count": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "task_id": {
+          "type": "string"
+        }
+      }
+    },
+    "ThreadFanInResultDiagnosticsSummary": {
+      "type": "object",
+      "required": [
+        "diagnostics_matched_completion_total",
+        "diagnostics_pending_matching_tool_ids_total",
+        "diagnostics_scan_last_seq_max",
+        "diagnostics_tasks",
+        "task_count"
+      ],
+      "properties": {
+        "diagnostics_matched_completion_total": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "diagnostics_pending_matching_tool_ids_total": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "diagnostics_scan_last_seq_max": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "diagnostics_tasks": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "task_count": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        }
+      }
+    },
+    "ThreadFanOutAutoApplySummary": {
+      "type": "object",
+      "required": [
+        "status",
+        "task_id"
+      ],
+      "properties": {
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "patch_artifact_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "recovery_1": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "recovery_commands": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "stage": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "type": "string"
+        },
+        "task_id": {
+          "type": "string"
+        }
+      }
+    },
+    "TurnStatus": {
+      "type": "string",
+      "enum": [
+        "completed",
+        "interrupted",
+        "failed",
+        "cancelled",
+        "stuck"
+      ]
+    }
+  }
+}

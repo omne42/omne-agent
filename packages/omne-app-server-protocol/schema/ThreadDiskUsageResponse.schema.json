@@ -1,0 +1,46 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ThreadDiskUsageResponse",
+  "type": "object",
+  "required": [
+    "artifacts_bytes",
+    "events_log_bytes",
+    "events_log_path",
+    "file_count",
+    "thread_dir",
+    "thread_id",
+    "total_bytes"
+  ],
+  "properties": {
+    "artifacts_bytes": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0.0
+    },
+    "events_log_bytes": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0.0
+    },
+    "events_log_path": {
+      "type": "string"
+    },
+    "file_count": {
+      "type": "integer",
+      "format": "uint",
+      "minimum": 0.0
+    },
+    "thread_dir": {
+      "type": "string"
+    },
+    "thread_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "total_bytes": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0.0
+    }
+  }
+}

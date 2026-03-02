@@ -4,4 +4,4 @@ import type { SandboxNetworkAccess } from "./SandboxNetworkAccess";
 import type { SandboxPolicy } from "./SandboxPolicy";
 import type { ThreadId } from "./ThreadId";
 
-export type ThreadConfigureParams = { thread_id: ThreadId, approval_policy?: ApprovalPolicy, sandbox_policy?: SandboxPolicy, sandbox_writable_roots?: Array<string>, sandbox_network_access?: SandboxNetworkAccess, mode?: string, model?: string, thinking?: string, openai_base_url?: string, allowed_tools?: Array<string> | null, execpolicy_rules?: Array<string>, };
+export type ThreadConfigureParams = { thread_id: ThreadId, approval_policy?: ApprovalPolicy, sandbox_policy?: SandboxPolicy, sandbox_writable_roots?: Array<string>, sandbox_network_access?: SandboxNetworkAccess, mode?: string, model?: string, thinking?: string, show_thinking?: boolean, openai_base_url?: string, allowed_tools?: Array<string> | null, execpolicy_rules?: Array<string>, };

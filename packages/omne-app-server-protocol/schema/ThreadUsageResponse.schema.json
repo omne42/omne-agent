@@ -1,0 +1,105 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ThreadUsageResponse",
+  "type": "object",
+  "required": [
+    "last_seq",
+    "thread_id",
+    "total_tokens_used"
+  ],
+  "properties": {
+    "cache_creation_input_tokens_used": {
+      "default": 0,
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0.0
+    },
+    "cache_input_ratio": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "format": "double"
+    },
+    "cache_input_tokens_used": {
+      "default": 0,
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0.0
+    },
+    "input_tokens_used": {
+      "default": 0,
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0.0
+    },
+    "last_seq": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0.0
+    },
+    "non_cache_input_tokens_used": {
+      "default": 0,
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0.0
+    },
+    "output_ratio": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "format": "double"
+    },
+    "output_tokens_used": {
+      "default": 0,
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0.0
+    },
+    "thread_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "token_budget_exceeded": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "token_budget_limit": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0.0
+    },
+    "token_budget_remaining": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0.0
+    },
+    "token_budget_utilization": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "format": "double"
+    },
+    "token_budget_warning_active": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "total_tokens_used": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0.0
+    }
+  }
+}

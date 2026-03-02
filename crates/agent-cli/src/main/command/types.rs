@@ -7,6 +7,8 @@ pub(super) struct WorkflowFileFrontmatterV1 {
     #[serde(default)]
     pub(super) name: Option<String>,
     pub(super) mode: String,
+    #[serde(default)]
+    pub(super) show_thinking: Option<bool>,
     #[serde(default, rename = "subagent-fork")]
     pub(super) subagent_fork: bool,
     #[serde(default)]

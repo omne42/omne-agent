@@ -41,6 +41,7 @@ async fn configure_test_thread_mode_shared(
             mode: Some(mode_name.to_string()),
             model: None,
             thinking: None,
+            show_thinking: None,
             openai_base_url: None,
             allowed_tools: None,
             execpolicy_rules: None,

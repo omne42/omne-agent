@@ -15,6 +15,12 @@
     "env": {
       "type": "string"
     },
+    "error_code": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "reason": {
       "type": "string"
     },

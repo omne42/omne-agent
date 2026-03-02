@@ -19,6 +19,13 @@
     "error": {
       "type": "string"
     },
+    "error_code": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "mode": {
       "type": "string"
     },

@@ -193,7 +193,10 @@
         "plan_ready",
         "diff_ready",
         "test_failed",
-        "fan_out_linkage_issue"
+        "fan_out_linkage_issue",
+        "fan_out_auto_apply_error",
+        "token_budget_warning",
+        "token_budget_exceeded"
       ]
     },
     "CheckpointRestoreStatus": {
@@ -622,6 +625,12 @@
               "items": {
                 "type": "string"
               }
+            },
+            "show_thinking": {
+              "type": [
+                "boolean",
+                "null"
+              ]
             },
             "thinking": {
               "type": [

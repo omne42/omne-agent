@@ -66,6 +66,7 @@ async fn run_ask(app: &mut App, args: AskArgs) -> anyhow::Result<()> {
         let thread_id_str = thread_id.to_string();
         let turn_id_str = turn_id.to_string();
         streaming_handle = Some(tokio::spawn(async move {
+            let mut thinking_started = false;
             while let Some(note) = notifications.recv().await {
                 if note.method != "item/delta" {
                     continue;
@@ -83,18 +84,34 @@ async fn run_ask(app: &mut App, args: AskArgs) -> anyhow::Result<()> {
                 if thread_id != thread_id_str || turn_id != turn_id_str {
                     continue;
                 }
-                if params.get("kind").and_then(|v| v.as_str()) != Some("output_text") {
+                let Some(kind) = params.get("kind").and_then(|v| v.as_str()) else {
                     continue;
-                }
+                };
                 let Some(delta) = params.get("delta").and_then(|v| v.as_str()) else {
                     continue;
                 };
                 if delta.is_empty() {
                     continue;
                 }
-                saw_delta.store(true, Ordering::Relaxed);
-                print!("{delta}");
-                std::io::stdout().flush().ok();
+                match kind {
+                    "output_text" => {
+                        saw_delta.store(true, Ordering::Relaxed);
+                        print!("{delta}");
+                        std::io::stdout().flush().ok();
+                    }
+                    "thinking" => {
+                        if !thinking_started {
+                            thinking_started = true;
+                            eprint!("\n[thinking]\n");
+                        }
+                        eprint!("{delta}");
+                        std::io::stderr().flush().ok();
+                    }
+                    "warning" => {
+                        eprintln!("\n[warning] {delta}");
+                    }
+                    _ => {}
+                }
             }
         }));
     }
@@ -225,6 +242,7 @@ where
         let thread_id_str = thread_id.to_string();
         let turn_id_str = turn_id.to_string();
         streaming_handle = Some(tokio::spawn(async move {
+            let mut thinking_started = false;
             while let Some(note) = notifications.recv().await {
                 if note.method != "item/delta" {
                     continue;
@@ -242,18 +260,34 @@ where
                 if thread_id != thread_id_str || turn_id != turn_id_str {
                     continue;
                 }
-                if params.get("kind").and_then(|v| v.as_str()) != Some("output_text") {
+                let Some(kind) = params.get("kind").and_then(|v| v.as_str()) else {
                     continue;
-                }
+                };
                 let Some(delta) = params.get("delta").and_then(|v| v.as_str()) else {
                     continue;
                 };
                 if delta.is_empty() {
                     continue;
                 }
-                saw_delta.store(true, Ordering::Relaxed);
-                print!("{delta}");
-                std::io::stdout().flush().ok();
+                match kind {
+                    "output_text" => {
+                        saw_delta.store(true, Ordering::Relaxed);
+                        print!("{delta}");
+                        std::io::stdout().flush().ok();
+                    }
+                    "thinking" => {
+                        if !thinking_started {
+                            thinking_started = true;
+                            eprint!("\n[thinking]\n");
+                        }
+                        eprint!("{delta}");
+                        std::io::stderr().flush().ok();
+                    }
+                    "warning" => {
+                        eprintln!("\n[warning] {delta}");
+                    }
+                    _ => {}
+                }
             }
         }));
     }
@@ -614,16 +648,21 @@ fn render_event_to<W: std::io::Write>(
             mode,
             model,
             thinking,
+            show_thinking,
             openai_base_url,
             allowed_tools,
             execpolicy_rules,
         } => {
             let _ = writeln!(
                 writer,
-                "[{ts}] config approval_policy={approval_policy:?} sandbox_policy={sandbox_policy:?} sandbox_writable_roots={sandbox_writable_roots:?} sandbox_network_access={sandbox_network_access:?} mode={} model={} thinking={} openai_base_url={} allowed_tools={allowed_tools:?} execpolicy_rules={execpolicy_rules:?}",
+                "[{ts}] config approval_policy={approval_policy:?} sandbox_policy={sandbox_policy:?} sandbox_writable_roots={sandbox_writable_roots:?} sandbox_network_access={sandbox_network_access:?} mode={} model={} thinking={} show_thinking={} openai_base_url={} allowed_tools={allowed_tools:?} execpolicy_rules={execpolicy_rules:?}",
                 mode.as_deref().unwrap_or(""),
                 model.as_deref().unwrap_or(""),
                 thinking.as_deref().unwrap_or(""),
+                show_thinking
+                    .as_ref()
+                    .map(|v| v.to_string())
+                    .unwrap_or_default(),
                 openai_base_url.as_deref().unwrap_or("")
             );
         }

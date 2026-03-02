@@ -851,6 +851,7 @@ async fn start_agent_spawn_schedule(
                 mode: Some(plan.mode.clone()),
                 model: plan.model.clone(),
                 thinking: None,
+                show_thinking: None,
                 openai_base_url: plan.openai_base_url.clone(),
                 allowed_tools: None,
                 execpolicy_rules: None,

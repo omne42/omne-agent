@@ -4,4 +4,4 @@ import type { SandboxPolicy } from "./SandboxPolicy";
 import type { ThreadCheckpointDecision } from "./ThreadCheckpointDecision";
 import type { ThreadId } from "./ThreadId";
 
-export type ThreadCheckpointRestoreDeniedResponse = { thread_id: ThreadId, checkpoint_id: CheckpointId, denied: boolean, sandbox_policy?: SandboxPolicy, mode?: string, decision?: ThreadCheckpointDecision, available?: string, load_error?: string, sandbox_writable_roots?: Array<string>, };
+export type ThreadCheckpointRestoreDeniedResponse = { thread_id: ThreadId, checkpoint_id: CheckpointId, denied: boolean, error_code?: string, sandbox_policy?: SandboxPolicy, mode?: string, decision?: ThreadCheckpointDecision, available?: string, load_error?: string, sandbox_writable_roots?: Array<string>, };

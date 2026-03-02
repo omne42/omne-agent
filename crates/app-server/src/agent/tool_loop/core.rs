@@ -16,6 +16,7 @@ struct ToolLoopConfig {
     parallel_tool_calls: bool,
     max_parallel_tool_calls: usize,
     response_format: Option<ditto_llm::ResponseFormat>,
+    show_thinking: bool,
 }
 
 #[derive(Debug)]
@@ -306,6 +307,9 @@ impl ToolLoop {
                     reasoning_effort,
                     response_format: cfg.response_format.clone(),
                     parallel_tool_calls: Some(cfg.parallel_tool_calls),
+                    // Always set a stable cache key so OpenAI-compatible gateways can do prefix
+                    // prompt caching across turns (OpenCode uses a session id for this).
+                    prompt_cache_key: Some(thread_id.to_string()),
                 };
                 if !resolved_attachments.is_empty()
                     && !attachment_parts_cache.contains_key(&provider_name)
@@ -350,6 +354,7 @@ impl ToolLoop {
                         thread_id,
                         turn_id,
                         emit_deltas,
+                        cfg.show_thinking,
                         req,
                         cfg.max_openai_request_duration,
                     )
@@ -361,6 +366,7 @@ impl ToolLoop {
                         thread_id,
                         turn_id,
                         emit_deltas,
+                        cfg.show_thinking,
                         req,
                         cfg.max_openai_request_duration,
                     )

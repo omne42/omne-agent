@@ -2,4 +2,4 @@
 import type { SandboxNetworkAccess } from "./SandboxNetworkAccess";
 import type { ToolId } from "./ToolId";
 
-export type McpSandboxNetworkDeniedResponse = { tool_id: ToolId, denied: boolean, sandbox_network_access: SandboxNetworkAccess, };
+export type McpSandboxNetworkDeniedResponse = { tool_id: ToolId, denied: boolean, sandbox_network_access: SandboxNetworkAccess, error_code?: string, };

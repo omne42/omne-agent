@@ -2,4 +2,4 @@
 import type { ThreadId } from "./ThreadId";
 import type { ToolId } from "./ToolId";
 
-export type ProcessDeniedResponse = { tool_id: ToolId, denied: boolean, thread_id: ThreadId, remembered?: boolean, };
+export type ProcessDeniedResponse = { tool_id: ToolId, denied: boolean, thread_id: ThreadId, remembered?: boolean, error_code?: string, };

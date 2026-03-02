@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ThreadHandleResponse",
+  "type": "object",
+  "required": [
+    "last_seq",
+    "log_path",
+    "thread_id"
+  ],
+  "properties": {
+    "last_seq": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0.0
+    },
+    "log_path": {
+      "type": "string"
+    },
+    "thread_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

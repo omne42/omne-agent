@@ -764,11 +764,12 @@ fn format_event_for_context(kind: &ThreadEventKind) -> Option<String> {
             mode,
             model,
             thinking,
+            show_thinking,
             openai_base_url,
             allowed_tools,
             execpolicy_rules,
         } => Some(format!(
-            "[thread/config] approval_policy={approval_policy:?} sandbox_policy={} sandbox_writable_roots={} sandbox_network_access={} mode={} model={} thinking={} openai_base_url={} allowed_tools={} execpolicy_rules={}",
+            "[thread/config] approval_policy={approval_policy:?} sandbox_policy={} sandbox_writable_roots={} sandbox_network_access={} mode={} model={} thinking={} show_thinking={} openai_base_url={} allowed_tools={} execpolicy_rules={}",
             sandbox_policy
                 .as_ref()
                 .map(|v| format!("{v:?}"))
@@ -784,6 +785,10 @@ fn format_event_for_context(kind: &ThreadEventKind) -> Option<String> {
             mode.as_deref().unwrap_or("<unchanged>"),
             model.as_deref().unwrap_or("<unchanged>"),
             thinking.as_deref().unwrap_or("<unchanged>"),
+            show_thinking
+                .as_ref()
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "<unchanged>".to_string()),
             openai_base_url.as_deref().unwrap_or("<unchanged>"),
             match allowed_tools {
                 None => "<unchanged>".to_string(),

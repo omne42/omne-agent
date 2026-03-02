@@ -2,4 +2,4 @@
 import type { ArtifactModeDecision } from "./ArtifactModeDecision";
 import type { ToolId } from "./ToolId";
 
-export type ArtifactUnknownModeDeniedResponse = { tool_id: ToolId, denied: boolean, mode: string, decision: ArtifactModeDecision, available: string, load_error?: string, };
+export type ArtifactUnknownModeDeniedResponse = { tool_id: ToolId, denied: boolean, error_code?: string, mode: string, decision: ArtifactModeDecision, available: string, load_error?: string, };

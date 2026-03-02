@@ -231,6 +231,7 @@ modes:
                 mode: None,
                 model: None,
                 thinking: None,
+                show_thinking: None,
                 openai_base_url: None,
                 allowed_tools: Some(Some(vec!["repo/search".to_string()])),
                 execpolicy_rules: None,

@@ -10,6 +10,13 @@
     "denied": {
       "type": "boolean"
     },
+    "error_code": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "remembered": {
       "default": null,
       "type": [

@@ -1,0 +1,250 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ThreadStateResponse",
+  "type": "object",
+  "required": [
+    "approval_policy",
+    "archived",
+    "last_seq",
+    "mode",
+    "paused",
+    "sandbox_network_access",
+    "sandbox_policy",
+    "thread_id",
+    "total_tokens_used"
+  ],
+  "properties": {
+    "active_turn_id": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
+    "active_turn_interrupt_requested": {
+      "default": false,
+      "type": "boolean"
+    },
+    "allowed_tools": {
+      "default": null,
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "string"
+      }
+    },
+    "approval_policy": {
+      "$ref": "#/definitions/ApprovalPolicy"
+    },
+    "archived": {
+      "type": "boolean"
+    },
+    "archived_at": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "archived_reason": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "cache_creation_input_tokens_used": {
+      "default": 0,
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0.0
+    },
+    "cache_input_tokens_used": {
+      "default": 0,
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0.0
+    },
+    "cwd": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "input_tokens_used": {
+      "default": 0,
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0.0
+    },
+    "last_seq": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0.0
+    },
+    "last_turn_id": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
+    "last_turn_reason": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "last_turn_status": {
+      "default": null,
+      "anyOf": [
+        {
+          "$ref": "#/definitions/TurnStatus"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "mode": {
+      "type": "string"
+    },
+    "model": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "openai_base_url": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "output_tokens_used": {
+      "default": 0,
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0.0
+    },
+    "paused": {
+      "type": "boolean"
+    },
+    "paused_at": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "paused_reason": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "sandbox_network_access": {
+      "$ref": "#/definitions/SandboxNetworkAccess"
+    },
+    "sandbox_policy": {
+      "$ref": "#/definitions/SandboxPolicy"
+    },
+    "sandbox_writable_roots": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "thread_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "token_budget_exceeded": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "token_budget_limit": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0.0
+    },
+    "token_budget_remaining": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0.0
+    },
+    "token_budget_utilization": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "format": "double"
+    },
+    "token_budget_warning_active": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "total_tokens_used": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0.0
+    }
+  },
+  "definitions": {
+    "ApprovalPolicy": {
+      "type": "string",
+      "enum": [
+        "auto_approve",
+        "on_request",
+        "manual",
+        "unless_trusted",
+        "auto_deny"
+      ]
+    },
+    "SandboxNetworkAccess": {
+      "type": "string",
+      "enum": [
+        "deny",
+        "allow"
+      ]
+    },
+    "SandboxPolicy": {
+      "type": "string",
+      "enum": [
+        "read_only",
+        "workspace_write",
+        "danger_full_access"
+      ]
+    },
+    "TurnStatus": {
+      "type": "string",
+      "enum": [
+        "completed",
+        "interrupted",
+        "failed",
+        "cancelled",
+        "stuck"
+      ]
+    }
+  }
+}

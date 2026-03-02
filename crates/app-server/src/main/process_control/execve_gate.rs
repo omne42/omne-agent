@@ -637,6 +637,15 @@ fn execve_gate_tools() -> Vec<Value> {
 mod execve_gate_tests {
     use super::*;
 
+    fn unix_socket_bind_not_permitted(err: &anyhow::Error) -> bool {
+        err.chain().any(|cause| {
+            cause
+                .downcast_ref::<std::io::Error>()
+                .and_then(|err| err.raw_os_error())
+                == Some(1)
+        })
+    }
+
     async fn mcp_initialize(
         lines: &mut tokio::io::Lines<tokio::io::BufReader<tokio::net::unix::OwnedReadHalf>>,
         write_half: &mut tokio::net::unix::OwnedWriteHalf,
@@ -717,7 +726,7 @@ mod execve_gate_tests {
         let socket_path = tmp.path().join("execve.sock");
         let token = "test-token".to_string();
 
-        let gate = spawn_execve_gate(
+        let gate = match spawn_execve_gate(
             ExecveGateContext {
                 thread_id,
                 turn_id: None,
@@ -729,7 +738,15 @@ mod execve_gate_tests {
             },
             socket_path.clone(),
         )
-        .await?;
+        .await
+        {
+            Ok(gate) => gate,
+            Err(err) if unix_socket_bind_not_permitted(&err) => {
+                eprintln!("skipping execve gate test: unix socket bind not permitted");
+                return Ok(());
+            }
+            Err(err) => return Err(err),
+        };
 
         let stream = tokio::net::UnixStream::connect(&socket_path).await?;
         let (read_half, mut write_half) = stream.into_split();
@@ -772,7 +789,7 @@ mod execve_gate_tests {
         let socket_path = tmp.path().join("execve.sock");
         let token = "test-token".to_string();
 
-        let gate = spawn_execve_gate(
+        let gate = match spawn_execve_gate(
             ExecveGateContext {
                 thread_id,
                 turn_id: None,
@@ -784,7 +801,15 @@ mod execve_gate_tests {
             },
             socket_path.clone(),
         )
-        .await?;
+        .await
+        {
+            Ok(gate) => gate,
+            Err(err) if unix_socket_bind_not_permitted(&err) => {
+                eprintln!("skipping execve gate test: unix socket bind not permitted");
+                return Ok(());
+            }
+            Err(err) => return Err(err),
+        };
 
         let stream = tokio::net::UnixStream::connect(&socket_path).await?;
         let (read_half, mut write_half) = stream.into_split();

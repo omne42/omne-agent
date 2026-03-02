@@ -3,4 +3,4 @@ import type { ProcessModeDecision } from "./ProcessModeDecision";
 import type { ThreadId } from "./ThreadId";
 import type { ToolId } from "./ToolId";
 
-export type ProcessModeDeniedResponse = { tool_id: ToolId, denied: boolean, thread_id: ThreadId, mode: string, decision: ProcessModeDecision, decision_source: string, tool_override_hit: boolean, };
+export type ProcessModeDeniedResponse = { tool_id: ToolId, denied: boolean, thread_id: ThreadId, mode: string, decision: ProcessModeDecision, decision_source: string, tool_override_hit: boolean, error_code?: string, };

@@ -1,0 +1,615 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ThreadListMetaResponse",
+  "type": "object",
+  "properties": {
+    "threads": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/ThreadListMetaItem"
+      }
+    }
+  },
+  "definitions": {
+    "ApprovalPolicy": {
+      "type": "string",
+      "enum": [
+        "auto_approve",
+        "on_request",
+        "manual",
+        "unless_trusted",
+        "auto_deny"
+      ]
+    },
+    "SandboxPolicy": {
+      "type": "string",
+      "enum": [
+        "read_only",
+        "workspace_write",
+        "danger_full_access"
+      ]
+    },
+    "ThreadAttentionArtifactMarker": {
+      "type": "object",
+      "required": [
+        "artifact_id",
+        "artifact_type",
+        "set_at"
+      ],
+      "properties": {
+        "artifact_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "artifact_type": {
+          "type": "string"
+        },
+        "set_at": {
+          "type": "string"
+        },
+        "turn_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      }
+    },
+    "ThreadAttentionMarkers": {
+      "type": "object",
+      "properties": {
+        "diff_ready": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ThreadAttentionArtifactMarker"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "fan_out_auto_apply_error": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ThreadAttentionArtifactMarker"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "fan_out_linkage_issue": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ThreadAttentionArtifactMarker"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "plan_ready": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ThreadAttentionArtifactMarker"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "test_failed": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ThreadAttentionTestFailedMarker"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "token_budget_exceeded": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ThreadAttentionStateMarker"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "token_budget_warning": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ThreadAttentionStateMarker"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "ThreadAttentionStateMarker": {
+      "type": "object",
+      "required": [
+        "set_at"
+      ],
+      "properties": {
+        "set_at": {
+          "type": "string"
+        },
+        "turn_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      }
+    },
+    "ThreadAttentionTestFailedMarker": {
+      "type": "object",
+      "required": [
+        "process_id",
+        "set_at"
+      ],
+      "properties": {
+        "command": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "exit_code": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        },
+        "process_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "set_at": {
+          "type": "string"
+        },
+        "turn_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      }
+    },
+    "ThreadFanInDependencyBlockedSummary": {
+      "type": "object",
+      "required": [
+        "dependency_blocked_count",
+        "dependency_blocked_ratio",
+        "status",
+        "task_count",
+        "task_id"
+      ],
+      "properties": {
+        "blocker_status": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "blocker_task_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "dependency_blocked_count": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "dependency_blocked_ratio": {
+          "type": "number",
+          "format": "double"
+        },
+        "diagnostics_matched_completion_total": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "diagnostics_pending_matching_tool_ids_total": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "diagnostics_scan_last_seq_max": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "diagnostics_tasks": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "type": "string"
+        },
+        "task_count": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "task_id": {
+          "type": "string"
+        }
+      }
+    },
+    "ThreadFanInResultDiagnosticsSummary": {
+      "type": "object",
+      "required": [
+        "diagnostics_matched_completion_total",
+        "diagnostics_pending_matching_tool_ids_total",
+        "diagnostics_scan_last_seq_max",
+        "diagnostics_tasks",
+        "task_count"
+      ],
+      "properties": {
+        "diagnostics_matched_completion_total": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "diagnostics_pending_matching_tool_ids_total": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "diagnostics_scan_last_seq_max": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "diagnostics_tasks": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "task_count": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        }
+      }
+    },
+    "ThreadFanOutAutoApplySummary": {
+      "type": "object",
+      "required": [
+        "status",
+        "task_id"
+      ],
+      "properties": {
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "patch_artifact_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "recovery_1": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "recovery_commands": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "stage": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "type": "string"
+        },
+        "task_id": {
+          "type": "string"
+        }
+      }
+    },
+    "ThreadListMetaItem": {
+      "type": "object",
+      "required": [
+        "approval_policy",
+        "archived",
+        "attention_state",
+        "last_seq",
+        "sandbox_policy",
+        "thread_id"
+      ],
+      "properties": {
+        "active_turn_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "active_turn_interrupt_requested": {
+          "default": false,
+          "type": "boolean"
+        },
+        "approval_policy": {
+          "$ref": "#/definitions/ApprovalPolicy"
+        },
+        "archived": {
+          "type": "boolean"
+        },
+        "archived_at": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "archived_reason": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "attention_markers": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ThreadAttentionMarkers"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "attention_state": {
+          "type": "string"
+        },
+        "created_at": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cwd": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fan_in_dependency_blocker": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ThreadFanInDependencyBlockedSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "fan_in_result_diagnostics": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ThreadFanInResultDiagnosticsSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "fan_out_auto_apply": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ThreadFanOutAutoApplySummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "first_message": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "has_diff_ready": {
+          "default": false,
+          "type": "boolean"
+        },
+        "has_fan_in_dependency_blocked": {
+          "default": false,
+          "type": "boolean"
+        },
+        "has_fan_in_result_diagnostics": {
+          "default": false,
+          "type": "boolean"
+        },
+        "has_fan_out_auto_apply_error": {
+          "default": false,
+          "type": "boolean"
+        },
+        "has_fan_out_linkage_issue": {
+          "default": false,
+          "type": "boolean"
+        },
+        "has_plan_ready": {
+          "default": false,
+          "type": "boolean"
+        },
+        "has_test_failed": {
+          "default": false,
+          "type": "boolean"
+        },
+        "last_seq": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "last_turn_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "last_turn_reason": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "last_turn_status": {
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TurnStatus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "openai_base_url": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pending_subagent_proxy_approvals": {
+          "default": 0,
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "sandbox_policy": {
+          "$ref": "#/definitions/SandboxPolicy"
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "title": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "token_budget_exceeded": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "token_budget_limit": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "token_budget_remaining": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "token_budget_utilization": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "token_budget_warning_active": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "updated_at": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "TurnStatus": {
+      "type": "string",
+      "enum": [
+        "completed",
+        "interrupted",
+        "failed",
+        "cancelled",
+        "stuck"
+      ]
+    }
+  }
+}

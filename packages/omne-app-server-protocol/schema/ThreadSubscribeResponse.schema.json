@@ -1,0 +1,1229 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ThreadSubscribeResponse",
+  "type": "object",
+  "required": [
+    "events",
+    "has_more",
+    "last_seq",
+    "thread_last_seq",
+    "timed_out"
+  ],
+  "properties": {
+    "events": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/ThreadEvent"
+      }
+    },
+    "has_more": {
+      "type": "boolean"
+    },
+    "last_seq": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0.0
+    },
+    "thread_last_seq": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0.0
+    },
+    "timed_out": {
+      "type": "boolean"
+    }
+  },
+  "definitions": {
+    "AgentStepToolCall": {
+      "type": "object",
+      "required": [
+        "arguments",
+        "call_id",
+        "name"
+      ],
+      "properties": {
+        "arguments": {
+          "type": "string"
+        },
+        "call_id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "AgentStepToolResult": {
+      "type": "object",
+      "required": [
+        "call_id",
+        "output"
+      ],
+      "properties": {
+        "call_id": {
+          "type": "string"
+        },
+        "output": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ApprovalDecision": {
+      "type": "string",
+      "enum": [
+        "approved",
+        "denied"
+      ]
+    },
+    "ApprovalPolicy": {
+      "type": "string",
+      "enum": [
+        "auto_approve",
+        "on_request",
+        "manual",
+        "unless_trusted",
+        "auto_deny"
+      ]
+    },
+    "AttachmentSource": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "path",
+            "type"
+          ],
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "path"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "url"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "url"
+              ]
+            },
+            "url": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "AttentionMarkerKind": {
+      "type": "string",
+      "enum": [
+        "plan_ready",
+        "diff_ready",
+        "test_failed",
+        "fan_out_linkage_issue",
+        "fan_out_auto_apply_error",
+        "token_budget_warning",
+        "token_budget_exceeded"
+      ]
+    },
+    "CheckpointRestoreStatus": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "failed"
+      ]
+    },
+    "ContextRef": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "path"
+          ],
+          "properties": {
+            "end_line": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0.0
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "file"
+              ]
+            },
+            "max_bytes": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0.0
+            },
+            "path": {
+              "type": "string"
+            },
+            "start_line": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0.0
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "diff"
+              ]
+            },
+            "max_bytes": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0.0
+            }
+          }
+        }
+      ]
+    },
+    "ModelRoutingRuleSource": {
+      "type": "string",
+      "enum": [
+        "subagent",
+        "project_override",
+        "keyword_rule",
+        "role_default",
+        "global_default"
+      ]
+    },
+    "SandboxNetworkAccess": {
+      "type": "string",
+      "enum": [
+        "deny",
+        "allow"
+      ]
+    },
+    "SandboxPolicy": {
+      "type": "string",
+      "enum": [
+        "read_only",
+        "workspace_write",
+        "danger_full_access"
+      ]
+    },
+    "ThreadEvent": {
+      "type": "object",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "cwd",
+            "type"
+          ],
+          "properties": {
+            "cwd": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "thread_created"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "thread_archived"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "thread_unarchived"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "thread_paused"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "thread_unpaused"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "input",
+            "turn_id",
+            "type"
+          ],
+          "properties": {
+            "attachments": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "$ref": "#/definitions/TurnAttachment"
+              }
+            },
+            "context_refs": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "$ref": "#/definitions/ContextRef"
+              }
+            },
+            "directives": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "$ref": "#/definitions/TurnDirective"
+              }
+            },
+            "input": {
+              "type": "string"
+            },
+            "priority": {
+              "default": "foreground",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/TurnPriority"
+                }
+              ]
+            },
+            "turn_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "turn_started"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "rule_source",
+            "selected_model",
+            "turn_id",
+            "type"
+          ],
+          "properties": {
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "rule_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "rule_source": {
+              "$ref": "#/definitions/ModelRoutingRuleSource"
+            },
+            "selected_model": {
+              "type": "string"
+            },
+            "turn_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "model_routed"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "turn_id",
+            "type"
+          ],
+          "properties": {
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "turn_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "turn_interrupt_requested"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "status",
+            "turn_id",
+            "type"
+          ],
+          "properties": {
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "status": {
+              "$ref": "#/definitions/TurnStatus"
+            },
+            "turn_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "turn_completed"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "approval_policy",
+            "type"
+          ],
+          "properties": {
+            "allowed_tools": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "type": "string"
+              }
+            },
+            "approval_policy": {
+              "$ref": "#/definitions/ApprovalPolicy"
+            },
+            "execpolicy_rules": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "type": "string"
+              }
+            },
+            "mode": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "model": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "openai_base_url": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "sandbox_network_access": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/SandboxNetworkAccess"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "sandbox_policy": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/SandboxPolicy"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "sandbox_writable_roots": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "type": "string"
+              }
+            },
+            "show_thinking": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "thinking": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "thread_config_updated"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "action",
+            "approval_id",
+            "params",
+            "type"
+          ],
+          "properties": {
+            "action": {
+              "type": "string"
+            },
+            "approval_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "params": true,
+            "turn_id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "approval_requested"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "approval_id",
+            "decision",
+            "type"
+          ],
+          "properties": {
+            "approval_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "decision": {
+              "$ref": "#/definitions/ApprovalDecision"
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "remember": {
+              "type": "boolean"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "approval_decided"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "tool",
+            "tool_id",
+            "type"
+          ],
+          "properties": {
+            "params": true,
+            "tool": {
+              "type": "string"
+            },
+            "tool_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "turn_id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "tool_started"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "status",
+            "tool_id",
+            "type"
+          ],
+          "properties": {
+            "error": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "result": true,
+            "status": {
+              "$ref": "#/definitions/ToolStatus"
+            },
+            "tool_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "tool_completed"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "model",
+            "response_id",
+            "step",
+            "turn_id",
+            "type"
+          ],
+          "properties": {
+            "model": {
+              "type": "string"
+            },
+            "response_id": {
+              "type": "string"
+            },
+            "step": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0.0
+            },
+            "text": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "token_usage": true,
+            "tool_calls": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/AgentStepToolCall"
+              }
+            },
+            "tool_results": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/AgentStepToolResult"
+              }
+            },
+            "turn_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "agent_step"
+              ]
+            },
+            "warnings_count": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0.0
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "text",
+            "type"
+          ],
+          "properties": {
+            "model": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "response_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "text": {
+              "type": "string"
+            },
+            "token_usage": true,
+            "turn_id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "assistant_message"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "argv",
+            "cwd",
+            "process_id",
+            "stderr_path",
+            "stdout_path",
+            "type"
+          ],
+          "properties": {
+            "argv": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "cwd": {
+              "type": "string"
+            },
+            "process_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "stderr_path": {
+              "type": "string"
+            },
+            "stdout_path": {
+              "type": "string"
+            },
+            "turn_id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "process_started"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "process_id",
+            "type"
+          ],
+          "properties": {
+            "process_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "process_interrupt_requested"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "process_id",
+            "type"
+          ],
+          "properties": {
+            "process_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "process_kill_requested"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "process_id",
+            "type"
+          ],
+          "properties": {
+            "exit_code": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32"
+            },
+            "process_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "process_exited"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "marker",
+            "type"
+          ],
+          "properties": {
+            "artifact_id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            },
+            "artifact_type": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "command": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "exit_code": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32"
+            },
+            "marker": {
+              "$ref": "#/definitions/AttentionMarkerKind"
+            },
+            "process_id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            },
+            "turn_id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "attention_marker_set"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "marker",
+            "type"
+          ],
+          "properties": {
+            "marker": {
+              "$ref": "#/definitions/AttentionMarkerKind"
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "turn_id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "attention_marker_cleared"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "checkpoint_id",
+            "snapshot_ref",
+            "type"
+          ],
+          "properties": {
+            "checkpoint_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "label": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "snapshot_ref": {
+              "type": "string"
+            },
+            "turn_id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "checkpoint_created"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "checkpoint_id",
+            "status",
+            "type"
+          ],
+          "properties": {
+            "checkpoint_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "report_artifact_id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            },
+            "status": {
+              "$ref": "#/definitions/CheckpointRestoreStatus"
+            },
+            "turn_id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "checkpoint_restored"
+              ]
+            }
+          }
+        }
+      ],
+      "required": [
+        "seq",
+        "thread_id",
+        "timestamp"
+      ],
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "timestamp": {
+          "type": "string"
+        }
+      }
+    },
+    "ToolStatus": {
+      "type": "string",
+      "enum": [
+        "completed",
+        "failed",
+        "denied",
+        "cancelled"
+      ]
+    },
+    "TurnAttachment": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "source"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "image"
+              ]
+            },
+            "media_type": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "source": {
+              "$ref": "#/definitions/AttachmentSource"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "media_type",
+            "source"
+          ],
+          "properties": {
+            "filename": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "file"
+              ]
+            },
+            "media_type": {
+              "type": "string"
+            },
+            "source": {
+              "$ref": "#/definitions/AttachmentSource"
+            }
+          }
+        }
+      ]
+    },
+    "TurnDirective": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "plan"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "TurnPriority": {
+      "type": "string",
+      "enum": [
+        "foreground",
+        "background"
+      ]
+    },
+    "TurnStatus": {
+      "type": "string",
+      "enum": [
+        "completed",
+        "interrupted",
+        "failed",
+        "cancelled",
+        "stuck"
+      ]
+    }
+  }
+}

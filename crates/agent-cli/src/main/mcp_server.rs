@@ -48,6 +48,7 @@ async fn run_mcp_serve(app: &mut App, args: McpServeArgs) -> anyhow::Result<()> 
                 mode: Some("reviewer".to_string()),
                 model: None,
                 thinking: None,
+                show_thinking: None,
                 openai_base_url: None,
                 allowed_tools: None,
                 execpolicy_rules: None,

@@ -68,7 +68,15 @@ pub async fn run_agent_turn(
     cancel: CancellationToken,
     turn_priority: omne_protocol::TurnPriority,
 ) -> anyhow::Result<()> {
-    let (thread_id, thread_mode, thread_model, thread_openai_base_url, thread_cwd, allowed_tools) = {
+    let (
+        thread_id,
+        thread_mode,
+        thread_model,
+        thread_openai_base_url,
+        thread_show_thinking,
+        thread_cwd,
+        allowed_tools,
+    ) = {
         let handle = thread_rt.handle.lock().await;
         let state = handle.state();
         (
@@ -76,6 +84,7 @@ pub async fn run_agent_turn(
             state.mode.clone(),
             state.model.clone(),
             state.openai_base_url.clone(),
+            state.show_thinking,
             state.cwd.clone(),
             state.allowed_tools.clone(),
         )
@@ -86,11 +95,28 @@ pub async fn run_agent_turn(
         None => None,
     };
 
-    let mut project_overrides = if let Some(thread_root) = thread_root.as_deref() {
-        crate::project_config::load_project_openai_overrides(thread_root).await
+    let (mut project_overrides, project_ui) = if let Some(thread_root) = thread_root.as_deref() {
+        let loaded = crate::project_config::load_project_config(thread_root).await;
+        (loaded.openai, loaded.ui)
     } else {
-        ProjectOpenAiOverrides::default()
+        (
+            ProjectOpenAiOverrides::default(),
+            crate::project_config::ProjectUiOverrides::default(),
+        )
     };
+
+    let mode_show_thinking = if let Some(thread_root) = thread_root.as_deref() {
+        let catalog = omne_core::modes::ModeCatalog::load(thread_root).await;
+        catalog
+            .mode(&thread_mode)
+            .and_then(|mode| mode.ui.show_thinking)
+    } else {
+        None
+    };
+    let show_thinking = thread_show_thinking
+        .or(mode_show_thinking)
+        .or(project_ui.show_thinking)
+        .unwrap_or(true);
 
     let provider = project_overrides
         .provider
@@ -296,6 +322,19 @@ pub async fn run_agent_turn(
         }
         Err(_) => None,
     };
+
+    if response_format.is_some() && !provider_capabilities.json_schema {
+        thread_rt
+            .emit_item_delta_warning_once(
+                format!("json_schema_unsupported:{provider}"),
+                thread_id,
+                turn_id,
+                format!(
+                    "response_format is set, but provider does not advertise json_schema support; request will be forwarded but may be ignored or error (provider={provider})"
+                ),
+            )
+            .await;
+    }
 
     let mut instructions = DEFAULT_INSTRUCTIONS.to_string();
 
@@ -522,6 +561,7 @@ pub async fn run_agent_turn(
         parallel_tool_calls,
         max_parallel_tool_calls,
         response_format,
+        show_thinking,
     };
 
     let ToolLoopOutcome {

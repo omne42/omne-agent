@@ -2,4 +2,4 @@
 import type { McpModeDecision } from "./McpModeDecision";
 import type { ToolId } from "./ToolId";
 
-export type McpModeDeniedResponse = { tool_id: ToolId, denied: boolean, mode: string, decision: McpModeDecision, decision_source: string, tool_override_hit: boolean, };
+export type McpModeDeniedResponse = { tool_id: ToolId, denied: boolean, mode: string, decision: McpModeDecision, decision_source: string, tool_override_hit: boolean, error_code?: string, };

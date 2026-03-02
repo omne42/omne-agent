@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ApprovalDecideResponse",
+  "type": "object",
+  "required": [
+    "ok"
+  ],
+  "properties": {
+    "child_approval_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
+    "child_thread_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
+    "forwarded": {
+      "type": "boolean"
+    },
+    "ok": {
+      "type": "boolean"
+    }
+  }
+}

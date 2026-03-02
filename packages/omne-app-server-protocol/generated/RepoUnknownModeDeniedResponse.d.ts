@@ -2,4 +2,4 @@
 import type { RepoModeDecision } from "./RepoModeDecision";
 import type { ToolId } from "./ToolId";
 
-export type RepoUnknownModeDeniedResponse = { tool_id: ToolId, denied: boolean, mode: string, decision: RepoModeDecision, available: string, load_error?: string, };
+export type RepoUnknownModeDeniedResponse = { tool_id: ToolId, denied: boolean, mode: string, decision: RepoModeDecision, available: string, load_error?: string, error_code?: string, };

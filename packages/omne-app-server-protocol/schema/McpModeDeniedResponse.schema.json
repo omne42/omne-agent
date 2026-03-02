@@ -19,6 +19,12 @@
       "default": false,
       "type": "boolean"
     },
+    "error_code": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "mode": {
       "type": "string"
     },

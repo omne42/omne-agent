@@ -11,6 +11,12 @@
       "default": false,
       "type": "boolean"
     },
+    "error_code": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "sandbox_network_access": {
       "$ref": "#/definitions/SandboxNetworkAccess"
     },

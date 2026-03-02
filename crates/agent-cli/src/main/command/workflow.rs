@@ -1207,6 +1207,7 @@ pub(super) async fn run_command_run(
         mode: Some(wf.frontmatter.mode.clone()),
         model: None,
         thinking: None,
+        show_thinking: wf.frontmatter.show_thinking,
         openai_base_url: None,
         allowed_tools: wf.frontmatter.allowed_tools.clone().map(Some),
         execpolicy_rules: None,

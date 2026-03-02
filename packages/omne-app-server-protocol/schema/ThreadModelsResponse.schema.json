@@ -1,0 +1,83 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ThreadModelsResponse",
+  "type": "object",
+  "required": [
+    "base_url",
+    "capabilities",
+    "current_model",
+    "provider",
+    "thinking"
+  ],
+  "properties": {
+    "base_url": {
+      "type": "string"
+    },
+    "capabilities": {
+      "$ref": "#/definitions/ThreadModelCapabilities"
+    },
+    "current_model": {
+      "type": "string"
+    },
+    "default_model": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "model_whitelist": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "models": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "provider": {
+      "type": "string"
+    },
+    "thinking": {
+      "type": "string"
+    }
+  },
+  "definitions": {
+    "ThreadModelCapabilities": {
+      "type": "object",
+      "required": [
+        "json_schema",
+        "prompt_cache",
+        "reasoning",
+        "streaming",
+        "tools",
+        "vision"
+      ],
+      "properties": {
+        "json_schema": {
+          "type": "boolean"
+        },
+        "prompt_cache": {
+          "type": "boolean"
+        },
+        "reasoning": {
+          "type": "boolean"
+        },
+        "streaming": {
+          "type": "boolean"
+        },
+        "tools": {
+          "type": "boolean"
+        },
+        "vision": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

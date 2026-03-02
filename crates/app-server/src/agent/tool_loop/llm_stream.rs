@@ -4,6 +4,7 @@ async fn run_llm_stream_once(
     thread_id: ThreadId,
     turn_id: TurnId,
     emit_deltas: bool,
+    show_thinking: bool,
     req: ditto_llm::GenerateRequest,
     max_openai_request_duration: Duration,
 ) -> Result<AgentLlmResponse, LlmAttemptFailure> {
@@ -282,6 +283,9 @@ async fn run_llm_stream_once(
                                 if let Some(reasoning_effort) = options.get("reasoning_effort") {
                                     body.insert("reasoning_effort".to_string(), reasoning_effort.clone());
                                 }
+                                if let Some(prompt_cache_key) = options.get("prompt_cache_key") {
+                                    body.insert("prompt_cache_key".to_string(), prompt_cache_key.clone());
+                                }
                             }
 
                             if let Ok(raw) = serde_json::to_vec_pretty(&Value::Object(body)) {
@@ -421,9 +425,23 @@ async fn run_llm_stream_once(
                         tool_call_order.push(id);
                     }
                 }
-                ditto_llm::StreamChunk::ReasoningDelta { .. } => {
+                ditto_llm::StreamChunk::ReasoningDelta { text } => {
                     debug_counts.reasoning_delta = debug_counts.reasoning_delta.saturating_add(1);
-                    emitted_output = true;
+                    if emit_deltas && show_thinking && !text.is_empty() {
+                        emitted_output = true;
+                        let delta = omne_core::redact_text(&text);
+                        let response_id_snapshot = response_id.clone();
+                        thread_rt.emit_notification(
+                            "item/delta",
+                            &serde_json::json!({
+                                "thread_id": thread_id,
+                                "turn_id": turn_id,
+                                "response_id": response_id_snapshot,
+                                "kind": "thinking",
+                                "delta": delta,
+                            }),
+                        );
+                    }
                 }
                 ditto_llm::StreamChunk::Usage(u) => {
                     debug_counts.usage = debug_counts.usage.saturating_add(1);
@@ -515,6 +533,7 @@ async fn run_llm_stream_once(
                 thread_id,
                 turn_id,
                 emit_deltas,
+                show_thinking,
                 req_for_generate,
             )
             .await?;
@@ -592,6 +611,7 @@ async fn run_llm_generate_inner(
     thread_id: ThreadId,
     turn_id: TurnId,
     emit_deltas: bool,
+    show_thinking: bool,
     req: ditto_llm::GenerateRequest,
 ) -> Result<AgentLlmResponse, ditto_llm::DittoError> {
     let resp = llm.generate(req).await?;
@@ -603,11 +623,13 @@ async fn run_llm_generate_inner(
     }
 
     let mut output_text = String::new();
+    let mut reasoning_text = String::new();
     let mut tool_calls = Vec::<(String, String, String)>::new();
 
     for part in &resp.content {
         match part {
             ditto_llm::ContentPart::Text { text } => output_text.push_str(text),
+            ditto_llm::ContentPart::Reasoning { text } => reasoning_text.push_str(text),
             ditto_llm::ContentPart::ToolCall { id, name, arguments } => {
                 tool_calls.push((
                     id.to_string(),
@@ -620,6 +642,19 @@ async fn run_llm_generate_inner(
     }
 
     let mut output_items = Vec::<OpenAiItem>::new();
+    if !reasoning_text.is_empty() && emit_deltas && show_thinking {
+        let delta = omne_core::redact_text(&reasoning_text);
+        thread_rt.emit_notification(
+            "item/delta",
+            &serde_json::json!({
+                "thread_id": thread_id,
+                "turn_id": turn_id,
+                "response_id": response_id.clone(),
+                "kind": "thinking",
+                "delta": delta,
+            }),
+        );
+    }
     if !output_text.is_empty() {
         let output_text = omne_core::redact_text(&output_text);
         output_items.push(serde_json::json!({
@@ -666,6 +701,7 @@ async fn run_llm_generate_once(
     thread_id: ThreadId,
     turn_id: TurnId,
     emit_deltas: bool,
+    show_thinking: bool,
     req: ditto_llm::GenerateRequest,
     max_openai_request_duration: Duration,
 ) -> Result<AgentLlmResponse, LlmAttemptFailure> {
@@ -677,6 +713,7 @@ async fn run_llm_generate_once(
             thread_id,
             turn_id,
             emit_deltas,
+            show_thinking,
             req,
         )
         .await?;
@@ -766,6 +803,7 @@ mod llm_stream_tests {
             thread_id,
             TurnId::new(),
             false,
+            false,
             req,
             Duration::from_secs(5),
         )
@@ -779,6 +817,114 @@ mod llm_stream_tests {
                 .iter()
                 .any(|w| matches!(w, ditto_llm::Warning::Compatibility { feature, .. } if feature == "stream.empty_output"))
         );
+
+        Ok(())
+    }
+
+    #[derive(Clone)]
+    struct ReasoningStreamEmitsDeltas;
+
+    #[async_trait]
+    impl ditto_llm::LanguageModel for ReasoningStreamEmitsDeltas {
+        fn provider(&self) -> &str {
+            "openai-compatible"
+        }
+
+        fn model_id(&self) -> &str {
+            "stub"
+        }
+
+        async fn generate(
+            &self,
+            _request: ditto_llm::GenerateRequest,
+        ) -> ditto_llm::Result<ditto_llm::GenerateResponse> {
+            Ok(ditto_llm::GenerateResponse {
+                content: vec![ditto_llm::ContentPart::Text {
+                    text: "OK".to_string(),
+                }],
+                provider_metadata: Some(serde_json::json!({ "id": "resp_gen_1" })),
+                ..Default::default()
+            })
+        }
+
+        async fn stream(
+            &self,
+            _request: ditto_llm::GenerateRequest,
+        ) -> ditto_llm::Result<ditto_llm::StreamResult> {
+            Ok(Box::pin(stream::iter(vec![
+                Ok(ditto_llm::StreamChunk::ResponseId {
+                    id: "resp_stream_1".to_string(),
+                }),
+                Ok(ditto_llm::StreamChunk::ReasoningDelta {
+                    text: "thinking...".to_string(),
+                }),
+                Ok(ditto_llm::StreamChunk::TextDelta {
+                    text: "OK".to_string(),
+                }),
+                Ok(ditto_llm::StreamChunk::FinishReason(ditto_llm::FinishReason::Stop)),
+            ])))
+        }
+    }
+
+    #[tokio::test]
+    async fn reasoning_delta_emits_item_delta_thinking_when_enabled() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let store = omne_core::ThreadStore::new(omne_core::PmPaths::new(
+            dir.path().join(".omne_data"),
+        ));
+        let handle = store.create_thread(std::path::PathBuf::from("/tmp")).await?;
+        let thread_id = handle.thread_id();
+        let (notify_tx, mut notify_rx) = tokio::sync::broadcast::channel(16);
+        let thread_rt = Arc::new(crate::ThreadRuntime::new(handle, notify_tx));
+
+        let turn_id = TurnId::new();
+        let req = ditto_llm::GenerateRequest::from(vec![ditto_llm::Message::user("ping")]);
+        let resp = run_llm_stream_once(
+            Arc::new(ReasoningStreamEmitsDeltas),
+            thread_rt,
+            thread_id,
+            turn_id,
+            true,
+            true,
+            req,
+            Duration::from_secs(5),
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("llm attempt failed: {:?}", err.error))?;
+
+        assert_eq!(resp.id, "resp_stream_1");
+        assert_eq!(extract_assistant_text(&resp.output), "OK");
+
+        let thread_id_str = thread_id.to_string();
+        let turn_id_str = turn_id.to_string();
+        let mut saw_thinking = false;
+        let mut saw_output = false;
+        while let Ok(line) = notify_rx.try_recv() {
+            let value: Value = serde_json::from_str(&line)?;
+            if value.get("method").and_then(Value::as_str) != Some("item/delta") {
+                continue;
+            }
+            let Some(params) = value.get("params").and_then(Value::as_object) else {
+                continue;
+            };
+            if params.get("thread_id").and_then(Value::as_str) != Some(thread_id_str.as_str()) {
+                continue;
+            }
+            if params.get("turn_id").and_then(Value::as_str) != Some(turn_id_str.as_str()) {
+                continue;
+            }
+            let kind = params.get("kind").and_then(Value::as_str).unwrap_or("");
+            let delta = params.get("delta").and_then(Value::as_str).unwrap_or("");
+            if kind == "thinking" && delta.contains("thinking") {
+                saw_thinking = true;
+            }
+            if kind == "output_text" && delta.contains("OK") {
+                saw_output = true;
+            }
+        }
+
+        assert!(saw_thinking, "expected item/delta kind=thinking");
+        assert!(saw_output, "expected item/delta kind=output_text");
 
         Ok(())
     }

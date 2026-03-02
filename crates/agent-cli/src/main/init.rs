@@ -210,6 +210,10 @@ async fn write_omne_config_toml(
 [project_config]
 enabled = {enabled}
 
+[ui]
+# Show model thinking/reasoning deltas in clients (default: true).
+# show_thinking = true
+
 [openai]
 # provider = "openai-codex-apikey" # selects a profile under [openai.providers]
 # model = "gpt-4.1"                # default model for this project
@@ -281,6 +285,10 @@ async fn write_omne_config_local_toml(
 
 [project_config]
 enabled = {enabled}
+
+[ui]
+# Show model thinking/reasoning deltas in clients (default: true).
+# show_thinking = true
 
 [openai]
 # provider = "openai-codex-apikey" # selects a profile under [openai.providers]
@@ -470,6 +478,8 @@ modes: {}
 # modes:
 #   docs-only:
 #     description: "Read and docs edits only."
+#     ui:
+#       show_thinking: false
 #     permissions:
 #       read: { decision: allow }
 #       edit:

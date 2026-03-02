@@ -51,6 +51,7 @@ omne command run <name> --var key=value
 version: 1
 name: commit-push-pr
 mode: coder
+show_thinking: true
 allowed_tools:
   - process/start
   - process/inspect
@@ -78,6 +79,7 @@ inputs:
 - `version`：整数，当前固定为 `1`。
 - `name`：显示名（可选；默认用文件名）。
 - `mode`：默认 mode（`architect/coder/reviewer/builder/debugger/merger`），用于选择权限边界（见 `docs/modes.md`）。
+- `show_thinking`：是否展示模型 thinking/reasoning 流式（可选；默认 true；适合某些“只想看结论”的 workflow 关闭）。
 - `allowed_tools`：额外的“最小权限”收口（可选）：
   - 语义是 **再收紧**：不在列表里的工具一律 `deny`（即使 mode 允许，也要拒绝）。
   - 与 mode 的合并语义：先算 mode gate，再与 `allowed_tools` 取交集（deny 优先）。

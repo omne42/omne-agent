@@ -3,12 +3,18 @@
   "title": "RepoDeniedResponse",
   "type": "object",
   "required": [
+    "denied",
     "tool_id"
   ],
   "properties": {
     "denied": {
-      "default": false,
       "type": "boolean"
+    },
+    "error_code": {
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "remembered": {
       "type": [

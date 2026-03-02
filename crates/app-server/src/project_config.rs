@@ -16,6 +16,11 @@ pub struct ProjectOpenAiOverrides {
     pub dotenv: BTreeMap<String, String>,
 }
 
+#[derive(Default)]
+pub struct ProjectUiOverrides {
+    pub show_thinking: Option<bool>,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum ProjectConfigSource {
     /// `.omne_data/config_local.toml` (gitignored)
@@ -42,6 +47,7 @@ pub struct LoadedProjectConfig {
     pub env_present: bool,
     pub load_error: Option<String>,
     pub openai: ProjectOpenAiOverrides,
+    pub ui: ProjectUiOverrides,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -50,6 +56,8 @@ struct ProjectConfigToml {
     project_config: ProjectConfigSection,
     #[serde(default)]
     openai: ProjectOpenAiSection,
+    #[serde(default)]
+    ui: ProjectUiSection,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -72,6 +80,12 @@ struct ProjectOpenAiSection {
     providers: BTreeMap<String, ProviderConfig>,
     #[serde(default)]
     models: BTreeMap<String, ModelConfig>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ProjectUiSection {
+    #[serde(default)]
+    show_thinking: Option<bool>,
 }
 
 #[derive(Default)]
@@ -203,6 +217,7 @@ pub async fn load_project_config(thread_root: &Path) -> LoadedProjectConfig {
     let mut config_openai_fallback_providers: Vec<String> = Vec::new();
     let mut config_openai_providers: BTreeMap<String, ProviderConfig> = BTreeMap::new();
     let mut config_openai_models: BTreeMap<String, ModelConfig> = BTreeMap::new();
+    let mut config_ui_show_thinking: Option<bool> = None;
 
     if let Some(raw) = config_raw {
         match toml::from_str::<ProjectConfigToml>(&raw) {
@@ -215,6 +230,7 @@ pub async fn load_project_config(thread_root: &Path) -> LoadedProjectConfig {
                     clean_string_list(parsed.openai.fallback_providers);
                 config_openai_providers = parsed.openai.providers;
                 config_openai_models = parsed.openai.models;
+                config_ui_show_thinking = parsed.ui.show_thinking;
             }
             Err(err) => {
                 let msg = format!("parse {}: {err}", config_path.display());
@@ -236,6 +252,7 @@ pub async fn load_project_config(thread_root: &Path) -> LoadedProjectConfig {
             env_present: false,
             load_error,
             openai: ProjectOpenAiOverrides::default(),
+            ui: ProjectUiOverrides::default(),
         };
     }
 
@@ -282,6 +299,9 @@ pub async fn load_project_config(thread_root: &Path) -> LoadedProjectConfig {
         models: config_openai_models,
         dotenv,
     };
+    let ui = ProjectUiOverrides {
+        show_thinking: config_ui_show_thinking,
+    };
 
     LoadedProjectConfig {
         enabled,
@@ -292,6 +312,7 @@ pub async fn load_project_config(thread_root: &Path) -> LoadedProjectConfig {
         env_present,
         load_error,
         openai,
+        ui,
     }
 }
 

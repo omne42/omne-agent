@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ThreadDeleteResponse",
+  "type": "object",
+  "required": [
+    "deleted",
+    "thread_dir",
+    "thread_id"
+  ],
+  "properties": {
+    "deleted": {
+      "type": "boolean"
+    },
+    "thread_dir": {
+      "type": "string"
+    },
+    "thread_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

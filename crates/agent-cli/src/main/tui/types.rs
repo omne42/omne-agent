@@ -45,6 +45,7 @@
     enum TranscriptRole {
         User,
         Assistant,
+        Thinking,
         System,
         Error,
         Tool,
@@ -53,7 +54,8 @@
     #[derive(Debug, Clone)]
     struct StreamingState {
         turn_id: TurnId,
-        text: String,
+        output_text: String,
+        thinking: String,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]

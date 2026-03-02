@@ -1,0 +1,987 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ThreadGitSnapshotRpcResponse",
+  "anyOf": [
+    {
+      "$ref": "#/definitions/ThreadGitSnapshotNeedsApprovalResponse"
+    },
+    {
+      "$ref": "#/definitions/ThreadGitSnapshotDeniedResponse"
+    },
+    {
+      "$ref": "#/definitions/ThreadGitSnapshotTimedOutResponse"
+    },
+    {
+      "$ref": "#/definitions/ThreadGitSnapshotResponse"
+    }
+  ],
+  "definitions": {
+    "ArtifactAllowedToolsDeniedResponse": {
+      "type": "object",
+      "required": [
+        "tool",
+        "tool_id"
+      ],
+      "properties": {
+        "allowed_tools": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "denied": {
+          "default": false,
+          "type": "boolean"
+        },
+        "error_code": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tool": {
+          "type": "string"
+        },
+        "tool_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "ArtifactDeniedResponse": {
+      "type": "object",
+      "required": [
+        "denied",
+        "tool_id"
+      ],
+      "properties": {
+        "denied": {
+          "type": "boolean"
+        },
+        "error_code": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "remembered": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "tool_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "ArtifactMetadata": {
+      "type": "object",
+      "required": [
+        "artifact_id",
+        "artifact_type",
+        "content_path",
+        "created_at",
+        "size_bytes",
+        "summary",
+        "updated_at",
+        "version"
+      ],
+      "properties": {
+        "artifact_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "artifact_type": {
+          "type": "string"
+        },
+        "content_path": {
+          "type": "string"
+        },
+        "created_at": {
+          "type": "string"
+        },
+        "preview": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ArtifactPreview"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "provenance": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ArtifactProvenance"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "size_bytes": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "summary": {
+          "type": "string"
+        },
+        "updated_at": {
+          "type": "string"
+        },
+        "version": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        }
+      }
+    },
+    "ArtifactModeDecision": {
+      "type": "string",
+      "enum": [
+        "allow",
+        "prompt",
+        "deny"
+      ]
+    },
+    "ArtifactModeDeniedResponse": {
+      "type": "object",
+      "required": [
+        "decision",
+        "decision_source",
+        "mode",
+        "tool_id"
+      ],
+      "properties": {
+        "decision": {
+          "$ref": "#/definitions/ArtifactModeDecision"
+        },
+        "decision_source": {
+          "type": "string"
+        },
+        "denied": {
+          "default": false,
+          "type": "boolean"
+        },
+        "error_code": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "mode": {
+          "type": "string"
+        },
+        "tool_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "tool_override_hit": {
+          "default": false,
+          "type": "boolean"
+        }
+      }
+    },
+    "ArtifactPreview": {
+      "type": "object",
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "$ref": "#/definitions/ArtifactPreviewKind"
+        },
+        "language": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "ArtifactPreviewKind": {
+      "type": "string",
+      "enum": [
+        "markdown",
+        "diff_unified",
+        "patch_unified",
+        "code",
+        "html",
+        "log"
+      ]
+    },
+    "ArtifactProvenance": {
+      "type": "object",
+      "required": [
+        "thread_id"
+      ],
+      "properties": {
+        "process_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "tool_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "turn_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      }
+    },
+    "ArtifactPruneReportVersionDetail": {
+      "type": "object",
+      "required": [
+        "version"
+      ],
+      "properties": {
+        "size_bytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "version": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        }
+      }
+    },
+    "ArtifactUnknownModeDeniedResponse": {
+      "type": "object",
+      "required": [
+        "available",
+        "decision",
+        "mode",
+        "tool_id"
+      ],
+      "properties": {
+        "available": {
+          "type": "string"
+        },
+        "decision": {
+          "$ref": "#/definitions/ArtifactModeDecision"
+        },
+        "denied": {
+          "default": false,
+          "type": "boolean"
+        },
+        "error_code": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "load_error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "mode": {
+          "type": "string"
+        },
+        "tool_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "ArtifactWriteHistory": {
+      "type": "object",
+      "required": [
+        "max_versions"
+      ],
+      "properties": {
+        "max_versions": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "prune_error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "prune_report_artifact_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "prune_report_error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pruned_version_details": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ArtifactPruneReportVersionDetail"
+          }
+        },
+        "pruned_versions": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0.0
+          }
+        },
+        "snapshotted_version": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        }
+      }
+    },
+    "ArtifactWriteResponse": {
+      "type": "object",
+      "required": [
+        "artifact_id",
+        "content_path",
+        "metadata",
+        "metadata_path",
+        "tool_id"
+      ],
+      "properties": {
+        "artifact_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "content_path": {
+          "type": "string"
+        },
+        "created": {
+          "default": false,
+          "type": "boolean"
+        },
+        "history": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ArtifactWriteHistory"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "metadata": {
+          "$ref": "#/definitions/ArtifactMetadata"
+        },
+        "metadata_path": {
+          "type": "string"
+        },
+        "tool_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "ExecPolicyDecision": {
+      "type": "string",
+      "enum": [
+        "allow",
+        "prompt",
+        "prompt_strict",
+        "forbidden"
+      ]
+    },
+    "ExecPolicyRuleMatch": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "prefixRuleMatch"
+          ],
+          "properties": {
+            "prefixRuleMatch": {
+              "type": "object",
+              "required": [
+                "decision",
+                "matchedPrefix"
+              ],
+              "properties": {
+                "decision": {
+                  "$ref": "#/definitions/ExecPolicyDecision"
+                },
+                "justification": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "matchedPrefix": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "heuristicsRuleMatch"
+          ],
+          "properties": {
+            "heuristicsRuleMatch": {
+              "type": "object",
+              "required": [
+                "command",
+                "decision"
+              ],
+              "properties": {
+                "command": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "decision": {
+                  "$ref": "#/definitions/ExecPolicyDecision"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ProcessAllowedToolsDeniedResponse": {
+      "type": "object",
+      "required": [
+        "allowed_tools",
+        "denied",
+        "tool",
+        "tool_id"
+      ],
+      "properties": {
+        "allowed_tools": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "denied": {
+          "type": "boolean"
+        },
+        "error_code": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tool": {
+          "type": "string"
+        },
+        "tool_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "ProcessDeniedResponse": {
+      "type": "object",
+      "required": [
+        "denied",
+        "thread_id",
+        "tool_id"
+      ],
+      "properties": {
+        "denied": {
+          "type": "boolean"
+        },
+        "error_code": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "remembered": {
+          "default": null,
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "tool_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "ProcessExecPolicyDeniedResponse": {
+      "type": "object",
+      "required": [
+        "decision",
+        "denied",
+        "matched_rules",
+        "tool_id"
+      ],
+      "properties": {
+        "decision": {
+          "$ref": "#/definitions/ExecPolicyDecision"
+        },
+        "denied": {
+          "type": "boolean"
+        },
+        "error_code": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "justification": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "matched_rules": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ExecPolicyRuleMatch"
+          }
+        },
+        "tool_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "ProcessExecPolicyLoadDeniedResponse": {
+      "type": "object",
+      "required": [
+        "denied",
+        "details",
+        "error",
+        "mode",
+        "tool_id"
+      ],
+      "properties": {
+        "denied": {
+          "type": "boolean"
+        },
+        "details": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        },
+        "error_code": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "mode": {
+          "type": "string"
+        },
+        "tool_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "ProcessModeDecision": {
+      "type": "string",
+      "enum": [
+        "allow",
+        "prompt",
+        "deny"
+      ]
+    },
+    "ProcessModeDeniedResponse": {
+      "type": "object",
+      "required": [
+        "decision",
+        "decision_source",
+        "denied",
+        "mode",
+        "thread_id",
+        "tool_id",
+        "tool_override_hit"
+      ],
+      "properties": {
+        "decision": {
+          "$ref": "#/definitions/ProcessModeDecision"
+        },
+        "decision_source": {
+          "type": "string"
+        },
+        "denied": {
+          "type": "boolean"
+        },
+        "error_code": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "mode": {
+          "type": "string"
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "tool_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "tool_override_hit": {
+          "type": "boolean"
+        }
+      }
+    },
+    "ProcessSandboxNetworkDeniedResponse": {
+      "type": "object",
+      "required": [
+        "denied",
+        "sandbox_network_access",
+        "tool_id"
+      ],
+      "properties": {
+        "denied": {
+          "type": "boolean"
+        },
+        "error_code": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sandbox_network_access": {
+          "$ref": "#/definitions/SandboxNetworkAccess"
+        },
+        "tool_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "ProcessSandboxPolicyDeniedResponse": {
+      "type": "object",
+      "required": [
+        "denied",
+        "sandbox_policy",
+        "tool_id"
+      ],
+      "properties": {
+        "denied": {
+          "type": "boolean"
+        },
+        "error_code": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sandbox_policy": {
+          "$ref": "#/definitions/SandboxPolicy"
+        },
+        "tool_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "ProcessUnknownModeDeniedResponse": {
+      "type": "object",
+      "required": [
+        "available",
+        "decision",
+        "denied",
+        "mode",
+        "thread_id",
+        "tool_id"
+      ],
+      "properties": {
+        "available": {
+          "type": "string"
+        },
+        "decision": {
+          "$ref": "#/definitions/ProcessModeDecision"
+        },
+        "denied": {
+          "type": "boolean"
+        },
+        "error_code": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "load_error": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "mode": {
+          "type": "string"
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "tool_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "SandboxNetworkAccess": {
+      "type": "string",
+      "enum": [
+        "deny",
+        "allow"
+      ]
+    },
+    "SandboxPolicy": {
+      "type": "string",
+      "enum": [
+        "read_only",
+        "workspace_write",
+        "danger_full_access"
+      ]
+    },
+    "ThreadArtifactDeniedDetail": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/ArtifactAllowedToolsDeniedResponse"
+        },
+        {
+          "$ref": "#/definitions/ArtifactModeDeniedResponse"
+        },
+        {
+          "$ref": "#/definitions/ArtifactUnknownModeDeniedResponse"
+        },
+        {
+          "$ref": "#/definitions/ArtifactDeniedResponse"
+        }
+      ]
+    },
+    "ThreadGitSnapshotDeniedDetail": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/ThreadProcessDeniedDetail"
+        },
+        {
+          "$ref": "#/definitions/ThreadArtifactDeniedDetail"
+        }
+      ]
+    },
+    "ThreadGitSnapshotDeniedResponse": {
+      "type": "object",
+      "required": [
+        "denied",
+        "detail",
+        "thread_id"
+      ],
+      "properties": {
+        "denied": {
+          "type": "boolean"
+        },
+        "detail": {
+          "$ref": "#/definitions/ThreadGitSnapshotDeniedDetail"
+        },
+        "error_code": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "ThreadGitSnapshotNeedsApprovalResponse": {
+      "type": "object",
+      "required": [
+        "approval_id",
+        "needs_approval",
+        "thread_id"
+      ],
+      "properties": {
+        "approval_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "needs_approval": {
+          "type": "boolean"
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "ThreadGitSnapshotResponse": {
+      "type": "object",
+      "required": [
+        "artifact",
+        "max_bytes",
+        "process_id",
+        "stderr_path",
+        "stdout_path",
+        "thread_id",
+        "truncated"
+      ],
+      "properties": {
+        "artifact": {
+          "$ref": "#/definitions/ArtifactWriteResponse"
+        },
+        "exit_code": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        },
+        "max_bytes": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "process_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "stderr_path": {
+          "type": "string"
+        },
+        "stdout_path": {
+          "type": "string"
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      }
+    },
+    "ThreadGitSnapshotTimedOutResponse": {
+      "type": "object",
+      "required": [
+        "process_id",
+        "stderr_path",
+        "stdout_path",
+        "thread_id",
+        "timed_out",
+        "wait_seconds"
+      ],
+      "properties": {
+        "process_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "stderr_path": {
+          "type": "string"
+        },
+        "stdout_path": {
+          "type": "string"
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "timed_out": {
+          "type": "boolean"
+        },
+        "wait_seconds": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        }
+      }
+    },
+    "ThreadProcessDeniedDetail": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/ProcessAllowedToolsDeniedResponse"
+        },
+        {
+          "$ref": "#/definitions/ProcessModeDeniedResponse"
+        },
+        {
+          "$ref": "#/definitions/ProcessUnknownModeDeniedResponse"
+        },
+        {
+          "$ref": "#/definitions/ProcessSandboxPolicyDeniedResponse"
+        },
+        {
+          "$ref": "#/definitions/ProcessSandboxNetworkDeniedResponse"
+        },
+        {
+          "$ref": "#/definitions/ProcessExecPolicyDeniedResponse"
+        },
+        {
+          "$ref": "#/definitions/ProcessExecPolicyLoadDeniedResponse"
+        },
+        {
+          "$ref": "#/definitions/ProcessDeniedResponse"
+        }
+      ]
+    }
+  }
+}

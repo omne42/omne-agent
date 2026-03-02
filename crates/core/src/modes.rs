@@ -297,6 +297,7 @@ impl ModeCatalog {
 pub struct ModeDef {
     pub description: String,
     pub permissions: ModePermissions,
+    pub ui: ModeUi,
     pub command_execpolicy_rules: Vec<String>,
     pub tool_overrides: BTreeMap<String, Decision>,
 }
@@ -306,6 +307,7 @@ impl ModeDef {
         Self {
             description: description.to_string(),
             permissions,
+            ui: ModeUi::default(),
             command_execpolicy_rules: Vec::new(),
             tool_overrides: BTreeMap::new(),
         }
@@ -326,14 +328,21 @@ impl ModeDef {
             .filter(|o| !o.tool.trim().is_empty())
             .map(|o| (o.tool, o.decision))
             .collect::<BTreeMap<_, _>>();
+        let ui = raw.ui.unwrap_or_default().into_ui();
 
         Ok(Self {
             description: raw.description.unwrap_or_default(),
             permissions,
+            ui,
             command_execpolicy_rules,
             tool_overrides,
         })
     }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ModeUi {
+    pub show_thinking: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -647,7 +656,23 @@ struct RawModeDef {
     description: Option<String>,
     permissions: RawPermissions,
     #[serde(default)]
+    ui: Option<RawModeUi>,
+    #[serde(default)]
     tool_overrides: Option<Vec<RawToolOverride>>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct RawModeUi {
+    #[serde(default)]
+    show_thinking: Option<bool>,
+}
+
+impl RawModeUi {
+    fn into_ui(self) -> ModeUi {
+        ModeUi {
+            show_thinking: self.show_thinking,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]

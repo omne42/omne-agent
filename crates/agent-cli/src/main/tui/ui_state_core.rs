@@ -216,11 +216,21 @@
                         event.seq.0,
                     );
                     let mut streamed = None::<String>;
+                    let mut streamed_thinking = None::<String>;
                     if let Some(turn_id) = turn_id
                         && self.streaming.as_ref().is_some_and(|s| s.turn_id == *turn_id)
                     {
-                        streamed = self.streaming.as_ref().map(|s| s.text.clone());
+                        streamed = self.streaming.as_ref().map(|s| s.output_text.clone());
+                        streamed_thinking = self.streaming.as_ref().map(|s| s.thinking.clone());
                         self.streaming = None;
+                    }
+                    if let Some(thinking) =
+                        streamed_thinking.filter(|thinking| !thinking.trim().is_empty())
+                    {
+                        self.push_transcript(TranscriptEntry {
+                            role: TranscriptRole::Thinking,
+                            text: thinking,
+                        });
                     }
                     if let Some(streamed) = streamed {
                         let streamed_trim = streamed.trim();

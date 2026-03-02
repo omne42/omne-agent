@@ -486,13 +486,13 @@
                         .as_ref()
                         .and_then(Value::as_object)
                         .context("delta params is not object")?;
+                    let Some(kind) = params.get("kind").and_then(|v| v.as_str()) else {
+                        return Ok(());
+                    };
                     let Some(delta) = params.get("delta").and_then(|v| v.as_str()) else {
                         return Ok(());
                     };
                     if delta.is_empty() {
-                        return Ok(());
-                    }
-                    if params.get("kind").and_then(|v| v.as_str()) != Some("output_text") {
                         return Ok(());
                     }
                     let thread_id = serde_json::from_value::<ThreadId>(
@@ -512,16 +512,39 @@
                             .unwrap_or(serde_json::Value::Null),
                     )
                     .context("parse delta turn_id")?;
-                    match &mut self.streaming {
-                        Some(streaming) if streaming.turn_id == turn_id => {
-                            streaming.text.push_str(delta);
+
+                    match kind {
+                        "output_text" | "thinking" => {
+                            match &mut self.streaming {
+                                Some(streaming) if streaming.turn_id == turn_id => {
+                                    if kind == "output_text" {
+                                        streaming.output_text.push_str(delta);
+                                    } else {
+                                        streaming.thinking.push_str(delta);
+                                    }
+                                }
+                                _ => {
+                                    let mut streaming = StreamingState {
+                                        turn_id,
+                                        output_text: String::new(),
+                                        thinking: String::new(),
+                                    };
+                                    if kind == "output_text" {
+                                        streaming.output_text = delta.to_string();
+                                    } else {
+                                        streaming.thinking = delta.to_string();
+                                    }
+                                    self.streaming = Some(streaming);
+                                }
+                            }
                         }
-                        _ => {
-                            self.streaming = Some(StreamingState {
-                                turn_id,
-                                text: delta.to_string(),
+                        "warning" => {
+                            self.push_transcript(TranscriptEntry {
+                                role: TranscriptRole::System,
+                                text: format!("warning: {delta}"),
                             });
                         }
+                        _ => {}
                     }
                 }
                 "thread/event"

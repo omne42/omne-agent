@@ -1139,6 +1139,7 @@ struct ThreadRuntime {
     handle: tokio::sync::Mutex<omne_core::ThreadHandle>,
     active_turn: tokio::sync::Mutex<Option<ActiveTurn>>,
     notify_tx: broadcast::Sender<String>,
+    warned_item_delta_keys: tokio::sync::Mutex<std::collections::HashSet<String>>,
 }
 
 fn validate_context_refs(refs: &[omne_protocol::ContextRef]) -> anyhow::Result<()> {
@@ -1252,6 +1253,7 @@ impl ThreadRuntime {
             handle: tokio::sync::Mutex::new(handle),
             active_turn: tokio::sync::Mutex::new(None),
             notify_tx,
+            warned_item_delta_keys: tokio::sync::Mutex::new(std::collections::HashSet::new()),
         }
     }
 
@@ -1269,6 +1271,32 @@ impl ThreadRuntime {
                 tracing::debug!("dropped thread notification because there are no subscribers");
             }
         }
+    }
+
+    async fn emit_item_delta_warning_once(
+        &self,
+        key: String,
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        message: String,
+    ) {
+        {
+            let mut warned = self.warned_item_delta_keys.lock().await;
+            if !warned.insert(key) {
+                return;
+            }
+        }
+
+        self.emit_notification(
+            "item/delta",
+            &serde_json::json!({
+                "thread_id": thread_id,
+                "turn_id": turn_id,
+                "response_id": "",
+                "kind": "warning",
+                "delta": message,
+            }),
+        );
     }
 
     async fn emit_event_notifications(&self, event: &ThreadEvent) {

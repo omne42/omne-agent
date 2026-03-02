@@ -83,15 +83,20 @@ fn render_event(event: &ThreadEvent) {
             mode,
             model,
             thinking,
+            show_thinking,
             openai_base_url,
             allowed_tools,
             execpolicy_rules,
         } => {
             println!(
-                "[{ts}] config approval_policy={approval_policy:?} sandbox_policy={sandbox_policy:?} sandbox_writable_roots={sandbox_writable_roots:?} sandbox_network_access={sandbox_network_access:?} mode={} model={} thinking={} openai_base_url={} allowed_tools={allowed_tools:?} execpolicy_rules={execpolicy_rules:?}",
+                "[{ts}] config approval_policy={approval_policy:?} sandbox_policy={sandbox_policy:?} sandbox_writable_roots={sandbox_writable_roots:?} sandbox_network_access={sandbox_network_access:?} mode={} model={} thinking={} show_thinking={} openai_base_url={} allowed_tools={allowed_tools:?} execpolicy_rules={execpolicy_rules:?}",
                 mode.as_deref().unwrap_or(""),
                 model.as_deref().unwrap_or(""),
                 thinking.as_deref().unwrap_or(""),
+                show_thinking
+                    .as_ref()
+                    .map(|v| v.to_string())
+                    .unwrap_or_default(),
                 openai_base_url.as_deref().unwrap_or("")
             );
         }

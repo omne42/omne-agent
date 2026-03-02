@@ -132,6 +132,7 @@ async fn repl_run_turn(
         let thread_id_str = state.thread_id.to_string();
         let turn_id_str = turn_id.to_string();
         streaming_handle = Some(AbortOnDrop(tokio::spawn(async move {
+            let mut thinking_started = false;
             loop {
                 let note = match rx.recv().await {
                     Ok(note) => note,
@@ -153,18 +154,34 @@ async fn repl_run_turn(
                 if thread_id != thread_id_str || turn_id != turn_id_str {
                     continue;
                 }
-                if params.get("kind").and_then(|v| v.as_str()) != Some("output_text") {
+                let Some(kind) = params.get("kind").and_then(|v| v.as_str()) else {
                     continue;
-                }
+                };
                 let Some(delta) = params.get("delta").and_then(|v| v.as_str()) else {
                     continue;
                 };
                 if delta.is_empty() {
                     continue;
                 }
-                saw_delta.store(true, Ordering::Relaxed);
-                print!("{delta}");
-                std::io::stdout().flush().ok();
+                match kind {
+                    "output_text" => {
+                        saw_delta.store(true, Ordering::Relaxed);
+                        print!("{delta}");
+                        std::io::stdout().flush().ok();
+                    }
+                    "thinking" => {
+                        if !thinking_started {
+                            thinking_started = true;
+                            eprint!("\n[thinking]\n");
+                        }
+                        eprint!("{delta}");
+                        std::io::stderr().flush().ok();
+                    }
+                    "warning" => {
+                        eprintln!("\n[warning] {delta}");
+                    }
+                    _ => {}
+                }
             }
         })));
     }

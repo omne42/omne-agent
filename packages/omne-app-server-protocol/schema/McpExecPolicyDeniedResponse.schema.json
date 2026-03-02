@@ -9,16 +9,102 @@
   ],
   "properties": {
     "decision": {
-      "type": "string"
+      "$ref": "#/definitions/ExecPolicyDecision"
     },
     "denied": {
       "default": false,
       "type": "boolean"
     },
-    "matched_rules": true,
+    "error_code": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "matched_rules": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/ExecPolicyRuleMatch"
+      }
+    },
     "tool_id": {
       "type": "string",
       "format": "uuid"
+    }
+  },
+  "definitions": {
+    "ExecPolicyDecision": {
+      "type": "string",
+      "enum": [
+        "allow",
+        "prompt",
+        "prompt_strict",
+        "forbidden"
+      ]
+    },
+    "ExecPolicyRuleMatch": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "prefixRuleMatch"
+          ],
+          "properties": {
+            "prefixRuleMatch": {
+              "type": "object",
+              "required": [
+                "decision",
+                "matchedPrefix"
+              ],
+              "properties": {
+                "decision": {
+                  "$ref": "#/definitions/ExecPolicyDecision"
+                },
+                "justification": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "matchedPrefix": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "heuristicsRuleMatch"
+          ],
+          "properties": {
+            "heuristicsRuleMatch": {
+              "type": "object",
+              "required": [
+                "command",
+                "decision"
+              ],
+              "properties": {
+                "command": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "decision": {
+                  "$ref": "#/definitions/ExecPolicyDecision"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
     }
   }
 }

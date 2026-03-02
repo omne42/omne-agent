@@ -2,4 +2,4 @@
 import type { FileModeDecision } from "./FileModeDecision";
 import type { ToolId } from "./ToolId";
 
-export type FileUnknownModeDeniedResponse = { tool_id: ToolId, denied: boolean, mode: string, decision: FileModeDecision, available: string, load_error?: string, };
+export type FileUnknownModeDeniedResponse = { tool_id: ToolId, denied: boolean, mode: string, decision: FileModeDecision, available: string, load_error?: string, error_code?: string, };
