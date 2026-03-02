@@ -825,6 +825,97 @@ mod llm_stream_tests {
     }
 
     #[derive(Clone)]
+    struct CaptureGenerateRequestOnFallback {
+        generated_request: std::sync::Arc<std::sync::Mutex<Option<ditto_llm::GenerateRequest>>>,
+    }
+
+    #[async_trait]
+    impl ditto_llm::LanguageModel for CaptureGenerateRequestOnFallback {
+        fn provider(&self) -> &str {
+            "openai-compatible"
+        }
+
+        fn model_id(&self) -> &str {
+            "stub"
+        }
+
+        async fn generate(
+            &self,
+            request: ditto_llm::GenerateRequest,
+        ) -> ditto_llm::Result<ditto_llm::GenerateResponse> {
+            *self.generated_request.lock().expect("mutex poisoned") = Some(request);
+            Ok(ditto_llm::GenerateResponse {
+                content: vec![ditto_llm::ContentPart::Text {
+                    text: "OK".to_string(),
+                }],
+                provider_metadata: Some(serde_json::json!({ "id": "resp_gen_1" })),
+                ..Default::default()
+            })
+        }
+
+        async fn stream(
+            &self,
+            _request: ditto_llm::GenerateRequest,
+        ) -> ditto_llm::Result<ditto_llm::StreamResult> {
+            Ok(Box::pin(stream::iter(vec![
+                Ok(ditto_llm::StreamChunk::ResponseId {
+                    id: "resp_stream_1".to_string(),
+                }),
+                Ok(ditto_llm::StreamChunk::FinishReason(ditto_llm::FinishReason::Stop)),
+            ])))
+        }
+    }
+
+    #[tokio::test]
+    async fn fallback_generate_keeps_prompt_cache_key() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let store = omne_core::ThreadStore::new(omne_core::PmPaths::new(
+            dir.path().join(".omne_data"),
+        ));
+        let handle = store.create_thread(std::path::PathBuf::from("/tmp")).await?;
+        let thread_id = handle.thread_id();
+        let (notify_tx, _notify_rx) = tokio::sync::broadcast::channel(16);
+        let thread_rt = Arc::new(crate::ThreadRuntime::new(handle, notify_tx));
+
+        let captured = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let llm = CaptureGenerateRequestOnFallback {
+            generated_request: captured.clone(),
+        };
+
+        let req = ditto_llm::GenerateRequest::from(vec![ditto_llm::Message::user("ping")])
+            .with_provider_options(ditto_llm::ProviderOptions {
+                prompt_cache_key: Some(thread_id.to_string()),
+                ..Default::default()
+            })?;
+
+        let _resp = run_llm_stream_once(
+            Arc::new(llm),
+            thread_rt,
+            thread_id,
+            TurnId::new(),
+            false,
+            false,
+            req,
+            Duration::from_secs(5),
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("llm attempt failed: {:?}", err.error))?;
+
+        let generated_req = captured
+            .lock()
+            .expect("mutex poisoned")
+            .clone()
+            .expect("fallback generate should be called");
+        let parsed = generated_req
+            .parsed_provider_options_for("openai-compatible")?
+            .expect("provider options should exist");
+        let expected = thread_id.to_string();
+        assert_eq!(parsed.prompt_cache_key.as_deref(), Some(expected.as_str()));
+
+        Ok(())
+    }
+
+    #[derive(Clone)]
     struct ReasoningStreamEmitsDeltas;
 
     #[async_trait]

@@ -70,9 +70,10 @@
 ### 2.2 `ditto-llm/`：provider 抽象层，但缺少缓存可观测性
 
 - OpenAI Responses 已集成：`src/providers/openai.rs`
-- 当前 `ditto_llm::Usage` 只有 token totals，没有 `input_tokens_details.cached_tokens` 等字段：
-  - 这会直接影响我们验证 prompt caching 命中率（文章把它当作主要优化手段）
-  - 如果要对齐文章的“缓存是一等性能指标”，需要把 usage details 从 provider 层透传出来
+- ✅ 已补齐：`ditto_llm::Usage` 增加 `cache_input_tokens`，并在 OpenAI-compatible `chat/completions` 下解析：
+  - `usage.cached_tokens`
+  - `usage.prompt_tokens_details.cached_tokens`
+  - 用于观测 prompt caching 命中率（文章把它当作主要优化手段）
 
 ### 2.3 `mcp-kit/`：MCP 动态工具会直接影响 cache hit
 
@@ -104,7 +105,7 @@
   - 文章强调 `system`/`developer`/`user`/`assistant` 的优先级
   - 我们在 `response_items_to_ditto_messages()` 对未知 role 会降级成 user；若未来要插入 `developer`（例如 permissions/sandbox 变化），需要修正映射
 - **缓存可观测性缺失**：
-  - 没有 cached_tokens 等指标，就无法判断“我们是否真的在 cache hit 上省钱”，容易把优化做成玄学
+  - 已补齐 cached_tokens（见上），后续需要在 UI/指标回归里把它当作一等指标使用，避免“优化玄学”
 
 ---
 

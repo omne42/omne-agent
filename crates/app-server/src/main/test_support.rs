@@ -8,6 +8,7 @@ fn build_test_server_shared(omne_root: PathBuf) -> Server {
         processes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         mcp: Arc::new(tokio::sync::Mutex::new(McpManager::default())),
         disk_warning: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+        provider_runtimes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         exec_policy: omne_execpolicy::Policy::empty(),
     }
 }

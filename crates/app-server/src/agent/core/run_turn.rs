@@ -195,25 +195,61 @@ pub async fn run_agent_turn(
         auth: provider_config.auth.clone(),
         capabilities: Some(provider_capabilities),
     };
-    let (model_client, openai_responses_client, file_uploader) = if provider_capabilities.reasoning {
-        let openai = Arc::new(
-            ditto_llm::OpenAI::from_config(&provider_for_llm, &env)
-                .await
-                .context("build OpenAI Responses client")?,
-        );
-        let model_client: Arc<dyn ditto_llm::LanguageModel> = openai.clone();
-        let file_uploader: Arc<dyn FileUploader> = openai.clone();
-        (model_client, Some(openai), Some(file_uploader))
-    } else {
-        let chat = Arc::new(
-            ditto_llm::OpenAICompatible::from_config(&provider_for_llm, &env)
-                .await
-                .context("build OpenAI-compatible Chat Completions client")?,
-        );
-        let model_client: Arc<dyn ditto_llm::LanguageModel> = chat.clone();
-        let file_uploader: Arc<dyn FileUploader> = chat;
-        (model_client, None, Some(file_uploader))
+
+    // Cache provider runtimes across turns to keep HTTP connections sticky. Some OpenAI-compatible
+    // gateways implement prompt caching per-backend-instance, so new TCP connections can lead to
+    // cache misses even with stable `prompt_cache_key`.
+    let provider_runtime_cache_key = format!(
+        "{}|{}|tools={};streaming={};reasoning={};vision={};json_schema={};prompt_cache={}",
+        provider,
+        provider_for_llm.base_url.as_deref().unwrap_or_default(),
+        provider_capabilities.tools,
+        provider_capabilities.streaming,
+        provider_capabilities.reasoning,
+        provider_capabilities.vision,
+        provider_capabilities.json_schema,
+        provider_capabilities.prompt_cache
+    );
+    let cached_provider_runtime = {
+        let cache = server.provider_runtimes.lock().await;
+        cache.get(&provider_runtime_cache_key).cloned()
     };
+    let provider_runtime = match cached_provider_runtime {
+        Some(runtime) => runtime,
+        None => {
+            let (model_client, openai_responses_client, file_uploader) = if provider_capabilities.reasoning {
+                let openai = Arc::new(
+                    ditto_llm::OpenAI::from_config(&provider_for_llm, &env)
+                        .await
+                        .context("build OpenAI Responses client")?,
+                );
+                let model_client: Arc<dyn ditto_llm::LanguageModel> = openai.clone();
+                let file_uploader: Arc<dyn FileUploader> = openai.clone();
+                (model_client, Some(openai), Some(file_uploader))
+            } else {
+                let chat = Arc::new(
+                    ditto_llm::OpenAICompatible::from_config(&provider_for_llm, &env)
+                        .await
+                        .context("build OpenAI-compatible Chat Completions client")?,
+                );
+                let model_client: Arc<dyn ditto_llm::LanguageModel> = chat.clone();
+                let file_uploader: Arc<dyn FileUploader> = chat;
+                (model_client, None, Some(file_uploader))
+            };
+
+            let runtime = ProviderRuntime {
+                config: provider_for_llm,
+                capabilities: provider_capabilities,
+                client: model_client,
+                openai_responses_client,
+                file_uploader,
+            };
+            let mut cache = server.provider_runtimes.lock().await;
+            cache.insert(provider_runtime_cache_key, runtime.clone());
+            runtime
+        }
+    };
+    let model_client = provider_runtime.client.clone();
 
     let fallbacks = std::env::var("OMNE_OPENAI_FALLBACK_PROVIDERS")
         .ok()
@@ -221,16 +257,7 @@ pub async fn run_agent_turn(
         .unwrap_or_else(|| project_overrides.fallback_providers.clone());
     let provider_candidates = build_provider_candidates(&provider, fallbacks);
     let mut provider_cache = std::collections::BTreeMap::<String, ProviderRuntime>::new();
-    provider_cache.insert(
-        provider.clone(),
-        ProviderRuntime {
-            config: provider_for_llm,
-            capabilities: provider_capabilities,
-            client: model_client.clone(),
-            openai_responses_client,
-            file_uploader,
-        },
-    );
+    provider_cache.insert(provider.clone(), provider_runtime);
 
     let tool_specs = build_tools();
     let tools = tool_specs_to_ditto_tools(&tool_specs).context("parse tool schemas")?;

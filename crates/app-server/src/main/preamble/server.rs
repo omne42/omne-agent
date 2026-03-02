@@ -1079,6 +1079,10 @@ struct Server {
     processes: Arc<tokio::sync::Mutex<HashMap<ProcessId, ProcessEntry>>>,
     mcp: Arc<tokio::sync::Mutex<McpManager>>,
     disk_warning: Arc<tokio::sync::Mutex<HashMap<ThreadId, DiskWarningState>>>,
+    // Cache provider runtimes across turns to keep HTTP connection pools warm.
+    // This materially improves prompt-cache hit rates when the upstream gateway
+    // uses per-instance caches and connection-level stickiness.
+    provider_runtimes: Arc<tokio::sync::Mutex<HashMap<String, crate::agent::ProviderRuntime>>>,
     exec_policy: omne_execpolicy::Policy,
 }
 

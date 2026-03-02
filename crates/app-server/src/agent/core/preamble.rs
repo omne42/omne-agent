@@ -702,7 +702,7 @@ impl FileUploader for ditto_llm::OpenAICompatible {
 }
 
 #[derive(Clone)]
-struct ProviderRuntime {
+pub(crate) struct ProviderRuntime {
     config: ditto_llm::ProviderConfig,
     capabilities: ditto_llm::ProviderCapabilities,
     client: Arc<dyn ditto_llm::LanguageModel>,

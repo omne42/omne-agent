@@ -35,7 +35,7 @@ impl App {
             .unwrap_or_else(|| Duration::from_millis(1500));
 
         let socket_path = omne_root.join("daemon.sock");
-        let bypass_daemon = should_bypass_daemon(&socket_path, &server);
+        let daemon_socket_stale = should_refresh_daemon_socket(&socket_path, &server);
 
         let build_spawn_argv = || {
             let mut argv: Vec<OsString> = Vec::new();
@@ -48,14 +48,92 @@ impl App {
             argv
         };
 
-        let (mut rpc, used_daemon) = if bypass_daemon {
-            (
-                omne_jsonrpc::Client::spawn(server.clone(), build_spawn_argv()).await?,
-                false,
-            )
+        let daemon_autostart =
+            parse_env_bool("OMNE_RPC_AUTOSTART_DAEMON", true) && cfg!(unix);
+        let daemon_start_timeout = std::env::var("OMNE_RPC_DAEMON_START_TIMEOUT_MS")
+            .ok()
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .filter(|value| *value > 0)
+            .map(Duration::from_millis)
+            .unwrap_or_else(|| Duration::from_millis(5000));
+
+        // Keep a long-lived daemon connection whenever possible. This improves cache stickiness
+        // for OpenAI-compatible gateways that keep prompt caches local to an upstream instance.
+        let (mut rpc, used_daemon) = if daemon_autostart && daemon_socket_stale {
+            // The app-server binary is newer than the socket; try refreshing daemon first.
+            match spawn_daemon(&server, &omne_root, &socket_path, build_spawn_argv()) {
+                Ok(()) => match connect_unix_with_retry(&socket_path, daemon_start_timeout).await {
+                    Ok(client) => (client, true),
+                    Err(err) => {
+                        eprintln!(
+                            "warning: failed to connect refreshed daemon ({}); falling back to direct spawn",
+                            err
+                        );
+                        (
+                            omne_jsonrpc::Client::spawn(server.clone(), build_spawn_argv()).await?,
+                            false,
+                        )
+                    }
+                },
+                Err(err) => {
+                    eprintln!(
+                        "warning: failed to refresh daemon ({}); falling back to existing path",
+                        err
+                    );
+                    match omne_jsonrpc::Client::connect_unix(&socket_path).await {
+                        Ok(client) => (client, true),
+                        Err(connect_err) => {
+                            eprintln!(
+                                "warning: failed to connect daemon socket after refresh failure ({}); falling back to direct spawn",
+                                connect_err
+                            );
+                            (
+                                omne_jsonrpc::Client::spawn(server.clone(), build_spawn_argv())
+                                    .await?,
+                                false,
+                            )
+                        }
+                    }
+                }
+            }
         } else {
             match omne_jsonrpc::Client::connect_unix(&socket_path).await {
                 Ok(client) => (client, true),
+                Err(connect_err) if daemon_autostart => {
+                    // Prompt cache hit rates can depend heavily on TCP connection stickiness
+                    // when an OpenAI-compatible gateway uses per-instance caches. Using a
+                    // long-lived daemon keeps the underlying HTTP client and connections
+                    // warm across repeated `omne` invocations.
+                    match spawn_daemon(&server, &omne_root, &socket_path, build_spawn_argv()) {
+                        Ok(()) => match connect_unix_with_retry(&socket_path, daemon_start_timeout)
+                            .await
+                        {
+                            Ok(client) => (client, true),
+                            Err(err) => {
+                                eprintln!(
+                                    "warning: daemon started but socket connect failed ({}); falling back to direct spawn",
+                                    err
+                                );
+                                (
+                                    omne_jsonrpc::Client::spawn(server.clone(), build_spawn_argv())
+                                        .await?,
+                                    false,
+                                )
+                            }
+                        },
+                        Err(err) => {
+                            eprintln!(
+                                "warning: failed to spawn daemon after socket connect error ({}, spawn_err={}); falling back to direct spawn",
+                                connect_err, err
+                            );
+                            (
+                                omne_jsonrpc::Client::spawn(server.clone(), build_spawn_argv())
+                                    .await?,
+                                false,
+                            )
+                        }
+                    }
+                }
                 Err(_) => (
                     omne_jsonrpc::Client::spawn(server.clone(), build_spawn_argv()).await?,
                     false,

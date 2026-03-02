@@ -100,6 +100,7 @@ async fn main() -> anyhow::Result<()> {
         processes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         mcp: Arc::new(tokio::sync::Mutex::new(McpManager::default())),
         disk_warning: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+        provider_runtimes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         exec_policy,
     });
 

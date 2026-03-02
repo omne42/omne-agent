@@ -24,7 +24,18 @@
 
 - socket：`<omne_root>/daemon.sock`
 - 启动：`omne-app-server --omne-root <omne_root> --listen <omne_root>/daemon.sock`
-- `omne` CLI：默认会尝试连接该 socket；失败则 fallback 到 spawn `omne-app-server`（保持 JSON-RPC 语义不变）。
+- `omne` CLI：默认会尝试连接该 socket；若连接失败：
+  - 默认会**自动启动** daemon（可用 `OMNE_RPC_AUTOSTART_DAEMON=0` 关闭）
+  - 启动后会重试连接（超时可用 `OMNE_RPC_DAEMON_START_TIMEOUT_MS` 覆盖）
+
+daemon 自动启动时的日志落盘（用于排障）：
+
+- `<omne_root>/logs/daemon.log`
+
+> 重要：对 OpenAI-compatible gateway 来说，prompt cache 命中率往往依赖 **TCP connection stickiness**（per-instance cache）。
+> 使用 daemon 能保持 app-server 进程长期存活，从而复用 HTTP connection pool，显著降低 `cached_tokens=0` 的概率。
+>
+> 另见：`docs/prompt_cache.md`（cached_tokens 的观测、验证与限制）
 
 ---
 
