@@ -833,11 +833,6 @@ async fn build_provider_runtime(
             "provider does not support tools: provider={provider} (omne requires tool calling; set [openai.providers.{provider}.capabilities.tools]=true)"
         );
     }
-    if !provider_capabilities.streaming {
-        anyhow::bail!(
-            "provider does not support streaming: provider={provider} (set [openai.providers.{provider}.capabilities.streaming]=true or choose a streaming-capable provider)"
-        );
-    }
 
     let base_url = base_url_override
         .map(|value| value.to_string())

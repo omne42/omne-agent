@@ -333,6 +333,10 @@ impl ToolLoop {
                 let messages = apply_attachments_to_messages(base_messages.clone(), attachment_parts);
                 let mut req_base = ditto_llm::GenerateRequest::from(messages);
                 req_base.model = Some(model.clone());
+                // Set a stable user/session id in addition to prompt_cache_key.
+                // Some OpenAI-compatible gateways use this field to improve request stickiness,
+                // which can make prompt cache hits more reliable.
+                req_base.user = Some(thread_id.to_string());
                 if tools_enabled {
                     req_base.tools = Some(tools.clone());
                     req_base.tool_choice = Some(ditto_llm::ToolChoice::Auto);

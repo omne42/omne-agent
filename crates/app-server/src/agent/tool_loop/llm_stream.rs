@@ -261,6 +261,9 @@ async fn run_llm_stream_once(
                             let mut body = serde_json::Map::<String, Value>::new();
                             body.insert("model".to_string(), Value::String(model.to_string()));
                             body.insert("stream".to_string(), Value::Bool(true));
+                            if let Some(user) = req.user.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                                body.insert("user".to_string(), Value::String(user.to_string()));
+                            }
                             body.insert("messages".to_string(), Value::Array(body_messages));
                             if let Some(tools) = tools {
                                 body.insert("tools".to_string(), Value::Array(tools));
