@@ -16,9 +16,15 @@
 /.codex/
 /bitto-llm/
 .tmp/
+tmp/
 node_modules/
 /packages/omne/dist/
 /packages/omne/vendor/
+/docs/reports/
+/scripts/experiments/
+__pycache__/
+*.pyc
+devtools/rust-tool-bench/target
 
 # generated git diff/patch artifacts
 *.gitdiff

@@ -116,6 +116,7 @@ async fn handle_mcp_list_servers(server: &Server, params: McpListServersParams) 
         .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
             tool_id,
             status: omne_protocol::ToolStatus::Completed,
+            structured_error: None,
             error: None,
             result: Some(serde_json::json!({
                 "servers": server_count,
@@ -354,7 +355,7 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
         return deny_mcp_disabled(&thread_rt, tool_id, req.turn_id, req.action, approval_params).await;
     }
 
-    if sandbox_policy == omne_protocol::SandboxPolicy::ReadOnly {
+    if sandbox_policy == policy_meta::WriteScope::ReadOnly {
         let result = mcp_sandbox_policy_denied_response(tool_id, sandbox_policy)?;
         emit_mcp_tool_denied(
             &thread_rt,
@@ -384,6 +385,7 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
             .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                 tool_id,
                 status: omne_protocol::ToolStatus::Failed,
+                structured_error: structured_error_from_result_value(&result),
                 error: Some("unknown mcp server".to_string()),
                 result: Some(result.clone()),
             })
@@ -615,6 +617,7 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
                 .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
                     status: omne_protocol::ToolStatus::Completed,
+                    structured_error: None,
                     error: None,
                     result: Some(serde_json::json!({
                         "process_id": process_id,
@@ -635,6 +638,7 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
                 .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
                     status: omne_protocol::ToolStatus::Failed,
+                    structured_error: None,
                     error: Some(err.to_string()),
                     result: Some(serde_json::json!({
                         "process_id": process_id,
@@ -657,10 +661,11 @@ fn mcp_denied_response(
         tool_id,
         remembered,
         "serialize mcp denied response",
-        |tool_id, remembered, error_code| omne_app_server_protocol::McpDeniedResponse {
+        |tool_id, remembered, structured_error, error_code| omne_app_server_protocol::McpDeniedResponse {
             tool_id,
             denied: true,
             remembered,
+            structured_error,
             error_code,
         },
     )
@@ -686,6 +691,12 @@ fn mcp_mode_denied_response(
     mode_name: &str,
     mode_decision: ModeDecisionAudit,
 ) -> anyhow::Result<Value> {
+    let structured_error = catalog_structured_error_with("mode_denied", |message| {
+        message.try_with_value_arg("mode", mode_name)?;
+        message.try_with_value_arg("decision_source", mode_decision.decision_source)?;
+        message.try_with_value_arg("tool_override_hit", mode_decision.tool_override_hit)?;
+        Ok(())
+    })?;
     let response = omne_app_server_protocol::McpModeDeniedResponse {
         tool_id,
         denied: true,
@@ -696,7 +707,8 @@ fn mcp_mode_denied_response(
         ),
         decision_source: mode_decision.decision_source.to_string(),
         tool_override_hit: mode_decision.tool_override_hit,
-        error_code: Some("mode_denied".to_string()),
+        structured_error: Some(structured_error.clone()),
+        error_code: structured_error_code(&structured_error),
     };
     serde_json::to_value(response).context("serialize mcp mode denied response")
 }
@@ -707,6 +719,14 @@ fn mcp_unknown_mode_denied_response(
     available: String,
     load_error: Option<String>,
 ) -> anyhow::Result<Value> {
+    let structured_error = catalog_structured_error_with("mode_unknown", |message| {
+        message.try_with_value_arg("mode", mode_name)?;
+        message.try_with_value_arg("available", available.as_str())?;
+        if let Some(load_error) = load_error.as_deref() {
+            message.try_with_value_arg("load_error", load_error)?;
+        }
+        Ok(())
+    })?;
     let response = omne_app_server_protocol::McpUnknownModeDeniedResponse {
         tool_id,
         denied: true,
@@ -714,7 +734,8 @@ fn mcp_unknown_mode_denied_response(
         decision: omne_app_server_protocol::McpModeDecision::Deny,
         available,
         load_error,
-        error_code: Some("mode_unknown".to_string()),
+        structured_error: Some(structured_error.clone()),
+        error_code: structured_error_code(&structured_error),
     };
     serde_json::to_value(response).context("serialize mcp unknown mode denied response")
 }
@@ -724,25 +745,32 @@ fn mcp_allowed_tools_denied_response(
     tool: &str,
     allowed_tools: &Option<Vec<String>>,
 ) -> anyhow::Result<Value> {
+    let structured_error = catalog_structured_error_with("allowed_tools_denied", |message| {
+        message.try_with_value_arg("tool", tool)?;
+        Ok(())
+    })?;
     let response = omne_app_server_protocol::McpAllowedToolsDeniedResponse {
         tool_id,
         denied: true,
         tool: tool.to_string(),
         allowed_tools: allowed_tools.clone().unwrap_or_default(),
-        error_code: Some("allowed_tools_denied".to_string()),
+        structured_error: Some(structured_error.clone()),
+        error_code: structured_error_code(&structured_error),
     };
     serde_json::to_value(response).context("serialize mcp allowed_tools denied response")
 }
 
 fn mcp_sandbox_policy_denied_response(
     tool_id: omne_protocol::ToolId,
-    sandbox_policy: omne_protocol::SandboxPolicy,
+    sandbox_policy: policy_meta::WriteScope,
 ) -> anyhow::Result<Value> {
+    let structured_error = catalog_structured_error("sandbox_policy_denied")?;
     let response = omne_app_server_protocol::McpSandboxPolicyDeniedResponse {
         tool_id,
         denied: true,
         sandbox_policy,
-        error_code: Some("sandbox_policy_denied".to_string()),
+        structured_error: Some(structured_error.clone()),
+        error_code: structured_error_code(&structured_error),
     };
     serde_json::to_value(response).context("serialize mcp sandbox_policy denied response")
 }
@@ -751,11 +779,13 @@ fn mcp_sandbox_network_denied_response(
     tool_id: omne_protocol::ToolId,
     sandbox_network_access: omne_protocol::SandboxNetworkAccess,
 ) -> anyhow::Result<Value> {
+    let structured_error = catalog_structured_error("sandbox_network_denied")?;
     let response = omne_app_server_protocol::McpSandboxNetworkDeniedResponse {
         tool_id,
         denied: true,
         sandbox_network_access,
-        error_code: Some("sandbox_network_denied".to_string()),
+        structured_error: Some(structured_error.clone()),
+        error_code: structured_error_code(&structured_error),
     };
     serde_json::to_value(response).context("serialize mcp sandbox_network_access denied response")
 }
@@ -765,12 +795,14 @@ fn mcp_execpolicy_denied_response(
     decision: ExecDecision,
     matched_rules: &[ExecRuleMatch],
 ) -> anyhow::Result<Value> {
+    let structured_error = catalog_structured_error("execpolicy_denied")?;
     let response = omne_app_server_protocol::McpExecPolicyDeniedResponse {
         tool_id,
         denied: true,
         decision: to_protocol_execpolicy_decision(decision),
         matched_rules: to_protocol_execpolicy_matches(matched_rules),
-        error_code: Some("execpolicy_denied".to_string()),
+        structured_error: Some(structured_error.clone()),
+        error_code: structured_error_code(&structured_error),
     };
     serde_json::to_value(response).context("serialize mcp execpolicy denied response")
 }
@@ -781,13 +813,20 @@ fn mcp_execpolicy_load_denied_response(
     error: &str,
     details: String,
 ) -> anyhow::Result<Value> {
+    let structured_error = catalog_structured_error_with("execpolicy_load_denied", |message| {
+        message.try_with_value_arg("mode", mode_name)?;
+        message.try_with_value_arg("error", error)?;
+        message.try_with_value_arg("details", details.as_str())?;
+        Ok(())
+    })?;
     let response = omne_app_server_protocol::McpExecPolicyLoadDeniedResponse {
         tool_id,
         denied: true,
         mode: mode_name.to_string(),
         error: error.to_string(),
         details,
-        error_code: Some("execpolicy_load_denied".to_string()),
+        structured_error: Some(structured_error.clone()),
+        error_code: structured_error_code(&structured_error),
     };
     serde_json::to_value(response).context("serialize mcp execpolicy load denied response")
 }
@@ -797,11 +836,17 @@ fn mcp_failed_response(
     error: &str,
     server: &str,
 ) -> anyhow::Result<Value> {
+    let structured_error = catalog_structured_error_with("mcp_failed", |message| {
+        message.try_with_value_arg("error", error)?;
+        message.try_with_value_arg("server", server)?;
+        Ok(())
+    })?;
     let response = omne_app_server_protocol::McpFailedResponse {
         tool_id,
         failed: true,
         error: error.to_string(),
         server: server.to_string(),
+        structured_error: Some(structured_error),
     };
     serde_json::to_value(response).context("serialize mcp failed response")
 }

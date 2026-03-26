@@ -96,6 +96,14 @@
         "null"
       ]
     },
+    "current_context_tokens_estimate": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0.0
+    },
     "total_tokens_used": {
       "type": "integer",
       "format": "uint64",

@@ -153,15 +153,7 @@ fn configured_total_token_budget_limit_for_notify() -> Option<u64> {
 }
 
 fn parse_token_budget_warning_threshold_ratio_env() -> f64 {
-    const ENV_KEY: &str = "OMNE_NOTIFY_TOKEN_BUDGET_UTILIZATION_THRESHOLD_PCT";
-    std::env::var(ENV_KEY)
-        .ok()
-        .map(|raw| raw.trim().to_string())
-        .filter(|raw| !raw.is_empty())
-        .and_then(|raw| raw.parse::<f64>().ok())
-        .filter(|value| *value > 0.0 && *value <= 100.0)
-        .map(|value| value / 100.0)
-        .unwrap_or(0.9)
+    omne_notify_env::parse_token_budget_warning_threshold_ratio_from_env()
 }
 
 fn token_budget_warning_threshold_ratio() -> f64 {
@@ -169,14 +161,7 @@ fn token_budget_warning_threshold_ratio() -> f64 {
 }
 
 fn parse_token_budget_warning_debounce_env() -> Duration {
-    const ENV_KEY: &str = "OMNE_NOTIFY_TOKEN_BUDGET_WARNING_DEBOUNCE_MS";
-    let ms = std::env::var(ENV_KEY)
-        .ok()
-        .map(|raw| raw.trim().to_string())
-        .filter(|raw| !raw.is_empty())
-        .and_then(|raw| raw.parse::<u64>().ok())
-        .unwrap_or(30_000);
-    Duration::from_millis(ms.max(1))
+    omne_notify_env::parse_token_budget_warning_debounce_from_env()
 }
 
 fn token_budget_warning_debounce() -> Duration {
@@ -184,7 +169,7 @@ fn token_budget_warning_debounce() -> Duration {
 }
 
 fn build_notify_hub_from_env() -> anyhow::Result<Option<Arc<notify_kit::Hub>>> {
-    let hub = notify_kit::build_hub_from_standard_env(notify_kit::StandardEnvHubOptions {
+    let hub = build_omne_notify_hub_from_env(OmneNotifyHubOptions {
         // Service-side notifications are opt-in to avoid changing default app-server behavior.
         default_sound_enabled: false,
         require_sink: false,

@@ -1,0 +1,11 @@
+Context summary for review:
+- Goal: evaluate L0 ownership boundaries after latest runtime builder refactor.
+- Relevant recent changes:
+  - context cache assembly was extracted out of runtime/model_builders.rs into runtime/builder_backends.rs.
+  - runtime/builder_protocol.rs now has a specialized context-cache assembly protocol instead of forcing context cache through generic invocation-route assembly.
+  - explicit searchable markers were added:
+    - RUNTIME-CONTEXT-CACHE-ASSEMBLY-PROTOCOL
+    - RUNTIME-CONTEXT-CACHE-MINIMAX-BACKEND
+    - RUNTIME-CONTEXT-CACHE-BACKEND-OWNER
+  - gateway compile validation required import/gate fixes in gateway/application/translation/mod.rs and gateway/transport/http/{mod,router}.rs.
+- Focus review on structural quality, owner boundaries, and architecture drift, not dead-code cleanup.

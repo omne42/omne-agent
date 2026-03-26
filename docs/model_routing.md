@@ -222,6 +222,8 @@ keyword_rules:
 - 如果两者都实现，建议优先级写死为：
   1. 有 long-context model 且命中阈值 → 路由到 long-context
   2. 否则 → 触发 compact/summary（规格草案见 `docs/budgets.md`）
+- 当前实现里，Router 与 compact **都使用同一个 `context_tokens_estimate` 口径**（当前 prompt-load 的近似值）。
+- `total_tokens_used` 只用于 thread 生命周期 budget / warning / exceeded；不再驱动 compact 决策。
 
 ---
 

@@ -138,7 +138,7 @@ impl FanOutScheduler {
             app.thread_configure_rpc(omne_app_server_protocol::ThreadConfigureParams {
                 thread_id: forked_thread_id,
                 approval_policy: None,
-                sandbox_policy: Some(omne_protocol::SandboxPolicy::ReadOnly),
+                sandbox_policy: Some(policy_meta::WriteScope::ReadOnly),
                 sandbox_writable_roots: None,
                 sandbox_network_access: None,
                 mode: Some("reviewer".to_string()),
@@ -305,6 +305,8 @@ impl FanOutScheduler {
                     turn_id: Some(task.turn_id),
                     result_artifact_id: artifact_write.result_artifact_id,
                     result_artifact_error: artifact_write.result_artifact_error,
+                    result_artifact_structured_error: artifact_write
+                        .result_artifact_structured_error,
                     result_artifact_error_id: artifact_write.result_artifact_error_id,
                     status,
                     reason,

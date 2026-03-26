@@ -6,4 +6,5 @@ version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-safe-fs-tools = { path = "../../../safe-fs-tools" }
+omne-fs = { path = "../../../omne-runtime/crates/omne-fs" }
+policy-meta.workspace = true

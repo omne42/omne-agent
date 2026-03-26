@@ -355,6 +355,112 @@ fn top_level() {}
     }
 
     #[tokio::test]
+    async fn repo_goto_definition_writes_artifact_and_resolves_symbol() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+
+        tokio::fs::create_dir_all(repo_dir.join("src")).await?;
+        tokio::fs::write(
+            repo_dir.join("src/lib.rs"),
+            r#"
+pub fn lookup_me() -> i32 {
+    1
+}
+
+pub fn caller() -> i32 {
+    lookup_me()
+}
+"#,
+        )
+        .await?;
+
+        let server = build_test_server_shared(repo_dir.join(".omne_data"));
+        let thread_id = create_test_thread_shared(&server, repo_dir.clone()).await?;
+
+        let result = handle_repo_goto_definition(
+            &server,
+            RepoGotoDefinitionParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                root: None,
+                symbol: "lookup_me".to_string(),
+                path: Some("src/lib.rs".to_string()),
+                include_glob: Some("**/*.rs".to_string()),
+                max_results: Some(20),
+                max_files: Some(20_000),
+                max_bytes_per_file: Some(1024 * 1024),
+                max_symbols: Some(5000),
+            },
+        )
+        .await?;
+
+        let response: omne_app_server_protocol::RepoGotoDefinitionResponse =
+            serde_json::from_value(result).context("parse repo/goto_definition response")?;
+        assert_eq!(response.root, "workspace");
+        assert_eq!(response.symbol, "lookup_me");
+        assert!(response.definitions >= 1);
+        assert!(response.resolved);
+        let text = read_user_artifact_text(&server, thread_id, response.artifact_id).await?;
+        assert!(text.contains("# Repo Go To Definition"));
+        assert!(text.contains("lookup_me"));
+        assert!(text.contains("src/lib.rs"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn repo_find_references_writes_artifact_and_finds_hits() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+
+        tokio::fs::create_dir_all(repo_dir.join("src")).await?;
+        tokio::fs::write(
+            repo_dir.join("src/lib.rs"),
+            r#"
+pub fn lookup_me() -> i32 {
+    1
+}
+
+pub fn caller() -> i32 {
+    lookup_me() + lookup_me()
+}
+"#,
+        )
+        .await?;
+
+        let server = build_test_server_shared(repo_dir.join(".omne_data"));
+        let thread_id = create_test_thread_shared(&server, repo_dir.clone()).await?;
+
+        let result = handle_repo_find_references(
+            &server,
+            RepoFindReferencesParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                root: None,
+                symbol: "lookup_me".to_string(),
+                path: Some("src/lib.rs".to_string()),
+                include_glob: Some("**/*.rs".to_string()),
+                max_matches: Some(200),
+                max_bytes_per_file: Some(1024 * 1024),
+                max_files: Some(20_000),
+            },
+        )
+        .await?;
+
+        let response: omne_app_server_protocol::RepoFindReferencesResponse =
+            serde_json::from_value(result).context("parse repo/find_references response")?;
+        assert_eq!(response.root, "workspace");
+        assert_eq!(response.symbol, "lookup_me");
+        assert!(response.references >= 2);
+        let text = read_user_artifact_text(&server, thread_id, response.artifact_id).await?;
+        assert!(text.contains("# Repo Find References"));
+        assert!(text.contains("lookup_me"));
+        assert!(text.contains("src/lib.rs"));
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn repo_search_denied_by_tool_override_reports_decision_source() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");
@@ -383,6 +489,91 @@ fn top_level() {}
                 is_regex: false,
                 include_glob: None,
                 max_matches: Some(20),
+                max_bytes_per_file: Some(1024 * 1024),
+                max_files: Some(20_000),
+            },
+        )
+        .await?;
+
+        assert!(result["denied"].as_bool().unwrap_or(false));
+        assert_eq!(result["decision_source"].as_str(), Some("tool_override"));
+        assert_eq!(result["tool_override_hit"].as_bool(), Some(true));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn repo_goto_definition_denied_by_tool_override_reports_decision_source(
+    ) -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = build_test_server_shared(repo_dir.join(".omne_data"));
+        let thread_id = create_test_thread_shared(&server, repo_dir.clone()).await?;
+
+        configure_mode_with_tool_override(
+            &repo_dir,
+            &server,
+            thread_id,
+            "repo-goto-definition-override-deny",
+            "repo/goto_definition",
+        )
+        .await?;
+
+        let result = handle_repo_goto_definition(
+            &server,
+            RepoGotoDefinitionParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                root: None,
+                symbol: "lookup_me".to_string(),
+                path: None,
+                include_glob: None,
+                max_results: Some(20),
+                max_files: Some(20_000),
+                max_bytes_per_file: Some(1024 * 1024),
+                max_symbols: Some(2000),
+            },
+        )
+        .await?;
+
+        assert!(result["denied"].as_bool().unwrap_or(false));
+        assert_eq!(result["decision_source"].as_str(), Some("tool_override"));
+        assert_eq!(result["tool_override_hit"].as_bool(), Some(true));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn repo_find_references_denied_by_tool_override_reports_decision_source(
+    ) -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = build_test_server_shared(repo_dir.join(".omne_data"));
+        let thread_id = create_test_thread_shared(&server, repo_dir.clone()).await?;
+
+        configure_mode_with_tool_override(
+            &repo_dir,
+            &server,
+            thread_id,
+            "repo-find-references-override-deny",
+            "repo/find_references",
+        )
+        .await?;
+
+        let result = handle_repo_find_references(
+            &server,
+            RepoFindReferencesParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                root: None,
+                symbol: "lookup_me".to_string(),
+                path: None,
+                include_glob: None,
+                max_matches: Some(100),
                 max_bytes_per_file: Some(1024 * 1024),
                 max_files: Some(20_000),
             },

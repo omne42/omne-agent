@@ -87,7 +87,7 @@ async fn main() -> anyhow::Result<()> {
     let exec_policy = if args.execpolicy_rules.is_empty() {
         omne_execpolicy::Policy::empty()
     } else {
-        omne_execpolicy::execpolicycheck::load_policies(&args.execpolicy_rules)?
+        omne_execpolicy::load_policies(&args.execpolicy_rules)?
     };
 
     let (notify_tx, _notify_rx) = broadcast::channel::<String>(NOTIFY_CHANNEL_CAPACITY);

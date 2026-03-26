@@ -129,10 +129,11 @@ fn repo_denied_response(
         tool_id,
         remembered,
         "serialize repo denied response",
-        |tool_id, remembered, error_code| omne_app_server_protocol::RepoDeniedResponse {
+        |tool_id, remembered, structured_error, error_code| omne_app_server_protocol::RepoDeniedResponse {
             tool_id,
             denied: true,
             remembered,
+            structured_error,
             error_code,
         },
     )
@@ -143,12 +144,17 @@ fn repo_allowed_tools_denied_response(
     tool: &str,
     allowed_tools: &Option<Vec<String>>,
 ) -> anyhow::Result<Value> {
+    let structured_error = catalog_structured_error_with("allowed_tools_denied", |message| {
+        message.try_with_value_arg("tool", tool)?;
+        Ok(())
+    })?;
     let response = omne_app_server_protocol::RepoAllowedToolsDeniedResponse {
         tool_id,
         denied: true,
         tool: tool.to_string(),
         allowed_tools: allowed_tools.clone().unwrap_or_default(),
-        error_code: Some("allowed_tools_denied".to_string()),
+        structured_error: Some(structured_error.clone()),
+        error_code: structured_error_code(&structured_error),
     };
     serde_json::to_value(response).context("serialize repo allowed_tools denied response")
 }
@@ -173,6 +179,12 @@ fn repo_mode_denied_response(
     mode_name: &str,
     mode_decision: ModeDecisionAudit,
 ) -> anyhow::Result<Value> {
+    let structured_error = catalog_structured_error_with("mode_denied", |message| {
+        message.try_with_value_arg("mode", mode_name)?;
+        message.try_with_value_arg("decision_source", mode_decision.decision_source)?;
+        message.try_with_value_arg("tool_override_hit", mode_decision.tool_override_hit)?;
+        Ok(())
+    })?;
     let response = omne_app_server_protocol::RepoModeDeniedResponse {
         tool_id,
         denied: true,
@@ -183,7 +195,8 @@ fn repo_mode_denied_response(
         ),
         decision_source: mode_decision.decision_source.to_string(),
         tool_override_hit: mode_decision.tool_override_hit,
-        error_code: Some("mode_denied".to_string()),
+        structured_error: Some(structured_error.clone()),
+        error_code: structured_error_code(&structured_error),
     };
     serde_json::to_value(response).context("serialize repo mode denied response")
 }
@@ -194,6 +207,14 @@ fn repo_unknown_mode_denied_response(
     available: String,
     load_error: Option<String>,
 ) -> anyhow::Result<Value> {
+    let structured_error = catalog_structured_error_with("mode_unknown", |message| {
+        message.try_with_value_arg("mode", mode_name)?;
+        message.try_with_value_arg("available", available.as_str())?;
+        if let Some(load_error) = load_error.as_deref() {
+            message.try_with_value_arg("load_error", load_error)?;
+        }
+        Ok(())
+    })?;
     let response = omne_app_server_protocol::RepoUnknownModeDeniedResponse {
         tool_id,
         denied: true,
@@ -201,7 +222,8 @@ fn repo_unknown_mode_denied_response(
         decision: omne_app_server_protocol::RepoModeDecision::Deny,
         available,
         load_error,
-        error_code: Some("mode_unknown".to_string()),
+        structured_error: Some(structured_error.clone()),
+        error_code: structured_error_code(&structured_error),
     };
     serde_json::to_value(response).context("serialize repo unknown mode denied response")
 }

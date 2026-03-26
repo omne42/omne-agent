@@ -38,12 +38,15 @@
 
     const BASELINE_TOKENS: u64 = 12_000;
 
-    fn percent_of_context_window_remaining(total_tokens_used: u64, context_window: u64) -> u64 {
+    fn percent_of_context_window_remaining(
+        current_context_tokens_estimate: u64,
+        context_window: u64,
+    ) -> u64 {
         if context_window <= BASELINE_TOKENS {
             return 0;
         }
         let effective_window = context_window.saturating_sub(BASELINE_TOKENS);
-        let used = total_tokens_used.saturating_sub(BASELINE_TOKENS);
+        let used = current_context_tokens_estimate.saturating_sub(BASELINE_TOKENS);
         let remaining = effective_window.saturating_sub(used);
         (remaining as f64 / effective_window as f64 * 100.0)
             .clamp(0.0, 100.0)
@@ -51,12 +54,18 @@
     }
 
     fn build_footer_line(state: &UiState, width: u16) -> Line<'static> {
-        let context_left = match state.header.model_context_window {
-            Some(window) => {
-                let pct = percent_of_context_window_remaining(state.total_tokens_used, window);
+        let context_left = match (
+            state.current_context_tokens_estimate,
+            state.header.model_context_window,
+        ) {
+            (Some(context_tokens_estimate), Some(window)) => {
+                let pct = percent_of_context_window_remaining(context_tokens_estimate, window);
                 format!("{pct}% context left")
             }
-            None => {
+            (Some(context_tokens_estimate), None) => {
+                format!("~{} ctx", context_tokens_estimate)
+            }
+            (None, _) => {
                 if state.total_tokens_used > 0 {
                     format!("{} used", state.total_tokens_used)
                 } else {

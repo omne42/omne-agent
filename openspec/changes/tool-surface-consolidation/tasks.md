@@ -81,6 +81,8 @@
 - CLI/TUI 文本层已显示 facade 映射摘要（`facade_tool/op/mapped_action`），便于审计与排障。
 - role/mode 已完成正交收口：执行链使用 mode，tool 暴露与 explain 同步 role(permission_mode) 叠加。
 - 动态工具注册 MVP 已落地（默认关闭，read-only 映射，支持本地 registry 文件加载与审计）。
+- 文件工具执行归属已进一步收敛（2026-03-04）：`file/read|glob|grep|write|patch|edit|delete|fs/mkdir`
+  均通过 `omne-fs-runtime -> safe-fs-tools` 执行；`app-server` 不再直接依赖 `diffy`。
 
 ### 下一步 1-3 条可执行动作
 

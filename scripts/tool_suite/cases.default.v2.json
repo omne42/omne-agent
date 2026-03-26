@@ -1,0 +1,102 @@
+[
+  {
+    "id": "read_readme_head",
+    "user_prompt": "帮我看一下 README.md 的开头内容，并告诉我有没有提到 Omne。",
+    "target_tool": "file_read",
+    "success_args": {
+      "path": "README.md"
+    },
+    "capability_hint": "read file content from workspace"
+  },
+  {
+    "id": "glob_markdown_files",
+    "user_prompt": "请列出项目里所有 markdown 文件，先给我前几条就行。",
+    "target_tool": "file_glob",
+    "success_args": {
+      "pattern": "**/*.md"
+    },
+    "capability_hint": "glob files by pattern"
+  },
+  {
+    "id": "grep_omne_keyword",
+    "user_prompt": "在仓库里搜一下 OmneAgent 这个关键词，看看出现在哪些文件。",
+    "target_tool": "file_grep",
+    "success_args": {
+      "query": "OmneAgent"
+    },
+    "capability_hint": "search text across repository files"
+  },
+  {
+    "id": "mkdir_logs_dir",
+    "user_prompt": "请在 tmp/bench_v2 下创建一个 logs 目录。",
+    "target_tool": "fs_mkdir",
+    "success_args": {
+      "path": "tmp/bench_v2/logs"
+    },
+    "capability_hint": "create directory in workspace"
+  },
+  {
+    "id": "write_temp_note",
+    "user_prompt": "帮我在 tmp/bench_v2/note.txt 写入一行文本：hello-v2",
+    "target_tool": "file_write",
+    "success_args": {
+      "path": "tmp/bench_v2/note.txt",
+      "content": "hello-v2"
+    },
+    "capability_hint": "write text file content"
+  },
+  {
+    "id": "edit_readme_phrase",
+    "user_prompt": "请把 README.md 里一个 OmneAgent 的字样替换成 Omne Agent。",
+    "target_tool": "file_edit",
+    "success_args": {
+      "path": "README.md",
+      "old_text": "OmneAgent",
+      "new_text": "Omne Agent"
+    },
+    "capability_hint": "edit file text by replacement"
+  },
+  {
+    "id": "start_echo_process",
+    "user_prompt": "帮我启动一个简单命令，执行 echo hello。",
+    "target_tool": "process_start",
+    "success_args": {
+      "command": [
+        "echo",
+        "hello"
+      ]
+    },
+    "capability_hint": "start a process command"
+  },
+  {
+    "id": "thread_usage_check",
+    "user_prompt": "我想知道当前会话大概用了多少 token，你帮我查一下。",
+    "target_tool": "thread",
+    "success_args": {
+      "op": "usage"
+    },
+    "capability_hint": "read current thread usage"
+  },
+  {
+    "id": "mcp_list_tools_default",
+    "user_prompt": "请帮我看看 default 这个 MCP server 暴露了哪些工具。",
+    "target_tool": "mcp_list_tools",
+    "success_args": {
+      "server": "default"
+    },
+    "capability_hint": "list tools from MCP server"
+  },
+  {
+    "id": "mcp_call_echo",
+    "user_prompt": "用 MCP 的 echo 工具发一条 text=hello 的测试请求。",
+    "target_tool": "mcp_call",
+    "success_args": {
+      "server": "default",
+      "tool": "echo",
+      "arguments": {
+        "text": "hello"
+      }
+    },
+    "capability_hint": "call MCP tool with nested arguments object"
+  }
+]

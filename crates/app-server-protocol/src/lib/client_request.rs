@@ -277,6 +277,18 @@ pub enum ClientRequest {
         request_id: RequestId,
         params: RepoSymbolsParams,
     },
+    #[serde(rename = "repo/goto_definition")]
+    RepoGotoDefinition {
+        #[serde(rename = "id")]
+        request_id: RequestId,
+        params: RepoGotoDefinitionParams,
+    },
+    #[serde(rename = "repo/find_references")]
+    RepoFindReferences {
+        #[serde(rename = "id")]
+        request_id: RequestId,
+        params: RepoFindReferencesParams,
+    },
     #[serde(rename = "mcp/list_servers")]
     McpListServers {
         #[serde(rename = "id")]

@@ -110,6 +110,34 @@
 - `crates/agent-cli/src/main/repl.rs`
   - 事实：`/help` 已补充 facade help-first 指引（默认最简 + `op=help` + `topic` 进阶）。
 
+### A5. Tool 执行归属（2026-03-04 对齐）
+
+- `crates/app-server/Cargo.toml`
+  - 事实：`omne-app-server` 已移除 `diffy` 直依赖；`file/patch` 不再在 app-server 内直接处理 patch 算法。
+- `crates/fs-runtime/src/lib.rs`
+  - 事实：`file/read|glob|grep|write|patch|edit|delete|fs/mkdir` 均有 `omne-fs-runtime` 封装并委托到 `safe-fs-tools`。
+  - 事实：`file/patch` 链路为 `safe-fs-tools::apply_unified_patch`（`diffy` 仅位于更底层依赖）。
+- `crates/app-server/src/main/file_read_glob_grep/read.rs`
+  - 事实：`file/read` 通过 `spawn_blocking -> omne_fs_runtime::read_text_read_only` 执行。
+- `crates/app-server/src/main/file_read_glob_grep/grep.rs`
+  - 事实：`file/grep` 通过 `spawn_blocking -> omne_fs_runtime::grep_read_only_paths` 执行。
+- `crates/app-server/src/main/file_write_patch.rs`
+  - 事实：`file/write`、`file/patch` 分别通过
+    `omne_fs_runtime::write_text_workspace`、`omne_fs_runtime::patch_text_workspace` 执行。
+- `crates/app-server/src/main/file_edit_delete.rs`
+  - 事实：`file/edit`、`file/delete` 分别通过
+    `omne_fs_runtime::edit_replace_workspace`、`omne_fs_runtime::delete_path_workspace` 执行。
+- `crates/app-server/src/main/fs.rs`
+  - 事实：`fs/mkdir` 已下沉到 `spawn_blocking -> omne_fs_runtime::mkdir_workspace`（不再直接 `tokio::fs::create_dir`）。
+- `crates/app-server/src/main/thread_observe/disk_git_diff.rs`
+  - 事实：`thread/diff` 不是“直接 git-runtime 执行 diff”；`git-runtime` 提供 recipe/limits，实际通过 `process/start` 跑命令并走 artifact 写入管线。
+- `crates/app-server/src/main/artifact/write.rs`
+  - 事实：artifact 业务逻辑（版本、历史快照、裁剪报告）在 app-server 层显著存在；`omne-artifact-store` 不是唯一实现主体。
+- `crates/app-server/src/agent/tools/dispatch/run_tool_call_once.rs`
+  - 事实：`web_search/web_fetch/view_image` 主要实现位于 dispatch 层；不是独立 runtime crate。
+- `crates/app-server/src/main/mcp/runtime.rs`
+  - 事实：MCP 连接管理/调用在该模块实现，与 `web/*` 的 dispatch 实现位置不同。
+
 ## B. 内部规范文档
 
 - `docs/research/tools-alignment-todo.md`

@@ -11,6 +11,36 @@ Primary sources:
 - `/root/autodl-tmp/zjj/p/omne-agent/crates/core/src/modes.rs`
 - `/root/autodl-tmp/zjj/p/omne-agent/crates/app-server/src/main/thread_manage/config.rs`
 - `/root/autodl-tmp/zjj/p/omne-agent/crates/app-server/src/agent/core/run_turn.rs`
+- `/root/autodl-tmp/zjj/p/omne-agent/crates/app-server/src/main/fs.rs`
+
+## Code Reality Corrections (2026-03-04)
+
+以下为近期实现演进后的准确口径（用于覆盖旧认知）：
+
+1. `file/patch` 不再由 `omne-app-server` 直连 `diffy` 实现。
+   - 当前链路：`app-server -> omne-fs-runtime -> safe-fs-tools::apply_unified_patch`。
+   - `diffy` 仅存在于 `safe-fs-tools` 更底层实现中。
+   - 参考：`crates/app-server/Cargo.toml`、`crates/fs-runtime/src/lib.rs`。
+
+2. `omne-fs-runtime` 不再只服务 `file/glob`。
+   - 当前 `file/read|glob|grep|write|patch|edit|delete|fs/mkdir` 均通过 `omne-fs-runtime` 调用 `safe-fs-tools`。
+   - 参考：`crates/app-server/src/main/file_read_glob_grep/read.rs`、`crates/app-server/src/main/file_read_glob_grep/grep.rs`、`crates/app-server/src/main/file_write_patch.rs`、`crates/app-server/src/main/file_edit_delete.rs`。
+
+3. `fs/mkdir` 已下沉到 `omne-fs-runtime`。
+   - 当前链路：`app-server -> omne-fs-runtime::mkdir_workspace -> safe-fs-tools::mkdir`。
+   - 参考：`crates/app-server/src/main/fs.rs`、`crates/fs-runtime/src/lib.rs`。
+
+4. `thread/diff` 不是“直接由 git-runtime 执行 diff 命令”。
+   - `omne-git-runtime` 提供 recipe/limits 约束，实际通过 `process/start` 跑命令，再经 artifact 管线落盘输出。
+   - 参考：`crates/app-server/src/main/thread_observe/disk_git_diff.rs`。
+
+5. `artifact` 不能简化为“主要由 omne-artifact-store 实现”。
+   - `omne-artifact-store` 提供底层存储能力，但版本、历史快照、裁剪报告等大量业务逻辑在 `app-server`。
+   - 参考：`crates/app-server/src/main/artifact/write.rs`、`crates/app-server/src/main/fs.rs`。
+
+6. `integration` 中 MCP 描述正确，但 `web/*` 主实现位置需明确。
+   - `web_search/web_fetch/view_image` 主要在 `run_tool_call_once.rs` 内实现，不是独立 runtime crate。
+   - 参考：`crates/app-server/src/main/mcp/runtime.rs`、`crates/app-server/src/agent/tools/dispatch/run_tool_call_once.rs`。
 
 ## 1) 全量工具面（代码定义）
 

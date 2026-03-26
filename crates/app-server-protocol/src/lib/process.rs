@@ -192,6 +192,9 @@ pub struct ProcessAllowedToolsDeniedResponse {
     pub allowed_tools: Vec<String>,
     #[serde(default)]
     #[ts(optional)]
+    pub structured_error: Option<StructuredTextData>,
+    #[serde(default)]
+    #[ts(optional)]
     pub error_code: Option<String>,
 }
 
@@ -214,6 +217,9 @@ pub struct ProcessModeDeniedResponse {
     pub tool_override_hit: bool,
     #[serde(default)]
     #[ts(optional)]
+    pub structured_error: Option<StructuredTextData>,
+    #[serde(default)]
+    #[ts(optional)]
     pub error_code: Option<String>,
 }
 
@@ -230,6 +236,9 @@ pub struct ProcessUnknownModeDeniedResponse {
     pub load_error: Option<String>,
     #[serde(default)]
     #[ts(optional)]
+    pub structured_error: Option<StructuredTextData>,
+    #[serde(default)]
+    #[ts(optional)]
     pub error_code: Option<String>,
 }
 
@@ -237,7 +246,10 @@ pub struct ProcessUnknownModeDeniedResponse {
 pub struct ProcessSandboxPolicyDeniedResponse {
     pub tool_id: omne_protocol::ToolId,
     pub denied: bool,
-    pub sandbox_policy: omne_protocol::SandboxPolicy,
+    pub sandbox_policy: policy_meta::WriteScope,
+    #[serde(default)]
+    #[ts(optional)]
+    pub structured_error: Option<StructuredTextData>,
     #[serde(default)]
     #[ts(optional)]
     pub error_code: Option<String>,
@@ -248,6 +260,9 @@ pub struct ProcessSandboxNetworkDeniedResponse {
     pub tool_id: omne_protocol::ToolId,
     pub denied: bool,
     pub sandbox_network_access: omne_protocol::SandboxNetworkAccess,
+    #[serde(default)]
+    #[ts(optional)]
+    pub structured_error: Option<StructuredTextData>,
     #[serde(default)]
     #[ts(optional)]
     pub error_code: Option<String>,
@@ -264,6 +279,9 @@ pub struct ProcessExecPolicyDeniedResponse {
     pub justification: Option<String>,
     #[serde(default)]
     #[ts(optional)]
+    pub structured_error: Option<StructuredTextData>,
+    #[serde(default)]
+    #[ts(optional)]
     pub error_code: Option<String>,
 }
 
@@ -274,6 +292,9 @@ pub struct ProcessExecPolicyLoadDeniedResponse {
     pub mode: String,
     pub error: String,
     pub details: String,
+    #[serde(default)]
+    #[ts(optional)]
+    pub structured_error: Option<StructuredTextData>,
     #[serde(default)]
     #[ts(optional)]
     pub error_code: Option<String>,

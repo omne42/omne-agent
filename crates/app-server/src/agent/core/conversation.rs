@@ -112,6 +112,35 @@ async fn build_conversation(
     Ok(input)
 }
 
+pub(crate) async fn estimate_thread_context_tokens(
+    server: &super::Server,
+    thread_id: ThreadId,
+    thread_mode: &str,
+    thread_cwd: Option<&str>,
+    system_prompt_text: Option<&str>,
+) -> anyhow::Result<u64> {
+    let thread_root = match thread_cwd {
+        Some(thread_cwd) => {
+            Some(omne_core::resolve_dir(Path::new(thread_cwd), Path::new(".")).await?)
+        }
+        None => None,
+    };
+    let mode_catalog = if let Some(thread_root) = thread_root.as_deref() {
+        omne_core::modes::ModeCatalog::load(thread_root).await
+    } else {
+        omne_core::modes::ModeCatalog::builtin()
+    };
+
+    let mut instructions = match system_prompt_text {
+        Some(prompt_text) => prompt_text.to_string(),
+        None => build_system_prompt_from_sources(thread_cwd).await.text,
+    };
+    append_mode_scenario_prompt(&mut instructions, thread_mode, &mode_catalog);
+
+    let input_items = build_conversation(server, thread_id).await?;
+    Ok(estimate_context_tokens(&instructions, &input_items))
+}
+
 async fn load_turn_context_refs(
     server: &super::Server,
     thread_id: ThreadId,
@@ -199,6 +228,22 @@ async fn load_turn_directives(
     Ok(Vec::new())
 }
 
+async fn load_turn_started_count(
+    server: &super::Server,
+    thread_id: ThreadId,
+) -> anyhow::Result<usize> {
+    let events = server
+        .thread_store
+        .read_events_since(thread_id, EventSeq::ZERO)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("thread not found: {thread_id}"))?;
+
+    Ok(events
+        .iter()
+        .filter(|event| matches!(event.kind, ThreadEventKind::TurnStarted { .. }))
+        .count())
+}
+
 fn infer_image_media_type(path: &str) -> Option<&'static str> {
     let ext = Path::new(path)
         .extension()
@@ -264,8 +309,13 @@ async fn resolve_attachment_path_and_size(
 
 #[derive(Debug, Clone)]
 enum ResolvedAttachment {
-    ImageUrl { url: String },
-    ImageBytes { media_type: String, bytes: Vec<u8> },
+    ImageUrl {
+        url: String,
+    },
+    ImageBytes {
+        media_type: String,
+        bytes: Vec<u8>,
+    },
     FileUrl {
         url: String,
         filename: Option<String>,
@@ -394,10 +444,7 @@ async fn resolve_turn_attachments(
             },
             omne_protocol::TurnAttachment::File(file) => match &file.source {
                 omne_protocol::AttachmentSource::Url { url } => {
-                    let filename = file
-                        .filename
-                        .clone()
-                        .or_else(|| filename_from_url(url));
+                    let filename = file.filename.clone().or_else(|| filename_from_url(url));
                     out.push(ResolvedAttachment::FileUrl {
                         url: url.clone(),
                         filename,
@@ -410,10 +457,7 @@ async fn resolve_turn_attachments(
                     };
                     let (resolved, size_bytes) =
                         resolve_attachment_path_and_size(thread_root, path, max_bytes).await?;
-                    let filename = file
-                        .filename
-                        .clone()
-                        .or_else(|| filename_from_path(path));
+                    let filename = file.filename.clone().or_else(|| filename_from_path(path));
                     out.push(ResolvedAttachment::FilePath {
                         path: path.clone(),
                         resolved,
@@ -436,20 +480,20 @@ async fn attachments_to_ditto_parts_for_provider(
     runtime: &ProviderRuntime,
     attachments: &[ResolvedAttachment],
     pdf_file_id_upload_min_bytes: u64,
-) -> anyhow::Result<Vec<ditto_llm::ContentPart>> {
+) -> anyhow::Result<Vec<ditto_core::contracts::ContentPart>> {
     let mut out = Vec::new();
 
     for attachment in attachments {
         match attachment {
             ResolvedAttachment::ImageUrl { url } => {
-                out.push(ditto_llm::ContentPart::Image {
-                    source: ditto_llm::ImageSource::Url { url: url.clone() },
+                out.push(ditto_core::contracts::ContentPart::Image {
+                    source: ditto_core::contracts::ImageSource::Url { url: url.clone() },
                 });
             }
             ResolvedAttachment::ImageBytes { media_type, bytes } => {
                 let data = base64::engine::general_purpose::STANDARD.encode(bytes);
-                out.push(ditto_llm::ContentPart::Image {
-                    source: ditto_llm::ImageSource::Base64 {
+                out.push(ditto_core::contracts::ContentPart::Image {
+                    source: ditto_core::contracts::ImageSource::Base64 {
                         media_type: media_type.clone(),
                         data,
                     },
@@ -460,10 +504,10 @@ async fn attachments_to_ditto_parts_for_provider(
                 filename,
                 media_type,
             } => {
-                out.push(ditto_llm::ContentPart::File {
+                out.push(ditto_core::contracts::ContentPart::File {
                     filename: filename.clone(),
                     media_type: media_type.clone(),
-                    source: ditto_llm::FileSource::Url { url: url.clone() },
+                    source: ditto_core::contracts::FileSource::Url { url: url.clone() },
                 });
             }
             ResolvedAttachment::FilePath {
@@ -479,23 +523,19 @@ async fn attachments_to_ditto_parts_for_provider(
 
                 if should_upload_as_file_id {
                     if let Some(uploader) = runtime.file_uploader.as_ref() {
-                        let filename = filename
-                            .clone()
-                            .unwrap_or_else(|| "file.pdf".to_string());
-                        let bytes = tokio::fs::read(resolved)
-                            .await
-                            .with_context(|| {
-                                format!("read attachment path={path} resolved={}", resolved.display())
-                            })?;
-                        match uploader
-                            .upload_file(filename.clone(), bytes)
-                            .await
-                        {
+                        let filename = filename.clone().unwrap_or_else(|| "file.pdf".to_string());
+                        let bytes = tokio::fs::read(resolved).await.with_context(|| {
+                            format!(
+                                "read attachment path={path} resolved={}",
+                                resolved.display()
+                            )
+                        })?;
+                        match uploader.upload_file(filename.clone(), bytes).await {
                             Ok(file_id) => {
-                                out.push(ditto_llm::ContentPart::File {
+                                out.push(ditto_core::contracts::ContentPart::File {
                                     filename: Some(filename),
                                     media_type: media_type.clone(),
-                                    source: ditto_llm::FileSource::FileId { file_id },
+                                    source: ditto_core::contracts::FileSource::FileId { file_id },
                                 });
                                 continue;
                             }
@@ -513,16 +553,17 @@ async fn attachments_to_ditto_parts_for_provider(
                     }
                 }
 
-                let bytes = tokio::fs::read(resolved)
-                    .await
-                    .with_context(|| {
-                        format!("read attachment path={path} resolved={}", resolved.display())
-                    })?;
+                let bytes = tokio::fs::read(resolved).await.with_context(|| {
+                    format!(
+                        "read attachment path={path} resolved={}",
+                        resolved.display()
+                    )
+                })?;
                 let data = base64::engine::general_purpose::STANDARD.encode(bytes);
-                out.push(ditto_llm::ContentPart::File {
+                out.push(ditto_core::contracts::ContentPart::File {
                     filename: filename.clone(),
                     media_type: media_type.clone(),
-                    source: ditto_llm::FileSource::Base64 { data },
+                    source: ditto_core::contracts::FileSource::Base64 { data },
                 });
             }
         }
@@ -558,21 +599,20 @@ async fn context_refs_to_messages(
                     "max_bytes": max_bytes,
                 });
 
-                let (output, hook_messages) =
-                    match run_tool_call(
-                        server,
-                        thread_id,
-                        Some(turn_id),
-                        "file_read",
-                        args,
-                        cancel.clone(),
-                        true,
-                    )
-                    .await
-                    {
-                        Ok(outcome) => (outcome.output, outcome.hook_messages),
-                        Err(err) => (serde_json::json!({ "error": err.to_string() }), Vec::new()),
-                    };
+                let (output, hook_messages) = match run_tool_call(
+                    server,
+                    thread_id,
+                    Some(turn_id),
+                    "file_read",
+                    args,
+                    cancel.clone(),
+                    true,
+                )
+                .await
+                {
+                    Ok(outcome) => (outcome.output, outcome.hook_messages),
+                    Err(err) => (serde_json::json!({ "error": err.to_string() }), Vec::new()),
+                };
 
                 out.extend(hook_messages);
 
@@ -588,13 +628,18 @@ async fn context_refs_to_messages(
                     .get("truncated")
                     .and_then(Value::as_bool)
                     .unwrap_or(false);
-                let mut text = output.get("text").and_then(Value::as_str).unwrap_or("").to_string();
+                let mut text = output
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
 
                 if !denied && (file.start_line.is_some() || file.end_line.is_some()) {
                     let start_line = file.start_line.unwrap_or(1);
                     let end_line = file.end_line;
                     let lines = text.lines().collect::<Vec<_>>();
-                    let start_idx = usize::try_from(start_line.saturating_sub(1)).unwrap_or(usize::MAX);
+                    let start_idx =
+                        usize::try_from(start_line.saturating_sub(1)).unwrap_or(usize::MAX);
                     let end_idx = end_line
                         .and_then(|v| usize::try_from(v).ok())
                         .unwrap_or(lines.len());
@@ -613,7 +658,9 @@ async fn context_refs_to_messages(
                     msg.push_str(&format!(
                         "range: L{}{}\n",
                         start,
-                        file.end_line.map(|e| format!("-L{}", e)).unwrap_or_default()
+                        file.end_line
+                            .map(|e| format!("-L{}", e))
+                            .unwrap_or_default()
                     ));
                 }
                 if !resolved_path.trim().is_empty() {
@@ -652,21 +699,20 @@ async fn context_refs_to_messages(
                 let args = serde_json::json!({
                     "max_bytes": max_bytes,
                 });
-                let (output, hook_messages) =
-                    match run_tool_call(
-                        server,
-                        thread_id,
-                        Some(turn_id),
-                        "thread_diff",
-                        args,
-                        cancel.clone(),
-                        true,
-                    )
-                    .await
-                    {
-                        Ok(outcome) => (outcome.output, outcome.hook_messages),
-                        Err(err) => (serde_json::json!({ "error": err.to_string() }), Vec::new()),
-                    };
+                let (output, hook_messages) = match run_tool_call(
+                    server,
+                    thread_id,
+                    Some(turn_id),
+                    "thread_diff",
+                    args,
+                    cancel.clone(),
+                    true,
+                )
+                .await
+                {
+                    Ok(outcome) => (outcome.output, outcome.hook_messages),
+                    Err(err) => (serde_json::json!({ "error": err.to_string() }), Vec::new()),
+                };
 
                 out.extend(hook_messages);
 
@@ -675,8 +721,14 @@ async fn context_refs_to_messages(
                     .and_then(Value::as_bool)
                     .unwrap_or(false);
                 let artifact = output.get("artifact").cloned().unwrap_or(Value::Null);
-                let artifact_id = artifact.get("artifact_id").and_then(Value::as_str).unwrap_or("");
-                let summary = artifact.get("summary").and_then(Value::as_str).unwrap_or("");
+                let artifact_id = artifact
+                    .get("artifact_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                let summary = artifact
+                    .get("summary")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
 
                 let mut msg = String::new();
                 msg.push_str("# Context (@diff)\n\n");
@@ -845,6 +897,7 @@ fn format_event_for_context(kind: &ThreadEventKind) -> Option<String> {
             status,
             error,
             result,
+            ..
         } => Some(format!(
             "[tool/done] tool_id={tool_id} status={status:?} error={} result={}",
             error.as_deref().unwrap_or(""),

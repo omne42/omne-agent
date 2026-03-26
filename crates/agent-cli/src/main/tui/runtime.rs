@@ -511,6 +511,7 @@
                         .map(str::trim)
                         .filter(|s| !s.is_empty())
                         .map(ToString::to_string);
+                    state.current_context_tokens_estimate = value.current_context_tokens_estimate;
                     state.total_tokens_used = value.total_tokens_used;
                 }
             }
@@ -528,6 +529,7 @@
                         .map(str::trim)
                         .filter(|s| !s.is_empty())
                         .map(ToString::to_string);
+                    state.current_context_tokens_estimate = value.current_context_tokens_estimate;
                     state.total_tokens_used = value.total_tokens_used;
                 }
             }

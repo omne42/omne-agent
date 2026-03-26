@@ -29,15 +29,19 @@ struct ExecveGateContext {
 }
 
 #[cfg(unix)]
-async fn spawn_execve_gate(ctx: ExecveGateContext, socket_path: PathBuf) -> anyhow::Result<ExecveGateHandle> {
+async fn spawn_execve_gate(
+    ctx: ExecveGateContext,
+    socket_path: PathBuf,
+) -> anyhow::Result<ExecveGateHandle> {
     use std::os::unix::fs::PermissionsExt;
 
     match tokio::fs::remove_file(&socket_path).await {
         Ok(()) => {}
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
         Err(err) => {
-            return Err(err)
-                .with_context(|| format!("remove stale execve gate socket {}", socket_path.display()));
+            return Err(err).with_context(|| {
+                format!("remove stale execve gate socket {}", socket_path.display())
+            });
         }
     }
     let listener = tokio::net::UnixListener::bind(&socket_path)
@@ -159,7 +163,10 @@ async fn handle_execve_gate_connection(
         let resp = match method.as_str() {
             "initialize" => handle_mcp_initialize(&mut init_state, id).await,
             "tools/list" => handle_mcp_tools_list(&init_state, id).await,
-            "tools/call" => handle_mcp_tools_call(ctx.clone(), &mut init_state, id, params, cancel.clone()).await,
+            "tools/call" => {
+                handle_mcp_tools_call(ctx.clone(), &mut init_state, id, params, cancel.clone())
+                    .await
+            }
             "resources/list" => handle_mcp_resources_list(&init_state, id).await,
             "prompts/list" => handle_mcp_prompts_list(&init_state, id).await,
             _ => jsonrpc_error(id, -32601, "method not found", None::<String>),
@@ -290,12 +297,20 @@ async fn handle_mcp_tools_call(
         None => return jsonrpc_error(id, -32602, "invalid params", Some("missing params")),
     };
     let Some(obj) = params.as_object() else {
-        return jsonrpc_error(id, -32602, "invalid params", Some("params must be an object"));
+        return jsonrpc_error(
+            id,
+            -32602,
+            "invalid params",
+            Some("params must be an object"),
+        );
     };
     let Some(name) = obj.get("name").and_then(|v| v.as_str()).map(str::to_string) else {
         return jsonrpc_error(id, -32602, "invalid params", Some("missing tool name"));
     };
-    let arguments = obj.get("arguments").cloned().unwrap_or_else(|| serde_json::json!({}));
+    let arguments = obj
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
 
     let outcome = dispatch_execve_gate_tool(ctx, &name, &arguments, cancel).await;
     match outcome {
@@ -370,11 +385,6 @@ async fn dispatch_execve_gate_tool(
 }
 
 #[cfg(unix)]
-fn execpolicy_allow_fallback(_: &[String]) -> ExecDecision {
-    ExecDecision::Allow
-}
-
-#[cfg(unix)]
 async fn handle_execve_gate_decide(
     ctx: Arc<ExecveGateContext>,
     args: ExecveGateDecideArgs,
@@ -403,142 +413,116 @@ async fn handle_execve_gate_decide(
             state.execpolicy_rules.clone(),
         )
     };
-
-    if sandbox_policy == omne_protocol::SandboxPolicy::ReadOnly {
-        return Ok(serde_json::json!({
-            "decision": "deny",
-            "reason": "sandbox_policy=read_only forbids execve",
-        }));
-    }
-
-    if sandbox_network_access == omne_protocol::SandboxNetworkAccess::Deny
-        && omne_process_runtime::command_uses_network(&args.argv)
-    {
-        return Ok(serde_json::json!({
-            "decision": "deny",
-            "reason": "sandbox_network_access=deny forbids this command",
-        }));
-    }
-
-    let catalog = omne_core::modes::ModeCatalog::load(&ctx.thread_root).await;
-    let mode = match catalog.mode(&mode_name) {
-        Some(mode) => mode,
-        None => {
-            let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
-            return Ok(serde_json::json!({
-                "decision": "deny",
-                "reason": "unknown mode",
-                "mode": mode_name,
-                "available": available,
-                "load_error": catalog.load_error.clone(),
-            }));
-        }
-    };
-
-    let mut effective_exec_policy = ctx.exec_policy.clone();
-    if !mode.command_execpolicy_rules.is_empty() {
-        let mode_exec_policy = match load_mode_exec_policy(&ctx.thread_root, &mode.command_execpolicy_rules).await
-        {
-            Ok(policy) => policy,
-            Err(err) => {
-                return Ok(serde_json::json!({
-                    "decision": "deny",
-                    "reason": "failed to load mode execpolicy rules",
-                    "mode": mode_name,
-                    "rules": mode.command_execpolicy_rules.clone(),
-                    "details": err.to_string(),
-                }));
-            }
-        };
-        effective_exec_policy = merge_exec_policies(&effective_exec_policy, &mode_exec_policy);
-    }
-    if !thread_execpolicy_rules.is_empty() {
-        let thread_exec_policy = match load_mode_exec_policy(&ctx.thread_root, &thread_execpolicy_rules).await {
-            Ok(policy) => policy,
-            Err(err) => {
-                return Ok(serde_json::json!({
-                    "decision": "deny",
-                    "reason": "failed to load thread execpolicy rules",
-                    "mode": mode_name,
-                    "rules": thread_execpolicy_rules.clone(),
-                    "details": err.to_string(),
-                }));
-            }
-        };
-        effective_exec_policy = merge_exec_policies(&effective_exec_policy, &thread_exec_policy);
-    }
-    let exec_matches = effective_exec_policy
-        .matches_for_command(&args.argv, Some(&execpolicy_allow_fallback));
-    let exec_decision = exec_matches.iter().map(ExecRuleMatch::decision).max();
-
-    let effective_exec_decision = match exec_decision {
-        Some(ExecDecision::Forbidden) => ExecDecision::Forbidden,
-        Some(ExecDecision::PromptStrict) => ExecDecision::PromptStrict,
-        Some(ExecDecision::Allow) => ExecDecision::Allow,
-        Some(ExecDecision::Prompt) | None => ExecDecision::Prompt,
-    };
-
-    if effective_exec_decision == ExecDecision::Forbidden {
-        let exec_matches_json = serde_json::to_value(&exec_matches)?;
-        let justification = exec_matches.iter().find_map(|m| match m {
-            ExecRuleMatch::PrefixRuleMatch {
-                decision: ExecDecision::Forbidden,
-                justification,
-                ..
-            } => justification.clone(),
-            _ => None,
-        });
-
-        return Ok(serde_json::json!({
-            "decision": "deny",
-            "reason": "execpolicy forbids this command",
-            "matched_rules": exec_matches_json,
-            "justification": justification,
-        }));
-    }
-
-    if effective_exec_decision == ExecDecision::Allow {
-        return Ok(serde_json::json!({ "decision": "run" }));
-    }
-
-    let approval_params = serde_json::json!({
-        "argv": args.argv.clone(),
-        "cwd": args
-            .cwd
-            .unwrap_or_else(|| ctx.thread_root.display().to_string()),
-        "approval": {
-            "source": "execve-wrapper",
-            "requirement": match effective_exec_decision {
-                ExecDecision::PromptStrict => "prompt_strict",
-                _ => "prompt",
-            }
-        }
-    });
-
-    match gate_approval_with_deps(
-        &ctx.thread_store,
-        &effective_exec_policy,
-        &ctx.thread_rt,
-        ctx.thread_id,
-        ctx.turn_id,
-        approval_policy,
-        ApprovalRequest {
-            approval_id: None,
-            action: "process/execve",
-            params: &approval_params,
+    let access_mode = process_exec_access_mode(sandbox_policy);
+    let gateway_cwd = args
+        .cwd
+        .as_deref()
+        .map(Path::new)
+        .unwrap_or_else(|| Path::new("."));
+    let approval_cwd = args
+        .cwd
+        .clone()
+        .unwrap_or_else(|| ctx.thread_root.display().to_string());
+    let exec_governance = evaluate_process_exec_governance(
+        &ProcessExecGovernanceContext {
+            access_mode,
+            cwd: gateway_cwd,
+            sandbox_policy,
+            sandbox_network_access,
+            authorization: ProcessExecAuthorizationContext {
+                thread_root: &ctx.thread_root,
+                thread_store: &ctx.thread_store,
+                thread_rt: &ctx.thread_rt,
+                thread_id: ctx.thread_id,
+                turn_id: ctx.turn_id,
+                approval_id: None,
+                approval_policy,
+                mode_name: &mode_name,
+                action: "process/execve",
+                exec_policy: &ctx.exec_policy,
+                thread_execpolicy_rules: &thread_execpolicy_rules,
+                argv: &args.argv,
+                unmatched_command_policy: UnmatchedCommandPolicy::Allow,
+            },
+        },
+        |mode| mode.permissions.command,
+        |approval_requirement| {
+            build_process_exec_approval_params(
+                &args.argv,
+                &approval_cwd,
+                None,
+                Some((
+                    ProcessExecApprovalSource::ExecveWrapper,
+                    approval_requirement,
+                )),
+            )
         },
     )
-    .await?
-    {
-        ApprovalGate::Approved => Ok(serde_json::json!({ "decision": "run" })),
-        ApprovalGate::Denied { remembered } => Ok(serde_json::json!({
-            "decision": "deny",
-            "reason": approval_denied_error(remembered),
-        })),
-        ApprovalGate::NeedsApproval { approval_id } => Ok(serde_json::json!({
+    .await?;
+
+    match exec_governance {
+        ProcessExecGovernance::Bypassed | ProcessExecGovernance::Allowed => {
+            Ok(serde_json::json!({ "decision": "run" }))
+        }
+        ProcessExecGovernance::NeedsApproval { approval_id } => Ok(serde_json::json!({
             "decision": "escalate",
             "approval_id": approval_id,
         })),
+        ProcessExecGovernance::Denied(denied) => {
+            let action_label = match &denied {
+                ProcessExecGovernanceDenied::ModeDenied { .. } => "process/execve",
+                _ => "execve",
+            };
+            let reason = process_exec_governance_denied_reason(&denied, action_label);
+
+            match denied {
+                ProcessExecGovernanceDenied::UnknownMode {
+                    available,
+                    load_error,
+                } => Ok(serde_json::json!({
+                    "decision": "deny",
+                    "reason": reason,
+                    "mode": mode_name,
+                    "available": available,
+                    "load_error": load_error,
+                })),
+                ProcessExecGovernanceDenied::ModeDenied { mode_decision } => {
+                    Ok(serde_json::json!({
+                        "decision": "deny",
+                        "reason": reason,
+                        "mode": mode_name,
+                        "mode_decision": format!("{:?}", mode_decision.decision).to_lowercase(),
+                        "decision_source": mode_decision.decision_source,
+                        "tool_override_hit": mode_decision.tool_override_hit,
+                    }))
+                }
+                ProcessExecGovernanceDenied::ExecPolicyLoad { details, rules, .. } => {
+                    Ok(serde_json::json!({
+                        "decision": "deny",
+                        "reason": reason,
+                        "mode": mode_name,
+                        "rules": rules,
+                        "details": details,
+                    }))
+                }
+                ProcessExecGovernanceDenied::ExecPolicyForbidden {
+                    matches,
+                    justification,
+                } => Ok(serde_json::json!({
+                    "decision": "deny",
+                    "reason": reason,
+                    "matched_rules": serde_json::to_value(&matches)?,
+                    "justification": justification,
+                })),
+                ProcessExecGovernanceDenied::SandboxPolicyReadOnly
+                | ProcessExecGovernanceDenied::SandboxNetworkDenied
+                | ProcessExecGovernanceDenied::GatewayDenied(_)
+                | ProcessExecGovernanceDenied::ApprovalDenied { .. } => Ok(serde_json::json!({
+                    "decision": "deny",
+                    "reason": reason,
+                })),
+            }
+        }
     }
 }
 
@@ -764,6 +748,617 @@ mod execve_gate_tests {
 
         let payload = mcp_payload(&resp)?;
         assert_eq!(payload["decision"], "deny");
+
+        shutdown_execve_gate(gate).await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn execve_gate_denies_read_only_sandbox_policy() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let exec_policy = omne_execpolicy::Policy::empty();
+
+        let mut server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        server.exec_policy = exec_policy.clone();
+        let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        handle_thread_configure(
+            &server,
+            ThreadConfigureParams {
+                thread_id,
+                approval_policy: Some(omne_protocol::ApprovalPolicy::AutoApprove),
+                sandbox_policy: Some(policy_meta::WriteScope::ReadOnly),
+                sandbox_writable_roots: None,
+                sandbox_network_access: None,
+                mode: None,
+                role: None,
+                model: None,
+                thinking: None,
+                show_thinking: None,
+                openai_base_url: None,
+                allowed_tools: None,
+                execpolicy_rules: None,
+            },
+        )
+        .await?;
+
+        let thread_rt = server.get_or_load_thread(thread_id).await?;
+        let socket_path = tmp.path().join("execve.sock");
+        let token = "test-token".to_string();
+
+        let gate = match spawn_execve_gate(
+            ExecveGateContext {
+                thread_id,
+                turn_id: None,
+                token: token.clone(),
+                thread_root: repo_dir,
+                thread_store: server.thread_store.clone(),
+                exec_policy,
+                thread_rt,
+            },
+            socket_path.clone(),
+        )
+        .await
+        {
+            Ok(gate) => gate,
+            Err(err) if unix_socket_bind_not_permitted(&err) => {
+                eprintln!("skipping execve gate test: unix socket bind not permitted");
+                return Ok(());
+            }
+            Err(err) => return Err(err),
+        };
+
+        let stream = tokio::net::UnixStream::connect(&socket_path).await?;
+        let (read_half, mut write_half) = stream.into_split();
+        let mut lines = tokio::io::BufReader::new(read_half).lines();
+        mcp_initialize(&mut lines, &mut write_half).await?;
+
+        let resp = mcp_tools_call(
+            &mut lines,
+            &mut write_half,
+            2,
+            EXECVE_GATE_TOOL_DECIDE,
+            serde_json::json!({ "token": token, "argv": ["echo", "ok"] }),
+        )
+        .await?;
+        let payload = mcp_payload(&resp)?;
+        assert_eq!(payload["decision"], "deny");
+        assert!(
+            payload["reason"]
+                .as_str()
+                .is_some_and(|reason| reason.contains("sandbox_policy=read_only"))
+        );
+
+        shutdown_execve_gate(gate).await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn execve_gate_denies_network_commands_when_network_access_is_denied()
+    -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let exec_policy = omne_execpolicy::Policy::empty();
+
+        let mut server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        server.exec_policy = exec_policy.clone();
+        let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        handle_thread_configure(
+            &server,
+            ThreadConfigureParams {
+                thread_id,
+                approval_policy: Some(omne_protocol::ApprovalPolicy::AutoApprove),
+                sandbox_policy: None,
+                sandbox_writable_roots: None,
+                sandbox_network_access: Some(omne_protocol::SandboxNetworkAccess::Deny),
+                mode: None,
+                role: None,
+                model: None,
+                thinking: None,
+                show_thinking: None,
+                openai_base_url: None,
+                allowed_tools: None,
+                execpolicy_rules: None,
+            },
+        )
+        .await?;
+
+        let thread_rt = server.get_or_load_thread(thread_id).await?;
+        let socket_path = tmp.path().join("execve.sock");
+        let token = "test-token".to_string();
+
+        let gate = match spawn_execve_gate(
+            ExecveGateContext {
+                thread_id,
+                turn_id: None,
+                token: token.clone(),
+                thread_root: repo_dir,
+                thread_store: server.thread_store.clone(),
+                exec_policy,
+                thread_rt,
+            },
+            socket_path.clone(),
+        )
+        .await
+        {
+            Ok(gate) => gate,
+            Err(err) if unix_socket_bind_not_permitted(&err) => {
+                eprintln!("skipping execve gate test: unix socket bind not permitted");
+                return Ok(());
+            }
+            Err(err) => return Err(err),
+        };
+
+        let stream = tokio::net::UnixStream::connect(&socket_path).await?;
+        let (read_half, mut write_half) = stream.into_split();
+        let mut lines = tokio::io::BufReader::new(read_half).lines();
+        mcp_initialize(&mut lines, &mut write_half).await?;
+
+        let resp = mcp_tools_call(
+            &mut lines,
+            &mut write_half,
+            2,
+            EXECVE_GATE_TOOL_DECIDE,
+            serde_json::json!({
+                "token": token,
+                "argv": ["curl", "https://example.com"],
+            }),
+        )
+        .await?;
+        let payload = mcp_payload(&resp)?;
+        assert_eq!(payload["decision"], "deny");
+        assert!(
+            payload["reason"]
+                .as_str()
+                .is_some_and(|reason| reason.contains("sandbox_network_access=deny"))
+        );
+
+        shutdown_execve_gate(gate).await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn execve_gate_denies_cwd_outside_workspace() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        let outside_dir = tmp.path().join("outside");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+        tokio::fs::create_dir_all(&outside_dir).await?;
+
+        let exec_policy = omne_execpolicy::Policy::empty();
+
+        let mut server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        server.exec_policy = exec_policy.clone();
+        let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let thread_rt = server.get_or_load_thread(thread_id).await?;
+        let socket_path = tmp.path().join("execve.sock");
+        let token = "test-token".to_string();
+
+        let gate = match spawn_execve_gate(
+            ExecveGateContext {
+                thread_id,
+                turn_id: None,
+                token: token.clone(),
+                thread_root: repo_dir,
+                thread_store: server.thread_store.clone(),
+                exec_policy,
+                thread_rt,
+            },
+            socket_path.clone(),
+        )
+        .await
+        {
+            Ok(gate) => gate,
+            Err(err) if unix_socket_bind_not_permitted(&err) => {
+                eprintln!("skipping execve gate test: unix socket bind not permitted");
+                return Ok(());
+            }
+            Err(err) => return Err(err),
+        };
+
+        let stream = tokio::net::UnixStream::connect(&socket_path).await?;
+        let (read_half, mut write_half) = stream.into_split();
+        let mut lines = tokio::io::BufReader::new(read_half).lines();
+        mcp_initialize(&mut lines, &mut write_half).await?;
+
+        let resp = mcp_tools_call(
+            &mut lines,
+            &mut write_half,
+            2,
+            EXECVE_GATE_TOOL_DECIDE,
+            serde_json::json!({
+                "token": token,
+                "argv": ["echo", "ok"],
+                "cwd": outside_dir.display().to_string(),
+            }),
+        )
+        .await?;
+        let payload = mcp_payload(&resp)?;
+        assert_eq!(payload["decision"], "deny");
+        assert!(
+            payload["reason"]
+                .as_str()
+                .is_some_and(|reason| reason.contains("cwd_outside_workspace"))
+        );
+
+        shutdown_execve_gate(gate).await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn execve_gate_allows_cwd_outside_workspace_with_full_access() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        let outside_dir = tmp.path().join("outside");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+        tokio::fs::create_dir_all(&outside_dir).await?;
+
+        let exec_policy = omne_execpolicy::Policy::empty();
+
+        let mut server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        server.exec_policy = exec_policy.clone();
+        let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        handle_thread_configure(
+            &server,
+            ThreadConfigureParams {
+                thread_id,
+                approval_policy: Some(omne_protocol::ApprovalPolicy::AutoApprove),
+                sandbox_policy: Some(policy_meta::WriteScope::FullAccess),
+                sandbox_writable_roots: None,
+                sandbox_network_access: None,
+                mode: None,
+                role: None,
+                model: None,
+                thinking: None,
+                show_thinking: None,
+                openai_base_url: None,
+                allowed_tools: None,
+                execpolicy_rules: None,
+            },
+        )
+        .await?;
+
+        let thread_rt = server.get_or_load_thread(thread_id).await?;
+        let socket_path = tmp.path().join("execve.sock");
+        let token = "test-token".to_string();
+
+        let gate = match spawn_execve_gate(
+            ExecveGateContext {
+                thread_id,
+                turn_id: None,
+                token: token.clone(),
+                thread_root: repo_dir,
+                thread_store: server.thread_store.clone(),
+                exec_policy,
+                thread_rt,
+            },
+            socket_path.clone(),
+        )
+        .await
+        {
+            Ok(gate) => gate,
+            Err(err) if unix_socket_bind_not_permitted(&err) => {
+                eprintln!("skipping execve gate test: unix socket bind not permitted");
+                return Ok(());
+            }
+            Err(err) => return Err(err),
+        };
+
+        let stream = tokio::net::UnixStream::connect(&socket_path).await?;
+        let (read_half, mut write_half) = stream.into_split();
+        let mut lines = tokio::io::BufReader::new(read_half).lines();
+        mcp_initialize(&mut lines, &mut write_half).await?;
+
+        let resp = mcp_tools_call(
+            &mut lines,
+            &mut write_half,
+            2,
+            EXECVE_GATE_TOOL_DECIDE,
+            serde_json::json!({
+                "token": token,
+                "argv": ["echo", "ok"],
+                "cwd": outside_dir.display().to_string(),
+            }),
+        )
+        .await?;
+        let payload = mcp_payload(&resp)?;
+        assert_eq!(payload["decision"], "run");
+
+        shutdown_execve_gate(gate).await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn execve_gate_full_access_skips_all_policy_gates() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let mut exec_policy = omne_execpolicy::Policy::empty();
+        exec_policy.add_prefix_rule(&["curl".to_string()], ExecDecision::Forbidden)?;
+
+        let mut server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        server.exec_policy = exec_policy.clone();
+        let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        handle_thread_configure(
+            &server,
+            ThreadConfigureParams {
+                thread_id,
+                approval_policy: Some(omne_protocol::ApprovalPolicy::AutoDeny),
+                sandbox_policy: Some(policy_meta::WriteScope::FullAccess),
+                sandbox_writable_roots: None,
+                sandbox_network_access: Some(omne_protocol::SandboxNetworkAccess::Deny),
+                mode: None,
+                role: None,
+                model: None,
+                thinking: None,
+                show_thinking: None,
+                openai_base_url: None,
+                allowed_tools: None,
+                execpolicy_rules: None,
+            },
+        )
+        .await?;
+
+        let thread_rt = server.get_or_load_thread(thread_id).await?;
+        let socket_path = tmp.path().join("execve.sock");
+        let token = "test-token".to_string();
+
+        let gate = match spawn_execve_gate(
+            ExecveGateContext {
+                thread_id,
+                turn_id: None,
+                token: token.clone(),
+                thread_root: repo_dir,
+                thread_store: server.thread_store.clone(),
+                exec_policy,
+                thread_rt,
+            },
+            socket_path.clone(),
+        )
+        .await
+        {
+            Ok(gate) => gate,
+            Err(err) if unix_socket_bind_not_permitted(&err) => {
+                eprintln!("skipping execve gate test: unix socket bind not permitted");
+                return Ok(());
+            }
+            Err(err) => return Err(err),
+        };
+
+        let stream = tokio::net::UnixStream::connect(&socket_path).await?;
+        let (read_half, mut write_half) = stream.into_split();
+        let mut lines = tokio::io::BufReader::new(read_half).lines();
+        mcp_initialize(&mut lines, &mut write_half).await?;
+
+        let resp = mcp_tools_call(
+            &mut lines,
+            &mut write_half,
+            2,
+            EXECVE_GATE_TOOL_DECIDE,
+            serde_json::json!({
+                "token": token,
+                "argv": ["curl", "https://example.com"],
+            }),
+        )
+        .await?;
+        let payload = mcp_payload(&resp)?;
+        assert_eq!(payload["decision"], "run");
+
+        shutdown_execve_gate(gate).await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn execve_gate_denies_when_mode_disallows_commands() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let exec_policy = omne_execpolicy::Policy::empty();
+
+        let mut server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        server.exec_policy = exec_policy.clone();
+        let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        handle_thread_configure(
+            &server,
+            ThreadConfigureParams {
+                thread_id,
+                approval_policy: Some(omne_protocol::ApprovalPolicy::AutoApprove),
+                sandbox_policy: None,
+                sandbox_writable_roots: None,
+                sandbox_network_access: None,
+                mode: Some("chat".to_string()),
+                role: None,
+                model: None,
+                thinking: None,
+                show_thinking: None,
+                openai_base_url: None,
+                allowed_tools: None,
+                execpolicy_rules: None,
+            },
+        )
+        .await?;
+
+        let thread_rt = server.get_or_load_thread(thread_id).await?;
+        let socket_path = tmp.path().join("execve.sock");
+        let token = "test-token".to_string();
+
+        let gate = match spawn_execve_gate(
+            ExecveGateContext {
+                thread_id,
+                turn_id: None,
+                token: token.clone(),
+                thread_root: repo_dir,
+                thread_store: server.thread_store.clone(),
+                exec_policy,
+                thread_rt,
+            },
+            socket_path.clone(),
+        )
+        .await
+        {
+            Ok(gate) => gate,
+            Err(err) if unix_socket_bind_not_permitted(&err) => {
+                eprintln!("skipping execve gate test: unix socket bind not permitted");
+                return Ok(());
+            }
+            Err(err) => return Err(err),
+        };
+
+        let stream = tokio::net::UnixStream::connect(&socket_path).await?;
+        let (read_half, mut write_half) = stream.into_split();
+        let mut lines = tokio::io::BufReader::new(read_half).lines();
+        mcp_initialize(&mut lines, &mut write_half).await?;
+
+        let resp = mcp_tools_call(
+            &mut lines,
+            &mut write_half,
+            2,
+            EXECVE_GATE_TOOL_DECIDE,
+            serde_json::json!({
+                "token": token,
+                "argv": ["echo", "ok"],
+            }),
+        )
+        .await?;
+        let payload = mcp_payload(&resp)?;
+        assert_eq!(payload["decision"], "deny");
+        assert_eq!(payload["reason"], "mode denies process/execve");
+        assert_eq!(payload["mode"], "chat");
+        assert_eq!(payload["mode_decision"], "deny");
+        assert_eq!(payload["decision_source"], "mode_permission");
+        assert_eq!(payload["tool_override_hit"].as_bool(), Some(false));
+
+        shutdown_execve_gate(gate).await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn execve_gate_mode_prompt_can_request_approval() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let exec_policy = omne_execpolicy::Policy::empty();
+
+        let mut server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        server.exec_policy = exec_policy.clone();
+        let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        handle_thread_configure(
+            &server,
+            ThreadConfigureParams {
+                thread_id,
+                approval_policy: Some(omne_protocol::ApprovalPolicy::Manual),
+                sandbox_policy: None,
+                sandbox_writable_roots: None,
+                sandbox_network_access: None,
+                mode: Some("default".to_string()),
+                role: None,
+                model: None,
+                thinking: None,
+                show_thinking: None,
+                openai_base_url: None,
+                allowed_tools: None,
+                execpolicy_rules: None,
+            },
+        )
+        .await?;
+
+        let thread_rt = server.get_or_load_thread(thread_id).await?;
+        let socket_path = tmp.path().join("execve.sock");
+        let token = "test-token".to_string();
+
+        let gate = match spawn_execve_gate(
+            ExecveGateContext {
+                thread_id,
+                turn_id: None,
+                token: token.clone(),
+                thread_root: repo_dir,
+                thread_store: server.thread_store.clone(),
+                exec_policy,
+                thread_rt,
+            },
+            socket_path.clone(),
+        )
+        .await
+        {
+            Ok(gate) => gate,
+            Err(err) if unix_socket_bind_not_permitted(&err) => {
+                eprintln!("skipping execve gate test: unix socket bind not permitted");
+                return Ok(());
+            }
+            Err(err) => return Err(err),
+        };
+
+        let stream = tokio::net::UnixStream::connect(&socket_path).await?;
+        let (read_half, mut write_half) = stream.into_split();
+        let mut lines = tokio::io::BufReader::new(read_half).lines();
+        mcp_initialize(&mut lines, &mut write_half).await?;
+
+        let resp = mcp_tools_call(
+            &mut lines,
+            &mut write_half,
+            2,
+            EXECVE_GATE_TOOL_DECIDE,
+            serde_json::json!({
+                "token": token,
+                "argv": ["echo", "ok"],
+            }),
+        )
+        .await?;
+        let payload = mcp_payload(&resp)?;
+        assert_eq!(payload["decision"], "escalate");
+        let approval_id: omne_protocol::ApprovalId = payload["approval_id"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing approval_id"))?
+            .parse()?;
+
+        let events = server
+            .thread_store
+            .read_events_since(thread_id, EventSeq::ZERO)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("thread not found"))?;
+        let approval_event = events.into_iter().find_map(|event| match event.kind {
+            omne_protocol::ThreadEventKind::ApprovalRequested {
+                approval_id: got,
+                action,
+                params,
+                ..
+            } if got == approval_id => Some((action, params)),
+            _ => None,
+        });
+        let (action, params) =
+            approval_event.ok_or_else(|| anyhow::anyhow!("missing approval request event"))?;
+        assert_eq!(action, "process/execve");
+        assert_eq!(params["approval"]["source"], "execve-wrapper");
+        assert_eq!(params["approval"]["requirement"], "prompt");
+        assert_eq!(params["argv"], serde_json::json!(["echo", "ok"]));
 
         shutdown_execve_gate(gate).await;
         Ok(())

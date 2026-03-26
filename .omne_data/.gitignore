@@ -16,3 +16,5 @@ config_local.toml
 # Secrets (do not commit)
 .env
 reference/
+# OmneAgent runtime (do not commit)
+

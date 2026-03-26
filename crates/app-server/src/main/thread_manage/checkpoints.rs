@@ -7,8 +7,13 @@ fn is_not_found(err: &anyhow::Error) -> bool {
 }
 
 fn checkpoint_restore_denied_response(
-    response: omne_app_server_protocol::ThreadCheckpointRestoreDeniedResponse,
+    mut response: omne_app_server_protocol::ThreadCheckpointRestoreDeniedResponse,
 ) -> anyhow::Result<Value> {
+    if response.structured_error.is_none() {
+        if let Some(code) = response.error_code.as_deref() {
+            response.structured_error = Some(catalog_structured_error(code)?);
+        }
+    }
     serde_json::to_value(response).context("serialize checkpoint restore denied response")
 }
 
@@ -360,7 +365,7 @@ async fn handle_thread_checkpoint_restore(
         );
     }
 
-    if sandbox_policy == omne_protocol::SandboxPolicy::ReadOnly {
+    if sandbox_policy == policy_meta::WriteScope::ReadOnly {
         let reason = "sandbox_policy=read_only forbids checkpoint restore".to_string();
         let report_artifact_id = write_checkpoint_restore_report(
             server,
@@ -380,13 +385,14 @@ async fn handle_thread_checkpoint_restore(
                 report_artifact_id,
             })
             .await?;
-        return checkpoint_restore_denied_response(
-            omne_app_server_protocol::ThreadCheckpointRestoreDeniedResponse {
-                thread_id: params.thread_id,
-                checkpoint_id: params.checkpoint_id,
-                denied: true,
-                error_code: Some("sandbox_policy_denied".to_string()),
-                sandbox_policy: Some(sandbox_policy),
+            return checkpoint_restore_denied_response(
+                omne_app_server_protocol::ThreadCheckpointRestoreDeniedResponse {
+                    thread_id: params.thread_id,
+                    checkpoint_id: params.checkpoint_id,
+                    denied: true,
+                    structured_error: None,
+                    error_code: Some("sandbox_policy_denied".to_string()),
+                    sandbox_policy: Some(sandbox_policy),
                 mode: None,
                 decision: None,
                 available: None,
@@ -450,6 +456,7 @@ async fn handle_thread_checkpoint_restore(
                     thread_id: params.thread_id,
                     checkpoint_id: params.checkpoint_id,
                     denied: true,
+                    structured_error: None,
                     error_code: Some("mode_unknown".to_string()),
                     sandbox_policy: None,
                     mode: Some(mode_name),
@@ -497,6 +504,7 @@ async fn handle_thread_checkpoint_restore(
                 thread_id: params.thread_id,
                 checkpoint_id: params.checkpoint_id,
                 denied: true,
+                structured_error: None,
                 error_code: Some("mode_denied".to_string()),
                 sandbox_policy: None,
                 mode: Some(mode_name),
@@ -562,6 +570,7 @@ async fn handle_thread_checkpoint_restore(
                     thread_id: params.thread_id,
                     checkpoint_id: params.checkpoint_id,
                     denied: true,
+                    structured_error: None,
                     error_code: Some("approval_denied".to_string()),
                     sandbox_policy: None,
                     mode: None,
@@ -608,6 +617,7 @@ async fn handle_thread_checkpoint_restore(
                 thread_id: params.thread_id,
                 checkpoint_id: params.checkpoint_id,
                 denied: true,
+                structured_error: None,
                 error_code: Some("sandbox_writable_roots_unsupported".to_string()),
                 sandbox_policy: None,
                 mode: None,

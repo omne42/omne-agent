@@ -214,7 +214,7 @@ mod thread_diff_tests {
         handle_thread_configure(
             &server,
             ThreadConfigureParams {
-                sandbox_policy: Some(omne_protocol::SandboxPolicy::ReadOnly),
+                sandbox_policy: Some(policy_meta::WriteScope::ReadOnly),
                 ..thread_configure_defaults(thread_id)
             },
         )
@@ -307,7 +307,7 @@ mod thread_diff_tests {
         handle_thread_configure(
             &server,
             ThreadConfigureParams {
-                sandbox_policy: Some(omne_protocol::SandboxPolicy::ReadOnly),
+                sandbox_policy: Some(policy_meta::WriteScope::ReadOnly),
                 ..thread_configure_defaults(thread_id)
             },
         )

@@ -45,241 +45,168 @@ async fn handle_process_start_inner(
             state.execpolicy_rules.clone(),
         )
     };
-    let tool_id = omne_protocol::ToolId::new();
-    let mut approval_params = serde_json::json!({
-        "argv": params.argv.clone(),
-        "cwd": params
-            .cwd
-            .clone()
-            .unwrap_or_else(|| thread_root.display().to_string()),
-    });
-    if let Some(timeout_ms) = params.timeout_ms {
-        approval_params["timeout_ms"] = serde_json::json!(timeout_ms);
-    }
-    if let Some(_result) = enforce_thread_allowed_tools(
-        &thread_rt,
-        tool_id,
-        params.turn_id,
-        "process/start",
-        Some(approval_params.clone()),
-        &allowed_tools,
-    )
-    .await?
-    {
-        return process_allowed_tools_denied_response(tool_id, "process/start", &allowed_tools);
-    }
-
     let cwd_path = if let Some(cwd) = params.cwd.as_deref() {
         omne_core::resolve_dir_for_sandbox(&thread_root, sandbox_policy, Path::new(cwd)).await?
     } else {
         thread_root.clone()
     };
-    let cwd_str = cwd_path.display().to_string();
+    let mut cwd_str = cwd_path.display().to_string();
+    let requested_cwd_str = params
+        .cwd
+        .clone()
+        .unwrap_or_else(|| thread_root.display().to_string());
     let start_tool_params = serde_json::json!({
         "argv": params.argv.clone(),
         "cwd": cwd_str.clone(),
     });
-
-    if sandbox_policy == omne_protocol::SandboxPolicy::ReadOnly {
-        let result = process_sandbox_policy_denied_response(tool_id, sandbox_policy)?;
-        emit_process_tool_denied(
-            &thread_rt,
-            tool_id,
-            params.turn_id,
-            "process/start",
-            &start_tool_params,
-            "sandbox_policy=read_only forbids process/start".to_string(),
-            result.clone(),
-        )
-        .await?;
-        return Ok(result);
-    }
-
-    if sandbox_network_access == omne_protocol::SandboxNetworkAccess::Deny
-        && omne_process_runtime::command_uses_network(&params.argv)
-    {
-        let result = process_sandbox_network_denied_response(tool_id, sandbox_network_access)?;
-        emit_process_tool_denied(
-            &thread_rt,
-            tool_id,
-            params.turn_id,
-            "process/start",
-            &start_tool_params,
-            "sandbox_network_access=deny forbids this command".to_string(),
-            result.clone(),
-        )
-        .await?;
-        return Ok(result);
-    }
-
-    let mode_ctx = ProcessModeApprovalContext {
-        thread_rt: &thread_rt,
-        thread_root: &thread_root,
-        thread_id: params.thread_id,
-        turn_id: params.turn_id,
-        approval_id: params.approval_id,
-        approval_policy,
-        mode_name: &mode_name,
-        action: "process/start",
-        tool_id,
-        approval_params: &start_tool_params,
-    };
-    let (mode, mode_decision) = match enforce_process_mode_gate(
-        &mode_ctx,
-        |mode| mode.permissions.command,
-    )
-    .await?
-    {
-        ProcessModeGate::Denied(result) => return Ok(*result),
-        ProcessModeGate::Allowed {
-            mode,
-            mode_decision,
-        } => (mode, mode_decision),
-    };
-
-    let mut effective_exec_policy = server.exec_policy.clone();
-    if !mode.command_execpolicy_rules.is_empty() {
-        let mode_exec_policy =
-            match load_mode_exec_policy(&thread_root, &mode.command_execpolicy_rules).await {
-                Ok(policy) => policy,
-                Err(err) => {
-                    let result = process_execpolicy_load_denied_response(
-                        tool_id,
-                        &mode_name,
-                        "failed to load mode execpolicy rules",
-                        err.to_string(),
-                    )?;
-                    emit_process_tool_denied(
-                        &thread_rt,
-                        tool_id,
-                        params.turn_id,
-                        "process/start",
-                        &start_tool_params,
-                        "failed to load mode execpolicy rules".to_string(),
-                        result.clone(),
-                    )
-                    .await?;
-                    return Ok(result);
-                }
-            };
-        effective_exec_policy = merge_exec_policies(&effective_exec_policy, &mode_exec_policy);
-    }
-    if !thread_execpolicy_rules.is_empty() {
-        let thread_exec_policy = match load_mode_exec_policy(&thread_root, &thread_execpolicy_rules).await {
-            Ok(policy) => policy,
-            Err(err) => {
-                let result = process_execpolicy_load_denied_response(
-                    tool_id,
-                    &mode_name,
-                    "failed to load thread execpolicy rules",
-                    err.to_string(),
-                )?;
-                emit_process_tool_denied(
-                    &thread_rt,
-                    tool_id,
-                    params.turn_id,
-                    "process/start",
-                    &start_tool_params,
-                    "failed to load thread execpolicy rules".to_string(),
-                    result.clone(),
-                )
-                .await?;
-                return Ok(result);
-            }
-        };
-        effective_exec_policy = merge_exec_policies(&effective_exec_policy, &thread_exec_policy);
-    }
-    let exec_matches = effective_exec_policy.matches_for_command(&params.argv, None);
-    let exec_decision = exec_matches.iter().map(ExecRuleMatch::decision).max();
-
-    let effective_exec_decision = match exec_decision {
-        Some(ExecDecision::Forbidden) => ExecDecision::Forbidden,
-        Some(ExecDecision::PromptStrict) => ExecDecision::PromptStrict,
-        Some(ExecDecision::Allow) => ExecDecision::Allow,
-        Some(ExecDecision::Prompt) | None => ExecDecision::Prompt,
-    };
-
-    if effective_exec_decision == ExecDecision::Forbidden {
-        let justification = exec_matches.iter().find_map(|m| match m {
-            ExecRuleMatch::PrefixRuleMatch {
-                decision: ExecDecision::Forbidden,
-                justification,
-                ..
-            } => justification.clone(),
-            _ => None,
-        });
-
-        let result = process_execpolicy_denied_response(
-            tool_id,
-            ExecDecision::Forbidden,
-            &exec_matches,
-            justification,
-        )?;
-        emit_process_tool_denied(
-            &thread_rt,
-            tool_id,
-            params.turn_id,
-            "process/start",
-            &start_tool_params,
-            "execpolicy forbids this command".to_string(),
-            result.clone(),
-        )
-        .await?;
-
-        return Ok(result);
-    }
-
-    let mut approval_params = serde_json::json!({
-        "argv": params.argv.clone(),
-        "cwd": cwd_str.clone(),
-    });
-    if let Some(timeout_ms) = params.timeout_ms {
-        approval_params["timeout_ms"] = serde_json::json!(timeout_ms);
-    }
-    if effective_exec_decision == ExecDecision::PromptStrict {
-        approval_params["approval"] = serde_json::json!({
-            "requirement": "prompt_strict",
-            "source": "execpolicy",
-        });
-    }
-    let needs_approval = mode_decision.decision == omne_core::modes::Decision::Prompt
-        || matches!(
-            effective_exec_decision,
-            ExecDecision::Prompt | ExecDecision::PromptStrict
+    let access_mode = process_exec_access_mode(sandbox_policy);
+    let tool_id = omne_protocol::ToolId::new();
+    if !access_mode.bypasses_governance() {
+        let approval_params = build_process_exec_approval_params(
+            &params.argv,
+            &requested_cwd_str,
+            params.timeout_ms,
+            None,
         );
-    if needs_approval {
-        match gate_approval_with_deps(
-            &server.thread_store,
-            &effective_exec_policy,
+        if let Some(_result) = enforce_thread_allowed_tools(
             &thread_rt,
-            params.thread_id,
+            tool_id,
             params.turn_id,
-            approval_policy,
-            ApprovalRequest {
-                approval_id: params.approval_id,
-                action: "process/start",
-                params: &approval_params,
-            },
+            "process/start",
+            Some(approval_params.clone()),
+            &allowed_tools,
         )
         .await?
         {
-            ApprovalGate::Approved => {}
-            ApprovalGate::Denied { remembered } => {
+            return process_allowed_tools_denied_response(tool_id, "process/start", &allowed_tools);
+        }
+
+        let auth_cwd_str = cwd_str.clone();
+        let exec_governance = evaluate_process_exec_governance(
+            &ProcessExecGovernanceContext {
+                access_mode,
+                cwd: &cwd_path,
+                sandbox_policy,
+                sandbox_network_access,
+                authorization: ProcessExecAuthorizationContext {
+                    thread_root: &thread_root,
+                    thread_store: &server.thread_store,
+                    thread_rt: &thread_rt,
+                    thread_id: params.thread_id,
+                    turn_id: params.turn_id,
+                    approval_id: params.approval_id,
+                    approval_policy,
+                    mode_name: &mode_name,
+                    action: "process/start",
+                    exec_policy: &server.exec_policy,
+                    thread_execpolicy_rules: &thread_execpolicy_rules,
+                    argv: &params.argv,
+                    unmatched_command_policy: UnmatchedCommandPolicy::Prompt,
+                },
+            },
+            |mode| mode.permissions.command,
+            |approval_requirement| {
+                let approval_metadata = matches!(
+                    approval_requirement,
+                    ProcessExecApprovalRequirement::PromptStrict
+                )
+                .then_some((
+                    ProcessExecApprovalSource::ExecPolicy,
+                    ProcessExecApprovalRequirement::PromptStrict,
+                ));
+                build_process_exec_approval_params(
+                    &params.argv,
+                    &auth_cwd_str,
+                    params.timeout_ms,
+                    approval_metadata,
+                )
+            },
+        )
+        .await?;
+
+        match exec_governance {
+            ProcessExecGovernance::Bypassed => unreachable!(),
+            ProcessExecGovernance::Allowed => {}
+            ProcessExecGovernance::NeedsApproval { approval_id } => {
+                return process_needs_approval_response(params.thread_id, approval_id);
+            }
+            ProcessExecGovernance::Denied(ProcessExecGovernanceDenied::ApprovalDenied {
+                remembered,
+            }) => {
+                let approval_params = build_process_exec_approval_params(
+                    &params.argv,
+                    &auth_cwd_str,
+                    params.timeout_ms,
+                    None,
+                );
                 let result = process_denied_response(tool_id, params.thread_id, Some(remembered))?;
-                emit_process_tool_denied(
+                return emit_process_tool_denied_response(
                     &thread_rt,
                     tool_id,
                     params.turn_id,
                     "process/start",
                     &approval_params,
                     approval_denied_error(remembered).to_string(),
-                    result.clone(),
+                    result,
                 )
-                .await?;
-                return Ok(result);
+                .await;
             }
-            ApprovalGate::NeedsApproval { approval_id } => {
-                return process_needs_approval_response(params.thread_id, approval_id);
+            ProcessExecGovernance::Denied(denied) => {
+                let error = process_exec_governance_denied_reason(&denied, "process/start");
+                let result = match denied {
+                    ProcessExecGovernanceDenied::SandboxPolicyReadOnly => {
+                        process_sandbox_policy_denied_response(tool_id, sandbox_policy)?
+                    }
+                    ProcessExecGovernanceDenied::SandboxNetworkDenied => {
+                        process_sandbox_network_denied_response(tool_id, sandbox_network_access)?
+                    }
+                    ProcessExecGovernanceDenied::GatewayDenied(_) => {
+                        process_denied_response(tool_id, params.thread_id, None)?
+                    }
+                    ProcessExecGovernanceDenied::UnknownMode {
+                        available,
+                        load_error,
+                    } => process_unknown_mode_denied_response(
+                        tool_id,
+                        params.thread_id,
+                        &mode_name,
+                        available,
+                        load_error,
+                    )?,
+                    ProcessExecGovernanceDenied::ModeDenied { mode_decision } => {
+                        process_mode_denied_response(
+                            tool_id,
+                            params.thread_id,
+                            &mode_name,
+                            mode_decision,
+                        )?
+                    }
+                    ProcessExecGovernanceDenied::ExecPolicyLoad { error, details, .. } => {
+                        process_execpolicy_load_denied_response(
+                            tool_id, &mode_name, &error, details,
+                        )?
+                    }
+                    ProcessExecGovernanceDenied::ExecPolicyForbidden {
+                        matches,
+                        justification,
+                    } => process_execpolicy_denied_response(
+                        tool_id,
+                        ExecDecision::Forbidden,
+                        &matches,
+                        justification,
+                    )?,
+                    ProcessExecGovernanceDenied::ApprovalDenied { .. } => unreachable!(),
+                };
+                return emit_process_tool_denied_response(
+                    &thread_rt,
+                    tool_id,
+                    params.turn_id,
+                    "process/start",
+                    &start_tool_params,
+                    error,
+                    result,
+                )
+                .await;
             }
         }
     }
@@ -369,6 +296,35 @@ async fn handle_process_start_inner(
     let combined_env_opt = (!combined_env.is_empty()).then_some(&combined_env);
     if let Some(env) = combined_env_opt {
         cmd.envs(env.iter());
+    }
+    if !access_mode.bypasses_governance()
+        && let Err(err) = prepare_process_exec_gateway_command(
+            &params.argv,
+            &cwd_path,
+            &thread_root,
+            cmd.as_std_mut(),
+        )
+    {
+        if let Some(gate) = execve_gate.take() {
+            shutdown_execve_gate(gate).await;
+        }
+        let result = process_denied_response(tool_id, params.thread_id, None)?;
+        emit_process_tool_denied(
+            &thread_rt,
+            tool_id,
+            params.turn_id,
+            "process/start",
+            &start_tool_params,
+            process_exec_gateway_error_reason(&err),
+            result.clone(),
+        )
+        .await?;
+        return Ok(result);
+    }
+    if !access_mode.bypasses_governance()
+        && let Some(prepared_cwd) = cmd.as_std().get_current_dir()
+    {
+        cwd_str = prepared_cwd.display().to_string();
     }
     let effective_env_summary = apply_child_process_hardening(&mut cmd, combined_env_opt)
         .context("apply child process hardening")?;
@@ -491,7 +447,8 @@ async fn resolve_execpolicy_rule_paths(
             out.push(path.to_path_buf());
         } else {
             let resolved =
-                omne_core::resolve_file(thread_root, path, omne_core::PathAccess::Read, false).await?;
+                omne_core::resolve_file(thread_root, path, omne_core::PathAccess::Read, false)
+                    .await?;
             out.push(resolved);
         }
     }
@@ -504,7 +461,7 @@ async fn load_mode_exec_policy(
 ) -> anyhow::Result<omne_execpolicy::Policy> {
     let rule_paths = resolve_execpolicy_rule_paths(thread_root, rules).await?;
     let policy = tokio::task::spawn_blocking(move || {
-        omne_execpolicy::execpolicycheck::load_policies(&rule_paths)
+        omne_execpolicy::load_policies(&rule_paths)
     })
     .await
     .context("join mode execpolicy load task")??;
@@ -537,6 +494,34 @@ mod process_start_tests {
             tokio::fs::set_permissions(path, perms).await?;
         }
         Ok(())
+    }
+
+    async fn wait_for_process_exit(
+        server: &Server,
+        process_id: ProcessId,
+        timeout: Duration,
+    ) -> anyhow::Result<ProcessInfo> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let info = {
+                let entry = {
+                    let processes = server.processes.lock().await;
+                    processes
+                        .get(&process_id)
+                        .cloned()
+                        .ok_or_else(|| anyhow::anyhow!("missing process entry"))?
+                };
+                entry.info.lock().await.clone()
+            };
+
+            if matches!(info.status, ProcessStatus::Exited) {
+                return Ok(info);
+            }
+            if tokio::time::Instant::now() > deadline {
+                anyhow::bail!("process did not exit in time");
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
     }
 
     #[tokio::test]
@@ -650,6 +635,254 @@ mod process_start_tests {
     }
 
     #[tokio::test]
+    async fn process_start_allows_cwd_outside_workspace_with_full_access() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        let outside_dir = tmp.path().join("outside");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+        tokio::fs::create_dir_all(&outside_dir).await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        handle_thread_configure(
+            &server,
+            ThreadConfigureParams {
+                thread_id,
+                approval_policy: Some(omne_protocol::ApprovalPolicy::AutoApprove),
+                sandbox_policy: Some(policy_meta::WriteScope::FullAccess),
+                sandbox_writable_roots: None,
+                sandbox_network_access: None,
+                mode: None,
+                role: None,
+                model: None,
+                thinking: None,
+                show_thinking: None,
+                openai_base_url: None,
+                allowed_tools: None,
+                execpolicy_rules: None,
+            },
+        )
+        .await?;
+
+        let result = handle_process_start(
+            &server,
+            ProcessStartParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                argv: vec![
+                    "/bin/sh".to_string(),
+                    "-lc".to_string(),
+                    "exit 0".to_string(),
+                ],
+                cwd: Some(outside_dir.display().to_string()),
+                timeout_ms: None,
+            },
+        )
+        .await?;
+
+        let process_id: ProcessId = result["process_id"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing process_id"))?
+            .parse()?;
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            let status = {
+                let entry = {
+                    let processes = server.processes.lock().await;
+                    processes
+                        .get(&process_id)
+                        .cloned()
+                        .ok_or_else(|| anyhow::anyhow!("missing process entry"))?
+                };
+                let info = entry.info.lock().await;
+                info.status.clone()
+            };
+
+            if matches!(status, ProcessStatus::Exited) {
+                break;
+            }
+            if tokio::time::Instant::now() > deadline {
+                anyhow::bail!("process did not exit in time");
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn process_start_full_access_skips_all_policy_gates() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+        write_executable_sh(repo_dir.join("curl").as_path(), "#!/bin/sh\nexit 0\n").await?;
+
+        let mut exec_policy = omne_execpolicy::Policy::empty();
+        exec_policy.add_prefix_rule(&["./curl".to_string()], ExecDecision::Forbidden)?;
+
+        let mut server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        server.exec_policy = exec_policy;
+
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        handle_thread_configure(
+            &server,
+            ThreadConfigureParams {
+                thread_id,
+                approval_policy: Some(omne_protocol::ApprovalPolicy::AutoDeny),
+                sandbox_policy: Some(policy_meta::WriteScope::FullAccess),
+                sandbox_writable_roots: None,
+                sandbox_network_access: Some(omne_protocol::SandboxNetworkAccess::Deny),
+                mode: None,
+                role: None,
+                model: None,
+                thinking: None,
+                show_thinking: None,
+                openai_base_url: None,
+                allowed_tools: Some(Some(vec!["file/read".to_string()])),
+                execpolicy_rules: None,
+            },
+        )
+        .await?;
+
+        let result = handle_process_start(
+            &server,
+            ProcessStartParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                argv: vec!["./curl".to_string()],
+                cwd: None,
+                timeout_ms: None,
+            },
+        )
+        .await?;
+
+        let process_id: ProcessId = result["process_id"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing process_id"))?
+            .parse()?;
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            let status = {
+                let entry = {
+                    let processes = server.processes.lock().await;
+                    processes
+                        .get(&process_id)
+                        .cloned()
+                        .ok_or_else(|| anyhow::anyhow!("missing process entry"))?
+                };
+                let info = entry.info.lock().await;
+                info.status.clone()
+            };
+
+            if matches!(status, ProcessStatus::Exited) {
+                break;
+            }
+            if tokio::time::Instant::now() > deadline {
+                anyhow::bail!("process did not exit in time");
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn process_start_uses_gateway_prepared_canonical_cwd() -> anyhow::Result<()> {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        let real_dir = repo_dir.join("real");
+        let link_dir = repo_dir.join("link");
+        tokio::fs::create_dir_all(&real_dir).await?;
+        symlink(&real_dir, &link_dir)?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let result = handle_process_start(
+            &server,
+            ProcessStartParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                argv: vec!["/bin/pwd".to_string()],
+                cwd: Some(link_dir.display().to_string()),
+                timeout_ms: None,
+            },
+        )
+        .await?;
+
+        let process_id: ProcessId = result["process_id"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing process_id"))?
+            .parse()?;
+        let stdout_path = result["stdout_path"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing stdout_path"))?;
+
+        let info = wait_for_process_exit(&server, process_id, Duration::from_secs(2)).await?;
+        let stdout = tokio::fs::read_to_string(stdout_path).await?;
+        let expected_cwd = real_dir.canonicalize()?;
+
+        assert_eq!(stdout.trim(), expected_cwd.display().to_string());
+        assert_eq!(info.cwd, expected_cwd.display().to_string());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn process_start_denies_cwd_outside_workspace_with_workspace_write() -> anyhow::Result<()>
+    {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        let outside_dir = tmp.path().join("outside");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+        tokio::fs::create_dir_all(&outside_dir).await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let err = handle_process_start(
+            &server,
+            ProcessStartParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                argv: vec![
+                    "/bin/sh".to_string(),
+                    "-lc".to_string(),
+                    "exit 0".to_string(),
+                ],
+                cwd: Some(outside_dir.display().to_string()),
+                timeout_ms: None,
+            },
+        )
+        .await
+        .expect_err("workspace_write should not allow cwd outside thread root");
+
+        assert!(err.to_string().contains("path escapes root"));
+        assert!(server.processes.lock().await.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn process_start_returns_effective_env_summary_for_hardening() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");
@@ -690,7 +923,11 @@ mod process_start_tests {
         let scrubbed_keys = result["effective_env_summary"]["scrubbed_keys"]
             .as_array()
             .ok_or_else(|| anyhow::anyhow!("missing scrubbed_keys"))?;
-        assert!(scrubbed_keys.iter().any(|k| k.as_str() == Some("OPENAI_API_KEY")));
+        assert!(
+            scrubbed_keys
+                .iter()
+                .any(|k| k.as_str() == Some("OPENAI_API_KEY"))
+        );
         let injected_defaults = result["effective_env_summary"]["injected_defaults"]
             .as_object()
             .ok_or_else(|| anyhow::anyhow!("missing injected_defaults"))?;
@@ -1228,6 +1465,65 @@ prefix_rule(
                 .is_empty()
         );
         assert!(server.processes.lock().await.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn process_start_applies_exec_gateway_prepare_to_spawned_command() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let result = handle_process_start(
+            &server,
+            ProcessStartParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                argv: vec![
+                    "/bin/sh".to_string(),
+                    "-lc".to_string(),
+                    "test -n \"$AGENT_EXEC_GATEWAY_WORKSPACE_ROOT\"".to_string(),
+                ],
+                cwd: None,
+                timeout_ms: None,
+            },
+        )
+        .await?;
+
+        let process_id: ProcessId = result["process_id"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing process_id"))?
+            .parse()?;
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            let info = {
+                let entry = {
+                    let processes = server.processes.lock().await;
+                    processes
+                        .get(&process_id)
+                        .cloned()
+                        .ok_or_else(|| anyhow::anyhow!("missing process entry"))?
+                };
+                entry.info.lock().await.clone()
+            };
+
+            if matches!(info.status, ProcessStatus::Exited) {
+                assert_eq!(info.exit_code, Some(0));
+                break;
+            }
+            if tokio::time::Instant::now() > deadline {
+                anyhow::bail!("process did not exit in time");
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
 
         Ok(())
     }

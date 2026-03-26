@@ -41,12 +41,6 @@ async fn enforce_artifact_mode_and_approval(
         Some(mode) => mode,
         None => {
             let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
-            let denied_event_result = serde_json::json!({
-                "mode": ctx.mode_name,
-                "decision": omne_core::modes::Decision::Deny,
-                "available": available.clone(),
-                "load_error": catalog.load_error.clone(),
-            });
             let denied_response = artifact_unknown_mode_denied_response(
                 ctx.tool_id,
                 ctx.mode_name.to_string(),
@@ -60,7 +54,7 @@ async fn enforce_artifact_mode_and_approval(
                 ctx.action,
                 ctx.approval_params,
                 "unknown mode".to_string(),
-                denied_event_result,
+                denied_response.clone(),
             )
             .await?;
             return Ok(Some(denied_response));
@@ -69,12 +63,6 @@ async fn enforce_artifact_mode_and_approval(
 
     let mode_decision = resolve_mode_decision_audit(mode, ctx.action, mode.permissions.artifact);
     if mode_decision.decision == omne_core::modes::Decision::Deny {
-        let denied_event_result = serde_json::json!({
-            "mode": ctx.mode_name,
-            "decision": mode_decision.decision,
-            "decision_source": mode_decision.decision_source,
-            "tool_override_hit": mode_decision.tool_override_hit,
-        });
         let denied_response =
             artifact_mode_denied_response(ctx.tool_id, ctx.mode_name.to_string(), mode_decision)?;
         emit_artifact_tool_denied(
@@ -84,7 +72,7 @@ async fn enforce_artifact_mode_and_approval(
             ctx.action,
             ctx.approval_params,
             format!("mode denies {}", ctx.action),
-            denied_event_result,
+            denied_response.clone(),
         )
         .await?;
         return Ok(Some(denied_response));
@@ -115,9 +103,7 @@ async fn enforce_artifact_mode_and_approval(
                     ctx.action,
                     ctx.approval_params,
                     approval_denied_error(remembered).to_string(),
-                    serde_json::json!({
-                        "approval_policy": ctx.approval_policy,
-                    }),
+                    denied_response.clone(),
                 )
                 .await?;
                 return Ok(Some(denied_response));
@@ -255,6 +241,7 @@ async fn handle_artifact_list(
                 .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
                     status: omne_protocol::ToolStatus::Completed,
+                    structured_error: None,
                     error: None,
                     result: Some(serde_json::json!({
                         "artifacts": artifacts.len(),
@@ -275,6 +262,7 @@ async fn handle_artifact_list(
                 .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
                     status: omne_protocol::ToolStatus::Failed,
+                    structured_error: None,
                     error: Some(err.to_string()),
                     result: None,
                 })
@@ -358,6 +346,7 @@ async fn handle_artifact_read(
                 .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
                     status: omne_protocol::ToolStatus::Failed,
+                    structured_error: None,
                     error: Some(err.to_string()),
                     result: None,
                 })
@@ -374,6 +363,7 @@ async fn handle_artifact_read(
             .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                 tool_id,
                 status: omne_protocol::ToolStatus::Failed,
+                structured_error: None,
                 error: Some(err.to_string()),
                 result: None,
             })
@@ -403,6 +393,7 @@ async fn handle_artifact_read(
             .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                 tool_id,
                 status: omne_protocol::ToolStatus::Failed,
+                structured_error: None,
                 error: Some(err.to_string()),
                 result: None,
             })
@@ -419,13 +410,14 @@ async fn handle_artifact_read(
                 latest_version
             );
             thread_rt
-                .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                    tool_id,
-                    status: omne_protocol::ToolStatus::Failed,
-                    error: Some(err.to_string()),
-                    result: None,
-                })
-                .await?;
+            .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
+                tool_id,
+                status: omne_protocol::ToolStatus::Failed,
+                structured_error: None,
+                error: Some(err.to_string()),
+                result: None,
+            })
+            .await?;
             return Err(err);
         }
         Err(err) => {
@@ -434,6 +426,7 @@ async fn handle_artifact_read(
                 .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
                     status: omne_protocol::ToolStatus::Failed,
+                    structured_error: None,
                     error: Some(err.to_string()),
                     result: None,
                 })
@@ -501,6 +494,7 @@ async fn handle_artifact_read(
         .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
             tool_id,
             status: omne_protocol::ToolStatus::Completed,
+            structured_error: None,
             error: None,
             result: Some(serde_json::json!({
                 "artifact_id": params.artifact_id,
@@ -568,9 +562,10 @@ fn artifact_denied_response(
         tool_id,
         remembered,
         "serialize artifact denied response",
-        |tool_id, remembered, error_code| omne_app_server_protocol::ArtifactDeniedResponse {
+        |tool_id, remembered, structured_error, error_code| omne_app_server_protocol::ArtifactDeniedResponse {
             tool_id,
             denied: true,
+            structured_error,
             error_code,
             remembered,
         },
@@ -582,10 +577,15 @@ fn artifact_allowed_tools_denied_response(
     tool: &str,
     allowed_tools: &Option<Vec<String>>,
 ) -> anyhow::Result<Value> {
+    let structured_error = catalog_structured_error_with("allowed_tools_denied", |message| {
+        message.try_with_value_arg("tool", tool)?;
+        Ok(())
+    })?;
     let response = omne_app_server_protocol::ArtifactAllowedToolsDeniedResponse {
         tool_id,
         denied: true,
-        error_code: Some("allowed_tools_denied".to_string()),
+        structured_error: Some(structured_error.clone()),
+        error_code: structured_error_code(&structured_error),
         tool: tool.to_string(),
         allowed_tools: allowed_tools.clone().unwrap_or_default(),
     };
@@ -612,10 +612,17 @@ fn artifact_mode_denied_response(
     mode: String,
     mode_decision: ModeDecisionAudit,
 ) -> anyhow::Result<Value> {
+    let structured_error = catalog_structured_error_with("mode_denied", |message| {
+        message.try_with_value_arg("mode", mode.as_str())?;
+        message.try_with_value_arg("decision_source", mode_decision.decision_source)?;
+        message.try_with_value_arg("tool_override_hit", mode_decision.tool_override_hit)?;
+        Ok(())
+    })?;
     let response = omne_app_server_protocol::ArtifactModeDeniedResponse {
         tool_id,
         denied: true,
-        error_code: Some("mode_denied".to_string()),
+        structured_error: Some(structured_error.clone()),
+        error_code: structured_error_code(&structured_error),
         mode,
         decision: map_mode_decision_for_protocol!(
             mode_decision.decision,
@@ -633,10 +640,19 @@ fn artifact_unknown_mode_denied_response(
     available: String,
     load_error: Option<String>,
 ) -> anyhow::Result<Value> {
+    let structured_error = catalog_structured_error_with("mode_unknown", |message| {
+        message.try_with_value_arg("mode", mode.as_str())?;
+        message.try_with_value_arg("available", available.as_str())?;
+        if let Some(load_error) = load_error.as_deref() {
+            message.try_with_value_arg("load_error", load_error)?;
+        }
+        Ok(())
+    })?;
     let response = omne_app_server_protocol::ArtifactUnknownModeDeniedResponse {
         tool_id,
         denied: true,
-        error_code: Some("mode_unknown".to_string()),
+        structured_error: Some(structured_error.clone()),
+        error_code: structured_error_code(&structured_error),
         mode,
         decision: omne_app_server_protocol::ArtifactModeDecision::Deny,
         available,
@@ -872,6 +888,7 @@ fn parse_fan_out_result_structured_data(
                 read_cmd: patch.read_cmd,
                 workspace_cwd: patch.workspace_cwd,
                 error: patch.error,
+                structured_error: patch.structured_error,
             }
         }),
         isolated_write_handoff: payload.isolated_write_handoff.map(|handoff| {
@@ -888,6 +905,7 @@ fn parse_fan_out_result_structured_data(
                         read_cmd: patch.read_cmd,
                         workspace_cwd: patch.workspace_cwd,
                         error: patch.error,
+                        structured_error: patch.structured_error,
                     }
                 }),
             }
@@ -918,6 +936,7 @@ fn parse_fan_out_result_structured_data(
                     })
                     .collect(),
                 error: auto_apply.error,
+                structured_error: auto_apply.structured_error,
             }
         }),
         status: payload.status,
@@ -982,6 +1001,7 @@ fn parse_fan_in_summary_structured_data(
                     dependency_blocker_status: task.dependency_blocker_status,
                     result_artifact_id: task.result_artifact_id,
                     result_artifact_error: task.result_artifact_error,
+                    result_artifact_structured_error: task.result_artifact_structured_error,
                     result_artifact_error_id: task.result_artifact_error_id,
                     result_artifact_diagnostics: task.result_artifact_diagnostics.map(
                         |diagnostics| {
@@ -1117,6 +1137,7 @@ async fn handle_artifact_versions(
                 .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
                     status: omne_protocol::ToolStatus::Failed,
+                    structured_error: None,
                     error: Some(err.to_string()),
                     result: None,
                 })
@@ -1134,6 +1155,7 @@ async fn handle_artifact_versions(
                 .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
                     status: omne_protocol::ToolStatus::Failed,
+                    structured_error: None,
                     error: Some(err.to_string()),
                     result: None,
                 })
@@ -1156,6 +1178,7 @@ async fn handle_artifact_versions(
         .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
             tool_id,
             status: omne_protocol::ToolStatus::Completed,
+            structured_error: None,
             error: None,
             result: Some(serde_json::json!({
                 "artifact_id": params.artifact_id,
@@ -1266,6 +1289,7 @@ async fn handle_artifact_delete(
                 .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
                     status: omne_protocol::ToolStatus::Completed,
+                    structured_error: None,
                     error: None,
                     result: Some(serde_json::json!({
                         "artifact_id": params.artifact_id,
@@ -1282,6 +1306,7 @@ async fn handle_artifact_delete(
                 .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
                     status: omne_protocol::ToolStatus::Failed,
+                    structured_error: None,
                     error: Some(err.to_string()),
                     result: None,
                 })

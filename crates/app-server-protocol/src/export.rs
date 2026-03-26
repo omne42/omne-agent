@@ -409,6 +409,13 @@ mod export_tests {
                 || thread_state_response.contains("cacheCreationInputTokensUsed: bigint"),
             "ThreadStateResponse.ts should include cache_creation_input_tokens_used"
         );
+        assert!(
+            thread_state_response.contains("current_context_tokens_estimate?: number")
+                || thread_state_response.contains("current_context_tokens_estimate?: bigint")
+                || thread_state_response.contains("currentContextTokensEstimate?: number")
+                || thread_state_response.contains("currentContextTokensEstimate?: bigint"),
+            "ThreadStateResponse.ts should include optional current_context_tokens_estimate"
+        );
         let thread_usage_response =
             std::fs::read_to_string(tmp.path().join("ThreadUsageResponse.ts"))
                 .expect("read ThreadUsageResponse.ts");
@@ -445,6 +452,13 @@ mod export_tests {
             thread_usage_response.contains("token_budget_warning_active?: boolean")
                 || thread_usage_response.contains("tokenBudgetWarningActive?: boolean"),
             "ThreadUsageResponse.ts should include optional token_budget_warning_active"
+        );
+        assert!(
+            thread_usage_response.contains("current_context_tokens_estimate?: number")
+                || thread_usage_response.contains("current_context_tokens_estimate?: bigint")
+                || thread_usage_response.contains("currentContextTokensEstimate?: number")
+                || thread_usage_response.contains("currentContextTokensEstimate?: bigint"),
+            "ThreadUsageResponse.ts should include optional current_context_tokens_estimate"
         );
         let thread_models_response =
             std::fs::read_to_string(tmp.path().join("ThreadModelsResponse.ts"))
@@ -660,7 +674,7 @@ mod export_tests {
             std::fs::read_to_string(tmp.path().join("FileSandboxPolicyDeniedResponse.ts"))
                 .expect("read FileSandboxPolicyDeniedResponse.ts");
         assert!(
-            file_sandbox_policy_denied_response.contains("sandbox_policy: SandboxPolicy"),
+            file_sandbox_policy_denied_response.contains("sandbox_policy: WriteScope"),
             "FileSandboxPolicyDeniedResponse.ts should expose sandbox_policy"
         );
 

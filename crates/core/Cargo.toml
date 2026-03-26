@@ -7,12 +7,15 @@ version.workspace = true
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+config-kit = { path = "../../../omne_foundation/crates/config-kit" }
 globset.workspace = true
 omne-eventlog = { path = "../eventlog" }
 omne-protocol = { path = "../agent-protocol" }
+policy-meta.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
+structured-text-protocol.workspace = true
 thiserror.workspace = true
 time.workspace = true
 tokio.workspace = true

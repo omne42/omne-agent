@@ -50,6 +50,7 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
                     .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                         tool_id,
                         status: omne_protocol::ToolStatus::Failed,
+                        structured_error: None,
                         error: Some(err.to_string()),
                         result: Some(serde_json::json!({
                             "root": file_root.as_str(),
@@ -64,7 +65,7 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
 
     let rel_path = omne_core::modes::relative_path_under_root(&root, Path::new(&params.path));
     if let Ok(rel) = rel_path.as_ref()
-        && rel_path_is_secret(rel)
+        && rel_path_is_read_blocked(rel)
     {
         thread_rt
             .append_event(omne_protocol::ThreadEventKind::ToolStarted {
@@ -74,17 +75,19 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
                 params: Some(approval_params.clone()),
             })
             .await?;
+        let denied = file_denied_response(tool_id, None)?;
         thread_rt
             .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                 tool_id,
                 status: omne_protocol::ToolStatus::Denied,
-                error: Some("refusing to read secrets file (.env)".to_string()),
-                result: Some(serde_json::json!({
-                    "reason": "secrets file is always denied",
-                })),
+                structured_error: structured_error_from_result_value(&denied),
+                error: Some(
+                    "refusing to read .env-style file without example/template suffix".to_string(),
+                ),
+                result: Some(denied.clone()),
             })
             .await?;
-        return file_denied_response(tool_id, None);
+        return Ok(denied);
     }
     let rel_path_for_mode = rel_path.as_ref().ok().cloned();
     let mode = match enforce_file_mode_and_approval(
@@ -122,7 +125,7 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
         })
         .await?;
 
-    let outcome: anyhow::Result<(PathBuf, String, bool, usize)> = async {
+    let outcome: anyhow::Result<(PathBuf, String, usize)> = async {
         let path = match file_root {
             FileRoot::Workspace => {
                 omne_core::resolve_file_for_sandbox(
@@ -147,10 +150,10 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
         };
 
         let resolved_rel = omne_core::modes::relative_path_under_root(&root, &path)?;
-        if rel_path_is_secret(&resolved_rel) {
+        if rel_path_is_read_blocked(&resolved_rel) {
             let result = file_denied_response(tool_id, None)?;
             return Err(tool_denied(
-                "refusing to read secrets file (.env)".to_string(),
+                "refusing to read .env-style file without example/template suffix".to_string(),
                 result,
             ));
         }
@@ -168,33 +171,36 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
             ));
         }
 
-        let limit = max_bytes + 1;
-        let file = tokio::fs::File::open(&path)
-            .await
-            .with_context(|| format!("open {}", path.display()))?;
-        let mut buf = Vec::new();
-        file.take(limit).read_to_end(&mut buf).await?;
+        let root_for_runtime = root.clone();
+        let root_id_for_runtime = file_root.as_str().to_string();
+        let path_for_runtime = resolved_rel;
+        let read_result = tokio::task::spawn_blocking(move || {
+            omne_fs_runtime::read_text_read_only(
+                root_id_for_runtime,
+                root_for_runtime,
+                path_for_runtime,
+                max_bytes,
+            )
+        })
+        .await
+        .context("join file/read task")??;
 
-        let truncated = buf.len() > max_bytes as usize;
-        if truncated {
-            buf.truncate(max_bytes as usize);
-        }
-        let bytes = buf.len();
-        let text = String::from_utf8(buf).context("file is not valid utf-8")?;
-        Ok((path, text, truncated, bytes))
+        let bytes = usize::try_from(read_result.bytes_read).unwrap_or(usize::MAX);
+        Ok((path, read_result.content, bytes))
     }
     .await;
 
     match outcome {
-        Ok((path, text, truncated, bytes)) => {
+        Ok((path, text, bytes)) => {
             thread_rt
                 .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
                     status: omne_protocol::ToolStatus::Completed,
+                    structured_error: None,
                     error: None,
                     result: Some(serde_json::json!({
                         "bytes": bytes,
-                        "truncated": truncated,
+                        "truncated": false,
                     })),
                 })
                 .await?;
@@ -204,7 +210,7 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
                 "resolved_path": path.display().to_string(),
                 "root": file_root.as_str(),
                 "text": text,
-                "truncated": truncated,
+                "truncated": false,
             }))
         }
         Err(err) => {
@@ -213,6 +219,7 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
                     .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                         tool_id,
                         status: omne_protocol::ToolStatus::Denied,
+                        structured_error: structured_error_from_result_value(&denied.result),
                         error: Some(denied.error.clone()),
                         result: Some(denied.result.clone()),
                     })
@@ -223,6 +230,7 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
                     .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                         tool_id,
                         status: omne_protocol::ToolStatus::Failed,
+                        structured_error: None,
                         error: Some(err.to_string()),
                         result: None,
                     })

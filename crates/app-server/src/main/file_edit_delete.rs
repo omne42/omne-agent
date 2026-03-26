@@ -43,7 +43,7 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
     {
         return file_allowed_tools_denied_response(tool_id, "file/edit", &allowed_tools);
     }
-    if sandbox_policy == omne_protocol::SandboxPolicy::ReadOnly {
+    if sandbox_policy == policy_meta::WriteScope::ReadOnly {
         let result = file_sandbox_policy_denied_response(tool_id, sandbox_policy)?;
         emit_file_tool_denied(
             &thread_rt,
@@ -113,7 +113,16 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
         })
         .await?;
 
-    let outcome: anyhow::Result<(PathBuf, bool, usize, usize)> = async {
+    let edits_for_runtime = params
+        .edits
+        .iter()
+        .map(|edit| omne_fs_runtime::EditReplaceOp {
+            old: edit.old.clone(),
+            new: edit.new.clone(),
+            expected_replacements: edit.expected_replacements,
+        })
+        .collect::<Vec<_>>();
+    let outcome: anyhow::Result<(PathBuf, bool, usize, u64)> = async {
         let path = omne_core::resolve_file_for_sandbox(
             &thread_root,
             sandbox_policy,
@@ -142,50 +151,26 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
             ));
         }
 
-        let bytes = tokio::fs::read(&path)
-            .await
-            .with_context(|| format!("read {}", path.display()))?;
-        if bytes.len() > max_bytes as usize {
-            anyhow::bail!(
-                "file too large for edit: {} ({} bytes)",
-                path.display(),
-                bytes.len()
-            );
-        }
-        let mut text = String::from_utf8(bytes).context("file is not valid utf-8")?;
+        let root_for_runtime = thread_root.clone();
+        let path_for_runtime = resolved_rel;
+        let edit_result = tokio::task::spawn_blocking(move || {
+            omne_fs_runtime::edit_replace_workspace(
+                "workspace".to_string(),
+                root_for_runtime,
+                path_for_runtime,
+                edits_for_runtime,
+                max_bytes,
+            )
+        })
+        .await
+        .context("join file/edit task")??;
 
-        let mut total_replacements = 0usize;
-        let mut changed = false;
-        for edit in &params.edits {
-            let expected = edit.expected_replacements.unwrap_or(1);
-            let found = count_non_overlapping(&text, &edit.old);
-            if found != expected {
-                anyhow::bail!(
-                    "edit mismatch for {}: expected {} replacements, found {}",
-                    path.display(),
-                    expected,
-                    found
-                );
-            }
-            if edit.old != edit.new {
-                changed = true;
-            }
-            total_replacements += expected;
-            text = text.replacen(&edit.old, &edit.new, expected);
-        }
-
-        let bytes_written = text.len();
-        tokio::fs::OpenOptions::new()
-            .write(true)
-            .truncate(true)
-            .open(&path)
-            .await
-            .with_context(|| format!("open {}", path.display()))?
-            .write_all(text.as_bytes())
-            .await
-            .with_context(|| format!("write {}", path.display()))?;
-
-        Ok((path, changed, total_replacements, bytes_written))
+        Ok((
+            path,
+            edit_result.changed,
+            edit_result.replacements,
+            edit_result.bytes_written,
+        ))
     }
     .await;
 
@@ -195,6 +180,7 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
                 .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
                     status: omne_protocol::ToolStatus::Completed,
+                    structured_error: None,
                     error: None,
                     result: Some(serde_json::json!({
                         "changed": changed,
@@ -217,6 +203,7 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
                     .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                         tool_id,
                         status: omne_protocol::ToolStatus::Denied,
+                        structured_error: structured_error_from_result_value(&denied.result),
                         error: Some(denied.error.clone()),
                         result: Some(denied.result.clone()),
                     })
@@ -227,6 +214,7 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
                     .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                         tool_id,
                         status: omne_protocol::ToolStatus::Failed,
+                        structured_error: None,
                         error: Some(err.to_string()),
                         result: None,
                     })
@@ -269,7 +257,7 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
     {
         return file_allowed_tools_denied_response(tool_id, "file/delete", &allowed_tools);
     }
-    if sandbox_policy == omne_protocol::SandboxPolicy::ReadOnly {
+    if sandbox_policy == policy_meta::WriteScope::ReadOnly {
         let result = file_sandbox_policy_denied_response(tool_id, sandbox_policy)?;
         emit_file_tool_denied(
             &thread_rt,
@@ -369,29 +357,21 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
             ));
         }
 
-        let meta = match tokio::fs::symlink_metadata(&path).await {
-            Ok(meta) => meta,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok((false, path)),
-            Err(err) => return Err(err).with_context(|| format!("stat {}", path.display())),
-        };
+        let root_for_runtime = thread_root.clone();
+        let path_for_runtime = resolved_rel;
+        let delete_result = tokio::task::spawn_blocking(move || {
+            omne_fs_runtime::delete_path_workspace(
+                "workspace".to_string(),
+                root_for_runtime,
+                path_for_runtime,
+                params.recursive,
+                true,
+            )
+        })
+        .await
+        .context("join file/delete task")??;
 
-        if meta.is_dir() {
-            if params.recursive {
-                tokio::fs::remove_dir_all(&path)
-                    .await
-                    .with_context(|| format!("remove dir {}", path.display()))?;
-            } else {
-                tokio::fs::remove_dir(&path)
-                    .await
-                    .with_context(|| format!("remove dir {}", path.display()))?;
-            }
-        } else {
-            tokio::fs::remove_file(&path)
-                .await
-                .with_context(|| format!("remove file {}", path.display()))?;
-        }
-
-        Ok((true, path))
+        Ok((delete_result.deleted, path))
     }
     .await;
 
@@ -401,6 +381,7 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
                 .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
                     status: omne_protocol::ToolStatus::Completed,
+                    structured_error: None,
                     error: None,
                     result: Some(serde_json::json!({
                         "deleted": deleted,
@@ -420,6 +401,7 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
                     .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                         tool_id,
                         status: omne_protocol::ToolStatus::Denied,
+                        structured_error: structured_error_from_result_value(&denied.result),
                         error: Some(denied.error.clone()),
                         result: Some(denied.result.clone()),
                     })
@@ -430,6 +412,7 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
                     .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                         tool_id,
                         status: omne_protocol::ToolStatus::Failed,
+                        structured_error: None,
                         error: Some(err.to_string()),
                         result: None,
                     })

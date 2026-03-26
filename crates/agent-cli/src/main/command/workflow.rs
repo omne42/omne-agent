@@ -317,6 +317,21 @@ pub(super) fn render_template(
     omne_workflow_spec::render_template(template, declared, vars)
 }
 
+pub(super) fn parse_bool_token(value: &str) -> Option<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+pub(super) fn parse_env_bool(key: &str, default: bool) -> bool {
+    std::env::var(key)
+        .ok()
+        .and_then(|value| parse_bool_token(&value))
+        .unwrap_or(default)
+}
+
 pub(super) fn fan_out_require_completed() -> bool {
     parse_env_bool("OMNE_COMMAND_FAN_OUT_REQUIRE_COMPLETED", true)
 }
@@ -458,9 +473,13 @@ pub(super) fn ensure_auto_hook_ready(
             Ok(())
         }
         omne_app_server_protocol::ThreadAutoHookResponse::Denied(response) => {
-            let detail =
-                serde_json::to_string(response).unwrap_or_else(|_| format!("{response:?}"));
-            if let Some(error_code) = response.error_code.as_deref() {
+            let detail_value = serde_json::to_value(response)
+                .unwrap_or_else(|_| Value::String(format!("{response:?}")));
+            let detail = crate::summarize_rpc_detail(&detail_value);
+            if let Some(error_code) = crate::preferred_error_code(
+                response.structured_error.as_ref(),
+                response.error_code.as_deref(),
+            ) {
                 anyhow::bail!(
                     "[rpc error_code] {error_code}; {action} {hook_context} denied: {detail}"
                 );
@@ -468,10 +487,23 @@ pub(super) fn ensure_auto_hook_ready(
             anyhow::bail!("{action} {hook_context} denied: {detail}");
         }
         omne_app_server_protocol::ThreadAutoHookResponse::Error(response) => {
+            let error = crate::preferred_structured_error_text(
+                response.structured_error.as_ref(),
+                Some(response.error.as_str()),
+            )
+            .unwrap_or_else(|| response.error.clone());
+            if let Some(error_code) =
+                crate::preferred_error_code(response.structured_error.as_ref(), None)
+            {
+                anyhow::bail!(
+                    "[rpc error_code] {error_code}; {action} {hook_context} error: hook={} error={error}",
+                    response.hook,
+                );
+            }
             anyhow::bail!(
                 "{action} {hook_context} error: hook={} error={}",
                 response.hook,
-                response.error
+                error
             );
         }
     }
@@ -498,12 +530,11 @@ pub(super) fn format_non_completed_fan_out_issue(
     parent_thread_id: ThreadId,
     artifact_id: omne_protocol::ArtifactId,
 ) -> String {
-    let artifact_error = result
-        .result_artifact_error
-        .as_deref()
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .unwrap_or("-");
+    let artifact_error = crate::preferred_structured_error_text(
+        result.result_artifact_structured_error.as_ref(),
+        result.result_artifact_error.as_deref(),
+    )
+    .unwrap_or_else(|| "-".to_string());
     let artifact_error_read_cmd = result
         .result_artifact_error_id
         .map(|error_artifact_id| fan_out_result_read_command(parent_thread_id, error_artifact_id))
@@ -593,12 +624,11 @@ pub(super) fn format_non_completed_fan_out_issue_from_structured_task(
     task: &omne_app_server_protocol::ArtifactFanInSummaryTask,
     artifact_id: omne_protocol::ArtifactId,
 ) -> String {
-    let artifact_error = task
-        .result_artifact_error
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("-");
+    let artifact_error = crate::preferred_structured_error_text(
+        task.result_artifact_structured_error.as_ref(),
+        task.result_artifact_error.as_deref(),
+    )
+    .unwrap_or_else(|| "-".to_string());
     let artifact_error_read_cmd = task
         .result_artifact_error_id
         .as_deref()
@@ -1205,7 +1235,7 @@ pub(super) async fn run_command_run(
         sandbox_writable_roots: None,
         sandbox_network_access: None,
         mode: Some(wf.frontmatter.mode.clone()),
-                role: None,
+        role: None,
         model: None,
         thinking: None,
         show_thinking: wf.frontmatter.show_thinking,

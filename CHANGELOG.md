@@ -8,7 +8,7 @@
 ## [Unreleased]
 
 ### Added
-- 新增 `docs/reports/domain-boundary-audit-20260304.md`：对 `omne-agent` 与 `agent-exec-gateway`/`ditto-llm`/`mcp-kit`/`notify-kit`/`safe-fs-tools`/`policy-meta-spec` 的领域边界、职责重复与抽象重叠进行专项审计并给出整改建议。
+- 新增 `docs/reports/domain-boundary-audit-20260304.md`：对 `omne-agent` 与 `omne-execution-gateway`（审计启动时文档里仍写作 `agent-exec-gateway`）/`ditto-llm`/`mcp-kit`/`notify-kit`/`safe-fs-tools`/`policy-meta-spec` 的领域边界、职责重复与抽象重叠进行专项审计并给出整改建议。
 - `omne init` 默认写入最小 workflow command 模板（`.omne_data/spec/commands/plan.md`、`.omne_data/spec/commands/fanout-review.md`），用于快速启动 `omne command {list,show,run}` / `--fan-out` 路径；可通过 `--no-command-templates` 跳过，`--force` 可覆盖现有模板。
 - `omne init` 默认新增 spec 配置空模板：`.omne_data/spec/workspace.yaml`（workspace lifecycle hooks）、`.omne_data/spec/hooks.yaml`（session/tool hooks）与 `.omne_data/spec/modes.yaml`（mode catalog）；可通过 `--no-workspace-template` / `--no-hooks-template` / `--no-modes-template` 单独跳过，或 `--no-spec-templates`（等价 `--minimal`）一键全部跳过；`--force` 可覆盖现有模板。
 - `omne preset list`：新增 preset 发现/校验命令（支持文本或 `--json` 输出），扫描 `<omne_root>/spec/preset.{yaml,yml}` 与 `<omne_root>/spec/presets/*.{yaml,yml}`；解析失败条目会以错误摘要返回（不阻断其它 preset 展示）。

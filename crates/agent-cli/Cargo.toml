@@ -9,16 +9,21 @@ anyhow.workspace = true
 clap.workspace = true
 crossterm = { version = "0.28", features = ["event-stream"] }
 futures-util.workspace = true
-notify-kit = { path = "../../../notify-kit/crates/notify-kit" }
-omne-jsonrpc = { package = "mcp-jsonrpc", path = "../../../mcp-kit/crates/jsonrpc" }
+notify-kit = { path = "../../../omne_foundation/crates/notify-kit" }
+omne-notify-env = { path = "../notify-env" }
+omne-jsonrpc = { package = "mcp-jsonrpc", path = "../../../omne_foundation/crates/mcp-jsonrpc" }
 omne-app-server-protocol = { path = "../app-server-protocol" }
 omne-core = { path = "../core" }
 omne-protocol = { path = "../agent-protocol" }
 omne-workflow-spec = { path = "../workflow-spec" }
+policy-meta.workspace = true
+ditto-core = { path = "../../../ditto-llm/crates/ditto-core", default-features = false }
+ditto-server = { path = "../../../ditto-llm/crates/ditto-server", default-features = false, features = ["config-editing", "config-interactive"] }
 ratatui = { version = "0.28", default-features = false, features = ["crossterm", "unstable-rendered-line-info"] }
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
+structured-text-protocol.workspace = true
 time.workspace = true
 tokio.workspace = true
 tracing-subscriber.workspace = true

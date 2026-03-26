@@ -1,11 +1,11 @@
 async fn run_llm_stream_once(
-    llm: Arc<dyn ditto_llm::LanguageModel>,
+    llm: Arc<dyn ditto_core::llm_core::model::LanguageModel>,
     thread_rt: Arc<super::ThreadRuntime>,
     thread_id: ThreadId,
     turn_id: TurnId,
     emit_deltas: bool,
     show_thinking: bool,
-    req: ditto_llm::GenerateRequest,
+    req: ditto_core::contracts::GenerateRequest,
     max_openai_request_duration: Duration,
 ) -> Result<AgentLlmResponse, LlmAttemptFailure> {
     #[derive(Default)]
@@ -25,6 +25,7 @@ async fn run_llm_stream_once(
     }
 
     let mut emitted_output = false;
+    let req_for_timeout_fallback = req.clone();
 
     let inner = async {
         let req_for_generate = req.clone();
@@ -45,71 +46,66 @@ async fn run_llm_stream_once(
                 let mut non_text_counts = serde_json::Map::<String, Value>::new();
                 for part in &msg.content {
                     match part {
-                        ditto_llm::ContentPart::Text { text: chunk } => text.push_str(chunk),
-                        ditto_llm::ContentPart::Image { .. } => {
+                        ditto_core::contracts::ContentPart::Text { text: chunk } => text.push_str(chunk),
+                        ditto_core::contracts::ContentPart::Image { .. } => {
                             *non_text_counts
                                 .entry("image".to_string())
-                                .or_insert(Value::Number(0u64.into())) =
-                                Value::Number(
-                                    non_text_counts
-                                        .get("image")
-                                        .and_then(Value::as_u64)
-                                        .unwrap_or(0)
-                                        .saturating_add(1)
-                                        .into(),
-                                );
+                                .or_insert(Value::Number(0u64.into())) = Value::Number(
+                                non_text_counts
+                                    .get("image")
+                                    .and_then(Value::as_u64)
+                                    .unwrap_or(0)
+                                    .saturating_add(1)
+                                    .into(),
+                            );
                         }
-                        ditto_llm::ContentPart::File { .. } => {
+                        ditto_core::contracts::ContentPart::File { .. } => {
                             *non_text_counts
                                 .entry("file".to_string())
-                                .or_insert(Value::Number(0u64.into())) =
-                                Value::Number(
-                                    non_text_counts
-                                        .get("file")
-                                        .and_then(Value::as_u64)
-                                        .unwrap_or(0)
-                                        .saturating_add(1)
-                                        .into(),
-                                );
+                                .or_insert(Value::Number(0u64.into())) = Value::Number(
+                                non_text_counts
+                                    .get("file")
+                                    .and_then(Value::as_u64)
+                                    .unwrap_or(0)
+                                    .saturating_add(1)
+                                    .into(),
+                            );
                         }
-                        ditto_llm::ContentPart::ToolCall { .. } => {
+                        ditto_core::contracts::ContentPart::ToolCall { .. } => {
                             *non_text_counts
                                 .entry("tool_call".to_string())
-                                .or_insert(Value::Number(0u64.into())) =
-                                Value::Number(
-                                    non_text_counts
-                                        .get("tool_call")
-                                        .and_then(Value::as_u64)
-                                        .unwrap_or(0)
-                                        .saturating_add(1)
-                                        .into(),
-                                );
+                                .or_insert(Value::Number(0u64.into())) = Value::Number(
+                                non_text_counts
+                                    .get("tool_call")
+                                    .and_then(Value::as_u64)
+                                    .unwrap_or(0)
+                                    .saturating_add(1)
+                                    .into(),
+                            );
                         }
-                        ditto_llm::ContentPart::ToolResult { .. } => {
+                        ditto_core::contracts::ContentPart::ToolResult { .. } => {
                             *non_text_counts
                                 .entry("tool_result".to_string())
-                                .or_insert(Value::Number(0u64.into())) =
-                                Value::Number(
-                                    non_text_counts
-                                        .get("tool_result")
-                                        .and_then(Value::as_u64)
-                                        .unwrap_or(0)
-                                        .saturating_add(1)
-                                        .into(),
-                                );
+                                .or_insert(Value::Number(0u64.into())) = Value::Number(
+                                non_text_counts
+                                    .get("tool_result")
+                                    .and_then(Value::as_u64)
+                                    .unwrap_or(0)
+                                    .saturating_add(1)
+                                    .into(),
+                            );
                         }
-                        ditto_llm::ContentPart::Reasoning { .. } => {
+                        ditto_core::contracts::ContentPart::Reasoning { .. } => {
                             *non_text_counts
                                 .entry("reasoning".to_string())
-                                .or_insert(Value::Number(0u64.into())) =
-                                Value::Number(
-                                    non_text_counts
-                                        .get("reasoning")
-                                        .and_then(Value::as_u64)
-                                        .unwrap_or(0)
-                                        .saturating_add(1)
-                                        .into(),
-                                );
+                                .or_insert(Value::Number(0u64.into())) = Value::Number(
+                                non_text_counts
+                                    .get("reasoning")
+                                    .and_then(Value::as_u64)
+                                    .unwrap_or(0)
+                                    .saturating_add(1)
+                                    .into(),
+                            );
                         }
                     }
                 }
@@ -140,7 +136,11 @@ async fn run_llm_stream_once(
                     .as_ref()
                     .map(|v| format!("{v:?}"))
                     .unwrap_or_default(),
-                "provider_options": req.provider_options.clone().unwrap_or(Value::Null),
+                "provider_options": req
+                    .provider_options
+                    .as_ref()
+                    .map(|value| value.as_value().clone())
+                    .unwrap_or(Value::Null),
             }))
         } else {
             None
@@ -220,39 +220,45 @@ async fn run_llm_stream_once(
                             for msg in &req.messages {
                                 let mut content = String::new();
                                 for part in &msg.content {
-                                    if let ditto_llm::ContentPart::Text { text } = part {
+                                    if let ditto_core::contracts::ContentPart::Text { text } = part {
                                         content.push_str(text);
                                     }
                                 }
                                 let role = match msg.role {
-                                    ditto_llm::Role::System => "system",
-                                    ditto_llm::Role::User => "user",
-                                    ditto_llm::Role::Assistant => "assistant",
-                                    ditto_llm::Role::Tool => "tool",
+                                    ditto_core::contracts::Role::System => "system",
+                                    ditto_core::contracts::Role::User => "user",
+                                    ditto_core::contracts::Role::Assistant => "assistant",
+                                    ditto_core::contracts::Role::Tool => "tool",
                                 };
                                 if content.trim().is_empty() {
                                     continue;
                                 }
-                                body_messages.push(serde_json::json!({ "role": role, "content": content }));
+                                body_messages
+                                    .push(serde_json::json!({ "role": role, "content": content }));
                             }
 
                             let tools = req.tools.as_ref().map(|tools| {
-                                tools.iter().map(|t| {
-                                    serde_json::json!({
-                                        "type": "function",
-                                        "function": {
-                                            "name": t.name,
-                                            "description": t.description,
-                                            "parameters": t.parameters,
-                                        }
+                                tools
+                                    .iter()
+                                    .map(|t| {
+                                        serde_json::json!({
+                                            "type": "function",
+                                            "function": {
+                                                "name": t.name,
+                                                "description": t.description,
+                                                "parameters": t.parameters,
+                                            }
+                                        })
                                     })
-                                }).collect::<Vec<_>>()
+                                    .collect::<Vec<_>>()
                             });
                             let tool_choice = req.tool_choice.as_ref().map(|choice| match choice {
-                                ditto_llm::ToolChoice::Auto => Value::String("auto".to_string()),
-                                ditto_llm::ToolChoice::None => Value::String("none".to_string()),
-                                ditto_llm::ToolChoice::Required => Value::String("required".to_string()),
-                                ditto_llm::ToolChoice::Tool { name } => serde_json::json!({
+                                ditto_core::contracts::ToolChoice::Auto => Value::String("auto".to_string()),
+                                ditto_core::contracts::ToolChoice::None => Value::String("none".to_string()),
+                                ditto_core::contracts::ToolChoice::Required => {
+                                    Value::String("required".to_string())
+                                }
+                                ditto_core::contracts::ToolChoice::Tool { name } => serde_json::json!({
                                     "type": "function",
                                     "function": { "name": name }
                                 }),
@@ -261,7 +267,9 @@ async fn run_llm_stream_once(
                             let mut body = serde_json::Map::<String, Value>::new();
                             body.insert("model".to_string(), Value::String(model.to_string()));
                             body.insert("stream".to_string(), Value::Bool(true));
-                            if let Some(user) = req.user.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                            if let Some(user) =
+                                req.user.as_deref().map(str::trim).filter(|s| !s.is_empty())
+                            {
                                 body.insert("user".to_string(), Value::String(user.to_string()));
                             }
                             body.insert("messages".to_string(), Value::Array(body_messages));
@@ -271,7 +279,11 @@ async fn run_llm_stream_once(
                             if let Some(tool_choice) = tool_choice {
                                 body.insert("tool_choice".to_string(), tool_choice);
                             }
-                            if let Some(options) = req.provider_options.as_ref().and_then(Value::as_object) {
+                            if let Some(options) = req
+                                .provider_options
+                                .as_ref()
+                                .and_then(|value| value.as_value().as_object())
+                            {
                                 if let Some(parallel_tool_calls) =
                                     options.get("parallel_tool_calls").and_then(Value::as_bool)
                                 {
@@ -281,13 +293,22 @@ async fn run_llm_stream_once(
                                     );
                                 }
                                 if let Some(response_format) = options.get("response_format") {
-                                    body.insert("response_format".to_string(), response_format.clone());
+                                    body.insert(
+                                        "response_format".to_string(),
+                                        response_format.clone(),
+                                    );
                                 }
                                 if let Some(reasoning_effort) = options.get("reasoning_effort") {
-                                    body.insert("reasoning_effort".to_string(), reasoning_effort.clone());
+                                    body.insert(
+                                        "reasoning_effort".to_string(),
+                                        reasoning_effort.clone(),
+                                    );
                                 }
                                 if let Some(prompt_cache_key) = options.get("prompt_cache_key") {
-                                    body.insert("prompt_cache_key".to_string(), prompt_cache_key.clone());
+                                    body.insert(
+                                        "prompt_cache_key".to_string(),
+                                        prompt_cache_key.clone(),
+                                    );
                                 }
                             }
 
@@ -313,48 +334,87 @@ async fn run_llm_stream_once(
             None
         };
 
-        let mut stream = llm.stream(req).await?;
+        let mut stream = match llm.stream(req).await {
+            Ok(stream) => stream,
+            Err(err) if llm_stream_error_prefers_generate_fallback(&err) => {
+                return fallback_stream_to_generate(
+                    llm.clone(),
+                    thread_rt.clone(),
+                    thread_id,
+                    turn_id,
+                    emit_deltas,
+                    show_thinking,
+                    req_for_generate,
+                    "stream.empty_response_error",
+                    "streaming failed before emitting output; fell back to non-streaming generate after upstream returned an empty-response error"
+                        .to_string(),
+                )
+                .await;
+            }
+            Err(err) => return Err(err),
+        };
         let mut response_id = String::new();
-        let mut usage: Option<ditto_llm::Usage> = None;
+        let mut usage: Option<ditto_core::contracts::Usage> = None;
         let mut output_items = Vec::<OpenAiItem>::new();
         let mut output_text = String::new();
         let mut tool_call_order = Vec::<String>::new();
         let mut tool_calls = std::collections::BTreeMap::<String, ToolCallBuffer>::new();
         let mut seen_tool_call_ids = std::collections::HashSet::<String>::new();
-        let mut warnings = Vec::<ditto_llm::Warning>::new();
+        let mut warnings = Vec::<ditto_core::contracts::Warning>::new();
 
         while let Some(chunk) = stream.next().await {
-            let chunk = chunk?;
+            let chunk = match chunk {
+                Ok(chunk) => chunk,
+                Err(err) if !emitted_output && llm_stream_error_prefers_generate_fallback(&err) => {
+                    return fallback_stream_to_generate(
+                        llm.clone(),
+                        thread_rt.clone(),
+                        thread_id,
+                        turn_id,
+                        emit_deltas,
+                        show_thinking,
+                        req_for_generate,
+                        "stream.empty_response_error",
+                        "streaming failed before emitting output; fell back to non-streaming generate after upstream returned an empty-response error"
+                            .to_string(),
+                    )
+                    .await;
+                }
+                Err(err) => return Err(err),
+            };
             let mut disable_debug_file = false;
             if let Some(file) = debug_file.as_mut() {
                 use tokio::io::AsyncWriteExt;
                 debug_seq += 1;
 
                 let line = match &chunk {
-                    ditto_llm::StreamChunk::Warnings { warnings } => {
+                    ditto_core::contracts::StreamChunk::Warnings { warnings } => {
                         serde_json::json!({ "seq": debug_seq, "type": "warnings", "count": warnings.len() })
                     }
-                    ditto_llm::StreamChunk::ResponseId { id } => {
+                    ditto_core::contracts::StreamChunk::ResponseId { id } => {
                         serde_json::json!({ "seq": debug_seq, "type": "response_id", "id": id })
                     }
-                    ditto_llm::StreamChunk::TextDelta { text } => {
+                    ditto_core::contracts::StreamChunk::TextDelta { text } => {
                         let text = truncate_chars(&omne_core::redact_text(text), 4000);
                         serde_json::json!({ "seq": debug_seq, "type": "text_delta", "len": text.len(), "text": text })
                     }
-                    ditto_llm::StreamChunk::ToolCallStart { id, name } => {
+                    ditto_core::contracts::StreamChunk::ToolCallStart { id, name } => {
                         serde_json::json!({ "seq": debug_seq, "type": "tool_call_start", "id": id, "name": name })
                     }
-                    ditto_llm::StreamChunk::ToolCallDelta { id, arguments_delta } => {
+                    ditto_core::contracts::StreamChunk::ToolCallDelta {
+                        id,
+                        arguments_delta,
+                    } => {
                         let delta = truncate_chars(&omne_core::redact_text(arguments_delta), 4000);
                         serde_json::json!({ "seq": debug_seq, "type": "tool_call_delta", "id": id, "len": delta.len(), "arguments_delta": delta })
                     }
-                    ditto_llm::StreamChunk::ReasoningDelta { text } => {
+                    ditto_core::contracts::StreamChunk::ReasoningDelta { text } => {
                         serde_json::json!({ "seq": debug_seq, "type": "reasoning_delta", "len": text.len() })
                     }
-                    ditto_llm::StreamChunk::FinishReason(reason) => {
+                    ditto_core::contracts::StreamChunk::FinishReason(reason) => {
                         serde_json::json!({ "seq": debug_seq, "type": "finish_reason", "reason": format!("{reason:?}") })
                     }
-                    ditto_llm::StreamChunk::Usage(usage) => {
+                    ditto_core::contracts::StreamChunk::Usage(usage) => {
                         serde_json::json!({ "seq": debug_seq, "type": "usage", "usage": usage })
                     }
                 };
@@ -377,13 +437,13 @@ async fn run_llm_stream_once(
             }
 
             match chunk {
-                ditto_llm::StreamChunk::Warnings { warnings: w } => warnings.extend(w),
-                ditto_llm::StreamChunk::ResponseId { id } => {
+                ditto_core::contracts::StreamChunk::Warnings { warnings: w } => warnings.extend(w),
+                ditto_core::contracts::StreamChunk::ResponseId { id } => {
                     if response_id.is_empty() && !id.trim().is_empty() {
                         response_id = id;
                     }
                 }
-                ditto_llm::StreamChunk::TextDelta { text } => {
+                ditto_core::contracts::StreamChunk::TextDelta { text } => {
                     if text.is_empty() {
                         continue;
                     }
@@ -405,7 +465,7 @@ async fn run_llm_stream_once(
                         );
                     }
                 }
-                ditto_llm::StreamChunk::ToolCallStart { id, name } => {
+                ditto_core::contracts::StreamChunk::ToolCallStart { id, name } => {
                     debug_counts.tool_call_start = debug_counts.tool_call_start.saturating_add(1);
                     emitted_output = true;
                     let slot = tool_calls.entry(id.clone()).or_default();
@@ -416,7 +476,7 @@ async fn run_llm_stream_once(
                         tool_call_order.push(id);
                     }
                 }
-                ditto_llm::StreamChunk::ToolCallDelta {
+                ditto_core::contracts::StreamChunk::ToolCallDelta {
                     id,
                     arguments_delta,
                 } => {
@@ -428,7 +488,7 @@ async fn run_llm_stream_once(
                         tool_call_order.push(id);
                     }
                 }
-                ditto_llm::StreamChunk::ReasoningDelta { text } => {
+                ditto_core::contracts::StreamChunk::ReasoningDelta { text } => {
                     debug_counts.reasoning_delta = debug_counts.reasoning_delta.saturating_add(1);
                     if emit_deltas && show_thinking && !text.is_empty() {
                         emitted_output = true;
@@ -446,11 +506,11 @@ async fn run_llm_stream_once(
                         );
                     }
                 }
-                ditto_llm::StreamChunk::Usage(u) => {
+                ditto_core::contracts::StreamChunk::Usage(u) => {
                     debug_counts.usage = debug_counts.usage.saturating_add(1);
                     usage = Some(u);
                 }
-                ditto_llm::StreamChunk::FinishReason(_) => {
+                ditto_core::contracts::StreamChunk::FinishReason(_) => {
                     debug_counts.finish_reason = debug_counts.finish_reason.saturating_add(1);
                 }
             }
@@ -513,10 +573,10 @@ async fn run_llm_stream_once(
             }));
         }
 
-        // Some OpenAI-compatible providers can return an "empty" SSE stream for large requests
+        // Some providers can return an "empty" SSE stream for large requests
         // (finish_reason + [DONE], but no delta.content/tool_calls). This breaks CLI output and
         // history because the tool loop sees no assistant text. Fallback to non-streaming generate.
-        if llm.provider() == "openai-compatible" && output_items.is_empty() {
+        if output_items.is_empty() {
             if let Some(file) = debug_file.as_mut() {
                 use tokio::io::AsyncWriteExt;
                 debug_seq += 1;
@@ -530,7 +590,7 @@ async fn run_llm_stream_once(
                 }
             }
 
-            let mut resp = run_llm_generate_inner(
+            let resp = fallback_stream_to_generate(
                 llm.clone(),
                 thread_rt.clone(),
                 thread_id,
@@ -538,12 +598,11 @@ async fn run_llm_stream_once(
                 emit_deltas,
                 show_thinking,
                 req_for_generate,
+                "stream.empty_output",
+                "streaming completed without emitting text/tool deltas; fell back to non-streaming generate"
+                    .to_string(),
             )
             .await?;
-            resp.warnings.push(ditto_llm::Warning::Compatibility {
-                feature: "stream.empty_output".to_string(),
-                details: "streaming completed without emitting text/tool deltas; fell back to non-streaming generate".to_string(),
-            });
 
             if let Some(file) = debug_file.as_mut() {
                 use tokio::io::AsyncWriteExt;
@@ -563,7 +622,7 @@ async fn run_llm_stream_once(
             return Ok(resp);
         }
 
-        Ok::<_, ditto_llm::DittoError>(AgentLlmResponse {
+        Ok::<_, ditto_core::error::DittoError>(AgentLlmResponse {
             id: response_id,
             output: output_items,
             usage: usage.as_ref().and_then(token_usage_json_from_ditto_usage),
@@ -577,6 +636,30 @@ async fn run_llm_stream_once(
             error: err.into(),
             emitted_output,
         }),
+        Err(_) if !emitted_output => {
+            // YUNWU_GEMINI_STREAM_TIMEOUT_FALLBACK:
+            // Some upstreams keep the streaming request open without ever
+            // yielding text/tool deltas. If that happens, preserve the turn by
+            // doing one non-streaming generate() retry instead of bubbling a
+            // timeout after zero observable output.
+            fallback_stream_to_generate(
+                llm,
+                thread_rt,
+                thread_id,
+                turn_id,
+                emit_deltas,
+                show_thinking,
+                req_for_timeout_fallback,
+                "stream.timeout_before_output",
+                "streaming timed out before emitting text/tool deltas; fell back to non-streaming generate"
+                    .to_string(),
+            )
+            .await
+            .map_err(|err| LlmAttemptFailure {
+                error: err.into(),
+                emitted_output,
+            })
+        }
         Err(_) => Err(LlmAttemptFailure {
             error: LlmAttemptError::TimedOut,
             emitted_output,
@@ -598,6 +681,82 @@ fn tool_call_arguments_to_openai_string(arguments: &Value) -> String {
     }
 }
 
+fn llm_stream_error_prefers_generate_fallback(err: &ditto_core::error::DittoError) -> bool {
+    // YUNWU_GEMINI_STREAM_FALLBACK:
+    // Omne sees this after the provider-level streaming call fails before
+    // producing any deltas. We only trigger fallback for the known
+    // "empty_response" family so we don't silently mask real stream failures.
+    #[derive(serde::Deserialize)]
+    struct ApiErrorEnvelope {
+        error: ApiErrorBody,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct ApiErrorBody {
+        #[serde(default)]
+        message: String,
+        #[serde(default, rename = "type")]
+        error_type: String,
+        #[serde(default)]
+        code: String,
+    }
+
+    fn is_empty_response_api_body(raw: &str) -> bool {
+        let Ok(parsed) = serde_json::from_str::<ApiErrorEnvelope>(raw) else {
+            return false;
+        };
+        if parsed.error.code.trim() == "channel:empty_response" {
+            return true;
+        }
+        parsed.error.error_type.trim() == "channel_error"
+            && parsed
+                .error
+                .message
+                .to_ascii_lowercase()
+                .contains("no meaningful content in candidates")
+    }
+
+    match err {
+        ditto_core::error::DittoError::Api { body, .. } => is_empty_response_api_body(body),
+        ditto_core::error::DittoError::InvalidResponse(message) => message
+            .freeform_text()
+            .is_some_and(is_empty_response_api_body),
+        _ => false,
+    }
+}
+
+async fn fallback_stream_to_generate(
+    llm: Arc<dyn ditto_core::llm_core::model::LanguageModel>,
+    thread_rt: Arc<super::ThreadRuntime>,
+    thread_id: ThreadId,
+    turn_id: TurnId,
+    emit_deltas: bool,
+    show_thinking: bool,
+    req: ditto_core::contracts::GenerateRequest,
+    warning_feature: &str,
+    warning_details: String,
+) -> Result<AgentLlmResponse, ditto_core::error::DittoError> {
+    // YUNWU_GEMINI_STREAM_FALLBACK:
+    // This is the Omne-side fallback path for reviewer/tool-loop flows. It
+    // preserves the turn by converting a stream-path failure with zero emitted
+    // output into one non-streaming generate() attempt.
+    let mut resp = run_llm_generate_inner(
+        llm,
+        thread_rt,
+        thread_id,
+        turn_id,
+        emit_deltas,
+        show_thinking,
+        req,
+    )
+    .await?;
+    resp.warnings.push(ditto_core::contracts::Warning::Compatibility {
+        feature: warning_feature.to_string(),
+        details: warning_details,
+    });
+    Ok(resp)
+}
+
 fn response_id_from_provider_metadata(metadata: &Option<Value>) -> Option<String> {
     metadata
         .as_ref()
@@ -609,14 +768,14 @@ fn response_id_from_provider_metadata(metadata: &Option<Value>) -> Option<String
 }
 
 async fn run_llm_generate_inner(
-    llm: Arc<dyn ditto_llm::LanguageModel>,
+    llm: Arc<dyn ditto_core::llm_core::model::LanguageModel>,
     thread_rt: Arc<super::ThreadRuntime>,
     thread_id: ThreadId,
     turn_id: TurnId,
     emit_deltas: bool,
     show_thinking: bool,
-    req: ditto_llm::GenerateRequest,
-) -> Result<AgentLlmResponse, ditto_llm::DittoError> {
+    req: ditto_core::contracts::GenerateRequest,
+) -> Result<AgentLlmResponse, ditto_core::error::DittoError> {
     let resp = llm.generate(req).await?;
 
     let mut response_id =
@@ -631,9 +790,13 @@ async fn run_llm_generate_inner(
 
     for part in &resp.content {
         match part {
-            ditto_llm::ContentPart::Text { text } => output_text.push_str(text),
-            ditto_llm::ContentPart::Reasoning { text } => reasoning_text.push_str(text),
-            ditto_llm::ContentPart::ToolCall { id, name, arguments } => {
+            ditto_core::contracts::ContentPart::Text { text } => output_text.push_str(text),
+            ditto_core::contracts::ContentPart::Reasoning { text } => reasoning_text.push_str(text),
+            ditto_core::contracts::ContentPart::ToolCall {
+                id,
+                name,
+                arguments,
+            } => {
                 tool_calls.push((
                     id.to_string(),
                     name.to_string(),
@@ -645,29 +808,35 @@ async fn run_llm_generate_inner(
     }
 
     let mut output_items = Vec::<OpenAiItem>::new();
-    if !reasoning_text.is_empty() && emit_deltas && show_thinking {
-        let delta = omne_core::redact_text(&reasoning_text);
-        thread_rt.emit_notification(
-            "item/delta",
-            &serde_json::json!({
-                "thread_id": thread_id,
-                "turn_id": turn_id,
-                "response_id": response_id.clone(),
-                "kind": "thinking",
-                "delta": delta,
-            }),
-        );
+    let mut assistant_content = Vec::<Value>::new();
+    if !reasoning_text.is_empty() {
+        let reasoning_text = omne_core::redact_text(&reasoning_text);
+        assistant_content.push(serde_json::json!({
+            "type": "reasoning_text",
+            "text": reasoning_text.clone(),
+        }));
+
+        if emit_deltas && show_thinking {
+            thread_rt.emit_notification(
+                "item/delta",
+                &serde_json::json!({
+                    "thread_id": thread_id,
+                    "turn_id": turn_id,
+                    "response_id": response_id.clone(),
+                    "kind": "thinking",
+                    "delta": reasoning_text,
+                }),
+            );
+        }
     }
     if !output_text.is_empty() {
         let output_text = omne_core::redact_text(&output_text);
-        output_items.push(serde_json::json!({
-            "type": "message",
-            "role": "assistant",
-            "content": [{ "type": "output_text", "text": output_text }],
+        assistant_content.push(serde_json::json!({
+            "type": "output_text",
+            "text": output_text.clone(),
         }));
 
         if emit_deltas {
-            let delta = omne_core::redact_text(&output_text);
             thread_rt.emit_notification(
                 "item/delta",
                 &serde_json::json!({
@@ -675,10 +844,17 @@ async fn run_llm_generate_inner(
                     "turn_id": turn_id,
                     "response_id": response_id.clone(),
                     "kind": "output_text",
-                    "delta": delta,
+                    "delta": output_text,
                 }),
             );
         }
+    }
+    if !assistant_content.is_empty() {
+        output_items.push(serde_json::json!({
+            "type": "message",
+            "role": "assistant",
+            "content": assistant_content,
+        }));
     }
 
     for (call_id, name, arguments) in tool_calls {
@@ -699,13 +875,13 @@ async fn run_llm_generate_inner(
 }
 
 async fn run_llm_generate_once(
-    llm: Arc<dyn ditto_llm::LanguageModel>,
+    llm: Arc<dyn ditto_core::llm_core::model::LanguageModel>,
     thread_rt: Arc<super::ThreadRuntime>,
     thread_id: ThreadId,
     turn_id: TurnId,
     emit_deltas: bool,
     show_thinking: bool,
-    req: ditto_llm::GenerateRequest,
+    req: ditto_core::contracts::GenerateRequest,
     max_openai_request_duration: Duration,
 ) -> Result<AgentLlmResponse, LlmAttemptFailure> {
     let mut emitted_output = false;
@@ -721,7 +897,7 @@ async fn run_llm_generate_once(
         )
         .await?;
         emitted_output = !resp.output.is_empty();
-        Ok::<_, ditto_llm::DittoError>(resp)
+        Ok::<_, ditto_core::error::DittoError>(resp)
     };
 
     match tokio::time::timeout(max_openai_request_duration, inner).await {
@@ -747,7 +923,7 @@ mod llm_stream_tests {
     struct EmptyStreamThenGenerate;
 
     #[async_trait]
-    impl ditto_llm::LanguageModel for EmptyStreamThenGenerate {
+    impl ditto_core::llm_core::model::LanguageModel for EmptyStreamThenGenerate {
         fn provider(&self) -> &str {
             "openai-compatible"
         }
@@ -758,13 +934,13 @@ mod llm_stream_tests {
 
         async fn generate(
             &self,
-            _request: ditto_llm::GenerateRequest,
-        ) -> ditto_llm::Result<ditto_llm::GenerateResponse> {
-            Ok(ditto_llm::GenerateResponse {
-                content: vec![ditto_llm::ContentPart::Text {
+            _request: ditto_core::contracts::GenerateRequest,
+        ) -> ditto_core::error::Result<ditto_core::contracts::GenerateResponse> {
+            Ok(ditto_core::contracts::GenerateResponse {
+                content: vec![ditto_core::contracts::ContentPart::Text {
                     text: "OK".to_string(),
                 }],
-                usage: ditto_llm::Usage {
+                usage: ditto_core::contracts::Usage {
                     input_tokens: Some(1),
                     output_tokens: Some(1),
                     total_tokens: Some(2),
@@ -777,13 +953,15 @@ mod llm_stream_tests {
 
         async fn stream(
             &self,
-            _request: ditto_llm::GenerateRequest,
-        ) -> ditto_llm::Result<ditto_llm::StreamResult> {
+            _request: ditto_core::contracts::GenerateRequest,
+        ) -> ditto_core::error::Result<ditto_core::llm_core::model::StreamResult> {
             Ok(Box::pin(stream::iter(vec![
-                Ok(ditto_llm::StreamChunk::ResponseId {
+                Ok(ditto_core::contracts::StreamChunk::ResponseId {
                     id: "resp_stream_1".to_string(),
                 }),
-                Ok(ditto_llm::StreamChunk::FinishReason(ditto_llm::FinishReason::Stop)),
+                Ok(ditto_core::contracts::StreamChunk::FinishReason(
+                    ditto_core::contracts::FinishReason::Stop,
+                )),
             ])))
         }
     }
@@ -791,15 +969,16 @@ mod llm_stream_tests {
     #[tokio::test]
     async fn empty_openai_compatible_stream_falls_back_to_generate() -> anyhow::Result<()> {
         let dir = tempfile::tempdir()?;
-        let store = omne_core::ThreadStore::new(omne_core::PmPaths::new(
-            dir.path().join(".omne_data"),
-        ));
-        let handle = store.create_thread(std::path::PathBuf::from("/tmp")).await?;
+        let store =
+            omne_core::ThreadStore::new(omne_core::PmPaths::new(dir.path().join(".omne_data")));
+        let handle = store
+            .create_thread(std::path::PathBuf::from("/tmp"))
+            .await?;
         let thread_id = handle.thread_id();
         let (notify_tx, _notify_rx) = tokio::sync::broadcast::channel(16);
         let thread_rt = Arc::new(crate::ThreadRuntime::new(handle, notify_tx));
 
-        let req = ditto_llm::GenerateRequest::from(vec![ditto_llm::Message::user("ping")]);
+        let req = ditto_core::contracts::GenerateRequest::from(vec![ditto_core::contracts::Message::user("ping")]);
         let resp = run_llm_stream_once(
             Arc::new(EmptyStreamThenGenerate),
             thread_rt,
@@ -818,19 +997,165 @@ mod llm_stream_tests {
         assert!(
             resp.warnings
                 .iter()
-                .any(|w| matches!(w, ditto_llm::Warning::Compatibility { feature, .. } if feature == "stream.empty_output"))
+                .any(|w| matches!(w, ditto_core::contracts::Warning::Compatibility { feature, .. } if feature == "stream.empty_output"))
         );
 
         Ok(())
     }
 
     #[derive(Clone)]
+    struct EmptyResponseStreamThenGenerate;
+
+    #[async_trait]
+    impl ditto_core::llm_core::model::LanguageModel for EmptyResponseStreamThenGenerate {
+        fn provider(&self) -> &str {
+            "google"
+        }
+
+        fn model_id(&self) -> &str {
+            "gemini-3.1-pro-preview"
+        }
+
+        async fn generate(
+            &self,
+            _request: ditto_core::contracts::GenerateRequest,
+        ) -> ditto_core::error::Result<ditto_core::contracts::GenerateResponse> {
+            Ok(ditto_core::contracts::GenerateResponse {
+                content: vec![ditto_core::contracts::ContentPart::Text {
+                    text: "OK".to_string(),
+                }],
+                provider_metadata: Some(serde_json::json!({ "id": "resp_gen_429" })),
+                ..Default::default()
+            })
+        }
+
+        async fn stream(
+            &self,
+            _request: ditto_core::contracts::GenerateRequest,
+        ) -> ditto_core::error::Result<ditto_core::llm_core::model::StreamResult> {
+            Err(ditto_core::error::DittoError::Api {
+                status: reqwest::StatusCode::TOO_MANY_REQUESTS,
+                body: "{\"error\":{\"message\":\"received empty response from Gemini: no meaningful content in candidates\",\"code\":\"channel:empty_response\"}}".to_string(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn empty_response_stream_error_falls_back_to_generate() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let store =
+            omne_core::ThreadStore::new(omne_core::PmPaths::new(dir.path().join(".omne_data")));
+        let handle = store
+            .create_thread(std::path::PathBuf::from("/tmp"))
+            .await?;
+        let thread_id = handle.thread_id();
+        let (notify_tx, _notify_rx) = tokio::sync::broadcast::channel(16);
+        let thread_rt = Arc::new(crate::ThreadRuntime::new(handle, notify_tx));
+
+        let req = ditto_core::contracts::GenerateRequest::from(vec![ditto_core::contracts::Message::user("ping")]);
+        let resp = run_llm_stream_once(
+            Arc::new(EmptyResponseStreamThenGenerate),
+            thread_rt,
+            thread_id,
+            TurnId::new(),
+            false,
+            false,
+            req,
+            Duration::from_secs(5),
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("llm attempt failed: {:?}", err.error))?;
+
+        assert_eq!(resp.id, "resp_gen_429");
+        assert_eq!(extract_assistant_text(&resp.output), "OK");
+        assert!(resp.warnings.iter().any(|w| matches!(
+            w,
+            ditto_core::contracts::Warning::Compatibility { feature, .. }
+                if feature == "stream.empty_response_error"
+        )));
+
+        Ok(())
+    }
+
+    #[derive(Clone)]
+    struct TimeoutBeforeOutputStreamThenGenerate;
+
+    #[async_trait]
+    impl ditto_core::llm_core::model::LanguageModel for TimeoutBeforeOutputStreamThenGenerate {
+        fn provider(&self) -> &str {
+            "google"
+        }
+
+        fn model_id(&self) -> &str {
+            "gemini-3.1-pro-preview"
+        }
+
+        async fn generate(
+            &self,
+            _request: ditto_core::contracts::GenerateRequest,
+        ) -> ditto_core::error::Result<ditto_core::contracts::GenerateResponse> {
+            Ok(ditto_core::contracts::GenerateResponse {
+                content: vec![ditto_core::contracts::ContentPart::Text {
+                    text: "OK".to_string(),
+                }],
+                provider_metadata: Some(serde_json::json!({ "id": "resp_gen_timeout" })),
+                ..Default::default()
+            })
+        }
+
+        async fn stream(
+            &self,
+            _request: ditto_core::contracts::GenerateRequest,
+        ) -> ditto_core::error::Result<ditto_core::llm_core::model::StreamResult> {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            Ok(Box::pin(stream::pending()))
+        }
+    }
+
+    #[tokio::test]
+    async fn timeout_before_output_stream_falls_back_to_generate() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let store =
+            omne_core::ThreadStore::new(omne_core::PmPaths::new(dir.path().join(".omne_data")));
+        let handle = store
+            .create_thread(std::path::PathBuf::from("/tmp"))
+            .await?;
+        let thread_id = handle.thread_id();
+        let (notify_tx, _notify_rx) = tokio::sync::broadcast::channel(16);
+        let thread_rt = Arc::new(crate::ThreadRuntime::new(handle, notify_tx));
+
+        let req = ditto_core::contracts::GenerateRequest::from(vec![ditto_core::contracts::Message::user("ping")]);
+        let resp = run_llm_stream_once(
+            Arc::new(TimeoutBeforeOutputStreamThenGenerate),
+            thread_rt,
+            thread_id,
+            TurnId::new(),
+            false,
+            false,
+            req,
+            Duration::from_millis(10),
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("llm attempt failed: {:?}", err.error))?;
+
+        assert_eq!(resp.id, "resp_gen_timeout");
+        assert_eq!(extract_assistant_text(&resp.output), "OK");
+        assert!(resp.warnings.iter().any(|w| matches!(
+            w,
+            ditto_core::contracts::Warning::Compatibility { feature, .. }
+                if feature == "stream.timeout_before_output"
+        )));
+
+        Ok(())
+    }
+
+    #[derive(Clone)]
     struct CaptureGenerateRequestOnFallback {
-        generated_request: std::sync::Arc<std::sync::Mutex<Option<ditto_llm::GenerateRequest>>>,
+        generated_request: std::sync::Arc<std::sync::Mutex<Option<ditto_core::contracts::GenerateRequest>>>,
     }
 
     #[async_trait]
-    impl ditto_llm::LanguageModel for CaptureGenerateRequestOnFallback {
+    impl ditto_core::llm_core::model::LanguageModel for CaptureGenerateRequestOnFallback {
         fn provider(&self) -> &str {
             "openai-compatible"
         }
@@ -841,11 +1166,11 @@ mod llm_stream_tests {
 
         async fn generate(
             &self,
-            request: ditto_llm::GenerateRequest,
-        ) -> ditto_llm::Result<ditto_llm::GenerateResponse> {
+            request: ditto_core::contracts::GenerateRequest,
+        ) -> ditto_core::error::Result<ditto_core::contracts::GenerateResponse> {
             *self.generated_request.lock().expect("mutex poisoned") = Some(request);
-            Ok(ditto_llm::GenerateResponse {
-                content: vec![ditto_llm::ContentPart::Text {
+            Ok(ditto_core::contracts::GenerateResponse {
+                content: vec![ditto_core::contracts::ContentPart::Text {
                     text: "OK".to_string(),
                 }],
                 provider_metadata: Some(serde_json::json!({ "id": "resp_gen_1" })),
@@ -855,13 +1180,15 @@ mod llm_stream_tests {
 
         async fn stream(
             &self,
-            _request: ditto_llm::GenerateRequest,
-        ) -> ditto_llm::Result<ditto_llm::StreamResult> {
+            _request: ditto_core::contracts::GenerateRequest,
+        ) -> ditto_core::error::Result<ditto_core::llm_core::model::StreamResult> {
             Ok(Box::pin(stream::iter(vec![
-                Ok(ditto_llm::StreamChunk::ResponseId {
+                Ok(ditto_core::contracts::StreamChunk::ResponseId {
                     id: "resp_stream_1".to_string(),
                 }),
-                Ok(ditto_llm::StreamChunk::FinishReason(ditto_llm::FinishReason::Stop)),
+                Ok(ditto_core::contracts::StreamChunk::FinishReason(
+                    ditto_core::contracts::FinishReason::Stop,
+                )),
             ])))
         }
     }
@@ -869,10 +1196,11 @@ mod llm_stream_tests {
     #[tokio::test]
     async fn fallback_generate_keeps_prompt_cache_key() -> anyhow::Result<()> {
         let dir = tempfile::tempdir()?;
-        let store = omne_core::ThreadStore::new(omne_core::PmPaths::new(
-            dir.path().join(".omne_data"),
-        ));
-        let handle = store.create_thread(std::path::PathBuf::from("/tmp")).await?;
+        let store =
+            omne_core::ThreadStore::new(omne_core::PmPaths::new(dir.path().join(".omne_data")));
+        let handle = store
+            .create_thread(std::path::PathBuf::from("/tmp"))
+            .await?;
         let thread_id = handle.thread_id();
         let (notify_tx, _notify_rx) = tokio::sync::broadcast::channel(16);
         let thread_rt = Arc::new(crate::ThreadRuntime::new(handle, notify_tx));
@@ -882,11 +1210,13 @@ mod llm_stream_tests {
             generated_request: captured.clone(),
         };
 
-        let req = ditto_llm::GenerateRequest::from(vec![ditto_llm::Message::user("ping")])
-            .with_provider_options(ditto_llm::ProviderOptions {
+        let req = ditto_core::provider_options::request_with_provider_options(
+            ditto_core::contracts::GenerateRequest::from(vec![ditto_core::contracts::Message::user("ping")]),
+            ditto_core::provider_options::ProviderOptions {
                 prompt_cache_key: Some(thread_id.to_string()),
                 ..Default::default()
-            })?;
+            },
+        )?;
 
         let _resp = run_llm_stream_once(
             Arc::new(llm),
@@ -906,9 +1236,9 @@ mod llm_stream_tests {
             .expect("mutex poisoned")
             .clone()
             .expect("fallback generate should be called");
-        let parsed = generated_req
-            .parsed_provider_options_for("openai-compatible")?
-            .expect("provider options should exist");
+        let parsed =
+            ditto_core::provider_options::request_parsed_provider_options_for(&generated_req, "openai-compatible")?
+                .expect("provider options should exist");
         let expected = thread_id.to_string();
         assert_eq!(parsed.prompt_cache_key.as_deref(), Some(expected.as_str()));
 
@@ -919,7 +1249,7 @@ mod llm_stream_tests {
     struct ReasoningStreamEmitsDeltas;
 
     #[async_trait]
-    impl ditto_llm::LanguageModel for ReasoningStreamEmitsDeltas {
+    impl ditto_core::llm_core::model::LanguageModel for ReasoningStreamEmitsDeltas {
         fn provider(&self) -> &str {
             "openai-compatible"
         }
@@ -930,10 +1260,10 @@ mod llm_stream_tests {
 
         async fn generate(
             &self,
-            _request: ditto_llm::GenerateRequest,
-        ) -> ditto_llm::Result<ditto_llm::GenerateResponse> {
-            Ok(ditto_llm::GenerateResponse {
-                content: vec![ditto_llm::ContentPart::Text {
+            _request: ditto_core::contracts::GenerateRequest,
+        ) -> ditto_core::error::Result<ditto_core::contracts::GenerateResponse> {
+            Ok(ditto_core::contracts::GenerateResponse {
+                content: vec![ditto_core::contracts::ContentPart::Text {
                     text: "OK".to_string(),
                 }],
                 provider_metadata: Some(serde_json::json!({ "id": "resp_gen_1" })),
@@ -943,19 +1273,21 @@ mod llm_stream_tests {
 
         async fn stream(
             &self,
-            _request: ditto_llm::GenerateRequest,
-        ) -> ditto_llm::Result<ditto_llm::StreamResult> {
+            _request: ditto_core::contracts::GenerateRequest,
+        ) -> ditto_core::error::Result<ditto_core::llm_core::model::StreamResult> {
             Ok(Box::pin(stream::iter(vec![
-                Ok(ditto_llm::StreamChunk::ResponseId {
+                Ok(ditto_core::contracts::StreamChunk::ResponseId {
                     id: "resp_stream_1".to_string(),
                 }),
-                Ok(ditto_llm::StreamChunk::ReasoningDelta {
+                Ok(ditto_core::contracts::StreamChunk::ReasoningDelta {
                     text: "thinking...".to_string(),
                 }),
-                Ok(ditto_llm::StreamChunk::TextDelta {
+                Ok(ditto_core::contracts::StreamChunk::TextDelta {
                     text: "OK".to_string(),
                 }),
-                Ok(ditto_llm::StreamChunk::FinishReason(ditto_llm::FinishReason::Stop)),
+                Ok(ditto_core::contracts::StreamChunk::FinishReason(
+                    ditto_core::contracts::FinishReason::Stop,
+                )),
             ])))
         }
     }
@@ -963,16 +1295,17 @@ mod llm_stream_tests {
     #[tokio::test]
     async fn reasoning_delta_emits_item_delta_thinking_when_enabled() -> anyhow::Result<()> {
         let dir = tempfile::tempdir()?;
-        let store = omne_core::ThreadStore::new(omne_core::PmPaths::new(
-            dir.path().join(".omne_data"),
-        ));
-        let handle = store.create_thread(std::path::PathBuf::from("/tmp")).await?;
+        let store =
+            omne_core::ThreadStore::new(omne_core::PmPaths::new(dir.path().join(".omne_data")));
+        let handle = store
+            .create_thread(std::path::PathBuf::from("/tmp"))
+            .await?;
         let thread_id = handle.thread_id();
         let (notify_tx, mut notify_rx) = tokio::sync::broadcast::channel(16);
         let thread_rt = Arc::new(crate::ThreadRuntime::new(handle, notify_tx));
 
         let turn_id = TurnId::new();
-        let req = ditto_llm::GenerateRequest::from(vec![ditto_llm::Message::user("ping")]);
+        let req = ditto_core::contracts::GenerateRequest::from(vec![ditto_core::contracts::Message::user("ping")]);
         let resp = run_llm_stream_once(
             Arc::new(ReasoningStreamEmitsDeltas),
             thread_rt,

@@ -5,6 +5,24 @@ fn env_test_lock() -> &'static std::sync::Mutex<()> {
     LOCK.get_or_init(|| std::sync::Mutex::new(()))
 }
 
+fn set_locked_process_env(key: &str, value: &str) {
+    // SAFETY:
+    // - Rust 2024 requires `unsafe` for process-environment mutation because the environment is a
+    //   process-global libc data structure.
+    // - Every agent-cli test in this binary that mutates env goes through `with_env_vars`, which
+    //   holds `env_test_lock()` across the full override lifetime and serializes these mutations.
+    // - We need the real process environment here because the code under test reads via `std::env`;
+    //   there is no safe in-process substitute for that boundary.
+    unsafe { std::env::set_var(key, value) };
+}
+
+fn remove_locked_process_env(key: &str) {
+    // SAFETY:
+    // - Same boundary and invariants as `set_locked_process_env`: callers hold the process-wide
+    //   test mutex for this binary, and this helper is the single audited env-removal boundary.
+    unsafe { std::env::remove_var(key) };
+}
+
 struct EnvVarResetGuard {
     prev: Vec<(String, Option<String>)>,
 }
@@ -15,12 +33,10 @@ impl EnvVarResetGuard {
             .iter()
             .map(|(key, _)| ((*key).to_string(), std::env::var(key).ok()))
             .collect();
-        unsafe {
-            for (key, value) in vars {
-                match value {
-                    Some(v) => std::env::set_var(key, v),
-                    None => std::env::remove_var(key),
-                }
+        for (key, value) in vars {
+            match value {
+                Some(v) => set_locked_process_env(key, v),
+                None => remove_locked_process_env(key),
             }
         }
         Self { prev }
@@ -29,12 +45,10 @@ impl EnvVarResetGuard {
 
 impl Drop for EnvVarResetGuard {
     fn drop(&mut self) {
-        unsafe {
-            for (key, value) in self.prev.drain(..) {
-                match value {
-                    Some(v) => std::env::set_var(&key, v),
-                    None => std::env::remove_var(&key),
-                }
+        for (key, value) in self.prev.drain(..) {
+            match value {
+                Some(v) => set_locked_process_env(&key, &v),
+                None => remove_locked_process_env(&key),
             }
         }
     }

@@ -6,6 +6,9 @@
 
 ## 1) 从哪里开始
 
+- `../README.md`：仓库外部概览与最小验证入口
+- `../AGENTS.md`：执行者短地图
+- `docs/docs-system-map.md`：文档系统地图（README / AGENTS / docs / reports / research 的分工）
 - `docs/v0.2.0_parity.md`：v0.2.0 对齐清单（实现状态 + TODO）
 - `docs/TODO.md`：新增待办项与版本计划（例如 v0.3.0 Node.js）
 - `docs/implementation_plan.md`：vNext 实现计划与里程碑
@@ -19,6 +22,7 @@
 - `docs/omne_data.md`：`./.omne_data/` 目录约定（项目配置 + 运行时数据）
 - `docs/runtime_layout.md`：`omne_root`（默认 `./.omne_data/`）目录结构与“从 ID 定位到文件”
 - `docs/modes.md`：Mode（角色权限边界）与合并语义
+- `docs/permissions_matrix.md`：用户可选权限与实际生效特征（含“最外层简版暴露项”与三档预设）
 - `docs/approvals.md`：Approvals 事件模型与 policy（含 `prompt_strict` / Escalate 口径）
 - `docs/execpolicy.md`：ExecPolicy（`process/start` 命令前缀规则）
 - `docs/redaction.md`：脱敏与 env scrub（避免 secrets 入日志/产物）
@@ -68,6 +72,37 @@ $ cargo run -p omne -- tui
 $ cargo run -p omne -- cli
 # 兼容别名：
 $ cargo run -p omne -- repl
+
+# provider / model 配置（增量更新，不覆盖整文件）
+# `add` 与 `set` 等价（互为别名）
+$ cargo run -p omne -- provider add openrouter \
+  --namespace google \
+  --upstream-api gemini_generate_content \
+  --auth-type api_key_env \
+  --auth-key OPENROUTER_API_KEY \
+  --base-url https://openrouter.ai/api/v1
+$ cargo run -p omne -- model add gemini-3.1-pro \
+  --provider google.providers.openrouter \
+  --set-default
+
+# 列表 / 查看 / 删除
+$ cargo run -p omne -- provider list --namespace google
+$ cargo run -p omne -- provider show openrouter --namespace google
+$ cargo run -p omne -- provider delete openrouter --namespace google
+$ cargo run -p omne -- model list
+$ cargo run -p omne -- model show gemini-3.1-pro
+$ cargo run -p omne -- model delete gemini-3.1-pro
+
+# 多步交互默认开启（参数可预填，剩余项交互补全）
+$ cargo run -p omne -- provider add openrouter \
+  --namespace google \
+  --upstream-api gemini_generate_content
+
+# 非交互（脚本场景）
+$ cargo run -p omne -- provider add openrouter \
+  --namespace google \
+  --upstream-api gemini_generate_content \
+  --no-interactive
 ```
 
 快速搜索：
@@ -80,3 +115,4 @@ $ rg "<keyword>" crates
 配置目录约定：
 
 - `./.omne_data/`：项目级数据根（运行时 threads/artifacts；项目级覆盖配置 `config.toml` + secrets `.env`；项目 spec 在 `.omne_data/spec/`）
+- `provider/model add` 的配置合并逻辑由 `ditto-llm` 提供，Omne 只做参数收集与调用，不重复实现配置编辑域逻辑。

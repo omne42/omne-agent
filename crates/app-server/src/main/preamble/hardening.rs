@@ -7,7 +7,6 @@ use std::time::Duration;
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
-use diffy::{Patch, apply};
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use omne_core::{PmPaths, ThreadStore};
 use omne_execpolicy::{Decision as ExecDecision, RuleMatch as ExecRuleMatch};
@@ -392,13 +391,32 @@ where
         .collect()
 }
 
+fn remove_process_env_pre_main(key: &str) {
+    // SAFETY:
+    // - Rust 2024 marks process-environment mutation unsafe because the environment is shared
+    //   process-global state.
+    // - This helper is only used during pre-main hardening, before the runtime starts worker
+    //   threads or any background tasks that could concurrently read/write the environment.
+    // - We must mutate the current process environment here because subsequent child-process
+    //   launches inherit from this process unless scrubbed up front.
+    unsafe { std::env::remove_var(key) };
+}
+
+fn set_process_env_pre_main(key: &str, value: &str) {
+    // SAFETY:
+    // - Same pre-main boundary and invariants as `remove_process_env_pre_main`: this runs before
+    //   any concurrency exists in the process, so there is no concurrent environment access.
+    // - We intentionally keep the unsafe boundary narrow and only use it for startup hardening
+    //   defaults that must affect the current process and its future children.
+    unsafe { std::env::set_var(key, value) };
+}
+
 fn apply_pre_main_env_scrub() -> Vec<String> {
     let scrubbed_keys = collect_pre_main_env_scrub_targets(
         std::env::vars_os().filter_map(|(key, _)| key.into_string().ok()),
     );
     for key in &scrubbed_keys {
-        // SAFETY: pre-main hardening runs at process startup before worker threads are spawned.
-        unsafe { std::env::remove_var(key) };
+        remove_process_env_pre_main(key);
     }
     scrubbed_keys
 }
@@ -484,8 +502,7 @@ fn apply_pre_main_hardening() -> anyhow::Result<()> {
     if pre_main_set_ci_enabled()? {
         log_hardening_enabled(HARDENING_ITEM_ENV_CI);
         if std::env::var_os("CI").is_none() {
-            // SAFETY: pre-main hardening runs at process startup before worker threads are spawned.
-            unsafe { std::env::set_var("CI", "1") };
+            set_process_env_pre_main("CI", "1");
             log_hardening_applied(HARDENING_ITEM_ENV_CI);
         } else {
             log_hardening_skipped(HARDENING_ITEM_ENV_CI, "already set");

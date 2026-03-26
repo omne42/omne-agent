@@ -345,12 +345,17 @@ async fn deny_mcp_disabled(
     tool: &str,
     params: Value,
 ) -> anyhow::Result<Value> {
+    let structured_error = catalog_structured_error_with("mcp_disabled", |message| {
+        message.try_with_value_arg("env", OMNE_ENABLE_MCP_ENV)?;
+        Ok(())
+    })?;
     let result = serde_json::to_value(omne_app_server_protocol::McpDisabledDeniedResponse {
         tool_id,
         denied: true,
         reason: "mcp is disabled".to_string(),
         env: OMNE_ENABLE_MCP_ENV.to_string(),
-        error_code: Some("mcp_disabled".to_string()),
+        structured_error: Some(structured_error.clone()),
+        error_code: structured_error_code(&structured_error),
     })
     .context("serialize mcp disabled denied response")?;
 
@@ -366,6 +371,7 @@ async fn deny_mcp_disabled(
         .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
             tool_id,
             status: omne_protocol::ToolStatus::Denied,
+            structured_error: structured_error_from_result_value(&result),
             error: Some(format!("{OMNE_ENABLE_MCP_ENV}=true is required")),
             result: Some(result.clone()),
         })

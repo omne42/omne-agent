@@ -33,6 +33,7 @@
         fn renders_thread_list_snapshot() -> anyhow::Result<()> {
             let mut state = UiState::new(false);
             state.header.model_context_window = Some(100_000);
+            state.current_context_tokens_estimate = Some(39_280);
             state.total_tokens_used = 39_280;
             state.threads = vec![
                 ThreadMeta {
@@ -191,6 +192,7 @@ Updated  Attn   Title   CWD    Message
             });
             state.input = "next".to_string();
             state.header.model_context_window = Some(100_000);
+            state.current_context_tokens_estimate = Some(39_280);
             state.total_tokens_used = 39_280;
 
             let actual = render_to_string(&mut state, 64, 12)?;

@@ -3,10 +3,7 @@ mod agent_spawn_guard_tests {
     use super::*;
     use std::collections::HashSet;
     use std::path::Path;
-    use tokio::sync::Mutex;
     use tokio::time::{Duration, Instant};
-
-    static ISOLATED_BACKEND_ENV_LOCK: Mutex<()> = Mutex::const_new(());
 
     struct ScopedEnvVar {
         key: &'static str,
@@ -16,23 +13,20 @@ mod agent_spawn_guard_tests {
     impl ScopedEnvVar {
         fn set(key: &'static str, value: &str) -> Self {
             let previous = std::env::var(key).ok();
-            unsafe { std::env::set_var(key, value) };
+            crate::set_locked_process_env(key, value);
             Self { key, previous }
         }
 
         fn unset(key: &'static str) -> Self {
             let previous = std::env::var(key).ok();
-            unsafe { std::env::remove_var(key) };
+            crate::remove_locked_process_env(key);
             Self { key, previous }
         }
     }
 
     impl Drop for ScopedEnvVar {
         fn drop(&mut self) {
-            match self.previous.take() {
-                Some(value) => unsafe { std::env::set_var(self.key, value) },
-                None => unsafe { std::env::remove_var(self.key) },
-            }
+            crate::restore_locked_process_env(self.key, self.previous.as_deref());
         }
     }
 
@@ -63,7 +57,7 @@ mod agent_spawn_guard_tests {
 
     #[tokio::test]
     async fn isolated_workspace_copy_skips_runtime_dirs() -> anyhow::Result<()> {
-        let _lock = ISOLATED_BACKEND_ENV_LOCK.lock().await;
+        let _lock = crate::app_server_process_env_lock().lock().await;
         let _backend = ScopedEnvVar::unset("OMNE_SUBAGENT_ISOLATED_BACKEND");
         let _legacy = ScopedEnvVar::unset("OMNE_SUBAGENT_ISOLATED_WORKTREE_FIRST");
 
@@ -110,7 +104,7 @@ mod agent_spawn_guard_tests {
 
     #[tokio::test]
     async fn isolated_workspace_prefers_worktree_for_git_repo() -> anyhow::Result<()> {
-        let _lock = ISOLATED_BACKEND_ENV_LOCK.lock().await;
+        let _lock = crate::app_server_process_env_lock().lock().await;
         let _backend = ScopedEnvVar::unset("OMNE_SUBAGENT_ISOLATED_BACKEND");
         let _legacy = ScopedEnvVar::unset("OMNE_SUBAGENT_ISOLATED_WORKTREE_FIRST");
 
@@ -149,7 +143,7 @@ mod agent_spawn_guard_tests {
     #[tokio::test]
     async fn isolated_workspace_backend_policy_copy_forces_copy_on_git_repo() -> anyhow::Result<()>
     {
-        let _lock = ISOLATED_BACKEND_ENV_LOCK.lock().await;
+        let _lock = crate::app_server_process_env_lock().lock().await;
         let _backend = ScopedEnvVar::set("OMNE_SUBAGENT_ISOLATED_BACKEND", "copy");
         let _legacy = ScopedEnvVar::unset("OMNE_SUBAGENT_ISOLATED_WORKTREE_FIRST");
 
@@ -188,7 +182,7 @@ mod agent_spawn_guard_tests {
     #[tokio::test]
     async fn isolated_workspace_backend_policy_worktree_fails_on_non_git_repo() -> anyhow::Result<()>
     {
-        let _lock = ISOLATED_BACKEND_ENV_LOCK.lock().await;
+        let _lock = crate::app_server_process_env_lock().lock().await;
         let _backend = ScopedEnvVar::set("OMNE_SUBAGENT_ISOLATED_BACKEND", "worktree");
         let _legacy = ScopedEnvVar::unset("OMNE_SUBAGENT_ISOLATED_WORKTREE_FIRST");
 
@@ -345,6 +339,7 @@ modes:
                 .append(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
                     status: omne_protocol::ToolStatus::Completed,
+                    structured_error: None,
                     error: None,
                     result: Some(serde_json::json!({
                         "thread_id": child_id,
@@ -447,6 +442,7 @@ modes:
             .append(omne_protocol::ThreadEventKind::ToolCompleted {
                 tool_id,
                 status: omne_protocol::ToolStatus::Completed,
+                structured_error: None,
                 error: None,
                 result: Some(serde_json::json!({
                     "thread_id": child_id,
@@ -555,6 +551,7 @@ modes:
                 .append(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
                     status: omne_protocol::ToolStatus::Completed,
+                    structured_error: None,
                     error: None,
                     result: Some(serde_json::json!({
                         "thread_id": child_id,
@@ -660,6 +657,7 @@ modes:
                 .append(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
                     status: omne_protocol::ToolStatus::Completed,
+                    structured_error: None,
                     error: None,
                     result: Some(serde_json::json!({
                         "thread_id": child_id,
@@ -2135,7 +2133,7 @@ modes:
     #[tokio::test]
     async fn fan_out_result_writer_includes_isolated_write_backend_observability()
     -> anyhow::Result<()> {
-        let _lock = ISOLATED_BACKEND_ENV_LOCK.lock().await;
+        let _lock = crate::app_server_process_env_lock().lock().await;
         let _backend = ScopedEnvVar::set("OMNE_SUBAGENT_ISOLATED_BACKEND", "auto");
         let _legacy = ScopedEnvVar::unset("OMNE_SUBAGENT_ISOLATED_WORKTREE_FIRST");
 
@@ -2589,7 +2587,7 @@ modes:
     #[tokio::test]
     async fn fan_out_result_writer_e2e_auto_apply_then_archive_cleans_managed_worktree()
     -> anyhow::Result<()> {
-        let _lock = ISOLATED_BACKEND_ENV_LOCK.lock().await;
+        let _lock = crate::app_server_process_env_lock().lock().await;
         let _backend = ScopedEnvVar::set("OMNE_SUBAGENT_ISOLATED_BACKEND", "auto");
         let _legacy = ScopedEnvVar::unset("OMNE_SUBAGENT_ISOLATED_WORKTREE_FIRST");
 
@@ -2722,7 +2720,7 @@ modes:
     #[tokio::test]
     async fn fan_out_result_writer_e2e_auto_apply_then_delete_cleans_managed_worktree()
     -> anyhow::Result<()> {
-        let _lock = ISOLATED_BACKEND_ENV_LOCK.lock().await;
+        let _lock = crate::app_server_process_env_lock().lock().await;
         let _backend = ScopedEnvVar::set("OMNE_SUBAGENT_ISOLATED_BACKEND", "auto");
         let _legacy = ScopedEnvVar::unset("OMNE_SUBAGENT_ISOLATED_WORKTREE_FIRST");
 
@@ -4076,6 +4074,7 @@ hooks:
             .append(omne_protocol::ThreadEventKind::ToolCompleted {
                 tool_id: patch_tool_id,
                 status: omne_protocol::ToolStatus::Completed,
+                structured_error: None,
                 error: None,
                 result: Some(serde_json::json!({
                     "artifact_id": omne_protocol::ArtifactId::new().to_string(),
@@ -4098,6 +4097,7 @@ hooks:
             .append(omne_protocol::ThreadEventKind::ToolCompleted {
                 tool_id: fan_out_tool_id,
                 status: omne_protocol::ToolStatus::Completed,
+                structured_error: None,
                 error: None,
                 result: Some(serde_json::json!({
                     "artifact_id": fan_out_result_artifact_id.to_string(),
@@ -4235,6 +4235,7 @@ hooks:
             .append(omne_protocol::ThreadEventKind::ToolCompleted {
                 tool_id: fan_out_tool_id,
                 status: omne_protocol::ToolStatus::Failed,
+                structured_error: None,
                 error: Some("artifact/write denied: approval required".to_string()),
                 result: None,
             })
@@ -4407,6 +4408,7 @@ hooks:
             .append(omne_protocol::ThreadEventKind::ToolCompleted {
                 tool_id: fan_out_tool_id,
                 status: omne_protocol::ToolStatus::Completed,
+                structured_error: None,
                 error: None,
                 result: Some(serde_json::json!({
                     "artifact_id": fan_out_result_artifact_id.to_string(),
@@ -4498,6 +4500,7 @@ hooks:
             .append(omne_protocol::ThreadEventKind::ToolCompleted {
                 tool_id: first_tool_id,
                 status: omne_protocol::ToolStatus::Failed,
+                structured_error: None,
                 error: Some("artifact/write denied: approval required".to_string()),
                 result: None,
             })
@@ -4558,6 +4561,7 @@ hooks:
             .append(omne_protocol::ThreadEventKind::ToolCompleted {
                 tool_id: second_tool_id,
                 status: omne_protocol::ToolStatus::Completed,
+                structured_error: None,
                 error: None,
                 result: Some(serde_json::json!({
                     "artifact_id": fan_out_result_artifact_id.to_string(),
@@ -4724,6 +4728,7 @@ hooks:
             .append(omne_protocol::ThreadEventKind::ToolCompleted {
                 tool_id: child1_wave1_tool_id,
                 status: omne_protocol::ToolStatus::Completed,
+                structured_error: None,
                 error: None,
                 result: Some(serde_json::json!({
                     "artifact_id": child1_wave1_artifact_id.to_string(),
@@ -4735,6 +4740,7 @@ hooks:
             .append(omne_protocol::ThreadEventKind::ToolCompleted {
                 tool_id: child2_wave1_tool_id,
                 status: omne_protocol::ToolStatus::Completed,
+                structured_error: None,
                 error: None,
                 result: Some(serde_json::json!({
                     "artifact_id": child2_wave1_artifact_id.to_string(),
@@ -4806,6 +4812,7 @@ hooks:
             .append(omne_protocol::ThreadEventKind::ToolCompleted {
                 tool_id: child2_wave2_tool_id,
                 status: omne_protocol::ToolStatus::Completed,
+                structured_error: None,
                 error: None,
                 result: Some(serde_json::json!({
                     "artifact_id": child2_wave2_artifact_id.to_string(),
@@ -4817,6 +4824,7 @@ hooks:
             .append(omne_protocol::ThreadEventKind::ToolCompleted {
                 tool_id: child1_wave2_tool_id,
                 status: omne_protocol::ToolStatus::Completed,
+                structured_error: None,
                 error: None,
                 result: Some(serde_json::json!({
                     "artifact_id": child1_wave2_artifact_id.to_string(),
@@ -4905,6 +4913,7 @@ hooks:
             .append(omne_protocol::ThreadEventKind::ToolCompleted {
                 tool_id: first_tool_id,
                 status: omne_protocol::ToolStatus::Failed,
+                structured_error: None,
                 error: Some("artifact/write denied: approval required".to_string()),
                 result: None,
             })
@@ -4997,6 +5006,7 @@ hooks:
             .append(omne_protocol::ThreadEventKind::ToolCompleted {
                 tool_id: second_tool_id,
                 status: omne_protocol::ToolStatus::Completed,
+                structured_error: None,
                 error: None,
                 result: Some(serde_json::json!({
                     "artifact_id": fan_out_result_artifact_id.to_string(),
@@ -5101,6 +5111,7 @@ hooks:
             .append(omne_protocol::ThreadEventKind::ToolCompleted {
                 tool_id: fan_out_tool_id,
                 status: omne_protocol::ToolStatus::Completed,
+                structured_error: None,
                 error: None,
                 result: Some(serde_json::json!({
                     "artifact_id": fan_out_result_artifact_id.to_string(),

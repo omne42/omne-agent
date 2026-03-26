@@ -1,0 +1,444 @@
+[
+  {
+    "id": "facade_workspace_read",
+    "user_prompt": "请读取 scripts/tool_suite/run_tool_surface_benchmark_v2.py 开头，并告诉我它是做什么的。",
+    "target_tool": "workspace",
+    "success_args": {
+      "op": "read",
+      "path": "scripts/tool_suite/run_tool_surface_benchmark_v2.py"
+    },
+    "capability_hint": "workspace read"
+  },
+  {
+    "id": "facade_workspace_glob",
+    "user_prompt": "请列出仓库中 markdown 文件样例。",
+    "target_tool": "workspace",
+    "success_args": {
+      "op": "glob",
+      "pattern": "**/*.md"
+    },
+    "capability_hint": "workspace glob"
+  },
+  {
+    "id": "facade_workspace_grep",
+    "user_prompt": "请在仓库中搜索 handle_repo_search 并给出命中位置。",
+    "target_tool": "workspace",
+    "success_args": {
+      "op": "grep",
+      "query": "handle_repo_search",
+      "include_glob": "crates/**/*.rs"
+    },
+    "capability_hint": "workspace grep"
+  },
+  {
+    "id": "facade_workspace_repo_search",
+    "user_prompt": "请做一次仓库级搜索，找 handle_repo_search 的位置。",
+    "target_tool": "workspace",
+    "success_args": {
+      "op": "repo_search",
+      "query": "handle_repo_search",
+      "include_glob": "crates/**/*.rs",
+      "max_matches": 20
+    },
+    "capability_hint": "workspace repo_search"
+  },
+  {
+    "id": "facade_workspace_repo_index",
+    "user_prompt": "请对 crates/**/*.rs 做仓库文件索引统计，并返回文件总数。",
+    "target_tool": "workspace",
+    "success_args": {
+      "op": "repo_index",
+      "include_glob": "crates/**/*.rs",
+      "max_files": 50000
+    },
+    "capability_hint": "workspace repo_index"
+  },
+  {
+    "id": "facade_workspace_repo_symbols",
+    "user_prompt": "请解析 scripts/tool_suite/run_tool_surface_benchmark_v2.py 的符号定义，并返回前几个函数名。",
+    "target_tool": "workspace",
+    "success_args": {
+      "op": "repo_symbols",
+      "path": "scripts/tool_suite/run_tool_surface_benchmark_v2.py"
+    },
+    "capability_hint": "workspace repo_symbols"
+  },
+  {
+    "id": "facade_workspace_repo_goto_definition",
+    "user_prompt": "请直接在 crates/**/*.rs 范围内定位 handle_repo_search 的定义位置，并返回文件路径和行号。",
+    "target_tool": "workspace",
+    "success_args": {
+      "op": "repo_goto_definition",
+      "symbol": "handle_repo_search",
+      "path": "crates/app-server/src/main/repo_index_search/search.rs",
+      "include_glob": "crates/**/*.rs",
+      "max_results": 20
+    },
+    "capability_hint": "workspace repo_goto_definition"
+  },
+  {
+    "id": "facade_workspace_repo_find_references",
+    "user_prompt": "请在 crates/**/*.rs 范围内查找 handle_repo_search 的引用位置，并返回文件和行号。",
+    "target_tool": "workspace",
+    "success_args": {
+      "op": "repo_find_references",
+      "symbol": "handle_repo_search",
+      "include_glob": "crates/**/*.rs",
+      "max_matches": 30
+    },
+    "capability_hint": "workspace repo_find_references"
+  },
+  {
+    "id": "facade_workspace_write",
+    "user_prompt": "请写入一个临时文件 tmp/facade_write.txt，内容是 hello facade。",
+    "target_tool": "workspace",
+    "success_args": {
+      "op": "write",
+      "path": "tmp/facade_write.txt",
+      "content": "hello facade"
+    },
+    "capability_hint": "workspace write"
+  },
+  {
+    "id": "facade_workspace_patch",
+    "user_prompt": "请对 tmp/facade_patch.txt 应用补丁 @@\\n-old\\n+new，并返回是否成功。",
+    "target_tool": "workspace",
+    "success_args": {
+      "op": "patch",
+      "path": "tmp/facade_patch.txt",
+      "patch": "@@\n-old\n+new"
+    },
+    "capability_hint": "workspace patch"
+  },
+  {
+    "id": "facade_workspace_edit",
+    "user_prompt": "请把 tmp/facade_edit.txt 中的 old 精确替换为 new，并返回替换结果。",
+    "target_tool": "workspace",
+    "success_args": {
+      "op": "edit",
+      "path": "tmp/facade_edit.txt",
+      "old_text": "old",
+      "new_text": "new"
+    },
+    "capability_hint": "workspace edit"
+  },
+  {
+    "id": "facade_workspace_delete",
+    "user_prompt": "请删除 tmp/old.log，然后确认该文件已不存在。",
+    "target_tool": "workspace",
+    "success_args": {
+      "op": "delete",
+      "path": "tmp/old.log"
+    },
+    "capability_hint": "workspace delete"
+  },
+  {
+    "id": "facade_workspace_mkdir",
+    "user_prompt": "请创建目录 tmp/facade_dir。",
+    "target_tool": "workspace",
+    "success_args": {
+      "op": "mkdir",
+      "path": "tmp/facade_dir"
+    },
+    "capability_hint": "workspace mkdir"
+  },
+  {
+    "id": "facade_process_start",
+    "user_prompt": "请在当前沙箱执行 echo hello facade，并返回 stdout。",
+    "target_tool": "process",
+    "success_args": {
+      "op": "start",
+      "command": [
+        "echo",
+        "hello facade"
+      ]
+    },
+    "capability_hint": "process start"
+  },
+  {
+    "id": "facade_process_inspect",
+    "user_prompt": "请检查进程 proc_001 状态。",
+    "target_tool": "process",
+    "success_args": {
+      "op": "inspect",
+      "process_id": "proc_001"
+    },
+    "capability_hint": "process inspect"
+  },
+  {
+    "id": "facade_process_tail",
+    "user_prompt": "请读取进程 proc_001 的最近输出。",
+    "target_tool": "process",
+    "success_args": {
+      "op": "tail",
+      "process_id": "proc_001",
+      "lines": 20
+    },
+    "capability_hint": "process tail"
+  },
+  {
+    "id": "facade_process_follow",
+    "user_prompt": "请跟踪进程 proc_001 的输出片段。",
+    "target_tool": "process",
+    "success_args": {
+      "op": "follow",
+      "process_id": "proc_001",
+      "max_chunks": 2
+    },
+    "capability_hint": "process follow"
+  },
+  {
+    "id": "facade_process_kill",
+    "user_prompt": "请终止进程 proc_001。",
+    "target_tool": "process",
+    "success_args": {
+      "op": "kill",
+      "process_id": "proc_001"
+    },
+    "capability_hint": "process kill"
+  },
+  {
+    "id": "facade_thread_diff",
+    "user_prompt": "请读取当前线程 diff。",
+    "target_tool": "thread",
+    "success_args": {
+      "op": "diff"
+    },
+    "capability_hint": "thread diff"
+  },
+  {
+    "id": "facade_thread_state",
+    "user_prompt": "请读取当前线程状态。",
+    "target_tool": "thread",
+    "success_args": {
+      "op": "state"
+    },
+    "capability_hint": "thread state"
+  },
+  {
+    "id": "facade_thread_usage",
+    "user_prompt": "请读取当前线程 usage。",
+    "target_tool": "thread",
+    "success_args": {
+      "op": "usage"
+    },
+    "capability_hint": "thread usage"
+  },
+  {
+    "id": "facade_thread_events",
+    "user_prompt": "请读取最近 20 条线程事件，并给出最新一条。",
+    "target_tool": "thread",
+    "success_args": {
+      "op": "events",
+      "max_events": 20
+    },
+    "capability_hint": "thread events"
+  },
+  {
+    "id": "facade_thread_hook_run",
+    "user_prompt": "请执行 setup hook。",
+    "target_tool": "thread",
+    "success_args": {
+      "op": "hook_run",
+      "hook": "setup"
+    },
+    "capability_hint": "thread hook_run"
+  },
+  {
+    "id": "facade_thread_request_input",
+    "user_prompt": "请直接发起一个用户输入请求：header=Confirm，question=Continue?，选项 Yes/No，并返回 request 信息。",
+    "target_tool": "thread",
+    "success_args": {
+      "op": "request_input",
+      "questions": [
+        {
+          "header": "Confirm",
+          "id": "q1",
+          "question": "Continue?",
+          "options": [
+            {
+              "label": "Yes",
+              "description": "Continue"
+            },
+            {
+              "label": "No",
+              "description": "Stop"
+            }
+          ]
+        }
+      ]
+    },
+    "capability_hint": "thread request_input"
+  },
+  {
+    "id": "facade_thread_spawn_agent",
+    "user_prompt": "请直接创建一个子代理执行“check TODO”，并返回 subagent_id。",
+    "target_tool": "thread",
+    "success_args": {
+      "op": "spawn_agent",
+      "goal": "check TODO"
+    },
+    "capability_hint": "thread spawn_agent"
+  },
+  {
+    "id": "facade_thread_send_input",
+    "user_prompt": "请给子代理 sa_001 发送 continue。",
+    "target_tool": "thread",
+    "success_args": {
+      "op": "send_input",
+      "subagent_id": "sa_001",
+      "input": "continue"
+    },
+    "capability_hint": "thread send_input"
+  },
+  {
+    "id": "facade_thread_wait",
+    "user_prompt": "请等待子代理 sa_001，并返回它的最新状态。",
+    "target_tool": "thread",
+    "success_args": {
+      "op": "wait",
+      "subagent_id": "sa_001"
+    },
+    "capability_hint": "thread wait"
+  },
+  {
+    "id": "facade_thread_close",
+    "user_prompt": "请关闭子代理 sa_001，并确认关闭结果。",
+    "target_tool": "thread",
+    "success_args": {
+      "op": "close",
+      "subagent_id": "sa_001"
+    },
+    "capability_hint": "thread close"
+  },
+  {
+    "id": "facade_artifact_write",
+    "user_prompt": "请写入一个 note artifact，summary=facade，text=hello。",
+    "target_tool": "artifact",
+    "success_args": {
+      "op": "write",
+      "artifact_type": "note",
+      "summary": "facade",
+      "text": "hello"
+    },
+    "capability_hint": "artifact write"
+  },
+  {
+    "id": "facade_artifact_update_plan",
+    "user_prompt": "请把计划更新为单步：step=check，status=in_progress。",
+    "target_tool": "artifact",
+    "success_args": {
+      "op": "update_plan",
+      "plan": [
+        {
+          "step": "check",
+          "status": "in_progress"
+        }
+      ]
+    },
+    "capability_hint": "artifact update_plan"
+  },
+  {
+    "id": "facade_artifact_list",
+    "user_prompt": "请列出 artifact 列表。",
+    "target_tool": "artifact",
+    "success_args": {
+      "op": "list",
+      "limit": 10
+    },
+    "capability_hint": "artifact list"
+  },
+  {
+    "id": "facade_artifact_read",
+    "user_prompt": "请读取 artifact art_001，并返回内容预览。",
+    "target_tool": "artifact",
+    "success_args": {
+      "op": "read",
+      "artifact_id": "art_001"
+    },
+    "capability_hint": "artifact read"
+  },
+  {
+    "id": "facade_artifact_delete",
+    "user_prompt": "请删除 art_001。",
+    "target_tool": "artifact",
+    "success_args": {
+      "op": "delete",
+      "artifact_id": "art_001"
+    },
+    "capability_hint": "artifact delete"
+  },
+  {
+    "id": "facade_integration_mcp_list_servers",
+    "user_prompt": "请列出 MCP servers。",
+    "target_tool": "integration",
+    "success_args": {
+      "op": "mcp_list_servers"
+    },
+    "capability_hint": "integration mcp_list_servers"
+  },
+  {
+    "id": "facade_integration_mcp_list_tools",
+    "user_prompt": "请查询 MCP server default 的工具列表，并返回前几项名称。",
+    "target_tool": "integration",
+    "success_args": {
+      "op": "mcp_list_tools",
+      "server": "default"
+    },
+    "capability_hint": "integration mcp_list_tools"
+  },
+  {
+    "id": "facade_integration_mcp_list_resources",
+    "user_prompt": "请查询 default 的 MCP 资源。",
+    "target_tool": "integration",
+    "success_args": {
+      "op": "mcp_list_resources",
+      "server": "default"
+    },
+    "capability_hint": "integration mcp_list_resources"
+  },
+  {
+    "id": "facade_integration_mcp_call",
+    "user_prompt": "请调用 MCP echo，text=hello。",
+    "target_tool": "integration",
+    "success_args": {
+      "op": "mcp_call",
+      "server": "default",
+      "tool": "echo",
+      "arguments": {
+        "text": "hello"
+      }
+    },
+    "capability_hint": "integration mcp_call"
+  },
+  {
+    "id": "facade_integration_web_search",
+    "user_prompt": "请联网搜索关键词 omne agent，并返回前 3 条结果标题。",
+    "target_tool": "integration",
+    "success_args": {
+      "op": "web_search",
+      "query": "omne agent"
+    },
+    "capability_hint": "integration web_search"
+  },
+  {
+    "id": "facade_integration_web_fetch",
+    "user_prompt": "请抓取 https://example.com 并返回标题。",
+    "target_tool": "integration",
+    "success_args": {
+      "op": "web_fetch",
+      "url": "https://example.com"
+    },
+    "capability_hint": "integration web_fetch"
+  },
+  {
+    "id": "facade_integration_view_image",
+    "user_prompt": "请读取 /tmp/demo.png，并返回图片格式和字节大小。",
+    "target_tool": "integration",
+    "success_args": {
+      "op": "view_image",
+      "path": "/tmp/demo.png"
+    },
+    "capability_hint": "integration view_image"
+  }
+]

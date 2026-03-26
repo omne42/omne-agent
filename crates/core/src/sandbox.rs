@@ -161,27 +161,25 @@ pub async fn resolve_file_with_writable_roots(
 
 pub async fn resolve_dir_for_sandbox(
     thread_root: &Path,
-    sandbox_policy: omne_protocol::SandboxPolicy,
+    sandbox_policy: policy_meta::WriteScope,
     input: &Path,
 ) -> anyhow::Result<PathBuf> {
     match sandbox_policy {
-        omne_protocol::SandboxPolicy::FullAccess => {
-            resolve_dir_unrestricted(thread_root, input).await
-        }
+        policy_meta::WriteScope::FullAccess => resolve_dir_unrestricted(thread_root, input).await,
         _ => resolve_dir(thread_root, input).await,
     }
 }
 
 pub async fn resolve_file_for_sandbox(
     thread_root: &Path,
-    sandbox_policy: omne_protocol::SandboxPolicy,
+    sandbox_policy: policy_meta::WriteScope,
     sandbox_writable_roots: &[String],
     input: &Path,
     access: PathAccess,
     create_parent_dirs: bool,
 ) -> anyhow::Result<PathBuf> {
     match sandbox_policy {
-        omne_protocol::SandboxPolicy::FullAccess => {
+        policy_meta::WriteScope::FullAccess => {
             resolve_file_unrestricted(thread_root, input, access, create_parent_dirs).await
         }
         _ => {

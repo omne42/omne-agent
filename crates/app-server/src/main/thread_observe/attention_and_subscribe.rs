@@ -516,6 +516,12 @@ pub(super) fn parse_thread_approval_action_id(
         "repo/search" => omne_app_server_protocol::ThreadApprovalActionId::RepoSearch,
         "repo/index" => omne_app_server_protocol::ThreadApprovalActionId::RepoIndex,
         "repo/symbols" => omne_app_server_protocol::ThreadApprovalActionId::RepoSymbols,
+        "repo/goto_definition" => {
+            omne_app_server_protocol::ThreadApprovalActionId::RepoGotoDefinition
+        }
+        "repo/find_references" => {
+            omne_app_server_protocol::ThreadApprovalActionId::RepoFindReferences
+        }
         "mcp/list_servers" => omne_app_server_protocol::ThreadApprovalActionId::McpListServers,
         "mcp/list_tools" => omne_app_server_protocol::ThreadApprovalActionId::McpListTools,
         "mcp/list_resources" => {
@@ -1240,8 +1246,6 @@ async fn list_thread_artifact_metadata(
 mod attention_marker_tests {
     use super::*;
 
-    static TOKEN_BUDGET_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
     struct ScopedEnvVar {
         key: &'static str,
         previous: Option<String>,
@@ -1250,26 +1254,18 @@ mod attention_marker_tests {
     impl ScopedEnvVar {
         fn set(key: &'static str, value: &str) -> Self {
             let previous = std::env::var(key).ok();
-            // SAFETY: test-only temporary env override guarded by TOKEN_BUDGET_ENV_LOCK.
-            unsafe { std::env::set_var(key, value) };
+            crate::set_locked_process_env(key, value);
             Self { key, previous }
         }
 
         fn update(&self, value: &str) {
-            // SAFETY: test-only temporary env override guarded by TOKEN_BUDGET_ENV_LOCK.
-            unsafe { std::env::set_var(self.key, value) };
+            crate::set_locked_process_env(self.key, value);
         }
     }
 
     impl Drop for ScopedEnvVar {
         fn drop(&mut self) {
-            if let Some(previous) = &self.previous {
-                // SAFETY: restoring process env in test teardown.
-                unsafe { std::env::set_var(self.key, previous) };
-            } else {
-                // SAFETY: restoring process env in test teardown.
-                unsafe { std::env::remove_var(self.key) };
-            }
+            crate::restore_locked_process_env(self.key, self.previous.as_deref());
         }
     }
 
@@ -1371,6 +1367,7 @@ mod attention_marker_tests {
                 },
                 result_artifact_id: None,
                 result_artifact_error: None,
+                result_artifact_structured_error: None,
                 result_artifact_error_id: None,
                 result_artifact_diagnostics: with_diagnostics.then_some(
                     omne_workflow_spec::FanInResultArtifactDiagnosticsStructuredData {
@@ -1743,7 +1740,7 @@ mod attention_marker_tests {
     #[tokio::test]
     async fn thread_runtime_token_budget_marker_sequence_tracks_threshold_and_limit_changes()
     -> anyhow::Result<()> {
-        let _env_lock = TOKEN_BUDGET_ENV_LOCK.lock().await;
+        let _env_lock = crate::app_server_process_env_lock().lock().await;
         let limit_env = ScopedEnvVar::set("OMNE_AGENT_MAX_TOTAL_TOKENS", "100");
 
         let tmp = tempfile::tempdir()?;

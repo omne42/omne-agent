@@ -20,7 +20,7 @@ fn gate_to_tui_outcome<T>(outcome: super::RpcGateOutcome<T>) -> RpcActionOutcome
             approval_id,
         },
         super::RpcGateOutcome::Denied { detail } => RpcActionOutcome::Denied {
-            summary: summarize_json(&detail),
+            summary: super::summarize_rpc_detail(&detail),
         },
         super::RpcGateOutcome::Ok(value) => RpcActionOutcome::Ok(value),
     }
@@ -34,27 +34,12 @@ where
     Ok(gate_to_tui_outcome(outcome))
 }
 
-fn parse_artifact_tui_outcome<T>(
-    action: &str,
-    value: Value,
-) -> anyhow::Result<RpcActionOutcome<T>>
+fn parse_artifact_tui_outcome<T>(action: &str, value: Value) -> anyhow::Result<RpcActionOutcome<T>>
 where
     T: serde::de::DeserializeOwned,
 {
     let outcome = super::parse_artifact_rpc_outcome(action, value)?;
     Ok(gate_to_tui_outcome(outcome))
-}
-
-fn summarize_json(value: &Value) -> String {
-    let rendered = serde_json::to_string(value).unwrap_or_else(|_| value.to_string());
-    let rendered = rendered.trim().to_string();
-    let mut chars = rendered.chars();
-    let prefix: String = chars.by_ref().take(280).collect();
-    if chars.next().is_some() {
-        format!("{prefix}…")
-    } else {
-        prefix
-    }
 }
 
 async fn rpc_artifact_list_tui_outcome(

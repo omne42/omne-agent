@@ -86,6 +86,7 @@ pub(super) struct WorkflowTaskResult {
     pub(super) turn_id: Option<TurnId>,
     pub(super) result_artifact_id: Option<ArtifactId>,
     pub(super) result_artifact_error: Option<String>,
+    pub(super) result_artifact_structured_error: Option<structured_text_protocol::StructuredTextData>,
     pub(super) result_artifact_error_id: Option<ArtifactId>,
     pub(super) status: TurnStatus,
     pub(super) reason: Option<String>,

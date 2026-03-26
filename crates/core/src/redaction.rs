@@ -3,6 +3,7 @@ use std::sync::OnceLock;
 use omne_protocol::ThreadEventKind;
 use regex::Regex;
 use serde_json::Value;
+use structured_text_protocol::{CatalogArgValueData, StructuredTextData};
 
 const REDACTED: &str = "<REDACTED>";
 
@@ -141,6 +142,35 @@ fn redact_token_usage_value(value: &mut Value) {
     }
 }
 
+fn redact_structured_message(value: &mut StructuredTextData) {
+    match value {
+        StructuredTextData::Catalog { args, .. } => {
+            for arg in args {
+                if is_sensitive_key(&arg.name) {
+                    arg.value = CatalogArgValueData::Text(REDACTED.to_string());
+                } else {
+                    redact_catalog_arg_value(&mut arg.value);
+                }
+            }
+        }
+        StructuredTextData::Freeform { text } => {
+            *text = redact_text(text);
+        }
+    }
+}
+
+fn redact_catalog_arg_value(value: &mut CatalogArgValueData) {
+    match value {
+        CatalogArgValueData::Text(text)
+        | CatalogArgValueData::Signed(text)
+        | CatalogArgValueData::Unsigned(text) => {
+            *text = redact_text(text);
+        }
+        CatalogArgValueData::Bool(_) => {}
+        CatalogArgValueData::NestedText(message) => redact_structured_message(message),
+    }
+}
+
 fn redact_argv(argv: &mut [String]) {
     const NEXT_TOKEN_FLAGS: &[&str] = &[
         "--api-key",
@@ -182,6 +212,16 @@ pub(crate) fn redact_thread_event_kind(kind: &mut ThreadEventKind) {
     match kind {
         ThreadEventKind::ThreadCreated { cwd } => {
             *cwd = redact_text(cwd);
+        }
+        ThreadEventKind::ThreadSystemPromptSnapshot {
+            prompt_text,
+            source,
+            ..
+        } => {
+            *prompt_text = redact_text(prompt_text);
+            if let Some(source) = source {
+                *source = redact_text(source);
+            }
         }
         ThreadEventKind::ThreadArchived { reason }
         | ThreadEventKind::ThreadUnarchived { reason }
@@ -309,7 +349,15 @@ pub(crate) fn redact_thread_event_kind(kind: &mut ThreadEventKind) {
                 redact_json_value(params);
             }
         }
-        ThreadEventKind::ToolCompleted { error, result, .. } => {
+        ThreadEventKind::ToolCompleted {
+            structured_error,
+            error,
+            result,
+            ..
+        } => {
+            if let Some(structured_error) = structured_error {
+                redact_structured_message(structured_error);
+            }
             if let Some(error) = error {
                 *error = redact_text(error);
             }

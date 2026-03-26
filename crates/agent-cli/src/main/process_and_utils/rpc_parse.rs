@@ -31,21 +31,96 @@ fn denied_detail_value<Response>(response: &Response) -> Value
 where
     Response: serde::Serialize + ?Sized,
 {
-    serde_json::to_value(response).unwrap_or_else(|_| {
-        Value::String("<failed to serialize denied response>".to_string())
+    serde_json::to_value(response)
+        .unwrap_or_else(|_| Value::String("<failed to serialize denied response>".to_string()))
+}
+
+fn structured_error_from_value(
+    value: &Value,
+) -> Option<structured_text_protocol::StructuredTextData> {
+    value.get("structured_error").cloned().and_then(|value| {
+        serde_json::from_value::<structured_text_protocol::StructuredTextData>(value).ok()
     })
 }
 
-fn denied_result_from_value<T>(action: &str, detail: &Value) -> anyhow::Result<T> {
-    let error_code = detail
-        .get("error_code")
-        .and_then(Value::as_str)
-        .map(ToString::to_string);
-    let detail = serde_json::to_string(detail).unwrap_or_else(|_| detail.to_string());
-    if let Some(error_code) = error_code {
-        anyhow::bail!("[rpc error_code] {error_code}; {action} denied: {detail}");
+fn preferred_error_code(
+    structured_error: Option<&structured_text_protocol::StructuredTextData>,
+    fallback_error_code: Option<&str>,
+) -> Option<String> {
+    structured_error
+        .and_then(structured_text_protocol::StructuredTextData::catalog_code)
+        .map(ToString::to_string)
+        .or_else(|| fallback_error_code.map(ToString::to_string))
+}
+
+fn preferred_error_code_from_value(value: &Value) -> Option<String> {
+    let structured_error = structured_error_from_value(value);
+    let fallback_error_code = value.get("error_code").and_then(Value::as_str);
+    preferred_error_code(structured_error.as_ref(), fallback_error_code)
+}
+
+fn preferred_structured_error_text(
+    structured_error: Option<&structured_text_protocol::StructuredTextData>,
+    fallback_error: Option<&str>,
+) -> Option<String> {
+    let fallback_error = fallback_error
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if let Some(code) =
+        structured_error.and_then(structured_text_protocol::StructuredTextData::catalog_code)
+    {
+        return Some(match fallback_error {
+            Some(text) => format!("{code}: {text}"),
+            None => code.to_string(),
+        });
     }
-    anyhow::bail!("{action} denied: {detail}")
+    if let Some(text) = structured_error
+        .and_then(structured_text_protocol::StructuredTextData::freeform_text)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return Some(text.to_string());
+    }
+    fallback_error.map(ToString::to_string)
+}
+
+fn render_rpc_detail_json(value: &Value) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| value.to_string())
+}
+
+fn summarize_rpc_detail(value: &Value) -> String {
+    let rendered = render_rpc_detail_json(value).trim().to_string();
+    if let Some(error_code) = preferred_error_code_from_value(value) {
+        return format!("{error_code}; {rendered}");
+    }
+    rendered
+}
+
+fn rpc_denied_message(action: &str, detail_value: &Value) -> String {
+    let detail = render_rpc_detail_json(detail_value);
+    if let Some(error_code) = preferred_error_code_from_value(detail_value) {
+        return format!("[rpc error_code] {error_code}; {action} denied: {detail}");
+    }
+    format!("{action} denied: {detail}")
+}
+
+fn approval_required_message<ThreadIdT, ApprovalIdT>(
+    action: &str,
+    thread_id: &ThreadIdT,
+    approval_id: &ApprovalIdT,
+) -> String
+where
+    ThreadIdT: std::fmt::Display + ?Sized,
+    ApprovalIdT: std::fmt::Display + ?Sized,
+{
+    format!(
+        "{action} needs approval: omne approval decide {} {} --approve (then re-run with --approval-id {})",
+        thread_id, approval_id, approval_id,
+    )
+}
+
+fn denied_result_from_value<T>(action: &str, detail: &Value) -> anyhow::Result<T> {
+    anyhow::bail!("{}", rpc_denied_message(action, detail))
 }
 
 fn needs_approval_outcome<T>(
@@ -120,9 +195,10 @@ where
 {
     let parsed: ArtifactRpcResponse<Value> = parse_typed_response(action, value.clone())?;
     match parsed {
-        ArtifactRpcResponse::NeedsApproval(response) => {
-            Ok(needs_approval_outcome(response.thread_id, response.approval_id))
-        }
+        ArtifactRpcResponse::NeedsApproval(response) => Ok(needs_approval_outcome(
+            response.thread_id,
+            response.approval_id,
+        )),
         ArtifactRpcResponse::ModeDenied(response) => Ok(denied_outcome(&response)),
         ArtifactRpcResponse::UnknownModeDenied(response) => Ok(denied_outcome(&response)),
         ArtifactRpcResponse::AllowedToolsDenied(response) => Ok(denied_outcome(&response)),
@@ -151,10 +227,8 @@ where
     ApprovalIdT: std::fmt::Display + ?Sized,
 {
     anyhow::bail!(
-        "{action} needs approval: omne approval decide {} {} --approve (then re-run with --approval-id {})",
-        thread_id,
-        approval_id,
-        approval_id,
+        "{}",
+        approval_required_message(action, thread_id, approval_id)
     )
 }
 
@@ -289,7 +363,10 @@ fn parse_thread_git_snapshot_rpc_response(
     action: &str,
     value: Value,
 ) -> anyhow::Result<omne_app_server_protocol::ThreadGitSnapshotRpcResponse> {
-    resolve_gate_outcome(action, parse_thread_git_snapshot_rpc_outcome(action, value)?)
+    resolve_gate_outcome(
+        action,
+        parse_thread_git_snapshot_rpc_outcome(action, value)?,
+    )
 }
 
 fn parse_thread_git_snapshot_rpc_outcome(
@@ -329,7 +406,9 @@ fn parse_thread_hook_run_rpc_outcome(
         omne_app_server_protocol::ThreadHookRunRpcResponse::Denied(response) => {
             denied_result(&response)
         }
-        omne_app_server_protocol::ThreadHookRunRpcResponse::Ok(response) => Ok(ok_outcome(response)),
+        omne_app_server_protocol::ThreadHookRunRpcResponse::Ok(response) => {
+            Ok(ok_outcome(response))
+        }
     }
 }
 

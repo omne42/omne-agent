@@ -1,0 +1,11 @@
+[
+  {
+    "id": "ask_user_flow_test",
+    "user_prompt": "这个操作有风险，请先向我确认再继续。",
+    "target_tool": "ask_user",
+    "success_args": {
+      "question": "请确认是否继续执行？"
+    },
+    "capability_hint": "ask user confirmation"
+  }
+]

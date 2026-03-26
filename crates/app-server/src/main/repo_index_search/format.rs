@@ -156,3 +156,114 @@ fn format_repo_symbols_artifact(
     out
 }
 
+fn format_repo_goto_definition_artifact(
+    root: &str,
+    symbol: &str,
+    path_hint: Option<&str>,
+    include_glob: &str,
+    max_results: usize,
+    outcome: &omne_repo_symbols_runtime::RepoSymbolsOutcome,
+    definitions: &[&omne_repo_symbols_runtime::RepoSymbol],
+) -> String {
+    let mut out = String::new();
+    out.push_str("# Repo Go To Definition\n\n");
+
+    out.push_str("## Query\n");
+    out.push_str(&format!("- root: `{root}`\n"));
+    out.push_str(&format!("- symbol: `{symbol}`\n"));
+    out.push_str(&format!("- include_glob: `{include_glob}`\n"));
+    if let Some(path_hint) = path_hint {
+        out.push_str(&format!("- path_hint: `{path_hint}`\n"));
+    } else {
+        out.push_str("- path_hint: (none)\n");
+    }
+    out.push_str(&format!("- max_results: `{max_results}`\n"));
+
+    out.push_str("\n## Stats\n");
+    let stats = serde_json::json!({
+        "definitions": definitions.len(),
+        "files_scanned": outcome.files_scanned,
+        "files_parsed": outcome.files_parsed,
+        "truncated_files": outcome.truncated_files,
+        "truncated_symbols": outcome.truncated_symbols,
+        "files_skipped_too_large": outcome.files_skipped_too_large,
+        "files_skipped_binary": outcome.files_skipped_binary,
+        "files_failed_parse": outcome.files_failed_parse,
+    });
+    match serde_json::to_string_pretty(&stats) {
+        Ok(json) => out.push_str(&format!("```json\n{json}\n```\n")),
+        Err(_) => out.push_str(&format!("```json\n{}\n```\n", stats)),
+    }
+
+    out.push_str("\n## Definitions\n");
+    if definitions.is_empty() {
+        out.push_str("_No matching definitions found._\n");
+        return out;
+    }
+
+    for definition in definitions {
+        out.push_str(&format!(
+            "- `{}` `{}` at `{}` (L{}-L{})\n",
+            definition.kind,
+            definition.name,
+            definition.path,
+            definition.start_line,
+            definition.end_line
+        ));
+    }
+
+    out
+}
+
+fn format_repo_find_references_artifact(
+    root: &str,
+    symbol: &str,
+    path_hint: Option<&str>,
+    include_glob: &str,
+    max_matches: usize,
+    outcome: &omne_repo_scan_runtime::RepoGrepOutcome,
+    references: &[omne_repo_scan_runtime::RepoGrepMatch],
+) -> String {
+    let mut out = String::new();
+    out.push_str("# Repo Find References\n\n");
+
+    out.push_str("## Query\n");
+    out.push_str(&format!("- root: `{root}`\n"));
+    out.push_str(&format!("- symbol: `{symbol}`\n"));
+    out.push_str(&format!("- include_glob: `{include_glob}`\n"));
+    if let Some(path_hint) = path_hint {
+        out.push_str(&format!("- path_hint: `{path_hint}`\n"));
+    } else {
+        out.push_str("- path_hint: (none)\n");
+    }
+    out.push_str(&format!("- max_matches: `{max_matches}`\n"));
+
+    out.push_str("\n## Stats\n");
+    let stats = serde_json::json!({
+        "references": references.len(),
+        "truncated": outcome.truncated,
+        "files_scanned": outcome.files_scanned,
+        "files_skipped_too_large": outcome.files_skipped_too_large,
+        "files_skipped_binary": outcome.files_skipped_binary,
+    });
+    match serde_json::to_string_pretty(&stats) {
+        Ok(json) => out.push_str(&format!("```json\n{json}\n```\n")),
+        Err(_) => out.push_str(&format!("```json\n{}\n```\n", stats)),
+    }
+
+    out.push_str("\n## References\n");
+    out.push_str("```text\n");
+    for reference in references {
+        out.push_str(&format!(
+            "{}:{}: {}\n",
+            reference.path,
+            reference.line_number,
+            reference.line
+        ));
+    }
+    if outcome.truncated {
+        out.push_str("... (truncated)\n");
+    }
+    out.push_str("```\n");
+    out
+}

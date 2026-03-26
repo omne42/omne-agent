@@ -4,5 +4,7 @@
 include!("repo_index_search/search.rs");
 include!("repo_index_search/index.rs");
 include!("repo_index_search/symbols.rs");
+include!("repo_index_search/goto_definition.rs");
+include!("repo_index_search/find_references.rs");
 include!("repo_index_search/gate.rs");
 include!("repo_index_search/format.rs");

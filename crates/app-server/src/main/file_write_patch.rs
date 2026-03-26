@@ -33,7 +33,7 @@ async fn handle_file_write(server: &Server, params: FileWriteParams) -> anyhow::
     {
         return file_allowed_tools_denied_response(tool_id, "file/write", &allowed_tools);
     }
-    if sandbox_policy == omne_protocol::SandboxPolicy::ReadOnly {
+    if sandbox_policy == policy_meta::WriteScope::ReadOnly {
         let result = file_sandbox_policy_denied_response(tool_id, sandbox_policy)?;
         emit_file_tool_denied(
             &thread_rt,
@@ -99,7 +99,8 @@ async fn handle_file_write(server: &Server, params: FileWriteParams) -> anyhow::
         })
         .await?;
 
-    let outcome: anyhow::Result<PathBuf> = async {
+    let text_for_runtime = params.text.clone();
+    let outcome: anyhow::Result<(PathBuf, u64)> = async {
         let path = omne_core::resolve_file_for_sandbox(
             &thread_root,
             sandbox_policy,
@@ -128,36 +129,40 @@ async fn handle_file_write(server: &Server, params: FileWriteParams) -> anyhow::
             ));
         }
 
-        tokio::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&path)
-            .await
-            .with_context(|| format!("open {}", path.display()))?
-            .write_all(params.text.as_bytes())
-            .await
-            .with_context(|| format!("write {}", path.display()))?;
+        let root_for_runtime = thread_root.clone();
+        let path_for_runtime = resolved_rel;
+        let write_result = tokio::task::spawn_blocking(move || {
+            omne_fs_runtime::write_text_workspace(
+                "workspace".to_string(),
+                root_for_runtime,
+                path_for_runtime,
+                text_for_runtime,
+                create_parent_dirs,
+            )
+        })
+        .await
+        .context("join file/write task")??;
 
-        Ok(path)
+        Ok((path, write_result.bytes_written))
     }
     .await;
 
     match outcome {
-        Ok(path) => {
+        Ok((path, bytes_written)) => {
             thread_rt
                 .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
                     status: omne_protocol::ToolStatus::Completed,
+                    structured_error: None,
                     error: None,
-                    result: Some(serde_json::json!({ "bytes": bytes })),
+                    result: Some(serde_json::json!({ "bytes": bytes_written })),
                 })
                 .await?;
 
             Ok(serde_json::json!({
                 "tool_id": tool_id,
                 "resolved_path": path.display().to_string(),
-                "bytes_written": bytes,
+                "bytes_written": bytes_written,
             }))
         }
         Err(err) => {
@@ -166,6 +171,7 @@ async fn handle_file_write(server: &Server, params: FileWriteParams) -> anyhow::
                     .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                         tool_id,
                         status: omne_protocol::ToolStatus::Denied,
+                        structured_error: structured_error_from_result_value(&denied.result),
                         error: Some(denied.error.clone()),
                         result: Some(denied.result.clone()),
                     })
@@ -176,6 +182,7 @@ async fn handle_file_write(server: &Server, params: FileWriteParams) -> anyhow::
                     .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                         tool_id,
                         status: omne_protocol::ToolStatus::Failed,
+                        structured_error: None,
                         error: Some(err.to_string()),
                         result: None,
                     })
@@ -225,7 +232,7 @@ async fn handle_file_patch(server: &Server, params: FilePatchParams) -> anyhow::
     {
         return file_allowed_tools_denied_response(tool_id, "file/patch", &allowed_tools);
     }
-    if sandbox_policy == omne_protocol::SandboxPolicy::ReadOnly {
+    if sandbox_policy == policy_meta::WriteScope::ReadOnly {
         let result = file_sandbox_policy_denied_response(tool_id, sandbox_policy)?;
         emit_file_tool_denied(
             &thread_rt,
@@ -295,7 +302,8 @@ async fn handle_file_patch(server: &Server, params: FilePatchParams) -> anyhow::
         })
         .await?;
 
-    let outcome: anyhow::Result<(PathBuf, bool, usize, usize)> = async {
+    let patch_for_runtime = params.patch.clone();
+    let outcome: anyhow::Result<(PathBuf, bool, usize, u64)> = async {
         let path = omne_core::resolve_file_for_sandbox(
             &thread_root,
             sandbox_policy,
@@ -324,41 +332,21 @@ async fn handle_file_patch(server: &Server, params: FilePatchParams) -> anyhow::
             ));
         }
 
-        let bytes = tokio::fs::read(&path)
-            .await
-            .with_context(|| format!("read {}", path.display()))?;
-        if bytes.len() > max_bytes as usize {
-            anyhow::bail!(
-                "file too large for patch: {} ({} bytes)",
-                path.display(),
-                bytes.len()
-            );
-        }
+        let root_for_runtime = thread_root.clone();
+        let path_for_runtime = resolved_rel;
+        let patch_result = tokio::task::spawn_blocking(move || {
+            omne_fs_runtime::patch_text_workspace(
+                "workspace".to_string(),
+                root_for_runtime,
+                path_for_runtime,
+                patch_for_runtime,
+                max_bytes,
+            )
+        })
+        .await
+        .context("join file/patch task")??;
 
-        let original = String::from_utf8(bytes).context("file is not valid utf-8")?;
-        let patch = Patch::from_str(&params.patch).context("parse unified diff patch")?;
-        let updated = apply(&original, &patch).context("apply patch")?;
-        let changed = updated != original;
-        let bytes_written = updated.len();
-        if bytes_written > max_bytes as usize {
-            anyhow::bail!(
-                "patched file too large: {} ({} bytes)",
-                path.display(),
-                bytes_written
-            );
-        }
-
-        tokio::fs::OpenOptions::new()
-            .write(true)
-            .truncate(true)
-            .open(&path)
-            .await
-            .with_context(|| format!("open {}", path.display()))?
-            .write_all(updated.as_bytes())
-            .await
-            .with_context(|| format!("write {}", path.display()))?;
-
-        Ok((path, changed, patch_bytes, bytes_written))
+        Ok((path, patch_result.changed, patch_bytes, patch_result.bytes_written))
     }
     .await;
 
@@ -368,6 +356,7 @@ async fn handle_file_patch(server: &Server, params: FilePatchParams) -> anyhow::
                 .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
                     status: omne_protocol::ToolStatus::Completed,
+                    structured_error: None,
                     error: None,
                     result: Some(serde_json::json!({
                         "changed": changed,
@@ -391,6 +380,7 @@ async fn handle_file_patch(server: &Server, params: FilePatchParams) -> anyhow::
                     .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                         tool_id,
                         status: omne_protocol::ToolStatus::Denied,
+                        structured_error: structured_error_from_result_value(&denied.result),
                         error: Some(denied.error.clone()),
                         result: Some(denied.result.clone()),
                     })
@@ -401,6 +391,7 @@ async fn handle_file_patch(server: &Server, params: FilePatchParams) -> anyhow::
                     .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                         tool_id,
                         status: omne_protocol::ToolStatus::Failed,
+                        structured_error: None,
                         error: Some(err.to_string()),
                         result: None,
                     })
@@ -409,18 +400,4 @@ async fn handle_file_patch(server: &Server, params: FilePatchParams) -> anyhow::
             }
         }
     }
-}
-
-fn count_non_overlapping(haystack: &str, needle: &str) -> usize {
-    if needle.is_empty() {
-        return 0;
-    }
-
-    let mut count = 0usize;
-    let mut rest = haystack;
-    while let Some(pos) = rest.find(needle) {
-        count += 1;
-        rest = &rest[(pos + needle.len())..];
-    }
-    count
 }

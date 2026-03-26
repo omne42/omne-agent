@@ -95,12 +95,18 @@ fn hooks_process_timeout() -> Duration {
     Duration::from_secs(value.clamp(1, MAX_HOOK_PROCESS_TIMEOUT_SECS))
 }
 
-fn hook_artifacts_dir_for_thread(server: &Server, thread_id: ThreadId) -> PathBuf {
-    server
-        .thread_store
-        .thread_dir(thread_id)
-        .join("artifacts")
-        .join("hooks")
+// Hook subprocesses run under the thread workspace sandbox, so their I/O
+// artifacts must also live under the workspace.
+fn hook_artifacts_dir(thread_root: &Path) -> PathBuf {
+    thread_root.join(".omne_data").join("tmp").join("hooks")
+}
+
+async fn hook_artifacts_dir_for_thread(
+    server: &Server,
+    thread_id: ThreadId,
+) -> anyhow::Result<PathBuf> {
+    let (_thread_rt, thread_root) = load_thread_root(server, thread_id).await?;
+    Ok(hook_artifacts_dir(&thread_root))
 }
 
 async fn load_hooks_config(
@@ -111,16 +117,20 @@ async fn load_hooks_config(
         .join("spec")
         .join("hooks.yaml");
 
-    let contents = match tokio::fs::read_to_string(&path).await {
-        Ok(contents) => contents,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(err) => return Err(err).with_context(|| format!("read {}", path.display())),
+    let Some(cfg) = config_kit::try_load_typed_config_file::<HooksConfigFile>(
+        &path,
+        config_kit::ConfigLoadOptions::new(),
+        config_kit::ConfigFormatSet::YAML,
+    )
+    .with_context(|| format!("load {}", path.display()))?
+    else {
+        return Ok(None);
     };
-
-    let cfg: HooksConfigFile =
-        serde_yaml::from_str(&contents).with_context(|| format!("parse {}", path.display()))?;
     if cfg.version != 1 {
-        anyhow::bail!("unsupported hooks.yaml version {} (expected 1)", cfg.version);
+        anyhow::bail!(
+            "unsupported hooks.yaml version {} (expected 1)",
+            cfg.version
+        );
     }
     Ok(Some((path, cfg)))
 }
@@ -131,7 +141,17 @@ async fn record_hooks_config_error(
     config_path: &Path,
     err: &anyhow::Error,
 ) {
-    let dir = hook_artifacts_dir_for_thread(server, thread_id);
+    let dir = match hook_artifacts_dir_for_thread(server, thread_id).await {
+        Ok(dir) => dir,
+        Err(load_err) => {
+            tracing::warn!(
+                thread_id = %thread_id,
+                error = %load_err,
+                "failed to resolve hook artifacts dir"
+            );
+            return;
+        }
+    };
     let path = dir.join("hooks_config_error.txt");
     let text = format!(
         "hooks config error\n\npath: {}\nerror: {}\n",
@@ -217,7 +237,7 @@ fn redact_and_truncate_value(value: &Value, max_string_chars: usize) -> Value {
             map.iter()
                 .take(128)
                 .map(|(k, v)| {
-                    if omne_core::redaction::is_sensitive_key(k) {
+                    if omne_core::is_sensitive_key(k) {
                         (k.clone(), Value::String(REDACTED_VALUE.to_string()))
                     } else {
                         (k.clone(), redact_and_truncate_value(v, max_string_chars))
@@ -390,11 +410,7 @@ async fn run_hook_commands(
             let Some(tool) = ctx.tool else {
                 continue;
             };
-            if !command
-                .when_tools
-                .iter()
-                .any(|t| t.trim() == tool.trim())
-            {
+            if !command.when_tools.iter().any(|t| t.trim() == tool.trim()) {
                 continue;
             }
         }
@@ -409,7 +425,7 @@ async fn run_hook_commands(
         }
 
         let hook_id = ToolId::new();
-        let hooks_dir = hook_artifacts_dir_for_thread(server, thread_id);
+        let hooks_dir = hook_artifacts_dir(&thread_root);
         let input_path = hooks_dir.join(format!("{hook_id}.input.json"));
         let output_path = hooks_dir.join(format!("{hook_id}.output.json"));
         let context_path = hooks_dir.join(format!("{hook_id}.additional_context.md"));
@@ -419,9 +435,10 @@ async fn run_hook_commands(
             thread_id,
             turn_id,
             tool: ctx.tool.map(ToString::to_string),
-            tool_params: ctx
-                .tool
-                .and_then(|tool| ctx.tool_args.map(|args| hook_tool_params_for_action(tool, args))),
+            tool_params: ctx.tool.and_then(|tool| {
+                ctx.tool_args
+                    .map(|args| hook_tool_params_for_action(tool, args))
+            }),
             tool_result: ctx.tool_result.map(|v| redact_and_truncate_value(v, 512)),
             turn_status: ctx.turn_status,
             turn_reason: ctx.turn_reason.map(|s| redact_and_truncate_string(s, 512)),
@@ -438,7 +455,11 @@ async fn run_hook_commands(
             }),
         };
 
-        if input.tool_params.as_ref().is_some_and(|v| v == &Value::Null) {
+        if input
+            .tool_params
+            .as_ref()
+            .is_some_and(|v| v == &Value::Null)
+        {
             input.tool_params = None;
         }
 
@@ -527,6 +548,7 @@ async fn run_hook_commands(
                     .append_event(ThreadEventKind::ToolCompleted {
                         tool_id,
                         status: ToolStatus::Failed,
+                        structured_error: None,
                         error: Some(err.to_string()),
                         result: None,
                     })
@@ -546,6 +568,7 @@ async fn run_hook_commands(
                 .append_event(ThreadEventKind::ToolCompleted {
                     tool_id,
                     status: ToolStatus::Denied,
+                    structured_error: None,
                     error: Some("hook process/start needs approval; skipped".to_string()),
                     result: Some(serde_json::json!({
                         "needs_approval": true,
@@ -565,6 +588,7 @@ async fn run_hook_commands(
                 .append_event(ThreadEventKind::ToolCompleted {
                     tool_id,
                     status: ToolStatus::Denied,
+                    structured_error: structured_error_from_result_value(&output),
                     error: Some("hook process/start denied".to_string()),
                     result: Some(redact_and_truncate_value(&output, 512)),
                 })
@@ -581,6 +605,7 @@ async fn run_hook_commands(
                 .append_event(ThreadEventKind::ToolCompleted {
                     tool_id,
                     status: ToolStatus::Failed,
+                    structured_error: None,
                     error: Some("hook process/start returned unexpected response".to_string()),
                     result: Some(redact_and_truncate_value(&output, 512)),
                 })
@@ -588,24 +613,25 @@ async fn run_hook_commands(
             continue;
         };
 
-        let exit_code = match wait_for_process_exit(server, process_id, hooks_process_timeout()).await
-        {
-            Ok(code) => code,
-            Err(err) => {
-                let _ = thread_rt
-                    .append_event(ThreadEventKind::ToolCompleted {
-                        tool_id,
-                        status: ToolStatus::Failed,
-                        error: Some(err.to_string()),
-                        result: Some(serde_json::json!({
-                            "process_id": process_id,
-                            "output": redact_and_truncate_value(&output, 512),
-                        })),
-                    })
-                    .await;
-                continue;
-            }
-        };
+        let exit_code =
+            match wait_for_process_exit(server, process_id, hooks_process_timeout()).await {
+                Ok(code) => code,
+                Err(err) => {
+                    let _ = thread_rt
+                        .append_event(ThreadEventKind::ToolCompleted {
+                            tool_id,
+                            status: ToolStatus::Failed,
+                            structured_error: None,
+                            error: Some(err.to_string()),
+                            result: Some(serde_json::json!({
+                                "process_id": process_id,
+                                "output": redact_and_truncate_value(&output, 512),
+                            })),
+                        })
+                        .await;
+                    continue;
+                }
+            };
 
         let ok_exit_codes = if command.ok_exit_codes.is_empty() {
             DEFAULT_HOOK_OK_EXIT_CODES
@@ -619,6 +645,7 @@ async fn run_hook_commands(
                 .append_event(ThreadEventKind::ToolCompleted {
                     tool_id,
                     status: ToolStatus::Failed,
+                    structured_error: None,
                     error: Some("hook process exited with unexpected status".to_string()),
                     result: Some(serde_json::json!({
                         "process_id": process_id,
@@ -676,6 +703,7 @@ async fn run_hook_commands(
             .append_event(ThreadEventKind::ToolCompleted {
                 tool_id,
                 status: ToolStatus::Completed,
+                structured_error: None,
                 error: None,
                 result: Some(serde_json::json!({
                     "process_id": process_id,
@@ -874,7 +902,7 @@ struct HookSubagentContext<'a> {
 #[cfg(test)]
 mod hooks_dispatch_tests {
     use super::*;
-    use omne_protocol::{ApprovalPolicy, SandboxPolicy};
+    use omne_protocol::ApprovalPolicy;
 
     #[tokio::test]
     async fn load_hooks_config_parses_valid_file() -> anyhow::Result<()> {
@@ -944,7 +972,9 @@ hooks: {}
         let err = anyhow::anyhow!("hooks parse failed");
         record_hooks_config_error(&server, thread_id, &config_path, &err).await;
 
-        let artifact_path = hook_artifacts_dir_for_thread(&server, thread_id).join("hooks_config_error.txt");
+        let artifact_path = hook_artifacts_dir_for_thread(&server, thread_id)
+            .await?
+            .join("hooks_config_error.txt");
         let text = tokio::fs::read_to_string(&artifact_path).await?;
         assert!(text.contains("hooks config error"));
         assert!(text.contains(&config_path.display().to_string()));
@@ -953,7 +983,8 @@ hooks: {}
     }
 
     #[tokio::test]
-    async fn pre_tool_use_hook_emits_additional_context_once_without_recursion() -> anyhow::Result<()> {
+    async fn pre_tool_use_hook_emits_additional_context_once_without_recursion()
+    -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");
         let spec_dir = repo_dir.join(".omne_data").join("spec");
@@ -1017,7 +1048,8 @@ hooks:
     }
 
     #[tokio::test]
-    async fn post_tool_use_hook_emits_additional_context_once_without_recursion() -> anyhow::Result<()> {
+    async fn post_tool_use_hook_emits_additional_context_once_without_recursion()
+    -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");
         let spec_dir = repo_dir.join(".omne_data").join("spec");
@@ -1147,8 +1179,14 @@ hooks:
         );
         assert_eq!(completed_contexts[0].hook_point, HookPoint::Stop);
 
-        let failed_contexts =
-            run_stop_hooks(&server, thread_id, turn_id, TurnStatus::Failed, Some("failed")).await;
+        let failed_contexts = run_stop_hooks(
+            &server,
+            thread_id,
+            turn_id,
+            TurnStatus::Failed,
+            Some("failed"),
+        )
+        .await;
         assert_eq!(failed_contexts.len(), 1);
         assert_eq!(failed_contexts[0].text, "failed reminder");
         assert_eq!(failed_contexts[0].summary.as_deref(), Some("failed-hook"));
@@ -1236,7 +1274,8 @@ hooks:
     }
 
     #[tokio::test]
-    async fn post_tool_use_hook_input_artifact_contains_redacted_tool_result() -> anyhow::Result<()> {
+    async fn post_tool_use_hook_input_artifact_contains_redacted_tool_result() -> anyhow::Result<()>
+    {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");
         let spec_dir = repo_dir.join(".omne_data").join("spec");
@@ -1484,7 +1523,10 @@ hooks:
         let completed =
             completed.ok_or_else(|| anyhow::anyhow!("missing hook ToolCompleted event"))?;
         assert_eq!(*completed.0, ToolStatus::Denied);
-        assert_eq!(completed.1, Some("hook process/start needs approval; skipped"));
+        assert_eq!(
+            completed.1,
+            Some("hook process/start needs approval; skipped")
+        );
         let result = completed
             .2
             .ok_or_else(|| anyhow::anyhow!("missing hook ToolCompleted result"))?;
@@ -1527,7 +1569,7 @@ hooks:
             ThreadConfigureParams {
                 thread_id,
                 approval_policy: Some(ApprovalPolicy::AutoApprove),
-                sandbox_policy: Some(SandboxPolicy::ReadOnly),
+                sandbox_policy: Some(policy_meta::WriteScope::ReadOnly),
                 sandbox_writable_roots: None,
                 sandbox_network_access: None,
                 mode: None,
@@ -1863,7 +1905,10 @@ hooks:
             subagent.get("child_turn_id").and_then(Value::as_str),
             Some(child_turn_id_text.as_str())
         );
-        assert_eq!(subagent.get("status").and_then(Value::as_str), Some("failed"));
+        assert_eq!(
+            subagent.get("status").and_then(Value::as_str),
+            Some("failed")
+        );
         let redacted_reason = subagent
             .get("reason")
             .and_then(Value::as_str)

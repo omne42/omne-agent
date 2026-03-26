@@ -1,473 +1,481 @@
-    fn summarize_tool_kv(value: &Value) -> String {
-        const MAX_ITEMS: usize = 6;
-        match value {
-            Value::Object(map) => {
-                let mut parts = Vec::new();
-                for (key, value) in map {
-                    if let Some(summary) = summarize_tool_value(value) {
-                        if !summary.trim().is_empty() {
-                            parts.push(format!("{key}={summary}"));
-                        }
-                    }
-                    if parts.len() >= MAX_ITEMS {
-                        break;
+fn summarize_tool_kv(value: &Value) -> String {
+    const MAX_ITEMS: usize = 6;
+    match value {
+        Value::Object(map) => {
+            let mut parts = Vec::new();
+            for (key, value) in map {
+                if let Some(summary) = summarize_tool_value(value) {
+                    if !summary.trim().is_empty() {
+                        parts.push(format!("{key}={summary}"));
                     }
                 }
-                if parts.is_empty() {
-                    String::new()
-                } else {
-                    format!("[{}]", parts.join(", "))
+                if parts.len() >= MAX_ITEMS {
+                    break;
                 }
             }
-            _ => summarize_tool_value(value).unwrap_or_default(),
-        }
-    }
-
-    fn summarize_tool_value(value: &Value) -> Option<String> {
-        match value {
-            Value::Null => None,
-            Value::Bool(value) => Some(value.to_string()),
-            Value::Number(value) => Some(value.to_string()),
-            Value::String(value) => {
-                let normalized = normalize_single_line(value);
-                if normalized.is_empty() {
-                    None
-                } else {
-                    Some(truncate_tool_text(&normalized))
-                }
+            if parts.is_empty() {
+                String::new()
+            } else {
+                format!("[{}]", parts.join(", "))
             }
-            Value::Array(value) => Some(format!("[{}]", value.len())),
-            Value::Object(value) => Some(format!("{{{}}}", value.len())),
         }
+        _ => summarize_tool_value(value).unwrap_or_default(),
     }
+}
 
-    fn truncate_tool_text(value: &str) -> String {
-        const MAX_CHARS: usize = 120;
-        if value.chars().count() <= MAX_CHARS {
-            return value.to_string();
+fn summarize_tool_value(value: &Value) -> Option<String> {
+    match value {
+        Value::Null => None,
+        Value::Bool(value) => Some(value.to_string()),
+        Value::Number(value) => Some(value.to_string()),
+        Value::String(value) => {
+            let normalized = normalize_single_line(value);
+            if normalized.is_empty() {
+                None
+            } else {
+                Some(truncate_tool_text(&normalized))
+            }
         }
-        let mut out: String = value.chars().take(MAX_CHARS).collect();
-        out.push('…');
-        out
+        Value::Array(value) => Some(format!("[{}]", value.len())),
+        Value::Object(value) => Some(format!("{{{}}}", value.len())),
     }
+}
 
-    fn should_suppress_tool_started(tool: &str) -> bool {
-        matches!(
-            tool,
-            "process/start" | "process/inspect" | "process/tail" | "process/follow"
-        )
+fn truncate_tool_text(value: &str) -> String {
+    const MAX_CHARS: usize = 120;
+    if value.chars().count() <= MAX_CHARS {
+        return value.to_string();
     }
+    let mut out: String = value.chars().take(MAX_CHARS).collect();
+    out.push('…');
+    out
+}
 
-    fn should_suppress_tool_completed(tool: &str) -> bool {
-        matches!(tool, "process/inspect" | "process/tail" | "process/follow")
-    }
+fn should_suppress_tool_started(tool: &str) -> bool {
+    matches!(
+        tool,
+        "process/start" | "process/inspect" | "process/tail" | "process/follow"
+    )
+}
 
-    fn non_empty_json_str<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
-        value
-            .get(key)
-            .and_then(Value::as_str)
+fn should_suppress_tool_completed(tool: &str) -> bool {
+    matches!(tool, "process/inspect" | "process/tail" | "process/follow")
+}
+
+fn non_empty_json_str<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn format_facade_mapping_brief(tool: &str, payload: Option<&Value>) -> Option<String> {
+    let payload = payload?;
+    let facade_tool = non_empty_json_str(payload, "facade_tool").or_else(|| {
+        tool.strip_prefix("facade/")
             .map(str::trim)
             .filter(|value| !value.is_empty())
-    }
+    })?;
+    let op = non_empty_json_str(payload, "op")?;
+    let mapped_action = non_empty_json_str(payload, "mapped_action")?;
+    Some(format!("{facade_tool}.{op} -> {mapped_action}"))
+}
 
-    fn format_facade_mapping_brief(tool: &str, payload: Option<&Value>) -> Option<String> {
-        let payload = payload?;
-        let facade_tool = non_empty_json_str(payload, "facade_tool").or_else(|| {
-            tool.strip_prefix("facade/")
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-        })?;
-        let op = non_empty_json_str(payload, "op")?;
-        let mapped_action = non_empty_json_str(payload, "mapped_action")?;
-        Some(format!("{facade_tool}.{op} -> {mapped_action}"))
-    }
-
-    fn summarize_facade_result_payload(result: &Value) -> String {
-        match result {
-            Value::Object(map) => {
-                let mut filtered = serde_json::Map::new();
-                for (key, value) in map {
-                    if matches!(key.as_str(), "facade_tool" | "op" | "mapped_action") {
-                        continue;
-                    }
-                    filtered.insert(key.clone(), value.clone());
+fn summarize_facade_result_payload(result: &Value) -> String {
+    match result {
+        Value::Object(map) => {
+            let mut filtered = serde_json::Map::new();
+            for (key, value) in map {
+                if matches!(key.as_str(), "facade_tool" | "op" | "mapped_action") {
+                    continue;
                 }
-                summarize_tool_kv(&Value::Object(filtered))
+                filtered.insert(key.clone(), value.clone());
             }
-            _ => summarize_tool_kv(result),
+            summarize_tool_kv(&Value::Object(filtered))
         }
+        _ => summarize_tool_kv(result),
     }
+}
 
-    fn format_tool_status_line(
-        tool: &str,
-        status: ToolStatus,
-        error: Option<&str>,
-        result: Option<&Value>,
-    ) -> String {
-        let mut line = format!("{tool} {}", tool_status_str(status));
-        if let Some(mapping) = format_facade_mapping_brief(tool, result) {
-            line.push_str(&format!(" ({mapping})"));
-        }
-        if let Some(err) = error.map(str::trim).filter(|value| !value.is_empty()) {
-            line.push_str(": ");
-            line.push_str(err);
-        }
-        line
+fn format_tool_status_line(
+    tool: &str,
+    status: ToolStatus,
+    structured_error: Option<&structured_text_protocol::StructuredTextData>,
+    error: Option<&str>,
+    result: Option<&Value>,
+) -> String {
+    let mut line = format!("{tool} {}", tool_status_str(status));
+    if let Some(mapping) = format_facade_mapping_brief(tool, result) {
+        line.push_str(&format!(" ({mapping})"));
     }
+    if let Some(err) = super::preferred_structured_error_text(structured_error, error) {
+        line.push_str(": ");
+        line.push_str(&err);
+    }
+    line
+}
 
-    fn format_tool_started_line(tool: &str, params: Option<&Value>) -> Option<String> {
-        if let Some(mapping) = format_facade_mapping_brief(tool, params) {
-            let args_summary = params
-                .and_then(|value| value.get("args"))
-                .map(summarize_tool_kv)
-                .unwrap_or_default();
-            if args_summary.trim().is_empty() {
-                return Some(mapping);
-            }
-            return Some(format!("{mapping} {args_summary}"));
+fn format_tool_started_line(tool: &str, params: Option<&Value>) -> Option<String> {
+    if let Some(mapping) = format_facade_mapping_brief(tool, params) {
+        let args_summary = params
+            .and_then(|value| value.get("args"))
+            .map(summarize_tool_kv)
+            .unwrap_or_default();
+        if args_summary.trim().is_empty() {
+            return Some(mapping);
         }
-        let line = match tool {
-            "file/read" => format_file_action("read", params),
-            "file/write" => format_file_action("write", params),
-            "file/edit" => format_file_action("edit", params),
-            "file/patch" => format_file_action("patch", params),
-            "file/delete" => format_file_action("delete", params),
-            "file/glob" => format_file_glob(params),
-            "file/grep" => format_file_grep(params),
-            "repo/search" => format_repo_search(params),
-            "repo/index" => format_repo_index(params),
-            "repo/symbols" => format_repo_symbols(params),
-            "fs/mkdir" => format_fs_mkdir(params),
-            "process/kill" => format_process_kill(params),
-            "process/interrupt" => format_process_interrupt(params),
-            "artifact/list" => Some("artifact list".to_string()),
-            "artifact/versions" => format_artifact_versions(params),
-            "artifact/read" => format_artifact_read(params),
-            "artifact/write" => format_artifact_write(params),
-            "artifact/delete" => format_artifact_delete(params),
-            "mcp/list_servers" => Some("mcp list servers".to_string()),
-            "mcp/list_tools" => format_mcp_list_tools(params),
-            "mcp/list_resources" => format_mcp_list_resources(params),
-            "mcp/call" => format_mcp_call(params),
-            "subagent/spawn" => Some("subagent spawn".to_string()),
-            _ => None,
-        };
-        if let Some(line) = line {
-            return Some(line);
-        }
-        let summary = params.map(summarize_tool_kv).unwrap_or_default();
+        return Some(format!("{mapping} {args_summary}"));
+    }
+    let line = match tool {
+        "file/read" => format_file_action("read", params),
+        "file/write" => format_file_action("write", params),
+        "file/edit" => format_file_action("edit", params),
+        "file/patch" => format_file_action("patch", params),
+        "file/delete" => format_file_action("delete", params),
+        "file/glob" => format_file_glob(params),
+        "file/grep" => format_file_grep(params),
+        "repo/search" => format_repo_search(params),
+        "repo/index" => format_repo_index(params),
+        "repo/symbols" => format_repo_symbols(params),
+        "fs/mkdir" => format_fs_mkdir(params),
+        "process/kill" => format_process_kill(params),
+        "process/interrupt" => format_process_interrupt(params),
+        "artifact/list" => Some("artifact list".to_string()),
+        "artifact/versions" => format_artifact_versions(params),
+        "artifact/read" => format_artifact_read(params),
+        "artifact/write" => format_artifact_write(params),
+        "artifact/delete" => format_artifact_delete(params),
+        "mcp/list_servers" => Some("mcp list servers".to_string()),
+        "mcp/list_tools" => format_mcp_list_tools(params),
+        "mcp/list_resources" => format_mcp_list_resources(params),
+        "mcp/call" => format_mcp_call(params),
+        "subagent/spawn" => Some("subagent spawn".to_string()),
+        _ => None,
+    };
+    if let Some(line) = line {
+        return Some(line);
+    }
+    let summary = params.map(summarize_tool_kv).unwrap_or_default();
+    if summary.trim().is_empty() {
+        Some(tool.to_string())
+    } else {
+        Some(format!("{tool} {summary}"))
+    }
+}
+
+fn format_tool_result_line(tool: &str, result: &Value) -> Option<String> {
+    if should_suppress_tool_completed(tool) || tool == "process/start" {
+        return None;
+    }
+    if let Some(mapping) = format_facade_mapping_brief(tool, Some(result)) {
+        let summary = summarize_facade_result_payload(result);
         if summary.trim().is_empty() {
-            Some(tool.to_string())
-        } else {
-            Some(format!("{tool} {summary}"))
+            return Some(mapping);
         }
+        return Some(format!("{mapping} {summary}"));
     }
+    let summary = summarize_tool_kv(result);
+    if summary.trim().is_empty() {
+        None
+    } else {
+        Some(format!("{tool} → {summary}"))
+    }
+}
 
-    fn format_tool_result_line(tool: &str, result: &Value) -> Option<String> {
-        if should_suppress_tool_completed(tool) || tool == "process/start" {
-            return None;
-        }
-        if let Some(mapping) = format_facade_mapping_brief(tool, Some(result)) {
-            let summary = summarize_facade_result_payload(result);
-            if summary.trim().is_empty() {
-                return Some(mapping);
-            }
-            return Some(format!("{mapping} {summary}"));
-        }
-        let summary = summarize_tool_kv(result);
-        if summary.trim().is_empty() {
+fn format_process_started_line(
+    argv: &[String],
+    cwd: &str,
+    thread_cwd: Option<&str>,
+) -> Option<String> {
+    let cmd = extract_shell_command(argv).unwrap_or_else(|| format_argv(argv));
+    if cmd.is_empty() {
+        return None;
+    }
+    let mut line = format!("$ {cmd}");
+    if let Some(cwd_display) = format_cwd_display(cwd, thread_cwd) {
+        line.push_str(&format!(" (cwd={cwd_display})"));
+    }
+    Some(line)
+}
+
+fn format_argv(argv: &[String]) -> String {
+    argv.iter()
+        .map(|arg| format_shell_arg(arg))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn extract_shell_command(argv: &[String]) -> Option<String> {
+    if argv.len() >= 3 && is_shell_wrapper(&argv[0]) && argv[1] == "-lc" {
+        let cmd = argv[2].trim();
+        return if cmd.is_empty() {
             None
         } else {
-            Some(format!("{tool} → {summary}"))
-        }
+            Some(cmd.to_string())
+        };
     }
+    if argv.len() >= 4
+        && argv[0] == "/usr/bin/env"
+        && is_shell_wrapper(&argv[1])
+        && argv[2] == "-lc"
+    {
+        let cmd = argv[3].trim();
+        return if cmd.is_empty() {
+            None
+        } else {
+            Some(cmd.to_string())
+        };
+    }
+    None
+}
 
-    fn format_process_started_line(
-        argv: &[String],
-        cwd: &str,
-        thread_cwd: Option<&str>,
-    ) -> Option<String> {
-        let cmd = extract_shell_command(argv).unwrap_or_else(|| format_argv(argv));
-        if cmd.is_empty() {
+fn is_shell_wrapper(cmd: &str) -> bool {
+    matches!(
+        cmd,
+        "bash" | "sh" | "zsh" | "/bin/bash" | "/bin/sh" | "/bin/zsh"
+    )
+}
+
+fn format_shell_arg(value: &str) -> String {
+    if value.is_empty() {
+        return "\"\"".to_string();
+    }
+    let safe = value
+        .chars()
+        .all(|c| matches!(c, 'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | '.' | '/' | ':' ));
+    if safe {
+        value.to_string()
+    } else {
+        format!("{value:?}")
+    }
+}
+
+fn format_cwd_display(cwd: &str, thread_cwd: Option<&str>) -> Option<String> {
+    let trimmed = cwd.trim();
+    if trimmed.is_empty() || trimmed == "." {
+        return None;
+    }
+    if let Some(thread_cwd) = thread_cwd.map(str::trim).filter(|s| !s.is_empty()) {
+        if trimmed == thread_cwd {
             return None;
         }
-        let mut line = format!("$ {cmd}");
-        if let Some(cwd_display) = format_cwd_display(cwd, thread_cwd) {
-            line.push_str(&format!(" (cwd={cwd_display})"));
-        }
-        Some(line)
     }
+    Some(trimmed.to_string())
+}
 
-    fn format_argv(argv: &[String]) -> String {
-        argv.iter()
-            .map(|arg| format_shell_arg(arg))
-            .collect::<Vec<_>>()
-            .join(" ")
+fn format_file_action(action: &str, params: Option<&Value>) -> Option<String> {
+    let path = param_str(params, "path")?;
+    let root = param_str(params, "root");
+    let path = format_path_with_root(root, path);
+    Some(format!("{action} {path}"))
+}
+
+fn format_file_glob(params: Option<&Value>) -> Option<String> {
+    let pattern = param_str(params, "pattern")?;
+    let root = root_tag(param_str(params, "root"));
+    let mut line = format!("glob \"{pattern}\"");
+    if let Some(root) = root {
+        line.push_str(&format!(" ({root})"));
     }
+    Some(line)
+}
 
-    fn extract_shell_command(argv: &[String]) -> Option<String> {
-        if argv.len() >= 3 && is_shell_wrapper(&argv[0]) && argv[1] == "-lc" {
-            let cmd = argv[2].trim();
-            return if cmd.is_empty() {
-                None
-            } else {
-                Some(cmd.to_string())
-            };
+fn format_file_grep(params: Option<&Value>) -> Option<String> {
+    let query = param_str(params, "query")?;
+    let mut line = format!("grep \"{query}\"");
+    if let Some(include) = param_str(params, "include_glob") {
+        line.push_str(&format!(" in {include}"));
+    }
+    if let Some(root) = root_tag(param_str(params, "root")) {
+        line.push_str(&format!(" ({root})"));
+    }
+    Some(line)
+}
+
+fn format_repo_search(params: Option<&Value>) -> Option<String> {
+    let query = param_str(params, "query")?;
+    let mut line = format!("search \"{query}\"");
+    if let Some(root) = root_tag(param_str(params, "root")) {
+        line.push_str(&format!(" ({root})"));
+    }
+    Some(line)
+}
+
+fn format_repo_index(params: Option<&Value>) -> Option<String> {
+    let mut line = "repo index".to_string();
+    if let Some(root) = root_tag(param_str(params, "root")) {
+        line.push_str(&format!(" ({root})"));
+    }
+    Some(line)
+}
+
+fn format_repo_symbols(params: Option<&Value>) -> Option<String> {
+    let mut line = "repo symbols".to_string();
+    if let Some(root) = root_tag(param_str(params, "root")) {
+        line.push_str(&format!(" ({root})"));
+    }
+    Some(line)
+}
+
+fn format_fs_mkdir(params: Option<&Value>) -> Option<String> {
+    let path = param_str(params, "path")?;
+    let recursive = param_bool(params, "recursive").unwrap_or(false);
+    if recursive {
+        Some(format!("mkdir -p {path}"))
+    } else {
+        Some(format!("mkdir {path}"))
+    }
+}
+
+fn format_process_kill(params: Option<&Value>) -> Option<String> {
+    let process_id = param_str(params, "process_id")?;
+    Some(format!("kill {process_id}"))
+}
+
+fn format_process_interrupt(params: Option<&Value>) -> Option<String> {
+    let process_id = param_str(params, "process_id")?;
+    Some(format!("interrupt {process_id}"))
+}
+
+fn format_artifact_read(params: Option<&Value>) -> Option<String> {
+    let artifact_id = param_str(params, "artifact_id")?;
+    let mut line = format!("artifact read {artifact_id}");
+    if let Some(version) = param_u64(params, "version") {
+        line.push_str(&format!(" v{version}"));
+    }
+    Some(line)
+}
+
+fn format_artifact_versions(params: Option<&Value>) -> Option<String> {
+    let artifact_id = param_str(params, "artifact_id")?;
+    Some(format!("artifact versions {artifact_id}"))
+}
+
+fn format_artifact_write(params: Option<&Value>) -> Option<String> {
+    let mut line = "artifact write".to_string();
+    if let Some(artifact_type) = param_str(params, "artifact_type") {
+        line.push(' ');
+        line.push_str(artifact_type);
+    }
+    if let Some(summary) = param_str(params, "summary") {
+        let summary = truncate_tool_text(summary);
+        if !summary.is_empty() {
+            line.push_str(&format!(" \"{summary}\""));
         }
-        if argv.len() >= 4
-            && argv[0] == "/usr/bin/env"
-            && is_shell_wrapper(&argv[1])
-            && argv[2] == "-lc"
-        {
-            let cmd = argv[3].trim();
-            return if cmd.is_empty() {
-                None
-            } else {
-                Some(cmd.to_string())
-            };
-        }
+    }
+    Some(line)
+}
+
+fn format_artifact_delete(params: Option<&Value>) -> Option<String> {
+    let artifact_id = param_str(params, "artifact_id")?;
+    Some(format!("artifact delete {artifact_id}"))
+}
+
+fn format_mcp_list_tools(params: Option<&Value>) -> Option<String> {
+    let server = param_str(params, "server")?;
+    Some(format!("mcp list_tools {server}"))
+}
+
+fn format_mcp_list_resources(params: Option<&Value>) -> Option<String> {
+    let server = param_str(params, "server")?;
+    Some(format!("mcp list_resources {server}"))
+}
+
+fn format_mcp_call(params: Option<&Value>) -> Option<String> {
+    let server = param_str(params, "server").unwrap_or("-");
+    let tool = param_str(params, "tool").unwrap_or("-");
+    Some(format!("mcp {server}.{tool}"))
+}
+
+fn param_str<'a>(params: Option<&'a Value>, key: &str) -> Option<&'a str> {
+    params
+        .and_then(|value| value.get(key))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn param_bool(params: Option<&Value>, key: &str) -> Option<bool> {
+    params
+        .and_then(|value| value.get(key))
+        .and_then(Value::as_bool)
+}
+
+fn param_u64(params: Option<&Value>, key: &str) -> Option<u64> {
+    params
+        .and_then(|value| value.get(key))
+        .and_then(Value::as_u64)
+}
+
+fn root_tag(root: Option<&str>) -> Option<&'static str> {
+    if matches!(root, Some("reference")) {
+        Some("ref")
+    } else {
         None
     }
+}
 
-    fn is_shell_wrapper(cmd: &str) -> bool {
-        matches!(
-            cmd,
-            "bash" | "sh" | "zsh" | "/bin/bash" | "/bin/sh" | "/bin/zsh"
+fn format_path_with_root(root: Option<&str>, path: &str) -> String {
+    if matches!(root, Some("reference")) {
+        format!("ref:{path}")
+    } else {
+        path.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tool_format_tests {
+    use super::*;
+
+    #[test]
+    fn format_tool_started_line_formats_facade_mapping() {
+        let line = format_tool_started_line(
+            "facade/workspace",
+            Some(&serde_json::json!({
+                "facade_tool": "workspace",
+                "op": "read",
+                "mapped_action": "file/read",
+                "args": {
+                    "path": "README.md"
+                }
+            })),
         )
+        .expect("line");
+        assert!(line.contains("workspace.read -> file/read"));
+        assert!(line.contains("path=README.md"));
     }
 
-    fn format_shell_arg(value: &str) -> String {
-        if value.is_empty() {
-            return "\"\"".to_string();
-        }
-        let safe = value.chars().all(|c| matches!(c, 'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | '.' | '/' | ':' ));
-        if safe {
-            value.to_string()
-        } else {
-            format!("{value:?}")
-        }
+    #[test]
+    fn format_tool_result_line_formats_facade_mapping() {
+        let line = format_tool_result_line(
+            "facade/thread",
+            &serde_json::json!({
+                "facade_tool": "thread",
+                "op": "close",
+                "mapped_action": "subagent/close",
+                "success": true
+            }),
+        )
+        .expect("line");
+        assert!(line.contains("thread.close -> subagent/close"));
+        assert!(line.contains("success=true"));
     }
 
-    fn format_cwd_display(cwd: &str, thread_cwd: Option<&str>) -> Option<String> {
-        let trimmed = cwd.trim();
-        if trimmed.is_empty() || trimmed == "." {
-            return None;
-        }
-        if let Some(thread_cwd) = thread_cwd.map(str::trim).filter(|s| !s.is_empty()) {
-            if trimmed == thread_cwd {
-                return None;
-            }
-        }
-        Some(trimmed.to_string())
+    #[test]
+    fn format_tool_status_line_includes_facade_mapping() {
+        let line = format_tool_status_line(
+            "facade/thread",
+            ToolStatus::Denied,
+            None,
+            None,
+            Some(&serde_json::json!({
+                "facade_tool": "thread",
+                "op": "send_input",
+                "mapped_action": "subagent/send_input"
+            })),
+        );
+        assert!(line.contains("facade/thread denied"));
+        assert!(line.contains("(thread.send_input -> subagent/send_input)"));
     }
-
-    fn format_file_action(action: &str, params: Option<&Value>) -> Option<String> {
-        let path = param_str(params, "path")?;
-        let root = param_str(params, "root");
-        let path = format_path_with_root(root, path);
-        Some(format!("{action} {path}"))
-    }
-
-    fn format_file_glob(params: Option<&Value>) -> Option<String> {
-        let pattern = param_str(params, "pattern")?;
-        let root = root_tag(param_str(params, "root"));
-        let mut line = format!("glob \"{pattern}\"");
-        if let Some(root) = root {
-            line.push_str(&format!(" ({root})"));
-        }
-        Some(line)
-    }
-
-    fn format_file_grep(params: Option<&Value>) -> Option<String> {
-        let query = param_str(params, "query")?;
-        let mut line = format!("grep \"{query}\"");
-        if let Some(include) = param_str(params, "include_glob") {
-            line.push_str(&format!(" in {include}"));
-        }
-        if let Some(root) = root_tag(param_str(params, "root")) {
-            line.push_str(&format!(" ({root})"));
-        }
-        Some(line)
-    }
-
-    fn format_repo_search(params: Option<&Value>) -> Option<String> {
-        let query = param_str(params, "query")?;
-        let mut line = format!("search \"{query}\"");
-        if let Some(root) = root_tag(param_str(params, "root")) {
-            line.push_str(&format!(" ({root})"));
-        }
-        Some(line)
-    }
-
-    fn format_repo_index(params: Option<&Value>) -> Option<String> {
-        let mut line = "repo index".to_string();
-        if let Some(root) = root_tag(param_str(params, "root")) {
-            line.push_str(&format!(" ({root})"));
-        }
-        Some(line)
-    }
-
-    fn format_repo_symbols(params: Option<&Value>) -> Option<String> {
-        let mut line = "repo symbols".to_string();
-        if let Some(root) = root_tag(param_str(params, "root")) {
-            line.push_str(&format!(" ({root})"));
-        }
-        Some(line)
-    }
-
-    fn format_fs_mkdir(params: Option<&Value>) -> Option<String> {
-        let path = param_str(params, "path")?;
-        let recursive = param_bool(params, "recursive").unwrap_or(false);
-        if recursive {
-            Some(format!("mkdir -p {path}"))
-        } else {
-            Some(format!("mkdir {path}"))
-        }
-    }
-
-    fn format_process_kill(params: Option<&Value>) -> Option<String> {
-        let process_id = param_str(params, "process_id")?;
-        Some(format!("kill {process_id}"))
-    }
-
-    fn format_process_interrupt(params: Option<&Value>) -> Option<String> {
-        let process_id = param_str(params, "process_id")?;
-        Some(format!("interrupt {process_id}"))
-    }
-
-    fn format_artifact_read(params: Option<&Value>) -> Option<String> {
-        let artifact_id = param_str(params, "artifact_id")?;
-        let mut line = format!("artifact read {artifact_id}");
-        if let Some(version) = param_u64(params, "version") {
-            line.push_str(&format!(" v{version}"));
-        }
-        Some(line)
-    }
-
-    fn format_artifact_versions(params: Option<&Value>) -> Option<String> {
-        let artifact_id = param_str(params, "artifact_id")?;
-        Some(format!("artifact versions {artifact_id}"))
-    }
-
-    fn format_artifact_write(params: Option<&Value>) -> Option<String> {
-        let mut line = "artifact write".to_string();
-        if let Some(artifact_type) = param_str(params, "artifact_type") {
-            line.push(' ');
-            line.push_str(artifact_type);
-        }
-        if let Some(summary) = param_str(params, "summary") {
-            let summary = truncate_tool_text(summary);
-            if !summary.is_empty() {
-                line.push_str(&format!(" \"{summary}\""));
-            }
-        }
-        Some(line)
-    }
-
-    fn format_artifact_delete(params: Option<&Value>) -> Option<String> {
-        let artifact_id = param_str(params, "artifact_id")?;
-        Some(format!("artifact delete {artifact_id}"))
-    }
-
-    fn format_mcp_list_tools(params: Option<&Value>) -> Option<String> {
-        let server = param_str(params, "server")?;
-        Some(format!("mcp list_tools {server}"))
-    }
-
-    fn format_mcp_list_resources(params: Option<&Value>) -> Option<String> {
-        let server = param_str(params, "server")?;
-        Some(format!("mcp list_resources {server}"))
-    }
-
-    fn format_mcp_call(params: Option<&Value>) -> Option<String> {
-        let server = param_str(params, "server").unwrap_or("-");
-        let tool = param_str(params, "tool").unwrap_or("-");
-        Some(format!("mcp {server}.{tool}"))
-    }
-
-    fn param_str<'a>(params: Option<&'a Value>, key: &str) -> Option<&'a str> {
-        params
-            .and_then(|value| value.get(key))
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-    }
-
-    fn param_bool(params: Option<&Value>, key: &str) -> Option<bool> {
-        params.and_then(|value| value.get(key)).and_then(Value::as_bool)
-    }
-
-    fn param_u64(params: Option<&Value>, key: &str) -> Option<u64> {
-        params.and_then(|value| value.get(key)).and_then(Value::as_u64)
-    }
-
-    fn root_tag(root: Option<&str>) -> Option<&'static str> {
-        if matches!(root, Some("reference")) {
-            Some("ref")
-        } else {
-            None
-        }
-    }
-
-    fn format_path_with_root(root: Option<&str>, path: &str) -> String {
-        if matches!(root, Some("reference")) {
-            format!("ref:{path}")
-        } else {
-            path.to_string()
-        }
-    }
-
-    #[cfg(test)]
-    mod tool_format_tests {
-        use super::*;
-
-        #[test]
-        fn format_tool_started_line_formats_facade_mapping() {
-            let line = format_tool_started_line(
-                "facade/workspace",
-                Some(&serde_json::json!({
-                    "facade_tool": "workspace",
-                    "op": "read",
-                    "mapped_action": "file/read",
-                    "args": {
-                        "path": "README.md"
-                    }
-                })),
-            )
-            .expect("line");
-            assert!(line.contains("workspace.read -> file/read"));
-            assert!(line.contains("path=README.md"));
-        }
-
-        #[test]
-        fn format_tool_result_line_formats_facade_mapping() {
-            let line = format_tool_result_line(
-                "facade/thread",
-                &serde_json::json!({
-                    "facade_tool": "thread",
-                    "op": "close",
-                    "mapped_action": "subagent/close",
-                    "success": true
-                }),
-            )
-            .expect("line");
-            assert!(line.contains("thread.close -> subagent/close"));
-            assert!(line.contains("success=true"));
-        }
-
-        #[test]
-        fn format_tool_status_line_includes_facade_mapping() {
-            let line = format_tool_status_line(
-                "facade/thread",
-                ToolStatus::Denied,
-                None,
-                Some(&serde_json::json!({
-                    "facade_tool": "thread",
-                    "op": "send_input",
-                    "mapped_action": "subagent/send_input"
-                })),
-            );
-            assert!(line.contains("facade/thread denied"));
-            assert!(line.contains("(thread.send_input -> subagent/send_input)"));
-        }
-    }
+}

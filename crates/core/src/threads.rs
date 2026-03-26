@@ -197,6 +197,7 @@ impl ThreadStore {
                 .append(ThreadEventKind::ToolCompleted {
                     tool_id,
                     status: omne_protocol::ToolStatus::Cancelled,
+                    structured_error: None,
                     error: Some("recovered incomplete tool on resume".to_string()),
                     result: None,
                 })

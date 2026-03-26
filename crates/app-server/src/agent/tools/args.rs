@@ -71,6 +71,42 @@ struct RepoSymbolsArgs {
 }
 
 #[derive(Debug, Deserialize)]
+struct RepoGotoDefinitionArgs {
+    #[serde(default)]
+    root: Option<crate::FileRoot>,
+    symbol: String,
+    #[serde(default)]
+    path: Option<String>,
+    #[serde(default)]
+    include_glob: Option<String>,
+    #[serde(default)]
+    max_results: Option<usize>,
+    #[serde(default)]
+    max_files: Option<usize>,
+    #[serde(default)]
+    max_bytes_per_file: Option<u64>,
+    #[serde(default)]
+    max_symbols: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RepoFindReferencesArgs {
+    #[serde(default)]
+    root: Option<crate::FileRoot>,
+    symbol: String,
+    #[serde(default)]
+    path: Option<String>,
+    #[serde(default)]
+    include_glob: Option<String>,
+    #[serde(default)]
+    max_matches: Option<usize>,
+    #[serde(default)]
+    max_bytes_per_file: Option<u64>,
+    #[serde(default)]
+    max_files: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
 struct McpListToolsArgs {
     server: String,
 }
@@ -84,8 +120,8 @@ struct McpListResourcesArgs {
 struct McpCallArgs {
     server: String,
     tool: String,
-    #[serde(default)]
-    arguments: Option<serde_json::Value>,
+    // Keep MCP payload nested and required to avoid root-level flattening regressions.
+    arguments: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -263,17 +299,17 @@ struct FacadeToolArgs {
     #[serde(default)]
     op: Option<String>,
     #[serde(default)]
-    args: Option<serde_json::Value>,
-    #[serde(default)]
     help: Option<bool>,
     #[serde(default)]
     topic: Option<String>,
+    #[serde(flatten)]
+    extra: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Debug, serde::Serialize)]
 struct FacadeQuickstartExample {
     op: &'static str,
-    args: serde_json::Value,
+    example: serde_json::Value,
 }
 
 #[derive(Debug, serde::Serialize)]

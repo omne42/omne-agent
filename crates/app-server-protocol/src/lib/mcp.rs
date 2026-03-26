@@ -77,6 +77,9 @@ pub struct McpModeDeniedResponse {
     pub tool_override_hit: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
+    pub structured_error: Option<StructuredTextData>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub error_code: Option<String>,
 }
 
@@ -93,6 +96,9 @@ pub struct McpUnknownModeDeniedResponse {
     pub load_error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
+    pub structured_error: Option<StructuredTextData>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub error_code: Option<String>,
 }
 
@@ -104,6 +110,9 @@ pub struct McpAllowedToolsDeniedResponse {
     pub tool: String,
     #[serde(default)]
     pub allowed_tools: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub structured_error: Option<StructuredTextData>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub error_code: Option<String>,
@@ -118,6 +127,9 @@ pub struct McpDisabledDeniedResponse {
     pub env: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
+    pub structured_error: Option<StructuredTextData>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub error_code: Option<String>,
 }
 
@@ -126,7 +138,10 @@ pub struct McpSandboxPolicyDeniedResponse {
     pub tool_id: omne_protocol::ToolId,
     #[serde(default)]
     pub denied: bool,
-    pub sandbox_policy: omne_protocol::SandboxPolicy,
+    pub sandbox_policy: policy_meta::WriteScope,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub structured_error: Option<StructuredTextData>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub error_code: Option<String>,
@@ -140,6 +155,9 @@ pub struct McpSandboxNetworkDeniedResponse {
     pub sandbox_network_access: omne_protocol::SandboxNetworkAccess,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
+    pub structured_error: Option<StructuredTextData>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub error_code: Option<String>,
 }
 
@@ -150,6 +168,9 @@ pub struct McpExecPolicyDeniedResponse {
     pub denied: bool,
     pub decision: ExecPolicyDecision,
     pub matched_rules: Vec<ExecPolicyRuleMatch>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub structured_error: Option<StructuredTextData>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub error_code: Option<String>,
@@ -165,6 +186,9 @@ pub struct McpExecPolicyLoadDeniedResponse {
     pub details: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
+    pub structured_error: Option<StructuredTextData>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub error_code: Option<String>,
 }
 
@@ -175,6 +199,9 @@ pub struct McpFailedResponse {
     pub failed: bool,
     pub error: String,
     pub server: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub structured_error: Option<StructuredTextData>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]

@@ -337,10 +337,14 @@ embeddings = []         # Embedding 模型支持
 ## 使用示例（未来 API 草案）
 
 ```rust
-use ditto_llm::{OpenAI, Anthropic, LanguageModel, Message, Role};
+use ditto_core::contracts::{Message, StreamChunk};
+use ditto_core::error::Result;
+use ditto_core::llm_core::model::LanguageModel;
+use ditto_core::providers::{Anthropic, OpenAI};
+use futures_util::StreamExt;
 
 #[tokio::main]
-async fn main() -> Result<(), ditto_llm::Error> {
+async fn main() -> Result<()> {
     // OpenAI - Ditto 变身!
     let openai = OpenAI::new(std::env::var("OPENAI_API_KEY")?)
         .with_model("gpt-4o");

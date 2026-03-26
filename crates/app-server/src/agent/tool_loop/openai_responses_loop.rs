@@ -7,43 +7,42 @@ async fn run_openai_responses_codex_parity_loop(
     cancel: CancellationToken,
     turn_priority: TurnPriority,
     final_model: String,
-    provider: String,
-    provider_candidates: Vec<String>,
+    completion_provider_candidates: Vec<ProviderRouteTarget>,
+    thinking_provider_candidates: Vec<ProviderRouteTarget>,
     mut provider_cache: std::collections::BTreeMap<String, ProviderRuntime>,
-    provider_config: ditto_llm::ProviderConfig,
-    project_overrides: ProjectOpenAiOverrides,
-    base_url_override: Option<String>,
-    env: ditto_llm::Env,
-    tools: Vec<ditto_llm::Tool>,
+    model_configs: std::collections::BTreeMap<String, ditto_core::config::ModelConfig>,
+    env: ditto_core::config::Env,
+    tools: Vec<ditto_core::contracts::Tool>,
     instructions: String,
     turn_input: String,
     seed_input_items: Vec<OpenAiItem>,
     tool_model: Option<String>,
-    model_fallbacks: Vec<String>,
+    completion_model_fallbacks: Vec<String>,
+    thinking_model_fallbacks: Vec<String>,
     resolved_attachments: Vec<ResolvedAttachment>,
     pdf_file_id_upload_min_bytes: u64,
     rule_source: omne_protocol::ModelRoutingRuleSource,
     rule_id: Option<String>,
     cfg: ToolLoopConfig,
 ) -> anyhow::Result<ToolLoopOutcome> {
-    fn content_part_to_openai_user_item(part: &ditto_llm::ContentPart) -> Option<Value> {
+    fn content_part_to_openai_user_item(part: &ditto_core::contracts::ContentPart) -> Option<Value> {
         match part {
-            ditto_llm::ContentPart::Text { text } => {
+            ditto_core::contracts::ContentPart::Text { text } => {
                 if text.is_empty() {
                     return None;
                 }
                 Some(serde_json::json!({ "type": "input_text", "text": text }))
             }
-            ditto_llm::ContentPart::Image { source } => {
+            ditto_core::contracts::ContentPart::Image { source } => {
                 let image_url = match source {
-                    ditto_llm::ImageSource::Url { url } => url.clone(),
-                    ditto_llm::ImageSource::Base64 { media_type, data } => {
+                    ditto_core::contracts::ImageSource::Url { url } => url.clone(),
+                    ditto_core::contracts::ImageSource::Base64 { media_type, data } => {
                         format!("data:{media_type};base64,{data}")
                     }
                 };
                 Some(serde_json::json!({ "type": "input_image", "image_url": image_url }))
             }
-            ditto_llm::ContentPart::File {
+            ditto_core::contracts::ContentPart::File {
                 filename,
                 media_type,
                 source,
@@ -53,15 +52,15 @@ async fn run_openai_responses_codex_parity_loop(
                 }
 
                 let item = match source {
-                    ditto_llm::FileSource::Url { url } => {
+                    ditto_core::contracts::FileSource::Url { url } => {
                         serde_json::json!({ "type": "input_file", "file_url": url })
                     }
-                    ditto_llm::FileSource::Base64 { data } => serde_json::json!({
+                    ditto_core::contracts::FileSource::Base64 { data } => serde_json::json!({
                         "type": "input_file",
                         "filename": filename.clone().unwrap_or_else(|| "file.pdf".to_string()),
                         "file_data": format!("data:{media_type};base64,{data}"),
                     }),
-                    ditto_llm::FileSource::FileId { file_id } => {
+                    ditto_core::contracts::FileSource::FileId { file_id } => {
                         serde_json::json!({ "type": "input_file", "file_id": file_id })
                     }
                 };
@@ -73,7 +72,7 @@ async fn run_openai_responses_codex_parity_loop(
 
     fn build_user_message_item(
         text: &str,
-        attachment_parts: &[ditto_llm::ContentPart],
+        attachment_parts: &[ditto_core::contracts::ContentPart],
     ) -> Option<Value> {
         let mut content = Vec::<Value>::new();
         if !text.trim().is_empty() {
@@ -96,7 +95,7 @@ async fn run_openai_responses_codex_parity_loop(
 
     fn append_attachments_to_last_user_message(
         history: &mut [Value],
-        attachment_parts: &[ditto_llm::ContentPart],
+        attachment_parts: &[ditto_core::contracts::ContentPart],
     ) -> bool {
         if attachment_parts.is_empty() {
             return false;
@@ -131,42 +130,45 @@ async fn run_openai_responses_codex_parity_loop(
         }
         let call_id = item.get("call_id").and_then(Value::as_str)?;
         let name = item.get("name").and_then(Value::as_str)?;
-        let arguments = item.get("arguments").and_then(Value::as_str).unwrap_or("{}");
+        let arguments = item
+            .get("arguments")
+            .and_then(Value::as_str)
+            .unwrap_or("{}");
         Some((name.to_string(), arguments.to_string(), call_id.to_string()))
     }
 
-    async fn resolve_openai_client_for_provider(
-        provider_name: &str,
+    async fn resolve_openai_client_for_target(
+        target: &ProviderRouteTarget,
         provider_cache: &mut std::collections::BTreeMap<String, ProviderRuntime>,
-        project_overrides: &ProjectOpenAiOverrides,
-        base_url_override: Option<&str>,
-        env: &ditto_llm::Env,
-    ) -> anyhow::Result<(ProviderRuntime, Arc<ditto_llm::OpenAI>)> {
-        let runtime = match provider_cache.get(provider_name).cloned() {
+        env: &ditto_core::config::Env,
+    ) -> anyhow::Result<(ProviderRuntime, Arc<ditto_core::providers::OpenAI>)> {
+        let runtime = match provider_cache.get(&target.id).cloned() {
             Some(runtime) => runtime,
             None => {
-                let runtime =
-                    build_provider_runtime(provider_name, project_overrides, base_url_override, env)
-                        .await?;
-                provider_cache.insert(provider_name.to_string(), runtime.clone());
+                let runtime = build_provider_runtime(target, env).await?;
+                provider_cache.insert(target.id.clone(), runtime.clone());
                 runtime
             }
         };
 
         let client = runtime.openai_responses_client.clone().ok_or_else(|| {
-            anyhow::anyhow!("provider does not have an OpenAI Responses client: {provider_name}")
+            anyhow::anyhow!(
+                "provider does not have an OpenAI Responses client: provider={} route_target={}",
+                target.provider,
+                target.id
+            )
         })?;
         Ok((runtime, client))
     }
 
     async fn run_openai_stream_once(
-        client: Arc<ditto_llm::OpenAI>,
+        client: Arc<ditto_core::providers::OpenAI>,
         thread_rt: Arc<super::ThreadRuntime>,
         thread_id: ThreadId,
         turn_id: TurnId,
         emit_deltas: bool,
         show_thinking: bool,
-        request: ditto_llm::providers::openai::OpenAIResponsesRawRequest<'_>,
+        request: ditto_core::providers::openai::OpenAIResponsesRawRequest<'_>,
         max_openai_request_duration: Duration,
     ) -> Result<OpenAiRawLlmResponse, LlmAttemptFailure> {
         let mut emitted_output = false;
@@ -181,7 +183,7 @@ async fn run_openai_responses_codex_parity_loop(
             while let Some(event) = stream.recv().await {
                 let event = event?;
                 match event {
-                    ditto_llm::providers::openai::OpenAIResponsesRawEvent::Created {
+                    ditto_core::providers::openai::OpenAIResponsesRawEvent::Created {
                         response_id: id,
                     } => {
                         if response_id.is_empty()
@@ -190,7 +192,7 @@ async fn run_openai_responses_codex_parity_loop(
                             response_id = id.to_string();
                         }
                     }
-                    ditto_llm::providers::openai::OpenAIResponsesRawEvent::OutputTextDelta(delta) => {
+                    ditto_core::providers::openai::OpenAIResponsesRawEvent::OutputTextDelta(delta) => {
                         if delta.is_empty() {
                             continue;
                         }
@@ -210,7 +212,7 @@ async fn run_openai_responses_codex_parity_loop(
                             );
                         }
                     }
-                    ditto_llm::providers::openai::OpenAIResponsesRawEvent::ReasoningTextDelta(delta) => {
+                    ditto_core::providers::openai::OpenAIResponsesRawEvent::ReasoningTextDelta(delta) => {
                         if delta.is_empty() {
                             continue;
                         }
@@ -231,7 +233,7 @@ async fn run_openai_responses_codex_parity_loop(
                             );
                         }
                     }
-                    ditto_llm::providers::openai::OpenAIResponsesRawEvent::ReasoningSummaryTextDelta(delta) => {
+                    ditto_core::providers::openai::OpenAIResponsesRawEvent::ReasoningSummaryTextDelta(delta) => {
                         if delta.is_empty() {
                             continue;
                         }
@@ -252,20 +254,20 @@ async fn run_openai_responses_codex_parity_loop(
                             );
                         }
                     }
-                    ditto_llm::providers::openai::OpenAIResponsesRawEvent::OutputItemDone(item) => {
+                    ditto_core::providers::openai::OpenAIResponsesRawEvent::OutputItemDone(item) => {
                         emitted_output = true;
                         output_items.push(item);
                     }
-                    ditto_llm::providers::openai::OpenAIResponsesRawEvent::Failed { error, .. } => {
+                    ditto_core::providers::openai::OpenAIResponsesRawEvent::Failed { error, .. } => {
                         let message = error
                             .get("message")
                             .and_then(Value::as_str)
                             .unwrap_or("unknown error message");
-                        return Err(ditto_llm::DittoError::InvalidResponse(format!(
+                        return Err(ditto_core::error::DittoError::invalid_response_text(format!(
                             "openai response.failed: {message}"
                         )));
                     }
-                    ditto_llm::providers::openai::OpenAIResponsesRawEvent::Completed {
+                    ditto_core::providers::openai::OpenAIResponsesRawEvent::Completed {
                         response_id: id,
                         usage: u,
                     } => {
@@ -284,7 +286,7 @@ async fn run_openai_responses_codex_parity_loop(
                 response_id = "<unknown>".to_string();
             }
 
-            Ok::<_, ditto_llm::DittoError>(OpenAiRawLlmResponse {
+            Ok::<_, ditto_core::error::DittoError>(OpenAiRawLlmResponse {
                 id: response_id,
                 output_text,
                 output_items,
@@ -307,14 +309,18 @@ async fn run_openai_responses_codex_parity_loop(
 
     let mut openai_history = read_openai_responses_history(&server.thread_store, thread_id).await?;
     let seeded_from_events = openai_history.is_empty() && !seed_input_items.is_empty();
-    let (bootstrap_runtime, bootstrap_client) = resolve_openai_client_for_provider(
-        &provider,
-        &mut provider_cache,
-        &project_overrides,
-        base_url_override.as_deref(),
-        &env,
-    )
-    .await?;
+    let tool_phase_initial = tool_model.is_some();
+    let bootstrap_candidates = if tool_phase_initial && !thinking_provider_candidates.is_empty() {
+        &thinking_provider_candidates
+    } else {
+        &completion_provider_candidates
+    };
+    let bootstrap_target = bootstrap_candidates
+        .first()
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("provider routing resolved no bootstrap target"))?;
+    let (bootstrap_runtime, bootstrap_client) =
+        resolve_openai_client_for_target(&bootstrap_target, &mut provider_cache, &env).await?;
 
     let attachment_parts = if resolved_attachments.is_empty() {
         Vec::new()
@@ -322,7 +328,7 @@ async fn run_openai_responses_codex_parity_loop(
         attachments_to_ditto_parts_for_provider(
             thread_id,
             turn_id,
-            &provider,
+            &bootstrap_target.provider,
             &bootstrap_runtime,
             &resolved_attachments,
             pdf_file_id_upload_min_bytes,
@@ -402,22 +408,33 @@ async fn run_openai_responses_codex_parity_loop(
     let started_at = tokio::time::Instant::now();
     let mut active_provider_idx = 0usize;
 
-    let mut tool_phase_active = tool_model.is_some();
+    let phase_model_fallbacks = |tool_phase: bool| {
+        let mut values = if tool_phase {
+            thinking_model_fallbacks.clone()
+        } else {
+            completion_model_fallbacks.clone()
+        };
+        let primary = if tool_phase && !thinking_provider_candidates.is_empty() {
+            thinking_provider_candidates.first()
+        } else {
+            completion_provider_candidates.first()
+        };
+        if let Some(target) = primary {
+            values.extend(target.model_fallbacks.clone());
+        }
+        ditto_core::config::normalize_string_list(values)
+    };
+
+    let mut tool_phase_active = tool_phase_initial;
     let mut model = tool_model.clone().unwrap_or_else(|| final_model.clone());
-    let mut model_candidates = build_model_candidates(&model, model_fallbacks.clone());
-    if !provider_config.model_whitelist.is_empty() {
-        model_candidates.retain(|candidate| {
-            model_allowed_by_whitelist(candidate, &provider_config.model_whitelist)
-        });
-    }
+    let mut model_candidates =
+        build_model_candidates(&model, phase_model_fallbacks(tool_phase_active));
     let mut model_idx = 0usize;
 
     if !attempted_auto_compact
         && should_auto_compact(
-            total_tokens_used,
+            estimate_context_tokens(&instructions, &openai_history),
             cfg.auto_compact_token_limit,
-            cfg.max_total_tokens,
-            cfg.auto_summary_threshold_pct.min(MAX_AUTO_SUMMARY_THRESHOLD_PCT),
         )
     {
         attempted_auto_compact = true;
@@ -461,12 +478,22 @@ async fn run_openai_responses_codex_parity_loop(
         let emit_deltas = tool_model.is_none() || !tool_phase_active;
         let keep_assistant_messages = emit_deltas;
 
-        let mut provider_index = active_provider_idx.min(provider_candidates.len().saturating_sub(1));
+        let phase_provider_candidates =
+            if tool_phase_active && !thinking_provider_candidates.is_empty() {
+                &thinking_provider_candidates
+            } else {
+                &completion_provider_candidates
+            };
+        if phase_provider_candidates.is_empty() {
+            anyhow::bail!("no usable provider candidates available for current phase");
+        }
+        let mut provider_index =
+            active_provider_idx.min(phase_provider_candidates.len().saturating_sub(1));
         let mut attempts = 0usize;
         let mut failure_count = 0usize;
         let mut last_failure: Option<LlmAttemptFailure> = None;
 
-        let (resp, active_provider_name) = loop {
+        let (resp, active_target) = loop {
             if cancel.is_cancelled() {
                 return Err(AgentTurnError::Cancelled.into());
             }
@@ -477,7 +504,7 @@ async fn run_openai_responses_codex_parity_loop(
                 .into());
             }
 
-            if provider_index >= provider_candidates.len() {
+            if provider_index >= phase_provider_candidates.len() {
                 if let Some(failure) = last_failure.as_ref()
                     && llm_error_prefers_model_fallback(&failure.error)
                     && model_idx + 1 < model_candidates.len()
@@ -510,7 +537,7 @@ async fn run_openai_responses_codex_parity_loop(
                         ..
                     }) => return Err(AgentTurnError::OpenAiRequestTimedOut.into()),
                     Some(LlmAttemptFailure { error, .. }) => {
-                        return Err(anyhow::Error::new(error).context("llm stream failed"))
+                        return Err(anyhow::Error::new(error).context("llm stream failed"));
                     }
                     None => {
                         anyhow::bail!("no usable openai provider available for model={model}")
@@ -518,25 +545,18 @@ async fn run_openai_responses_codex_parity_loop(
                 }
             }
 
-            let provider_name = provider_candidates
-                .get(provider_index)
-                .cloned()
-                .unwrap_or_else(|| provider.clone());
-            let (runtime, client) = match resolve_openai_client_for_provider(
-                &provider_name,
-                &mut provider_cache,
-                &project_overrides,
-                base_url_override.as_deref(),
-                &env,
-            )
-            .await
-            {
-                Ok((runtime, client)) => (runtime, client),
-                Err(_) => {
-                    provider_index = provider_index.saturating_add(1);
-                    continue;
-                }
+            let Some(target) = phase_provider_candidates.get(provider_index).cloned() else {
+                provider_index = provider_index.saturating_add(1);
+                continue;
             };
+            let (runtime, client) =
+                match resolve_openai_client_for_target(&target, &mut provider_cache, &env).await {
+                    Ok((runtime, client)) => (runtime, client),
+                    Err(_) => {
+                        provider_index = provider_index.saturating_add(1);
+                        continue;
+                    }
+                };
 
             if !runtime.capabilities.reasoning {
                 provider_index = provider_index.saturating_add(1);
@@ -547,20 +567,20 @@ async fn run_openai_responses_codex_parity_loop(
                 continue;
             }
 
-            let reasoning_effort = match ditto_llm::select_model_config(&project_overrides.models, &model)
+            let reasoning_effort = match ditto_core::config::select_model_config(&model_configs, &model)
                 .map(|cfg| cfg.thinking)
                 .unwrap_or_default()
             {
                 ThinkingIntensity::Unsupported => None,
-                ThinkingIntensity::Small => Some(ditto_llm::ReasoningEffort::Low),
-                ThinkingIntensity::Medium => Some(ditto_llm::ReasoningEffort::Medium),
-                ThinkingIntensity::High => Some(ditto_llm::ReasoningEffort::High),
-                ThinkingIntensity::XHigh => Some(ditto_llm::ReasoningEffort::XHigh),
+                ThinkingIntensity::Small => Some(ditto_core::provider_options::ReasoningEffort::Low),
+                ThinkingIntensity::Medium => Some(ditto_core::provider_options::ReasoningEffort::Medium),
+                ThinkingIntensity::High => Some(ditto_core::provider_options::ReasoningEffort::High),
+                ThinkingIntensity::XHigh => Some(ditto_core::provider_options::ReasoningEffort::XHigh),
             };
             let tool_choice = if tools_enabled {
-                ditto_llm::ToolChoice::Auto
+                ditto_core::contracts::ToolChoice::Auto
             } else {
-                ditto_llm::ToolChoice::None
+                ditto_core::contracts::ToolChoice::None
             };
             let tools_opt = if tools_enabled {
                 Some(tools.as_slice())
@@ -568,7 +588,7 @@ async fn run_openai_responses_codex_parity_loop(
                 None
             };
 
-            let request = ditto_llm::providers::openai::OpenAIResponsesRawRequest {
+            let request = ditto_core::providers::openai::OpenAIResponsesRawRequest {
                 model: &model,
                 instructions: &instructions,
                 input: &openai_history,
@@ -601,11 +621,11 @@ async fn run_openai_responses_codex_parity_loop(
             {
                 Ok(resp) => {
                     active_provider_idx = provider_index;
-                    break (resp, provider_name.clone());
+                    break (resp, target.clone());
                 }
                 Err(failure) => {
                     let should_fallback = llm_error_prefers_provider_fallback(&failure.error)
-                        && provider_index + 1 < provider_candidates.len();
+                        && provider_index + 1 < phase_provider_candidates.len();
                     let is_retryable = llm_error_is_retryable(&failure.error);
                     last_failure = Some(failure);
 
@@ -646,21 +666,23 @@ async fn run_openai_responses_codex_parity_loop(
 
                         match &failure.error {
                             LlmAttemptError::TimedOut => {
-                                return Err(AgentTurnError::OpenAiRequestTimedOut.into())
+                                return Err(AgentTurnError::OpenAiRequestTimedOut.into());
                             }
                             _ => {
                                 let summary = llm_error_summary(&failure.error);
-                                anyhow::bail!("llm stream failed after {attempts} attempts: {summary}");
+                                anyhow::bail!(
+                                    "llm stream failed after {attempts} attempts: {summary}"
+                                );
                             }
                         }
                     }
 
                     if should_fallback {
-                        let prev = provider_name.clone();
+                        let prev = target.provider.clone();
                         provider_index += 1;
-                        let next = provider_candidates
+                        let next = phase_provider_candidates
                             .get(provider_index)
-                            .cloned()
+                            .map(|candidate| candidate.provider.clone())
                             .unwrap_or_else(|| "<unknown>".to_string());
                         let cause = llm_error_summary(&failure.error);
                         let reason =
@@ -711,13 +733,11 @@ async fn run_openai_responses_codex_parity_loop(
             if let Some(tokens) = resp.usage.as_ref().and_then(usage_total_tokens) {
                 total_tokens_used = total_tokens_used.saturating_add(tokens);
                 if total_tokens_used > cfg.max_total_tokens {
-                    return Err(
-                        AgentTurnError::TokenBudgetExceeded {
-                            used: total_tokens_used,
-                            limit: cfg.max_total_tokens,
-                        }
-                        .into(),
-                    );
+                    return Err(AgentTurnError::TokenBudgetExceeded {
+                        used: total_tokens_used,
+                        limit: cfg.max_total_tokens,
+                    }
+                    .into());
                 }
             }
         }
@@ -734,8 +754,12 @@ async fn run_openai_responses_codex_parity_loop(
         }
 
         if !resp.output_items.is_empty() {
-            append_openai_responses_history_items(&server.thread_store, thread_id, &resp.output_items)
-                .await?;
+            append_openai_responses_history_items(
+                &server.thread_store,
+                thread_id,
+                &resp.output_items,
+            )
+            .await?;
             openai_history.extend(resp.output_items.clone());
         }
 
@@ -760,18 +784,18 @@ async fn run_openai_responses_codex_parity_loop(
 
             if tool_model.is_some() && tool_phase_active {
                 tool_phase_active = false;
+                active_provider_idx = 0;
 
                 let prev = model.clone();
                 model = final_model.clone();
-                model_candidates = build_model_candidates(&model, model_fallbacks.clone());
-                if !provider_config.model_whitelist.is_empty() {
-                    model_candidates.retain(|candidate| {
-                        model_allowed_by_whitelist(candidate, &provider_config.model_whitelist)
-                    });
-                }
+                model_candidates = build_model_candidates(&model, phase_model_fallbacks(false));
                 model_idx = 0;
 
                 if prev != model {
+                    let provider = completion_provider_candidates
+                        .first()
+                        .map(|target| target.provider.as_str())
+                        .unwrap_or("<unknown>");
                     let reason =
                         format!("tool_model_final: from={prev} to={model}; provider={provider}");
                     let _ = thread_rt
@@ -969,23 +993,25 @@ async fn run_openai_responses_codex_parity_loop(
         }
 
         if !tool_output_items.is_empty() {
-            append_openai_responses_history_items(&server.thread_store, thread_id, &tool_output_items)
-                .await?;
+            append_openai_responses_history_items(
+                &server.thread_store,
+                thread_id,
+                &tool_output_items,
+            )
+            .await?;
             openai_history.extend(tool_output_items.clone());
         }
 
         if !attempted_auto_compact
             && should_auto_compact(
-                total_tokens_used,
+                estimate_context_tokens(&instructions, &openai_history),
                 cfg.auto_compact_token_limit,
-                cfg.max_total_tokens,
-                cfg.auto_summary_threshold_pct.min(MAX_AUTO_SUMMARY_THRESHOLD_PCT),
             )
         {
             attempted_auto_compact = true;
             if !did_auto_compact
                 && let Some(openai_client) = provider_cache
-                    .get(&active_provider_name)
+                    .get(&active_target.id)
                     .and_then(|runtime| runtime.openai_responses_client.as_deref())
             {
                 match compact_openai_responses_history(

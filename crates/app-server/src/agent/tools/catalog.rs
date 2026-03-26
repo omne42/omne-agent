@@ -131,6 +131,8 @@ impl ToolRoleProfile {
                     | "repo_search"
                     | "repo_index"
                     | "repo_symbols"
+                    | "repo_goto_definition"
+                    | "repo_find_references"
                     | "mcp_list_servers"
                     | "mcp_list_tools"
                     | "mcp_list_resources"
@@ -154,6 +156,8 @@ impl ToolRoleProfile {
                     | "repo_search"
                     | "repo_index"
                     | "repo_symbols"
+                    | "repo_goto_definition"
+                    | "repo_find_references"
                     | "mcp_list_servers"
                     | "mcp_list_tools"
                     | "mcp_list_resources"
@@ -219,7 +223,9 @@ impl ToolExposurePolicy {
                 self.expose_thread_introspection
             }
             "thread_hook_run" => self.expose_thread_hook,
-            "repo_symbols" => self.expose_repo_symbols,
+            "repo_symbols" | "repo_goto_definition" | "repo_find_references" => {
+                self.expose_repo_symbols
+            }
             "web_search" | "webfetch" | "view_image" => self.expose_web,
             _ => true,
         }
@@ -373,6 +379,43 @@ fn build_tools() -> Vec<Value> {
             }),
         ),
         tool_function(
+            "repo_goto_definition",
+            "Resolve likely definition locations for a symbol and write a user-facing artifact (repo_goto_definition).",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "root": { "type": "string", "enum": ["workspace", "reference"] },
+                    "symbol": { "type": "string" },
+                    "path": { "type": "string" },
+                    "include_glob": { "type": "string" },
+                    "max_results": { "type": "integer", "minimum": 1 },
+                    "max_files": { "type": "integer", "minimum": 1 },
+                    "max_bytes_per_file": { "type": "integer", "minimum": 1 },
+                    "max_symbols": { "type": "integer", "minimum": 1 },
+                },
+                "required": ["symbol"],
+                "additionalProperties": false,
+            }),
+        ),
+        tool_function(
+            "repo_find_references",
+            "Find text references for a symbol and write a user-facing artifact (repo_find_references).",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "root": { "type": "string", "enum": ["workspace", "reference"] },
+                    "symbol": { "type": "string" },
+                    "path": { "type": "string" },
+                    "include_glob": { "type": "string" },
+                    "max_matches": { "type": "integer", "minimum": 1 },
+                    "max_bytes_per_file": { "type": "integer", "minimum": 1 },
+                    "max_files": { "type": "integer", "minimum": 1 },
+                },
+                "required": ["symbol"],
+                "additionalProperties": false,
+            }),
+        ),
+        tool_function(
             "mcp_list_servers",
             "List configured MCP servers (from .omne_data/spec/mcp.json).",
             serde_json::json!({
@@ -414,9 +457,13 @@ fn build_tools() -> Vec<Value> {
                 "properties": {
                     "server": { "type": "string" },
                     "tool": { "type": "string" },
-                    "arguments": { "type": "object", "additionalProperties": true },
+                    "arguments": {
+                        "type": "object",
+                        "description": "Required. The exact payload for the underlying MCP tool. Must be a JSON object containing required fields for that MCP tool. Even when empty, provide {}. Do not flatten nested MCP arguments to root.",
+                        "additionalProperties": true
+                    },
                 },
-                "required": ["server", "tool"],
+                "required": ["server", "tool", "arguments"],
                 "additionalProperties": false,
             }),
         ),
@@ -835,12 +882,11 @@ fn facade_tool_parameters(ops: &[&str]) -> Value {
         "type": "object",
         "properties": {
             "op": { "type": "string", "enum": ops },
-            "args": { "type": "object" },
             "help": { "type": "boolean" },
             "topic": { "type": "string" },
         },
         "required": ["op"],
-        "additionalProperties": false,
+        "additionalProperties": true,
     })
 }
 
@@ -848,7 +894,7 @@ fn build_facade_tools() -> Vec<Value> {
     vec![
         tool_function(
             "workspace",
-            "Workspace facade: files + repo operations. Use op=help for quickstart and advanced topics.",
+            "Workspace facade: files + repo operations. For op!=help, all operation parameters MUST be root-level fields (alongside op). Do not use args wrapper. Use op=help for quickstart and advanced topics.",
             facade_tool_parameters(&[
                 "help",
                 "read",
@@ -857,6 +903,8 @@ fn build_facade_tools() -> Vec<Value> {
                 "repo_search",
                 "repo_index",
                 "repo_symbols",
+                "repo_goto_definition",
+                "repo_find_references",
                 "write",
                 "patch",
                 "edit",
@@ -866,12 +914,12 @@ fn build_facade_tools() -> Vec<Value> {
         ),
         tool_function(
             "process",
-            "Process facade: start/inspect/tail/follow/kill. Use op=help for quickstart and advanced topics.",
+            "Process facade: start/inspect/tail/follow/kill. For op!=help, all operation parameters MUST be root-level fields (alongside op). Do not use args wrapper. Use op=help for quickstart and advanced topics.",
             facade_tool_parameters(&["help", "start", "inspect", "tail", "follow", "kill"]),
         ),
         tool_function(
             "thread",
-            "Thread facade: diff/state/usage/events/hooks plus subagent lifecycle (spawn/send_input/wait/close). Use op=help for details.",
+            "Thread facade: diff/state/usage/events/hooks plus subagent lifecycle (spawn/send_input/wait/close). For op!=help, all operation parameters MUST be root-level fields (alongside op). Do not use args wrapper. Use op=help for details.",
             facade_tool_parameters(&[
                 "help",
                 "diff",
@@ -889,12 +937,12 @@ fn build_facade_tools() -> Vec<Value> {
         ),
         tool_function(
             "artifact",
-            "Artifact facade: write/update_plan/list/read/delete. Use op=help for quickstart and advanced topics.",
+            "Artifact facade: write/update_plan/list/read/delete. For op!=help, all operation parameters MUST be root-level fields (alongside op). Do not use args wrapper. Use op=help for quickstart and advanced topics.",
             facade_tool_parameters(&["help", "write", "update_plan", "list", "read", "delete"]),
         ),
         tool_function(
             "integration",
-            "Integration facade: MCP + web tools. Optional by default; use op=help for capabilities.",
+            "Integration facade: MCP + web tools. For op!=help, all operation parameters MUST be root-level fields (alongside op). Do not use args wrapper. Optional by default; use op=help for capabilities.",
             facade_tool_parameters(&[
                 "help",
                 "mcp_list_servers",
@@ -969,9 +1017,6 @@ fn build_tools_for_turn(
 #[cfg(test)]
 mod tool_catalog_tests {
     use super::*;
-    use std::sync::Mutex;
-
-    static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
     struct ScopedEnvVar {
         key: &'static str,
@@ -981,24 +1026,20 @@ mod tool_catalog_tests {
     impl ScopedEnvVar {
         fn set(key: &'static str, value: &str) -> Self {
             let previous = std::env::var(key).ok();
-            unsafe { std::env::set_var(key, value) };
+            crate::set_locked_process_env(key, value);
             Self { key, previous }
         }
 
         fn unset(key: &'static str) -> Self {
             let previous = std::env::var(key).ok();
-            unsafe { std::env::remove_var(key) };
+            crate::remove_locked_process_env(key);
             Self { key, previous }
         }
     }
 
     impl Drop for ScopedEnvVar {
         fn drop(&mut self) {
-            if let Some(previous) = self.previous.as_deref() {
-                unsafe { std::env::set_var(self.key, previous) };
-            } else {
-                unsafe { std::env::remove_var(self.key) };
-            }
+            crate::restore_locked_process_env(self.key, self.previous.as_deref());
         }
     }
 
@@ -1134,6 +1175,8 @@ mod tool_catalog_tests {
     fn default_policy_hides_optional_groups() {
         let names = tool_names(&select_tools_for_turn(build_tools(), None, default_policy()));
         assert!(!names.iter().any(|name| name == "repo_symbols"));
+        assert!(!names.iter().any(|name| name == "repo_goto_definition"));
+        assert!(!names.iter().any(|name| name == "repo_find_references"));
         assert!(!names.iter().any(|name| name == "agent_spawn"));
         assert!(!names.iter().any(|name| name == "thread_state"));
         assert!(!names.iter().any(|name| name == "thread_usage"));
@@ -1149,6 +1192,8 @@ mod tool_catalog_tests {
     fn permissive_policy_shows_optional_groups() {
         let names = tool_names(&select_tools_for_turn(build_tools(), None, permissive_policy()));
         assert!(names.iter().any(|name| name == "repo_symbols"));
+        assert!(names.iter().any(|name| name == "repo_goto_definition"));
+        assert!(names.iter().any(|name| name == "repo_find_references"));
         assert!(names.iter().any(|name| name == "agent_spawn"));
         assert!(names.iter().any(|name| name == "thread_state"));
         assert!(names.iter().any(|name| name == "thread_usage"));
@@ -1353,7 +1398,7 @@ mod tool_catalog_tests {
 
     #[test]
     fn dynamic_registry_adds_tools_when_enabled() {
-        let _lock = ENV_MUTEX.lock().expect("lock env");
+        let _lock = crate::app_server_process_env_lock().blocking_lock();
         let _enabled = ScopedEnvVar::set("OMNE_TOOL_DYNAMIC_REGISTRY_ENABLED", "1");
         let _path = ScopedEnvVar::unset("OMNE_TOOL_DYNAMIC_REGISTRY_PATH");
 
@@ -1406,7 +1451,7 @@ mod tool_catalog_tests {
 
     #[test]
     fn dynamic_registry_respects_allowed_tool_filter() {
-        let _lock = ENV_MUTEX.lock().expect("lock env");
+        let _lock = crate::app_server_process_env_lock().blocking_lock();
         let _enabled = ScopedEnvVar::set("OMNE_TOOL_DYNAMIC_REGISTRY_ENABLED", "1");
         let _path = ScopedEnvVar::unset("OMNE_TOOL_DYNAMIC_REGISTRY_PATH");
 

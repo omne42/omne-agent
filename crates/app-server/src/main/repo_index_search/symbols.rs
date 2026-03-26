@@ -186,6 +186,7 @@ async fn handle_repo_symbols(server: &Server, params: RepoSymbolsParams) -> anyh
                 .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
                     status: omne_protocol::ToolStatus::Completed,
+                    structured_error: None,
                     error: None,
                     result: Some(completed),
                 })
@@ -197,6 +198,7 @@ async fn handle_repo_symbols(server: &Server, params: RepoSymbolsParams) -> anyh
                 .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
                     status: omne_protocol::ToolStatus::Failed,
+                    structured_error: None,
                     error: Some(err.to_string()),
                     result: None,
                 })

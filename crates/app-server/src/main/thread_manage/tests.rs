@@ -147,6 +147,14 @@ mod thread_manage_tests {
             state.token_budget_warning_active, usage.token_budget_warning_active,
             "thread/state and thread/usage should share token_budget_warning_active"
         );
+        assert_eq!(
+            state.current_context_tokens_estimate, usage.current_context_tokens_estimate,
+            "thread/state and thread/usage should share current_context_tokens_estimate"
+        );
+        assert!(
+            state.current_context_tokens_estimate.is_some(),
+            "thread/state should expose current_context_tokens_estimate"
+        );
         if let Some(limit) = usage.token_budget_limit {
             assert_eq!(
                 usage.token_budget_remaining,
@@ -422,7 +430,7 @@ hooks:
         handle_thread_configure(
             &server,
             ThreadConfigureParams {
-                sandbox_policy: Some(omne_protocol::SandboxPolicy::ReadOnly),
+                sandbox_policy: Some(policy_meta::WriteScope::ReadOnly),
                 ..thread_configure_defaults(thread_id)
             },
         )
@@ -1128,6 +1136,70 @@ modes:
 
         assert!(requested.contains(&turnless_approval_id));
         assert!(decided.contains(&turnless_approval_id));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn thread_fork_preserves_system_prompt_snapshot() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let expected_hash = "snapshot-hash".to_string();
+        let expected_text = "# frozen system prompt".to_string();
+        let rt = server.get_or_load_thread(thread_id).await?;
+        rt.append_event(omne_protocol::ThreadEventKind::ThreadSystemPromptSnapshot {
+            prompt_sha256: expected_hash.clone(),
+            prompt_text: expected_text.clone(),
+            source: Some("test".to_string()),
+        })
+        .await?;
+
+        let forked = handle_thread_fork(
+            &server,
+            ThreadForkParams {
+                thread_id,
+                cwd: None,
+            },
+        )
+        .await?;
+        let forked_thread_id = forked.thread_id;
+
+        let forked_rt = server.get_or_load_thread(forked_thread_id).await?;
+        let (fork_hash, fork_text) = {
+            let handle = forked_rt.handle.lock().await;
+            let state = handle.state();
+            (
+                state.system_prompt_sha256.clone(),
+                state.system_prompt_text.clone(),
+            )
+        };
+        assert_eq!(fork_hash.as_deref(), Some(expected_hash.as_str()));
+        assert_eq!(fork_text.as_deref(), Some(expected_text.as_str()));
+
+        let forked_events = server
+            .thread_store
+            .read_events_since(forked_thread_id, EventSeq::ZERO)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("forked thread not found: {forked_thread_id}"))?;
+        let snapshots = forked_events
+            .iter()
+            .filter_map(|event| match &event.kind {
+                omne_protocol::ThreadEventKind::ThreadSystemPromptSnapshot {
+                    prompt_sha256,
+                    prompt_text,
+                    ..
+                } => Some((prompt_sha256.clone(), prompt_text.clone())),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(snapshots, vec![(expected_hash, expected_text)]);
+
         Ok(())
     }
 
@@ -2773,7 +2845,7 @@ modes:
         handle_thread_configure(
             &server,
             ThreadConfigureParams {
-                sandbox_policy: Some(omne_protocol::SandboxPolicy::ReadOnly),
+                sandbox_policy: Some(policy_meta::WriteScope::ReadOnly),
                 ..thread_configure_defaults(thread_id)
             },
         )
@@ -2799,7 +2871,7 @@ modes:
         );
         assert_eq!(
             restore_result.sandbox_policy,
-            Some(omne_protocol::SandboxPolicy::ReadOnly)
+            Some(policy_meta::WriteScope::ReadOnly)
         );
 
         let events = server
@@ -3285,7 +3357,7 @@ modes:
     }
 
     #[tokio::test]
-    async fn thread_configure_custom_mode_name_as_role_remains_compatible() -> anyhow::Result<()> {
+    async fn thread_configure_custom_mode_name_as_role_is_rejected() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(repo_dir.join(".omne_data/spec")).await?;
@@ -3322,9 +3394,14 @@ modes:
         )
         .await;
 
-        if let Some(err) = response.error {
-            anyhow::bail!("expected thread/configure to accept custom role-like mode, got: {err:?}");
-        }
+        let err = response
+            .error
+            .ok_or_else(|| anyhow::anyhow!("expected thread/configure unknown role failure"))?;
+        assert_eq!(err.code, JSONRPC_INTERNAL_ERROR);
+        let data = err
+            .data
+            .ok_or_else(|| anyhow::anyhow!("expected json-rpc error data"))?;
+        assert_eq!(data["error_code"].as_str(), Some("role_unknown"));
         Ok(())
     }
 
@@ -3655,39 +3732,31 @@ modes:
     }
 
     #[tokio::test]
-    async fn thread_config_explain_role_catalog_layer_supports_mode_compat_role()
-    -> anyhow::Result<()> {
+    async fn thread_config_explain_role_unknown_falls_back_to_mode_only() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");
-        tokio::fs::create_dir_all(repo_dir.join(".omne_data/spec")).await?;
-        tokio::fs::write(
-            repo_dir.join(".omne_data/spec/modes.yaml"),
-            r#"
-version: 1
-modes:
-  role-custom:
-    description: "custom role-like mode"
-    permissions:
-      read: { decision: allow }
-      edit: { decision: allow }
-      command: { decision: allow }
-      artifact: { decision: allow }
-"#,
-        )
-        .await?;
+        tokio::fs::create_dir_all(&repo_dir).await?;
 
         let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
 
-        handle_thread_configure(
-            &server,
-            ThreadConfigureParams {
-                role: Some("role-custom".to_string()),
-                ..thread_configure_defaults(thread_id)
-            },
-        )
+        let rt = server.get_or_load_thread(thread_id).await?;
+        rt.append_event(omne_protocol::ThreadEventKind::ThreadConfigUpdated {
+            approval_policy: omne_protocol::ApprovalPolicy::AutoApprove,
+            sandbox_policy: None,
+            sandbox_writable_roots: None,
+            sandbox_network_access: None,
+            mode: Some("chat".to_string()),
+            role: Some("legacy-role".to_string()),
+            model: None,
+            thinking: None,
+            show_thinking: None,
+            openai_base_url: None,
+            allowed_tools: None,
+            execpolicy_rules: None,
+        })
         .await?;
 
         let explain =
@@ -3703,22 +3772,23 @@ modes:
                 .get("effective_role")
                 .and_then(|v| v.as_str())
                 .unwrap_or(""),
-            "role-custom"
+            "legacy-role"
         );
         assert_eq!(
             role_layer
                 .get("permission_mode")
                 .and_then(|v| v.as_str())
                 .unwrap_or(""),
-            "role-custom"
+            "chat"
         );
         assert_eq!(
             role_layer
                 .get("resolution_source")
                 .and_then(|v| v.as_str())
                 .unwrap_or(""),
-            "mode_compat"
+            "none"
         );
+        assert_eq!(explain.effective.permission_mode, "chat");
         Ok(())
     }
 

@@ -66,7 +66,7 @@ async fn run_ask(app: &mut App, args: AskArgs) -> anyhow::Result<()> {
             sandbox_writable_roots: None,
             sandbox_network_access: None,
             mode: args.mode,
-        role: None,
+            role: None,
             model: args.model,
             openai_base_url: args.openai_base_url,
             thinking: None,
@@ -212,11 +212,7 @@ async fn run_ask(app: &mut App, args: AskArgs) -> anyhow::Result<()> {
 
 type TickFuture<'a> = std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + 'a>>;
 
-async fn run_ask_with_tick<F>(
-    app: &mut App,
-    args: AskArgs,
-    mut tick: F,
-) -> anyhow::Result<TurnId>
+async fn run_ask_with_tick<F>(app: &mut App, args: AskArgs, mut tick: F) -> anyhow::Result<TurnId>
 where
     for<'a> F: FnMut(&'a mut App, ThreadId, TurnId) -> TickFuture<'a>,
 {
@@ -243,7 +239,7 @@ where
             sandbox_writable_roots: None,
             sandbox_network_access: None,
             mode: args.mode,
-        role: None,
+            role: None,
             model: args.model,
             openai_base_url: args.openai_base_url,
             thinking: None,
@@ -413,7 +409,7 @@ async fn run_exec(app: &mut App, args: ExecArgs) -> anyhow::Result<i32> {
             sandbox_writable_roots: None,
             sandbox_network_access: None,
             mode: args.mode,
-        role: None,
+            role: None,
             model: args.model,
             openai_base_url: args.openai_base_url,
             thinking: None,
@@ -732,17 +728,19 @@ fn render_event_to<W: std::io::Write>(
         }
         omne_protocol::ThreadEventKind::ToolCompleted {
             status,
+            structured_error,
             error,
             result,
             ..
         } => {
             let mapping = format_facade_mapping_suffix("", result.as_ref()).unwrap_or_default();
+            let error_text =
+                preferred_structured_error_text(structured_error.as_ref(), error.as_deref())
+                    .unwrap_or_default();
             let _ = writeln!(
                 writer,
                 "[{ts}] tool completed status={status:?} error={}{}",
-                error.as_deref().unwrap_or("")
-                ,
-                mapping
+                error_text, mapping
             );
         }
         omne_protocol::ThreadEventKind::ProcessStarted {
@@ -794,9 +792,7 @@ fn render_event_to<W: std::io::Write>(
             let _ = writeln!(
                 writer,
                 "[{ts}] attention marker set marker={marker:?} turn_id={} artifact_id={} artifact_type={} process_id={} exit_code={} command={}",
-                turn_id
-                    .map(|value| value.to_string())
-                    .unwrap_or_default(),
+                turn_id.map(|value| value.to_string()).unwrap_or_default(),
                 artifact_id
                     .map(|value| value.to_string())
                     .unwrap_or_default(),
@@ -804,9 +800,7 @@ fn render_event_to<W: std::io::Write>(
                 process_id
                     .map(|value| value.to_string())
                     .unwrap_or_default(),
-                exit_code
-                    .map(|value| value.to_string())
-                    .unwrap_or_default(),
+                exit_code.map(|value| value.to_string()).unwrap_or_default(),
                 command.as_deref().unwrap_or("")
             );
         }
@@ -818,9 +812,7 @@ fn render_event_to<W: std::io::Write>(
             let _ = writeln!(
                 writer,
                 "[{ts}] attention marker cleared marker={marker:?} turn_id={} reason={}",
-                turn_id
-                    .map(|value| value.to_string())
-                    .unwrap_or_default(),
+                turn_id.map(|value| value.to_string()).unwrap_or_default(),
                 reason.as_deref().unwrap_or("")
             );
         }
@@ -1004,6 +996,7 @@ mod ask_exec_tests {
         let kind = omne_protocol::ThreadEventKind::ToolCompleted {
             tool_id: omne_protocol::ToolId::new(),
             status: omne_protocol::ToolStatus::Denied,
+            structured_error: None,
             error: None,
             result: Some(serde_json::json!({
                 "facade_tool": "thread",

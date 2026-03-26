@@ -42,6 +42,16 @@ fn render_event(event: &ThreadEvent) {
                 reason.as_deref().unwrap_or("")
             );
         }
+        omne_protocol::ThreadEventKind::ThreadSystemPromptSnapshot {
+            prompt_sha256,
+            source,
+            ..
+        } => {
+            println!(
+                "[{ts}] thread system prompt snapshot sha256={prompt_sha256} source={}",
+                source.as_deref().unwrap_or("")
+            );
+        }
         omne_protocol::ThreadEventKind::TurnStarted { turn_id, input, .. } => {
             println!("[{ts}] turn started {turn_id}");
             println!("user: {input}");
@@ -130,15 +140,18 @@ fn render_event(event: &ThreadEvent) {
         }
         omne_protocol::ThreadEventKind::ToolCompleted {
             status,
+            structured_error,
             error,
             result,
             ..
         } => {
             let mapping = format_facade_mapping_suffix("", result.as_ref()).unwrap_or_default();
+            let error_text =
+                preferred_structured_error_text(structured_error.as_ref(), error.as_deref())
+                    .unwrap_or_default();
             println!(
                 "[{ts}] tool completed status={status:?} error={}{}",
-                error.as_deref().unwrap_or(""),
-                mapping
+                error_text, mapping
             );
         }
         omne_protocol::ThreadEventKind::AgentStep {
@@ -213,9 +226,7 @@ fn render_event(event: &ThreadEvent) {
         } => {
             println!(
                 "[{ts}] attention marker set marker={marker:?} turn_id={} artifact_id={} artifact_type={} process_id={} exit_code={} command={}",
-                turn_id
-                    .map(|value| value.to_string())
-                    .unwrap_or_default(),
+                turn_id.map(|value| value.to_string()).unwrap_or_default(),
                 artifact_id
                     .map(|value| value.to_string())
                     .unwrap_or_default(),
@@ -223,9 +234,7 @@ fn render_event(event: &ThreadEvent) {
                 process_id
                     .map(|value| value.to_string())
                     .unwrap_or_default(),
-                exit_code
-                    .map(|value| value.to_string())
-                    .unwrap_or_default(),
+                exit_code.map(|value| value.to_string()).unwrap_or_default(),
                 command.as_deref().unwrap_or(""),
             );
         }
@@ -236,9 +245,7 @@ fn render_event(event: &ThreadEvent) {
         } => {
             println!(
                 "[{ts}] attention marker cleared marker={marker:?} turn_id={} reason={}",
-                turn_id
-                    .map(|value| value.to_string())
-                    .unwrap_or_default(),
+                turn_id.map(|value| value.to_string()).unwrap_or_default(),
                 reason.as_deref().unwrap_or("")
             );
         }

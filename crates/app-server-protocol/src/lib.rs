@@ -3,9 +3,10 @@
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use structured_text_protocol::StructuredTextData;
 use ts_rs::TS;
 
-pub mod export;
+mod export;
 
 pub use export::{generate_json_schema, generate_ts};
 
@@ -19,6 +20,9 @@ macro_rules! define_tool_denied_response {
             #[serde(default)]
             #[ts(optional)]
             pub remembered: Option<bool>,
+            #[serde(default)]
+            #[ts(optional)]
+            pub structured_error: Option<StructuredTextData>,
             #[serde(default)]
             #[ts(optional)]
             pub error_code: Option<String>,
@@ -47,6 +51,9 @@ macro_rules! define_tool_denied_response_skip_none {
             #[serde(default, skip_serializing_if = "Option::is_none")]
             #[ts(optional)]
             pub remembered: Option<bool>,
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            #[ts(optional)]
+            pub structured_error: Option<StructuredTextData>,
             #[serde(default, skip_serializing_if = "Option::is_none")]
             #[ts(optional)]
             pub error_code: Option<String>,

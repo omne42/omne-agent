@@ -1,9 +1,6 @@
 #[cfg(test)]
 mod reference_repo_file_tools_tests {
     use super::*;
-    use std::sync::Mutex;
-
-    static DYNAMIC_TOOL_ENV_MUTEX: Mutex<()> = Mutex::new(());
 
     struct ScopedEnvVar {
         key: &'static str,
@@ -13,24 +10,20 @@ mod reference_repo_file_tools_tests {
     impl ScopedEnvVar {
         fn set(key: &'static str, value: &str) -> Self {
             let previous = std::env::var(key).ok();
-            unsafe { std::env::set_var(key, value) };
+            crate::set_locked_process_env(key, value);
             Self { key, previous }
         }
 
         fn unset(key: &'static str) -> Self {
             let previous = std::env::var(key).ok();
-            unsafe { std::env::remove_var(key) };
+            crate::remove_locked_process_env(key);
             Self { key, previous }
         }
     }
 
     impl Drop for ScopedEnvVar {
         fn drop(&mut self) {
-            if let Some(previous) = self.previous.as_deref() {
-                unsafe { std::env::set_var(self.key, previous) };
-            } else {
-                unsafe { std::env::remove_var(self.key) };
-            }
+            crate::restore_locked_process_env(self.key, self.previous.as_deref());
         }
     }
 
@@ -307,9 +300,7 @@ mod reference_repo_file_tools_tests {
             "workspace",
             serde_json::json!({
                 "op": "read",
-                "args": {
-                    "path": "hello.txt"
-                }
+                "path": "hello.txt"
             }),
             None,
         )
@@ -343,9 +334,7 @@ mod reference_repo_file_tools_tests {
             "process",
             serde_json::json!({
                 "op": "start",
-                "args": {
-                    "argv": ["echo", "blocked"]
-                }
+                "argv": ["echo", "blocked"]
             }),
             None,
         )
@@ -360,8 +349,8 @@ mod reference_repo_file_tools_tests {
     }
 
     #[tokio::test]
-    async fn facade_process_start_execpolicy_denied_path_preserves_error_code()
-    -> anyhow::Result<()> {
+    async fn facade_process_start_execpolicy_denied_path_preserves_error_code() -> anyhow::Result<()>
+    {
         let tmp = tempfile::tempdir()?;
         let project_dir = tmp.path().join("project");
         tokio::fs::create_dir_all(project_dir.join("rules")).await?;
@@ -391,9 +380,7 @@ prefix_rule(
             "process",
             serde_json::json!({
                 "op": "start",
-                "args": {
-                    "argv": ["./tool"]
-                }
+                "argv": ["./tool"]
             }),
             None,
         )
@@ -408,8 +395,8 @@ prefix_rule(
     }
 
     #[tokio::test]
-    async fn facade_process_start_approval_denied_path_preserves_error_code()
-    -> anyhow::Result<()> {
+    async fn facade_process_start_approval_denied_path_preserves_error_code() -> anyhow::Result<()>
+    {
         let tmp = tempfile::tempdir()?;
         let project_dir = tmp.path().join("project");
         tokio::fs::create_dir_all(&project_dir).await?;
@@ -430,9 +417,7 @@ prefix_rule(
             "process",
             serde_json::json!({
                 "op": "start",
-                "args": {
-                    "argv": ["echo", "approval-check"]
-                }
+                "argv": ["echo", "approval-check"]
             }),
             None,
         )
@@ -467,10 +452,8 @@ prefix_rule(
             "thread",
             serde_json::json!({
                 "op": "send_input",
-                "args": {
-                    "id": thread_id.to_string(),
-                    "message": "hello from lifecycle test"
-                }
+                "id": thread_id.to_string(),
+                "message": "hello from lifecycle test"
             }),
             None,
         )
@@ -508,10 +491,8 @@ prefix_rule(
             "thread",
             serde_json::json!({
                 "op": "send_input",
-                "args": {
-                    "id": thread_id.to_string(),
-                    "message": "hello from lifecycle test"
-                }
+                "id": thread_id.to_string(),
+                "message": "hello from lifecycle test"
             }),
             None,
         )
@@ -551,10 +532,8 @@ prefix_rule(
             "thread",
             serde_json::json!({
                 "op": "send_input",
-                "args": {
-                    "id": thread_id.to_string(),
-                    "message": "hello from lifecycle test"
-                }
+                "id": thread_id.to_string(),
+                "message": "hello from lifecycle test"
             }),
             None,
         )
@@ -578,7 +557,10 @@ prefix_rule(
         tokio::fs::create_dir_all(&project_dir).await?;
 
         let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
-        let parent = server.thread_store.create_thread(project_dir.clone()).await?;
+        let parent = server
+            .thread_store
+            .create_thread(project_dir.clone())
+            .await?;
         let parent_thread_id = parent.thread_id();
         drop(parent);
         let child = server.thread_store.create_thread(project_dir).await?;
@@ -603,10 +585,8 @@ prefix_rule(
                     "thread",
                     serde_json::json!({
                         "op": "send_input",
-                        "args": {
-                            "id": child_thread_id_str.clone(),
-                            "message": "ping child lifecycle"
-                        }
+                        "id": child_thread_id_str.clone(),
+                        "message": "ping child lifecycle"
                     }),
                     None,
                 )
@@ -616,7 +596,10 @@ prefix_rule(
         assert_eq!(send["facade_tool"].as_str(), Some("thread"));
         assert_eq!(send["op"].as_str(), Some("send_input"));
         assert_eq!(send["mapped_action"].as_str(), Some("subagent/send_input"));
-        assert_eq!(send["thread_id"].as_str(), Some(child_thread_id_str.as_str()));
+        assert_eq!(
+            send["thread_id"].as_str(),
+            Some(child_thread_id_str.as_str())
+        );
         assert!(send["turn_id"].as_str().is_some());
 
         let wait = run_tool_call_once(
@@ -626,10 +609,8 @@ prefix_rule(
             "thread",
             serde_json::json!({
                 "op": "wait",
-                "args": {
-                    "ids": [child_thread_id_str.clone()],
-                    "timeout_ms": 10_000
-                }
+                "ids": [child_thread_id_str.clone()],
+                "timeout_ms": 10_000
             }),
             None,
         )
@@ -651,10 +632,8 @@ prefix_rule(
             "thread",
             serde_json::json!({
                 "op": "close",
-                "args": {
-                    "id": child_thread_id_str.clone(),
-                    "reason": "facade close lifecycle test"
-                }
+                "id": child_thread_id_str.clone(),
+                "reason": "facade close lifecycle test"
             }),
             None,
         )
@@ -662,7 +641,10 @@ prefix_rule(
         assert_eq!(close["facade_tool"].as_str(), Some("thread"));
         assert_eq!(close["op"].as_str(), Some("close"));
         assert_eq!(close["mapped_action"].as_str(), Some("subagent/close"));
-        assert_eq!(close["thread_id"].as_str(), Some(child_thread_id_str.as_str()));
+        assert_eq!(
+            close["thread_id"].as_str(),
+            Some(child_thread_id_str.as_str())
+        );
         assert_eq!(close["archived"].as_bool(), Some(true));
         Ok(())
     }
@@ -2182,7 +2164,7 @@ modes:
 
     #[tokio::test]
     async fn dynamic_registry_tool_dispatches_to_mapped_read_only_tool() -> anyhow::Result<()> {
-        let _lock = DYNAMIC_TOOL_ENV_MUTEX.lock().expect("lock env");
+        let _lock = crate::app_server_process_env_lock().lock().await;
         let _enabled = ScopedEnvVar::set("OMNE_TOOL_DYNAMIC_REGISTRY_ENABLED", "1");
         let _path = ScopedEnvVar::unset("OMNE_TOOL_DYNAMIC_REGISTRY_PATH");
 
@@ -2242,7 +2224,7 @@ modes:
 
     #[tokio::test]
     async fn dynamic_registry_tool_rejects_non_object_args() -> anyhow::Result<()> {
-        let _lock = DYNAMIC_TOOL_ENV_MUTEX.lock().expect("lock env");
+        let _lock = crate::app_server_process_env_lock().lock().await;
         let _enabled = ScopedEnvVar::set("OMNE_TOOL_DYNAMIC_REGISTRY_ENABLED", "1");
         let _path = ScopedEnvVar::unset("OMNE_TOOL_DYNAMIC_REGISTRY_PATH");
 
@@ -2280,7 +2262,10 @@ modes:
         )
         .await?;
 
-        assert_eq!(result["error_code"].as_str(), Some("dynamic_invalid_params"));
+        assert_eq!(
+            result["error_code"].as_str(),
+            Some("dynamic_invalid_params")
+        );
         Ok(())
     }
 }

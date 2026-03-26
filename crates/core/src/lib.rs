@@ -6,7 +6,7 @@ pub mod jsonrpc_line;
 pub mod modes;
 pub mod orchestrator;
 pub mod paths;
-pub mod redaction;
+mod redaction;
 pub mod roles;
 pub mod router;
 pub mod sandbox;
@@ -23,7 +23,7 @@ pub use crate::events::{
 pub use crate::hooks::{CommandHookRunner, HookRunner, NoopHookRunner};
 pub use crate::orchestrator::{Architect, Coder, Merger, Orchestrator, RuleBasedArchitect};
 pub use crate::paths::{PmPaths, SessionPaths, TaskPaths};
-pub use crate::redaction::redact_text;
+pub use crate::redaction::{is_sensitive_key, redact_text};
 pub use crate::sandbox::{
     PathAccess, resolve_dir, resolve_dir_for_sandbox, resolve_dir_unrestricted, resolve_file,
     resolve_file_for_sandbox, resolve_file_unrestricted, resolve_file_with_writable_roots,

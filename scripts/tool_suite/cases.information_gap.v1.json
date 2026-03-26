@@ -1,0 +1,102 @@
+[
+  {
+    "id": "read_local_readme_evidence",
+    "user_prompt": "请读取本地仓库 README.md 的开头原文，并判断是否包含字符串 OmneAgent。请基于实际读取结果回答。",
+    "target_tool": "file_read",
+    "success_args": {
+      "path": "README.md"
+    },
+    "capability_hint": "read local file content as evidence"
+  },
+  {
+    "id": "glob_tool_suite_python_files",
+    "user_prompt": "请统计 scripts/tool_suite 目录下的 .py 文件，并给出样例文件名。",
+    "target_tool": "file_glob",
+    "success_args": {
+      "pattern": "scripts/tool_suite/**/*.py"
+    },
+    "capability_hint": "enumerate files from workspace using glob"
+  },
+  {
+    "id": "grep_guard_env_var_usage",
+    "user_prompt": "请在仓库中搜索 OMNE_AGENT_NO_TOOL_CONCLUSION_GUARD 这个环境变量的使用位置。",
+    "target_tool": "file_grep",
+    "success_args": {
+      "query": "OMNE_AGENT_NO_TOOL_CONCLUSION_GUARD"
+    },
+    "capability_hint": "search source code for concrete keyword occurrences"
+  },
+  {
+    "id": "mkdir_bench_v5_run_dir",
+    "user_prompt": "请在 tmp/bench_v5 下创建一个 run_logs 目录，后续我会把测试输出放进去。",
+    "target_tool": "fs_mkdir",
+    "success_args": {
+      "path": "tmp/bench_v5/run_logs"
+    },
+    "capability_hint": "create directory as side-effect in workspace"
+  },
+  {
+    "id": "write_bench_v5_manifest",
+    "user_prompt": "请在 tmp/bench_v5/manifest.txt 里写入一行 run-id:pending，作为本轮运行标记。",
+    "target_tool": "file_write",
+    "success_args": {
+      "path": "tmp/bench_v5/manifest.txt",
+      "content": "run-id:pending"
+    },
+    "capability_hint": "write exact marker text into workspace file"
+  },
+  {
+    "id": "edit_bench_v5_manifest",
+    "user_prompt": "请把 tmp/bench_v5/manifest.txt 里的 run-id:pending 更新为 run-id:done。",
+    "target_tool": "file_edit",
+    "success_args": {
+      "path": "tmp/bench_v5/manifest.txt",
+      "old_text": "run-id:pending",
+      "new_text": "run-id:done"
+    },
+    "capability_hint": "edit workspace file content by exact replacement"
+  },
+  {
+    "id": "process_python_version_check",
+    "user_prompt": "请查询当前运行环境 python3 的版本号（不是你记忆里的版本），把真实结果告诉我。",
+    "target_tool": "process_start",
+    "success_args": {
+      "command": [
+        "python3",
+        "--version"
+      ]
+    },
+    "capability_hint": "run process to fetch runtime environment information"
+  },
+  {
+    "id": "thread_usage_live",
+    "user_prompt": "我需要当前这个会话的 token 使用情况，请直接帮我查当前线程用量。",
+    "target_tool": "thread",
+    "success_args": {
+      "op": "usage"
+    },
+    "capability_hint": "read live thread usage from runtime"
+  },
+  {
+    "id": "mcp_default_tools_probe",
+    "user_prompt": "请确认一下 default 这个 MCP server 当前暴露了哪些工具。",
+    "target_tool": "mcp_list_tools",
+    "success_args": {
+      "server": "default"
+    },
+    "capability_hint": "query runtime MCP tool catalog"
+  },
+  {
+    "id": "mcp_echo_real_call",
+    "user_prompt": "请通过 MCP 的 echo 工具发起一次测试调用，内容 text=hello-v5。",
+    "target_tool": "mcp_call",
+    "success_args": {
+      "server": "default",
+      "tool": "echo",
+      "arguments": {
+        "text": "hello-v5"
+      }
+    },
+    "capability_hint": "invoke MCP tool with nested payload"
+  }
+]

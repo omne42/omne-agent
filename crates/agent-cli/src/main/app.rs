@@ -28,6 +28,16 @@ async fn main() -> anyhow::Result<()> {
             PreConnectCommand::CommandValidate { name, strict, json } => {
                 return run_command_validate(&cli, name, strict, json).await;
             }
+            PreConnectCommand::ProviderAdd(args) => return run_provider_add(&cli, args).await,
+            PreConnectCommand::ProviderList(args) => return run_provider_list(&cli, args).await,
+            PreConnectCommand::ProviderShow(args) => return run_provider_show(&cli, args).await,
+            PreConnectCommand::ProviderDelete(args) => {
+                return run_provider_delete(&cli, args).await;
+            }
+            PreConnectCommand::ModelAdd(args) => return run_model_add(&cli, args).await,
+            PreConnectCommand::ModelList(args) => return run_model_list(&cli, args).await,
+            PreConnectCommand::ModelShow(args) => return run_model_show(&cli, args).await,
+            PreConnectCommand::ModelDelete(args) => return run_model_delete(&cli, args).await,
         }
     }
 
@@ -58,6 +68,8 @@ async fn main() -> anyhow::Result<()> {
                 return Err(err);
             }
         }
+        Some(Command::Provider { .. }) => unreachable!("handled before App::connect"),
+        Some(Command::Model { .. }) => unreachable!("handled before App::connect"),
         Some(Command::Repo { command }) => match command {
             RepoCommand::Search {
                 thread_id,
@@ -720,6 +732,14 @@ enum PreConnectCommand {
         strict: bool,
         json: bool,
     },
+    ProviderAdd(ProviderAddArgs),
+    ProviderList(ProviderListArgs),
+    ProviderShow(ProviderShowArgs),
+    ProviderDelete(ProviderDeleteArgs),
+    ModelAdd(ModelAddArgs),
+    ModelList(ModelListArgs),
+    ModelShow(ModelShowArgs),
+    ModelDelete(ModelDeleteArgs),
 }
 
 fn take_preconnect_command(cli: &mut Cli) -> Option<PreConnectCommand> {
@@ -763,6 +783,18 @@ fn take_preconnect_command(cli: &mut Cli) -> Option<PreConnectCommand> {
                 });
                 None
             }
+        },
+        Command::Provider { command } => match command {
+            ProviderCommand::Add(args) => Some(PreConnectCommand::ProviderAdd(args)),
+            ProviderCommand::List(args) => Some(PreConnectCommand::ProviderList(args)),
+            ProviderCommand::Show(args) => Some(PreConnectCommand::ProviderShow(args)),
+            ProviderCommand::Delete(args) => Some(PreConnectCommand::ProviderDelete(args)),
+        },
+        Command::Model { command } => match command {
+            ModelCommand::Add(args) => Some(PreConnectCommand::ModelAdd(args)),
+            ModelCommand::List(args) => Some(PreConnectCommand::ModelList(args)),
+            ModelCommand::Show(args) => Some(PreConnectCommand::ModelShow(args)),
+            ModelCommand::Delete(args) => Some(PreConnectCommand::ModelDelete(args)),
         },
         other => {
             cli.command = Some(other);
@@ -1166,6 +1198,76 @@ mod app_preconnect_tests {
                 strict: true,
                 json: true
             })
+        ));
+        assert!(cli.command.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn preconnect_command_extracts_provider_add() -> anyhow::Result<()> {
+        let mut cli = Cli::try_parse_from([
+            "omne",
+            "provider",
+            "add",
+            "openrouter",
+            "--namespace",
+            "google",
+        ])?;
+        let preconnect = take_preconnect_command(&mut cli);
+        assert!(matches!(
+            preconnect,
+            Some(PreConnectCommand::ProviderAdd(ProviderAddArgs {
+                namespace: ProviderNamespace::Google,
+                ..
+            }))
+        ));
+        assert!(cli.command.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn preconnect_command_extracts_model_add() -> anyhow::Result<()> {
+        let mut cli = Cli::try_parse_from([
+            "omne",
+            "model",
+            "add",
+            "google/gemini-3.1-pro-preview",
+            "--set-default",
+        ])?;
+        let preconnect = take_preconnect_command(&mut cli);
+        assert!(matches!(
+            preconnect,
+            Some(PreConnectCommand::ModelAdd(ModelAddArgs {
+                set_default: true,
+                ..
+            }))
+        ));
+        assert!(cli.command.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn preconnect_command_extracts_provider_list() -> anyhow::Result<()> {
+        let mut cli = Cli::try_parse_from(["omne", "provider", "list", "--namespace", "google"])?;
+        let preconnect = take_preconnect_command(&mut cli);
+        assert!(matches!(
+            preconnect,
+            Some(PreConnectCommand::ProviderList(ProviderListArgs {
+                namespace: Some(ProviderNamespace::Google),
+                ..
+            }))
+        ));
+        assert!(cli.command.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn preconnect_command_extracts_model_delete() -> anyhow::Result<()> {
+        let mut cli = Cli::try_parse_from(["omne", "model", "delete", "gemini-3.1-pro"])?;
+        let preconnect = take_preconnect_command(&mut cli);
+        assert!(matches!(
+            preconnect,
+            Some(PreConnectCommand::ModelDelete(ModelDeleteArgs { .. }))
         ));
         assert!(cli.command.is_none());
         Ok(())

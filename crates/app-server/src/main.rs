@@ -5,8 +5,10 @@ mod agent;
 mod model_limits;
 mod project_config;
 
+include!("main/notify_integration.rs");
 include!("main/preamble.rs");
 include!("main/app.rs");
+include!("main/structured_error.rs");
 include!("main/thread_observe.rs");
 include!("main/thread_manage.rs");
 include!("main/approval.rs");

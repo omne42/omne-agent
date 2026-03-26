@@ -130,3 +130,15 @@
   - facade：`tool_count=4`，`tool_schema_bytes=1815`
   - schema bytes 降幅约 `76.33%`
 - 全量回归（`cargo test -p omne-app-server -- --nocapture`）通过：`448 passed; 0 failed`。
+
+## 实现归属补充（2026-03-04）
+
+- 文件工具执行链路已收敛：`file/read|glob|grep|write|patch|edit|delete|fs/mkdir`
+  均走 `app-server -> omne-fs-runtime -> safe-fs-tools`。
+- `omne-app-server` 已移除 `diffy` 直依赖；`file/patch` 由
+  `safe-fs-tools::apply_unified_patch` 执行（`diffy` 仅在更底层依赖中出现）。
+- `thread/diff` 的真实执行形态是：`git-runtime` 提供 recipe/limits，
+  app-server 通过 `process/start` 执行命令并经 artifact 管线落盘，而不是“单点 runtime 直接出 diff 文本”。
+- `artifact` 相关能力并非仅 `omne-artifact-store`：版本、历史快照、裁剪报告等编排逻辑仍在 app-server。
+- `integration` 中 `web_search/web_fetch/view_image` 的主要实现位于
+  `run_tool_call_once.rs`，与 `mcp/runtime.rs`（MCP 管理）职责分离。

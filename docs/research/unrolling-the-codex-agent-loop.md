@@ -56,7 +56,7 @@
 ### 2.1 `codex_omne/`：已经具备 unrolled loop 的主要骨架
 
 - agent loop：`crates/app-server/src/agent/tool_loop.rs`
-  - 流式采样（`ditto_llm::LanguageModel::stream`）
+  - 流式采样（`ditto_core::llm_core::model::LanguageModel::stream`）
   - 收集 `TextDelta` 与 tool call delta，拼回 OpenAI Responses 的 raw JSON item（`serde_json::Value`）
   - 执行工具后将 `FunctionCallOutput` 追加进 `input_items` 再采样（与文章思路一致）
 - 可回放“唯一真相”：`docs/thread_event_model.md`（append-only JSONL events）
@@ -70,7 +70,7 @@
 ### 2.2 `ditto-llm/`：provider 抽象层，但缺少缓存可观测性
 
 - OpenAI Responses 已集成：`src/providers/openai.rs`
-- ✅ 已补齐：`ditto_llm::Usage` 增加 `cache_input_tokens`，并在 OpenAI-compatible `chat/completions` 下解析：
+- ✅ 已补齐：`ditto_core::contracts::Usage` 增加 `cache_input_tokens`，并在 OpenAI-compatible `chat/completions` 下解析：
   - `usage.cached_tokens`
   - `usage.prompt_tokens_details.cached_tokens`
   - 用于观测 prompt caching 命中率（文章把它当作主要优化手段）
@@ -96,7 +96,7 @@
 ## 3) 差距与风险（相对文章的工程约束）
 
 - **两条 loop 的 item 完整度不同**：
-  - 默认 loop（`ditto_llm::LanguageModel::stream`）只会生成 `message/function_call/function_call_output` 等基础 item。
+  - 默认 loop（`ditto_core::llm_core::model::LanguageModel::stream`）只会生成 `message/function_call/function_call_output` 等基础 item。
   - Codex parity loop 走 raw `/responses` stream + `/responses/compact`，可以 round-trip 任意 item（含 `compaction`/`encrypted_content`），但目前只在 reasoning provider 且 `OMNE_OPENAI_RESPONSES_CODEX_PARITY=1` 时启用。
 - **compaction 路线不同**：
   - 我们的 auto summary 是“生成一段 summary 文本并重建 system message + tail items”

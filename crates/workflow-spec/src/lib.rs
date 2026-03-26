@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
+use structured_text_protocol::StructuredTextData;
+
 pub const FAN_IN_SUMMARY_SCHEMA_V1: &str = "fan_in_summary.v1";
 pub const FAN_OUT_LINKAGE_ISSUE_SCHEMA_V1: &str = "fan_out_linkage_issue.v1";
 pub const FAN_OUT_LINKAGE_ISSUE_CLEAR_SCHEMA_V1: &str = "fan_out_linkage_issue_clear.v1";
@@ -58,6 +60,8 @@ pub struct FanInTaskStructuredData {
     pub result_artifact_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result_artifact_error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result_artifact_structured_error: Option<StructuredTextData>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result_artifact_error_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -133,6 +137,8 @@ pub struct FanOutResultIsolatedWritePatchStructuredData {
     pub workspace_cwd: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub structured_error: Option<StructuredTextData>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -201,6 +207,8 @@ pub struct FanOutResultIsolatedWriteAutoApplyStructuredData {
     pub recovery_commands: Vec<FanOutResultRecoveryCommandStructuredData>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub structured_error: Option<StructuredTextData>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -420,6 +428,7 @@ mod tests {
                 dependency_blocker_status: None,
                 result_artifact_id: None,
                 result_artifact_error: None,
+                result_artifact_structured_error: None,
                 result_artifact_error_id: None,
                 result_artifact_diagnostics: None,
                 pending_approval: None,
@@ -470,6 +479,7 @@ mod tests {
                 read_cmd: Some("omne artifact read thread-1 artifact-1".to_string()),
                 workspace_cwd: None,
                 error: None,
+                structured_error: None,
             }),
             None,
             "completed".to_string(),

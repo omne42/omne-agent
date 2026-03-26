@@ -143,7 +143,7 @@ fn checkpoint_restore_rpc_sandbox_policy_denied_returns_error() {
             checkpoint_id: omne_protocol::CheckpointId::new(),
             denied: true,
             error_code: Some("sandbox_policy_denied".to_string()),
-            sandbox_policy: Some(omne_protocol::SandboxPolicy::ReadOnly),
+            sandbox_policy: Some(policy_meta::WriteScope::ReadOnly),
             mode: None,
             decision: None,
             available: None,

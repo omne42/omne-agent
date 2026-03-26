@@ -80,6 +80,7 @@ async fn handle_process_follow(
                 .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
                     status: omne_protocol::ToolStatus::Completed,
+                    structured_error: None,
                     error: None,
                     result: Some(serde_json::json!({
                         "path": path,
@@ -103,6 +104,7 @@ async fn handle_process_follow(
                 .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
                     status: omne_protocol::ToolStatus::Failed,
+                    structured_error: None,
                     error: Some(err.to_string()),
                     result: None,
                 })

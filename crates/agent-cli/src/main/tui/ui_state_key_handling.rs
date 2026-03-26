@@ -421,6 +421,7 @@
             self.active_turn_id = None;
             self.subagent_pending_summary = None;
             self.subagent_pending_summary_needs_refresh = false;
+            self.current_context_tokens_estimate = None;
             self.total_tokens_used = 0;
             self.counted_usage_responses.clear();
             self.skip_token_usage_before_seq = None;

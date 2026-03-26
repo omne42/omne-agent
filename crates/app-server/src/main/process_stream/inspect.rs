@@ -75,6 +75,7 @@ async fn handle_process_inspect(
         .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
             tool_id,
             status: omne_protocol::ToolStatus::Completed,
+            structured_error: None,
             error: None,
             result: Some(serde_json::json!({
                 "process_id": params.process_id,

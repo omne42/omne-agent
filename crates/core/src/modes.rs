@@ -2,6 +2,9 @@ use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::Context;
+use config_kit::{
+    ConfigFormat, ConfigFormatSet, ConfigLoadOptions, Error as ConfigError, load_typed_config_file,
+};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use serde::Deserialize;
 
@@ -43,20 +46,21 @@ impl ModeCatalog {
             return out;
         };
 
-        let raw = match tokio::fs::read_to_string(&path).await {
-            Ok(contents) => contents,
+        let parsed: RawModesFile = match load_typed_config_file(
+            &path,
+            ConfigLoadOptions::new().with_default_format(ConfigFormat::Yaml),
+            ConfigFormatSet::JSON_YAML,
+        ) {
+            Ok(parsed) => parsed,
             Err(err) => {
                 out.source = source.with_path(path);
-                out.load_error = Some(format!("read modes config: {err}"));
-                return out;
-            }
-        };
-
-        let parsed: RawModesFile = match serde_yaml::from_str(&raw) {
-            Ok(v) => v,
-            Err(err) => {
-                out.source = source.with_path(path);
-                out.load_error = Some(format!("parse modes config: {err}"));
+                let context = match err {
+                    ConfigError::Parse { .. } | ConfigError::FormatNotAllowed { .. } => {
+                        "parse modes config"
+                    }
+                    _ => "load modes config",
+                };
+                out.load_error = Some(format!("{context}: {err}"));
                 return out;
             }
         };

@@ -105,6 +105,16 @@ type = "api_key_env" # 默认读取 OPENAI_API_KEY / OMNE_OPENAI_API_KEY
 # unsupported/small/medium/high/xhigh
 [openai.models."*"]
 thinking = "medium"
+
+# 可选：覆盖模型的上下文窗口与 compact 阈值。
+# `context_window` 表示模型窗口；`auto_compact_token_limit` 表示当前 prompt-load
+# 达到该值时触发 compact。若未设置 `auto_compact_token_limit`，运行时会按
+# `context_window * OMNE_AGENT_AUTO_SUMMARY_THRESHOLD_PCT / 100` 计算（默认 80%）。
+[openai.models."gpt-4.1"]
+thinking = "high"
+context_window = 1047576
+auto_compact_token_limit = 900000
+
 [openai.models."codex-mini-latest"]
 thinking = "xhigh"
 ```

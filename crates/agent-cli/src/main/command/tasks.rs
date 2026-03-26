@@ -313,12 +313,12 @@ pub(super) fn display_artifact_id(artifact_id: Option<ArtifactId>) -> String {
         .unwrap_or_else(|| "-".to_string())
 }
 
-pub(super) fn display_artifact_error(error: Option<&str>) -> String {
-    error
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .unwrap_or("-")
-        .to_string()
+pub(super) fn display_artifact_error(
+    structured_error: Option<&structured_text_protocol::StructuredTextData>,
+    error: Option<&str>,
+) -> String {
+    crate::preferred_structured_error_text(structured_error, error)
+        .unwrap_or_else(|| "-".to_string())
 }
 
 pub(super) fn blocked_task_result(
@@ -333,6 +333,7 @@ pub(super) fn blocked_task_result(
         turn_id: None,
         result_artifact_id: None,
         result_artifact_error: None,
+        result_artifact_structured_error: None,
         result_artifact_error_id: None,
         status: TurnStatus::Cancelled,
         reason: Some(format!(
@@ -393,6 +394,7 @@ pub(super) fn pending_approval_task_result(
         turn_id: Some(turn_id),
         result_artifact_id: None,
         result_artifact_error: None,
+        result_artifact_structured_error: None,
         result_artifact_error_id: None,
         status: TurnStatus::Interrupted,
         reason: Some(reason),
@@ -507,6 +509,7 @@ pub(super) fn render_fan_in_summary_structured_json(
                 dependency_blocker_status,
                 result_artifact_id: result.result_artifact_id.map(|value| value.to_string()),
                 result_artifact_error: result.result_artifact_error.clone(),
+                result_artifact_structured_error: result.result_artifact_structured_error.clone(),
                 result_artifact_error_id: result
                     .result_artifact_error_id
                     .map(|value| value.to_string()),
@@ -808,7 +811,10 @@ pub(super) fn render_fan_out_approval_blocked_markdown(
                 display_thread_id(result.thread_id),
                 display_turn_id(result.turn_id),
                 display_artifact_id(result.result_artifact_id),
-                display_artifact_error(result.result_artifact_error.as_deref()),
+                display_artifact_error(
+                    result.result_artifact_structured_error.as_ref(),
+                    result.result_artifact_error.as_deref(),
+                ),
                 display_artifact_id(result.result_artifact_error_id)
             ));
         }
@@ -863,12 +869,12 @@ pub(super) async fn try_write_fan_out_result_artifact(
     status: TurnStatus,
     reason: Option<&str>,
     assistant_text: Option<&str>,
-) -> Result<ArtifactId, String> {
+) -> Result<ArtifactId, FanOutResultArtifactWriteError> {
     let summary = format!("fan-out result: {task_id} ({status:?})");
     let text =
         render_fan_out_result_markdown(task_id, title, turn_id, status, reason, assistant_text);
-    let parsed = app
-        .artifact_write(omne_app_server_protocol::ArtifactWriteParams {
+    let value = app
+        .rpc_artifact_write_value(omne_app_server_protocol::ArtifactWriteParams {
             thread_id,
             turn_id: Some(turn_id),
             approval_id: None,
@@ -878,8 +884,31 @@ pub(super) async fn try_write_fan_out_result_artifact(
             text,
         })
         .await
-        .map_err(|err| format!("artifact/write failed: {err}"))?;
-    Ok(parsed.artifact_id)
+        .map_err(|err| FanOutResultArtifactWriteError {
+            message: format!("artifact/write failed: {err}"),
+            structured_error: None,
+        })?;
+    let outcome = crate::parse_artifact_rpc_outcome::<
+        omne_app_server_protocol::ArtifactWriteResponse,
+    >("artifact/write", value)
+    .map_err(|err| FanOutResultArtifactWriteError {
+        message: format!("artifact/write failed: {err}"),
+        structured_error: None,
+    })?;
+    match outcome {
+        crate::RpcGateOutcome::Ok(response) => Ok(response.artifact_id),
+        crate::RpcGateOutcome::NeedsApproval {
+            thread_id,
+            approval_id,
+        } => Err(FanOutResultArtifactWriteError {
+            message: crate::approval_required_message("artifact/write", &thread_id, &approval_id),
+            structured_error: None,
+        }),
+        crate::RpcGateOutcome::Denied { detail } => Err(FanOutResultArtifactWriteError {
+            message: crate::rpc_denied_message("artifact/write", &detail),
+            structured_error: crate::structured_error_from_value(&detail),
+        }),
+    }
 }
 
 pub(super) fn render_fan_out_result_error_markdown(
@@ -1114,7 +1143,14 @@ pub(super) async fn try_clear_fan_out_linkage_issue_marker(
 pub(super) struct FanOutResultArtifactWriteOutcome {
     pub(super) result_artifact_id: Option<ArtifactId>,
     pub(super) result_artifact_error: Option<String>,
+    pub(super) result_artifact_structured_error: Option<structured_text_protocol::StructuredTextData>,
     pub(super) result_artifact_error_id: Option<ArtifactId>,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct FanOutResultArtifactWriteError {
+    pub(super) message: String,
+    pub(super) structured_error: Option<structured_text_protocol::StructuredTextData>,
 }
 
 pub(super) async fn write_fan_out_result_artifacts(
@@ -1144,9 +1180,14 @@ pub(super) async fn write_fan_out_result_artifacts(
         Ok(result_artifact_id) => FanOutResultArtifactWriteOutcome {
             result_artifact_id: Some(result_artifact_id),
             result_artifact_error: None,
+            result_artifact_structured_error: None,
             result_artifact_error_id: None,
         },
         Err(write_error) => {
+            let FanOutResultArtifactWriteError {
+                message,
+                structured_error,
+            } = write_error;
             let error_artifact_id = write_fan_out_result_error_artifact(
                 app,
                 parent_thread_id,
@@ -1157,17 +1198,18 @@ pub(super) async fn write_fan_out_result_artifacts(
                 turn_id,
                 status,
                 reason,
-                &write_error,
+                &message,
             )
             .await;
             let result_artifact_error = if let Some(error_artifact_id) = error_artifact_id {
-                format!("{write_error} (error_artifact_id={error_artifact_id})")
+                format!("{message} (error_artifact_id={error_artifact_id})")
             } else {
-                write_error
+                message
             };
             FanOutResultArtifactWriteOutcome {
                 result_artifact_id: None,
                 result_artifact_error: Some(result_artifact_error),
+                result_artifact_structured_error: structured_error,
                 result_artifact_error_id: error_artifact_id,
             }
         }
@@ -1300,7 +1342,10 @@ pub(super) fn render_fan_out_progress_markdown<T: std::fmt::Debug>(
                 display_thread_id(result.thread_id),
                 display_turn_id(result.turn_id),
                 display_artifact_id(result.result_artifact_id),
-                display_artifact_error(result.result_artifact_error.as_deref()),
+                display_artifact_error(
+                    result.result_artifact_structured_error.as_ref(),
+                    result.result_artifact_error.as_deref(),
+                ),
                 display_artifact_id(result.result_artifact_error_id)
             ));
         }
@@ -1347,7 +1392,10 @@ pub(super) fn render_fan_in_summary_markdown(
             display_thread_id(result.thread_id),
             display_turn_id(result.turn_id),
             display_artifact_id(result.result_artifact_id),
-            display_artifact_error(result.result_artifact_error.as_deref()),
+            display_artifact_error(
+                result.result_artifact_structured_error.as_ref(),
+                result.result_artifact_error.as_deref(),
+            ),
             display_artifact_id(result.result_artifact_error_id),
             result.status
         ));
@@ -1363,13 +1411,12 @@ pub(super) fn render_fan_in_summary_markdown(
             "- result_artifact_id: {}\n",
             display_artifact_id(result.result_artifact_id)
         ));
-        if let Some(error) = result
-            .result_artifact_error
-            .as_deref()
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-        {
-            text.push_str(&format!("- result_artifact_error: {}\n", error));
+        let artifact_error = display_artifact_error(
+            result.result_artifact_structured_error.as_ref(),
+            result.result_artifact_error.as_deref(),
+        );
+        if artifact_error != "-" {
+            text.push_str(&format!("- result_artifact_error: {}\n", artifact_error));
         }
         if let Some(error_artifact_id) = result.result_artifact_error_id {
             text.push_str(&format!(

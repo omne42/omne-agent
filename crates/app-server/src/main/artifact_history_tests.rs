@@ -795,6 +795,7 @@ modes:
                 dependency_blocker_status: None,
                 result_artifact_id: None,
                 result_artifact_error: Some("approval required".to_string()),
+                result_artifact_structured_error: None,
                 result_artifact_error_id: Some(ArtifactId::new().to_string()),
                 result_artifact_diagnostics: Some(
                     omne_workflow_spec::FanInResultArtifactDiagnosticsStructuredData {
@@ -958,6 +959,7 @@ modes:
                 dependency_blocker_status: None,
                 result_artifact_id: None,
                 result_artifact_error: None,
+                result_artifact_structured_error: None,
                 result_artifact_error_id: None,
                 result_artifact_diagnostics: None,
                 pending_approval: Some(omne_workflow_spec::FanInPendingApprovalStructuredData {

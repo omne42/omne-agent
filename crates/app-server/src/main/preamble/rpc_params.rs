@@ -52,6 +52,8 @@ type FileGrepParams = omne_app_server_protocol::FileGrepParams;
 type RepoSearchParams = omne_app_server_protocol::RepoSearchParams;
 type RepoIndexParams = omne_app_server_protocol::RepoIndexParams;
 type RepoSymbolsParams = omne_app_server_protocol::RepoSymbolsParams;
+type RepoGotoDefinitionParams = omne_app_server_protocol::RepoGotoDefinitionParams;
+type RepoFindReferencesParams = omne_app_server_protocol::RepoFindReferencesParams;
 
 type FileWriteParams = omne_app_server_protocol::FileWriteParams;
 type FilePatchParams = omne_app_server_protocol::FilePatchParams;

@@ -39,7 +39,7 @@ mod tool_parallelism_tests {
 
     #[test]
     fn token_usage_json_from_ditto_usage_includes_cache_fields() {
-        let usage = ditto_llm::Usage {
+        let usage = ditto_core::contracts::Usage {
             input_tokens: Some(100),
             cache_input_tokens: Some(60),
             cache_creation_input_tokens: Some(8),
@@ -47,7 +47,10 @@ mod tool_parallelism_tests {
             total_tokens: Some(120),
         };
         let json = token_usage_json_from_ditto_usage(&usage).expect("usage json");
-        assert_eq!(json.get("input_tokens").and_then(serde_json::Value::as_u64), Some(100));
+        assert_eq!(
+            json.get("input_tokens").and_then(serde_json::Value::as_u64),
+            Some(100)
+        );
         assert_eq!(
             json.get("cache_input_tokens")
                 .and_then(serde_json::Value::as_u64),
@@ -58,13 +61,20 @@ mod tool_parallelism_tests {
                 .and_then(serde_json::Value::as_u64),
             Some(8)
         );
-        assert_eq!(json.get("output_tokens").and_then(serde_json::Value::as_u64), Some(20));
-        assert_eq!(json.get("total_tokens").and_then(serde_json::Value::as_u64), Some(120));
+        assert_eq!(
+            json.get("output_tokens")
+                .and_then(serde_json::Value::as_u64),
+            Some(20)
+        );
+        assert_eq!(
+            json.get("total_tokens").and_then(serde_json::Value::as_u64),
+            Some(120)
+        );
     }
 
     #[test]
     fn token_usage_json_from_ditto_usage_keeps_cache_only_usage() {
-        let usage = ditto_llm::Usage {
+        let usage = ditto_core::contracts::Usage {
             input_tokens: None,
             cache_input_tokens: Some(42),
             cache_creation_input_tokens: None,
@@ -141,6 +151,71 @@ mod tool_parallelism_tests {
     fn non_plan_turn_keeps_thread_mode_for_routing() {
         assert_eq!(resolve_turn_role_for_routing(false, "reviewer"), "reviewer");
     }
+
+    #[test]
+    fn parse_role_input_directive_accepts_known_role_prefix() {
+        let roles = omne_core::roles::RoleCatalog::builtin();
+        let parsed =
+            parse_role_input_directive("@{reviewer} focus on correctness", &roles).expect("parsed");
+        assert_eq!(parsed.role_name, "reviewer");
+        assert_eq!(parsed.content, "focus on correctness");
+    }
+
+    #[test]
+    fn parse_role_input_directive_rejects_unknown_or_invalid_prefix() {
+        let roles = omne_core::roles::RoleCatalog::builtin();
+        assert!(parse_role_input_directive("@{missing} hi", &roles).is_none());
+        assert!(parse_role_input_directive("@{reviewer}hi", &roles).is_none());
+        assert!(parse_role_input_directive("@{reviewer}   ", &roles).is_none());
+        assert!(parse_role_input_directive("plain input", &roles).is_none());
+    }
+
+    #[test]
+    fn role_directive_handling_prioritizes_first_turn_then_compaction() {
+        assert_eq!(
+            resolve_role_directive_handling(true, true),
+            RoleDirectiveHandling::InjectIntoSystem
+        );
+        assert_eq!(
+            resolve_role_directive_handling(false, true),
+            RoleDirectiveHandling::AutoCompactThenUser
+        );
+        assert_eq!(
+            resolve_role_directive_handling(false, false),
+            RoleDirectiveHandling::UserMessage
+        );
+    }
+
+    #[test]
+    fn replace_latest_user_message_text_updates_last_user_input_text() {
+        let mut items = vec![
+            serde_json::json!({
+                "type": "message",
+                "role": "user",
+                "content": [{ "type": "input_text", "text": "old-1" }]
+            }),
+            serde_json::json!({
+                "type": "message",
+                "role": "assistant",
+                "content": [{ "type": "output_text", "text": "ack" }]
+            }),
+            serde_json::json!({
+                "type": "message",
+                "role": "user",
+                "content": [{ "type": "input_text", "text": "old-2" }]
+            }),
+        ];
+        assert!(replace_latest_user_message_text(&mut items, "new"));
+        assert_eq!(
+            items[2]
+                .get("content")
+                .and_then(Value::as_array)
+                .and_then(|parts| parts.first())
+                .and_then(|part| part.get("text"))
+                .and_then(Value::as_str),
+            Some("new")
+        );
+    }
 }
 
 #[cfg(test)]
@@ -199,21 +274,21 @@ mod llm_retry_tests {
     fn llm_error_classification_is_conservative() {
         use reqwest::StatusCode;
 
-        let rate_limited = LlmAttemptError::Ditto(ditto_llm::DittoError::Api {
+        let rate_limited = LlmAttemptError::Ditto(ditto_core::error::DittoError::Api {
             status: StatusCode::TOO_MANY_REQUESTS,
             body: "rate limit".to_string(),
         });
         assert!(llm_error_is_retryable(&rate_limited));
         assert!(llm_error_prefers_provider_fallback(&rate_limited));
 
-        let server_error = LlmAttemptError::Ditto(ditto_llm::DittoError::Api {
+        let server_error = LlmAttemptError::Ditto(ditto_core::error::DittoError::Api {
             status: StatusCode::BAD_GATEWAY,
             body: "upstream".to_string(),
         });
         assert!(llm_error_is_retryable(&server_error));
         assert!(llm_error_prefers_provider_fallback(&server_error));
 
-        let bad_request = LlmAttemptError::Ditto(ditto_llm::DittoError::Api {
+        let bad_request = LlmAttemptError::Ditto(ditto_core::error::DittoError::Api {
             status: StatusCode::BAD_REQUEST,
             body: "invalid".to_string(),
         });
@@ -221,7 +296,7 @@ mod llm_retry_tests {
         assert!(!llm_error_prefers_provider_fallback(&bad_request));
         assert!(llm_error_prefers_model_fallback(&bad_request));
 
-        let unauthorized = LlmAttemptError::Ditto(ditto_llm::DittoError::Api {
+        let unauthorized = LlmAttemptError::Ditto(ditto_core::error::DittoError::Api {
             status: StatusCode::UNAUTHORIZED,
             body: "auth".to_string(),
         });
@@ -235,6 +310,83 @@ mod llm_retry_tests {
 }
 
 #[cfg(test)]
+mod system_prompt_snapshot_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn persists_snapshot_once_and_reuses_it() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+        tokio::fs::write(repo_dir.join("AGENTS.md"), "# project prompt A\n").await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+        let thread_rt = server.get_or_load_thread(thread_id).await?;
+        let thread_cwd = repo_dir.display().to_string();
+
+        let first =
+            resolve_or_persist_thread_system_prompt_snapshot(&thread_rt, Some(&thread_cwd)).await?;
+        let second =
+            resolve_or_persist_thread_system_prompt_snapshot(&thread_rt, Some(&thread_cwd)).await?;
+        assert_eq!(first, second);
+
+        let events = server
+            .thread_store
+            .read_events_since(thread_id, EventSeq::ZERO)
+            .await?
+            .unwrap_or_default();
+        let snapshots = events
+            .iter()
+            .filter_map(|event| match &event.kind {
+                omne_protocol::ThreadEventKind::ThreadSystemPromptSnapshot {
+                    prompt_sha256,
+                    prompt_text,
+                    ..
+                } => Some((prompt_sha256.clone(), prompt_text.clone())),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(snapshots.len(), 1, "snapshot should only be persisted once");
+        assert_eq!(snapshots[0].1, first);
+        assert_eq!(snapshots[0].0, system_prompt_sha256(&first));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn rejects_prompt_change_after_snapshot_persisted() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+        let agents_path = repo_dir.join("AGENTS.md");
+        tokio::fs::write(&agents_path, "# project prompt A\n").await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+        let thread_rt = server.get_or_load_thread(thread_id).await?;
+        let thread_cwd = repo_dir.display().to_string();
+
+        resolve_or_persist_thread_system_prompt_snapshot(&thread_rt, Some(&thread_cwd)).await?;
+        tokio::fs::write(&agents_path, "# project prompt B\n").await?;
+
+        let err = resolve_or_persist_thread_system_prompt_snapshot(&thread_rt, Some(&thread_cwd))
+            .await
+            .expect_err("snapshot mismatch should fail");
+        assert!(
+            err.to_string()
+                .contains("thread system prompt is immutable"),
+            "unexpected error: {err:#}"
+        );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
 mod attachment_upload_tests {
     use super::*;
     use async_trait::async_trait;
@@ -243,7 +395,7 @@ mod attachment_upload_tests {
     struct DummyLanguageModel;
 
     #[async_trait]
-    impl ditto_llm::LanguageModel for DummyLanguageModel {
+    impl ditto_core::llm_core::model::LanguageModel for DummyLanguageModel {
         fn provider(&self) -> &str {
             "dummy"
         }
@@ -254,15 +406,15 @@ mod attachment_upload_tests {
 
         async fn generate(
             &self,
-            _request: ditto_llm::GenerateRequest,
-        ) -> ditto_llm::Result<ditto_llm::GenerateResponse> {
+            _request: ditto_core::contracts::GenerateRequest,
+        ) -> ditto_core::error::Result<ditto_core::contracts::GenerateResponse> {
             unimplemented!()
         }
 
         async fn stream(
             &self,
-            _request: ditto_llm::GenerateRequest,
-        ) -> ditto_llm::Result<ditto_llm::StreamResult> {
+            _request: ditto_core::contracts::GenerateRequest,
+        ) -> ditto_core::error::Result<ditto_core::llm_core::model::StreamResult> {
             unimplemented!()
         }
     }
@@ -284,16 +436,22 @@ mod attachment_upload_tests {
 
     fn dummy_runtime(file_uploader: Option<Arc<dyn FileUploader>>) -> ProviderRuntime {
         ProviderRuntime {
-            config: ditto_llm::ProviderConfig {
+            config: ditto_core::config::ProviderConfig {
+                provider: None,
+                enabled_capabilities: Vec::new(),
                 base_url: Some("http://example.com/v1".to_string()),
                 default_model: Some("gpt-4.1".to_string()),
                 model_whitelist: Vec::new(),
                 http_headers: Default::default(),
                 http_query_params: Default::default(),
                 auth: None,
-                capabilities: Some(ditto_llm::ProviderCapabilities::openai_responses()),
+                capabilities: Some(ditto_core::config::ProviderCapabilities::openai_responses()),
+                upstream_api: None,
+                normalize_to: None,
+                normalize_endpoint: None,
+                openai_compatible: None,
             },
-            capabilities: ditto_llm::ProviderCapabilities::openai_responses(),
+            capabilities: ditto_core::config::ProviderCapabilities::openai_responses(),
             client: Arc::new(DummyLanguageModel),
             openai_responses_client: None,
             file_uploader,
@@ -331,10 +489,10 @@ mod attachment_upload_tests {
         .expect("build attachment parts");
 
         assert_eq!(parts.len(), 1);
-        let ditto_llm::ContentPart::File { source, .. } = &parts[0] else {
+        let ditto_core::contracts::ContentPart::File { source, .. } = &parts[0] else {
             panic!("expected file part");
         };
-        assert!(matches!(source, ditto_llm::FileSource::Base64 { .. }));
+        assert!(matches!(source, ditto_core::contracts::FileSource::Base64 { .. }));
     }
 
     #[tokio::test]
@@ -361,12 +519,12 @@ mod attachment_upload_tests {
         .expect("build attachment parts");
 
         assert_eq!(parts.len(), 1);
-        let ditto_llm::ContentPart::File { source, .. } = &parts[0] else {
+        let ditto_core::contracts::ContentPart::File { source, .. } = &parts[0] else {
             panic!("expected file part");
         };
         assert!(matches!(
             source,
-            ditto_llm::FileSource::FileId { file_id } if file_id == "file_123"
+            ditto_core::contracts::FileSource::FileId { file_id } if file_id == "file_123"
         ));
     }
 
@@ -392,10 +550,10 @@ mod attachment_upload_tests {
         .expect("build attachment parts");
 
         assert_eq!(parts.len(), 1);
-        let ditto_llm::ContentPart::File { source, .. } = &parts[0] else {
+        let ditto_core::contracts::ContentPart::File { source, .. } = &parts[0] else {
             panic!("expected file part");
         };
-        assert!(matches!(source, ditto_llm::FileSource::Base64 { .. }));
+        assert!(matches!(source, ditto_core::contracts::FileSource::Base64 { .. }));
     }
 }
 
@@ -407,7 +565,10 @@ mod loop_detection_tests {
     fn tool_call_signature_is_stable_for_object_key_order() {
         let a = serde_json::json!({"a": 1, "b": 2});
         let b = serde_json::json!({"b": 2, "a": 1});
-        assert_eq!(tool_call_signature("file_read", &a), tool_call_signature("file_read", &b));
+        assert_eq!(
+            tool_call_signature("file_read", &a),
+            tool_call_signature("file_read", &b)
+        );
     }
 
     #[test]
@@ -433,6 +594,84 @@ mod loop_detection_tests {
 }
 
 #[cfg(test)]
+mod provider_protocol_tests {
+    use super::*;
+
+    #[test]
+    fn gemini_upstream_defaults_to_non_reasoning_capabilities() {
+        let config = ditto_core::config::ProviderConfig {
+            provider: None,
+            enabled_capabilities: Vec::new(),
+            base_url: Some("https://yunwu.ai/v1beta".to_string()),
+            default_model: Some("gemini-3.1-pro-preview".to_string()),
+            model_whitelist: Vec::new(),
+            http_headers: Default::default(),
+            http_query_params: Default::default(),
+            auth: None,
+            capabilities: None,
+            upstream_api: Some(ditto_core::config::ProviderApi::GeminiGenerateContent),
+            normalize_to: Some(ditto_core::config::ProviderApi::OpenaiChatCompletions),
+            normalize_endpoint: Some("/v1/chat/completions".to_string()),
+            openai_compatible: None,
+        };
+        let upstream = resolve_provider_upstream_api(&config);
+        let caps = resolve_provider_capabilities(&config, upstream);
+        assert!(caps.tools);
+        assert!(caps.streaming);
+        assert!(!caps.reasoning);
+    }
+
+    #[tokio::test]
+    async fn build_provider_runtime_uses_google_client_for_gemini_upstream_api() {
+        let target = ProviderRouteTarget {
+            id: "google.providers.yunwu:test".to_string(),
+            provider: "google.providers.yunwu".to_string(),
+            model: "gemini-3.1-pro-preview".to_string(),
+            model_fallbacks: Vec::new(),
+            provider_config: ditto_core::config::ProviderConfig {
+                provider: None,
+                enabled_capabilities: Vec::new(),
+                base_url: Some("https://yunwu.ai/v1beta".to_string()),
+                default_model: Some("gemini-3.1-pro-preview".to_string()),
+                model_whitelist: Vec::new(),
+                http_headers: Default::default(),
+                http_query_params: Default::default(),
+                auth: Some(ditto_core::config::ProviderAuth::HttpHeaderEnv {
+                    header: "Authorization".to_string(),
+                    keys: vec!["YUNWU_API_KEY".to_string()],
+                    prefix: Some("Bearer ".to_string()),
+                }),
+                capabilities: None,
+                upstream_api: Some(ditto_core::config::ProviderApi::GeminiGenerateContent),
+                normalize_to: Some(ditto_core::config::ProviderApi::OpenaiChatCompletions),
+                normalize_endpoint: Some("/v1/chat/completions".to_string()),
+                openai_compatible: None,
+            },
+        };
+        let env = ditto_core::config::Env {
+            dotenv: std::collections::BTreeMap::from([(
+                "YUNWU_API_KEY".to_string(),
+                "test-key".to_string(),
+            )]),
+        };
+
+        let runtime = build_provider_runtime(&target, &env)
+            .await
+            .expect("build provider runtime");
+        assert_eq!(
+            runtime.config.upstream_api,
+            Some(ditto_core::config::ProviderApi::GeminiGenerateContent)
+        );
+        assert_eq!(
+            runtime.config.normalize_to,
+            Some(ditto_core::config::ProviderApi::OpenaiChatCompletions)
+        );
+        assert!(!runtime.supports_openai_responses_codex_parity());
+        assert!(runtime.file_uploader.is_none());
+    }
+}
+
+#[cfg(test)]
 mod auto_summary_tests {
     use super::*;
 
@@ -440,11 +679,10 @@ mod auto_summary_tests {
 
     #[test]
     fn should_auto_compact_triggers_at_threshold() {
-        assert!(!should_auto_compact(0, None, 0, 80));
-        assert!(!should_auto_compact(79, None, 100, 80));
-        assert!(should_auto_compact(80, None, 100, 80));
-        assert!(should_auto_compact(100, None, 100, 80));
-        assert!(should_auto_compact(90, Some(80), 0, 0));
+        assert!(!should_auto_compact(0, None));
+        assert!(!should_auto_compact(79, Some(80)));
+        assert!(should_auto_compact(80, Some(80)));
+        assert!(should_auto_compact(100, Some(80)));
     }
 
     #[tokio::test]
@@ -581,14 +819,9 @@ mod auto_summary_tests {
         drop(handle);
 
         let turn_id = TurnId::new();
-        let wrote = write_plan_artifact_if_needed(
-            &server,
-            thread_id,
-            turn_id,
-            true,
-            "# Plan\n\n1. step\n",
-        )
-        .await?;
+        let wrote =
+            write_plan_artifact_if_needed(&server, thread_id, turn_id, true, "# Plan\n\n1. step\n")
+                .await?;
         assert!(wrote);
 
         let events = server

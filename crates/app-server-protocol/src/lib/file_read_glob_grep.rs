@@ -93,6 +93,9 @@ pub struct FileAllowedToolsDeniedResponse {
     pub allowed_tools: Vec<String>,
     #[serde(default)]
     #[ts(optional)]
+    pub structured_error: Option<StructuredTextData>,
+    #[serde(default)]
+    #[ts(optional)]
     pub error_code: Option<String>,
 }
 
@@ -114,6 +117,9 @@ pub struct FileModeDeniedResponse {
     pub tool_override_hit: bool,
     #[serde(default)]
     #[ts(optional)]
+    pub structured_error: Option<StructuredTextData>,
+    #[serde(default)]
+    #[ts(optional)]
     pub error_code: Option<String>,
 }
 
@@ -129,6 +135,9 @@ pub struct FileUnknownModeDeniedResponse {
     pub load_error: Option<String>,
     #[serde(default)]
     #[ts(optional)]
+    pub structured_error: Option<StructuredTextData>,
+    #[serde(default)]
+    #[ts(optional)]
     pub error_code: Option<String>,
 }
 
@@ -136,7 +145,10 @@ pub struct FileUnknownModeDeniedResponse {
 pub struct FileSandboxPolicyDeniedResponse {
     pub tool_id: omne_protocol::ToolId,
     pub denied: bool,
-    pub sandbox_policy: omne_protocol::SandboxPolicy,
+    pub sandbox_policy: policy_meta::WriteScope,
+    #[serde(default)]
+    #[ts(optional)]
+    pub structured_error: Option<StructuredTextData>,
     #[serde(default)]
     #[ts(optional)]
     pub error_code: Option<String>,

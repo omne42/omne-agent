@@ -4,11 +4,7 @@ struct BellNotifier {
 
 impl BellNotifier {
     fn from_env() -> anyhow::Result<Self> {
-        let hub = notify_kit::build_hub_from_standard_env(notify_kit::StandardEnvHubOptions {
-            default_sound_enabled: true,
-            require_sink: true,
-        })?
-        .context("expected notification hub when require_sink=true")?;
+        let hub = build_watch_inbox_notify_hub_from_env()?;
         Ok(Self { hub })
     }
 
@@ -52,15 +48,7 @@ fn env_bool(key: &str) -> Option<bool> {
 }
 
 fn parse_token_budget_warning_threshold_ratio_env() -> f64 {
-    const ENV_KEY: &str = "OMNE_NOTIFY_TOKEN_BUDGET_UTILIZATION_THRESHOLD_PCT";
-    std::env::var(ENV_KEY)
-        .ok()
-        .map(|raw| raw.trim().to_string())
-        .filter(|raw| !raw.is_empty())
-        .and_then(|raw| raw.parse::<f64>().ok())
-        .filter(|value| *value > 0.0 && *value <= 100.0)
-        .map(|value| value / 100.0)
-        .unwrap_or(0.9)
+    omne_notify_env::parse_token_budget_warning_threshold_ratio_from_env()
 }
 
 fn token_budget_warning_present(
@@ -726,7 +714,7 @@ struct ThreadMeta {
     #[serde(default)]
     archived_reason: Option<String>,
     approval_policy: ApprovalPolicy,
-    sandbox_policy: SandboxPolicy,
+    sandbox_policy: policy_meta::WriteScope,
     #[serde(default)]
     model: Option<String>,
     #[serde(default)]

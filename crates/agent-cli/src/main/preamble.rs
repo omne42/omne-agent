@@ -2,16 +2,15 @@ use std::ffi::OsString;
 use std::io::Write;
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use clap::{Parser, Subcommand, ValueEnum};
 use omne_protocol::{
     ApprovalDecision, ApprovalId, ApprovalPolicy, ArtifactId, CheckpointId, ProcessId,
-    SandboxPolicy, THREAD_EVENT_KIND_TAGS, ThreadEvent, ThreadEventKindTag, ThreadId, TurnId,
-    TurnStatus,
+    ThreadEvent, ThreadEventKindTag, ThreadId, TurnId, TurnStatus, THREAD_EVENT_KIND_TAGS,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -65,6 +64,14 @@ enum Command {
     Workflow {
         #[command(subcommand)]
         command: CommandCommand,
+    },
+    Provider {
+        #[command(subcommand)]
+        command: ProviderCommand,
+    },
+    Model {
+        #[command(subcommand)]
+        command: ModelCommand,
     },
     Repo {
         #[command(subcommand)]
@@ -156,6 +163,312 @@ struct CommandRunArgs {
     /// Working directory for a newly created thread.
     #[arg(long)]
     cwd: Option<PathBuf>,
+}
+
+#[derive(Subcommand)]
+enum ProviderCommand {
+    /// Add or update a provider profile (merge update, no full-file overwrite).
+    #[command(alias = "set")]
+    Add(ProviderAddArgs),
+    /// List configured providers.
+    #[command(alias = "ls")]
+    List(ProviderListArgs),
+    /// Show one provider configuration.
+    Show(ProviderShowArgs),
+    /// Delete one provider configuration.
+    #[command(alias = "rm")]
+    Delete(ProviderDeleteArgs),
+}
+
+#[derive(Subcommand)]
+enum ModelCommand {
+    /// Add or update a model profile (merge update, no full-file overwrite).
+    #[command(alias = "set")]
+    Add(ModelAddArgs),
+    /// List configured models.
+    #[command(alias = "ls")]
+    List(ModelListArgs),
+    /// Show one model configuration.
+    Show(ModelShowArgs),
+    /// Delete one model configuration.
+    #[command(alias = "rm")]
+    Delete(ModelDeleteArgs),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "snake_case")]
+enum ConfigScope {
+    Auto,
+    Workspace,
+    Global,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "snake_case")]
+enum ProviderNamespace {
+    Openai,
+    Google,
+    Gemini,
+    Claude,
+    Anthropic,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "snake_case")]
+enum ProviderApiArg {
+    OpenaiChatCompletions,
+    OpenaiResponses,
+    GeminiGenerateContent,
+    AnthropicMessages,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "snake_case")]
+enum ProviderAuthTypeArg {
+    ApiKeyEnv,
+    QueryParamEnv,
+    HttpHeaderEnv,
+    Command,
+}
+
+#[derive(clap::Args)]
+struct ProviderAddArgs {
+    /// Provider key under `<namespace>.providers.<name>`.
+    name: String,
+
+    /// Provider namespace (protocol family namespace in config).
+    #[arg(long, value_enum, default_value_t = ProviderNamespace::Openai)]
+    namespace: ProviderNamespace,
+
+    /// Update target location. `auto` prefers workspace when `./.omne_data` exists.
+    #[arg(long, value_enum, default_value_t = ConfigScope::Auto)]
+    scope: ConfigScope,
+
+    /// Provider base URL.
+    #[arg(long)]
+    base_url: Option<String>,
+
+    /// Provider default model id.
+    #[arg(long)]
+    default_model: Option<String>,
+
+    /// Upstream protocol used against provider.
+    #[arg(long, value_enum)]
+    upstream_api: Option<ProviderApiArg>,
+
+    /// Normalized response protocol for Omne-facing path.
+    #[arg(long, value_enum)]
+    normalize_to: Option<ProviderApiArg>,
+
+    /// Explicit normalized endpoint path (example: `/v1/chat/completions`).
+    #[arg(long)]
+    normalize_endpoint: Option<String>,
+
+    /// Authentication mode.
+    #[arg(long, value_enum, default_value_t = ProviderAuthTypeArg::ApiKeyEnv)]
+    auth_type: ProviderAuthTypeArg,
+
+    /// Env key candidates (comma-separated or repeated).
+    #[arg(long = "auth-key", value_delimiter = ',')]
+    auth_keys: Vec<String>,
+
+    /// Query param name for `query_param_env` auth (default: `key`).
+    #[arg(long)]
+    auth_param: Option<String>,
+
+    /// Header name for `http_header_env` auth.
+    #[arg(long)]
+    auth_header: Option<String>,
+
+    /// Optional auth value prefix (example: `Bearer `).
+    #[arg(long)]
+    auth_prefix: Option<String>,
+
+    /// Command argv for `command` auth (repeatable or comma-separated).
+    #[arg(long = "auth-command", value_delimiter = ',')]
+    auth_command: Vec<String>,
+
+    /// Persist as `[openai].provider = "<namespace>.providers.<name>"`.
+    #[arg(long, default_value_t = false)]
+    set_default: bool,
+
+    /// Also set `[openai].model` from `--default-model` when provided.
+    #[arg(long, default_value_t = false)]
+    set_default_model: bool,
+
+    /// Override capabilities (pass explicit true/false).
+    #[arg(long)]
+    tools: Option<bool>,
+    #[arg(long)]
+    vision: Option<bool>,
+    #[arg(long)]
+    reasoning: Option<bool>,
+    #[arg(long)]
+    json_schema: Option<bool>,
+    #[arg(long)]
+    streaming: Option<bool>,
+    #[arg(long)]
+    prompt_cache: Option<bool>,
+
+    /// Discover remote model list and update provider model whitelist.
+    #[arg(long, default_value_t = false)]
+    discover_models: bool,
+
+    /// API key for online discovery only (not persisted in config).
+    #[arg(long)]
+    api_key: Option<String>,
+
+    /// Also register discovered models into `[openai.models.<id>]`.
+    #[arg(long, default_value_t = false)]
+    register_models: bool,
+
+    /// Optional cap for imported model count during discovery.
+    #[arg(long)]
+    model_limit: Option<usize>,
+
+    /// Force interactive wizard mode (default behavior).
+    #[arg(long, default_value_t = false)]
+    interactive: bool,
+
+    /// Disable interactive wizard mode and run only from provided args.
+    #[arg(long, default_value_t = false, conflicts_with = "interactive")]
+    no_interactive: bool,
+
+    #[arg(long, default_value_t = false)]
+    json: bool,
+}
+
+#[derive(clap::Args)]
+struct ProviderListArgs {
+    /// Update target location. `auto` prefers workspace when `./.omne_data` exists.
+    #[arg(long, value_enum, default_value_t = ConfigScope::Auto)]
+    scope: ConfigScope,
+
+    /// Optional namespace filter.
+    #[arg(long, value_enum)]
+    namespace: Option<ProviderNamespace>,
+
+    #[arg(long, default_value_t = false)]
+    json: bool,
+}
+
+#[derive(clap::Args)]
+struct ProviderShowArgs {
+    /// Provider key name.
+    name: String,
+
+    /// Update target location. `auto` prefers workspace when `./.omne_data` exists.
+    #[arg(long, value_enum, default_value_t = ConfigScope::Auto)]
+    scope: ConfigScope,
+
+    /// Provider namespace.
+    #[arg(long, value_enum, default_value_t = ProviderNamespace::Openai)]
+    namespace: ProviderNamespace,
+
+    #[arg(long, default_value_t = false)]
+    json: bool,
+}
+
+#[derive(clap::Args)]
+struct ProviderDeleteArgs {
+    /// Provider key name.
+    name: String,
+
+    /// Update target location. `auto` prefers workspace when `./.omne_data` exists.
+    #[arg(long, value_enum, default_value_t = ConfigScope::Auto)]
+    scope: ConfigScope,
+
+    /// Provider namespace.
+    #[arg(long, value_enum, default_value_t = ProviderNamespace::Openai)]
+    namespace: ProviderNamespace,
+
+    #[arg(long, default_value_t = false)]
+    json: bool,
+}
+
+#[derive(clap::Args)]
+struct ModelAddArgs {
+    /// Model key under `[openai.models."<name>"]`.
+    name: String,
+
+    /// Update target location. `auto` prefers workspace when `./.omne_data` exists.
+    #[arg(long, value_enum, default_value_t = ConfigScope::Auto)]
+    scope: ConfigScope,
+
+    /// Optional default provider pointer (`[openai].provider`).
+    #[arg(long)]
+    provider: Option<String>,
+
+    /// Optional fallback provider list (`[openai].fallback_providers`).
+    #[arg(long = "fallback-provider", value_delimiter = ',')]
+    fallback_providers: Vec<String>,
+
+    /// Set `[openai].model` to this model.
+    #[arg(long, default_value_t = false)]
+    set_default: bool,
+
+    /// Model thinking intensity.
+    #[arg(long)]
+    thinking: Option<String>,
+
+    /// Model context window.
+    #[arg(long)]
+    context_window: Option<u64>,
+
+    /// Auto compact token limit.
+    #[arg(long)]
+    auto_compact_token_limit: Option<u64>,
+
+    /// Per-model prompt cache hint.
+    #[arg(long)]
+    prompt_cache: Option<bool>,
+
+    /// Force interactive wizard mode (default behavior).
+    #[arg(long, default_value_t = false)]
+    interactive: bool,
+
+    /// Disable interactive wizard mode and run only from provided args.
+    #[arg(long, default_value_t = false, conflicts_with = "interactive")]
+    no_interactive: bool,
+
+    #[arg(long, default_value_t = false)]
+    json: bool,
+}
+
+#[derive(clap::Args)]
+struct ModelListArgs {
+    /// Update target location. `auto` prefers workspace when `./.omne_data` exists.
+    #[arg(long, value_enum, default_value_t = ConfigScope::Auto)]
+    scope: ConfigScope,
+
+    #[arg(long, default_value_t = false)]
+    json: bool,
+}
+
+#[derive(clap::Args)]
+struct ModelShowArgs {
+    /// Model key under `[openai.models."<name>"]`.
+    name: String,
+
+    /// Update target location. `auto` prefers workspace when `./.omne_data` exists.
+    #[arg(long, value_enum, default_value_t = ConfigScope::Auto)]
+    scope: ConfigScope,
+
+    #[arg(long, default_value_t = false)]
+    json: bool,
+}
+
+#[derive(clap::Args)]
+struct ModelDeleteArgs {
+    /// Model key under `[openai.models."<name>"]`.
+    name: String,
+
+    /// Update target location. `auto` prefers workspace when `./.omne_data` exists.
+    #[arg(long, value_enum, default_value_t = ConfigScope::Auto)]
+    scope: ConfigScope,
+
+    #[arg(long, default_value_t = false)]
+    json: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -977,7 +1290,7 @@ enum CliSandboxPolicy {
     FullAccess,
 }
 
-impl From<CliSandboxPolicy> for SandboxPolicy {
+impl From<CliSandboxPolicy> for policy_meta::WriteScope {
     fn from(value: CliSandboxPolicy) -> Self {
         match value {
             CliSandboxPolicy::ReadOnly => Self::ReadOnly,
@@ -1023,7 +1336,10 @@ mod preamble_tests {
         let ThreadCommand::Usage { thread_id, json } = command else {
             panic!("expected thread usage command");
         };
-        assert_eq!(thread_id.to_string(), "00000000-0000-0000-0000-000000000000");
+        assert_eq!(
+            thread_id.to_string(),
+            "00000000-0000-0000-0000-000000000000"
+        );
         assert!(!json);
     }
 
@@ -1156,10 +1472,7 @@ mod preamble_tests {
             panic!("expected preset command");
         };
         let PresetCommand::Validate {
-            file,
-            name,
-            strict,
-            ..
+            file, name, strict, ..
         } = command
         else {
             panic!("expected preset validate");
@@ -1200,13 +1513,7 @@ mod preamble_tests {
     #[test]
     fn command_validate_accepts_name_strict_and_json() {
         let cli = Cli::try_parse_from([
-            "omne",
-            "command",
-            "validate",
-            "--name",
-            "plan",
-            "--strict",
-            "--json",
+            "omne", "command", "validate", "--name", "plan", "--strict", "--json",
         ])
         .expect("command validate with flags should parse");
         let Command::Workflow { command } = cli.command.expect("expected command") else {
@@ -1273,5 +1580,220 @@ mod preamble_tests {
             panic!("expected watch command");
         };
         assert!(args.debug_summary_cache);
+    }
+
+    #[test]
+    fn provider_add_parses_namespace_scope_and_auth_keys() {
+        let cli = Cli::try_parse_from([
+            "omne",
+            "provider",
+            "add",
+            "openrouter",
+            "--namespace",
+            "google",
+            "--scope",
+            "workspace",
+            "--auth-key",
+            "OPENROUTER_API_KEY,OPENAI_API_KEY",
+            "--upstream-api",
+            "openai_chat_completions",
+        ])
+        .expect("provider add should parse");
+        let Command::Provider { command } = cli.command.expect("expected command") else {
+            panic!("expected provider command");
+        };
+        let ProviderCommand::Add(args) = command else {
+            panic!("expected provider add command");
+        };
+        assert_eq!(args.namespace, ProviderNamespace::Google);
+        assert_eq!(args.scope, ConfigScope::Workspace);
+        assert_eq!(
+            args.upstream_api,
+            Some(ProviderApiArg::OpenaiChatCompletions)
+        );
+        assert_eq!(
+            args.auth_keys,
+            vec![
+                "OPENROUTER_API_KEY".to_string(),
+                "OPENAI_API_KEY".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn provider_set_alias_parses_namespace_scope_and_auth_keys() {
+        let cli = Cli::try_parse_from([
+            "omne",
+            "provider",
+            "set",
+            "openrouter",
+            "--namespace",
+            "google",
+            "--scope",
+            "workspace",
+            "--auth-key",
+            "OPENROUTER_API_KEY,OPENAI_API_KEY",
+            "--upstream-api",
+            "openai_chat_completions",
+        ])
+        .expect("provider set alias should parse");
+        let Command::Provider { command } = cli.command.expect("expected command") else {
+            panic!("expected provider command");
+        };
+        let ProviderCommand::Add(args) = command else {
+            panic!("expected provider add command");
+        };
+        assert_eq!(args.namespace, ProviderNamespace::Google);
+        assert_eq!(args.scope, ConfigScope::Workspace);
+        assert_eq!(
+            args.upstream_api,
+            Some(ProviderApiArg::OpenaiChatCompletions)
+        );
+        assert_eq!(
+            args.auth_keys,
+            vec![
+                "OPENROUTER_API_KEY".to_string(),
+                "OPENAI_API_KEY".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn model_add_parses_set_default_and_prompt_cache() {
+        let cli = Cli::try_parse_from([
+            "omne",
+            "model",
+            "add",
+            "google/gemini-3.1-pro-preview",
+            "--set-default",
+            "--prompt-cache",
+            "true",
+        ])
+        .expect("model add should parse");
+        let Command::Model { command } = cli.command.expect("expected command") else {
+            panic!("expected model command");
+        };
+        let ModelCommand::Add(args) = command else {
+            panic!("expected model add command");
+        };
+        assert!(args.set_default);
+        assert_eq!(args.prompt_cache, Some(true));
+    }
+
+    #[test]
+    fn model_set_alias_parses_set_default_and_prompt_cache() {
+        let cli = Cli::try_parse_from([
+            "omne",
+            "model",
+            "set",
+            "google/gemini-3.1-pro-preview",
+            "--set-default",
+            "--prompt-cache",
+            "true",
+        ])
+        .expect("model set alias should parse");
+        let Command::Model { command } = cli.command.expect("expected command") else {
+            panic!("expected model command");
+        };
+        let ModelCommand::Add(args) = command else {
+            panic!("expected model add command");
+        };
+        assert!(args.set_default);
+        assert_eq!(args.prompt_cache, Some(true));
+    }
+
+    #[test]
+    fn provider_add_accepts_interactive_flag() {
+        let cli = Cli::try_parse_from([
+            "omne",
+            "provider",
+            "add",
+            "openrouter",
+            "--interactive",
+        ])
+        .expect("provider add --interactive should parse");
+        let Command::Provider { command } = cli.command.expect("expected command") else {
+            panic!("expected provider command");
+        };
+        let ProviderCommand::Add(args) = command else {
+            panic!("expected provider add command");
+        };
+        assert!(args.interactive);
+        assert!(!args.no_interactive);
+    }
+
+    #[test]
+    fn model_add_accepts_interactive_flag() {
+        let cli = Cli::try_parse_from(["omne", "model", "add", "gemini-3.1-pro", "--interactive"])
+            .expect("model add --interactive should parse");
+        let Command::Model { command } = cli.command.expect("expected command") else {
+            panic!("expected model command");
+        };
+        let ModelCommand::Add(args) = command else {
+            panic!("expected model add command");
+        };
+        assert!(args.interactive);
+        assert!(!args.no_interactive);
+    }
+
+    #[test]
+    fn provider_add_accepts_no_interactive_flag() {
+        let cli = Cli::try_parse_from([
+            "omne",
+            "provider",
+            "add",
+            "openrouter",
+            "--no-interactive",
+        ])
+        .expect("provider add --no-interactive should parse");
+        let Command::Provider { command } = cli.command.expect("expected command") else {
+            panic!("expected provider command");
+        };
+        let ProviderCommand::Add(args) = command else {
+            panic!("expected provider add command");
+        };
+        assert!(args.no_interactive);
+        assert!(!args.interactive);
+    }
+
+    #[test]
+    fn model_add_accepts_no_interactive_flag() {
+        let cli =
+            Cli::try_parse_from(["omne", "model", "add", "gemini-3.1-pro", "--no-interactive"])
+                .expect("model add --no-interactive should parse");
+        let Command::Model { command } = cli.command.expect("expected command") else {
+            panic!("expected model command");
+        };
+        let ModelCommand::Add(args) = command else {
+            panic!("expected model add command");
+        };
+        assert!(args.no_interactive);
+        assert!(!args.interactive);
+    }
+
+    #[test]
+    fn provider_list_alias_parses() {
+        let cli = Cli::try_parse_from(["omne", "provider", "ls", "--namespace", "google"])
+            .expect("provider ls should parse");
+        let Command::Provider { command } = cli.command.expect("expected command") else {
+            panic!("expected provider command");
+        };
+        let ProviderCommand::List(args) = command else {
+            panic!("expected provider list command");
+        };
+        assert_eq!(args.namespace, Some(ProviderNamespace::Google));
+    }
+
+    #[test]
+    fn model_delete_alias_parses() {
+        let cli = Cli::try_parse_from(["omne", "model", "rm", "gemini-3.1-pro"])
+            .expect("model rm should parse");
+        let Command::Model { command } = cli.command.expect("expected command") else {
+            panic!("expected model command");
+        };
+        let ModelCommand::Delete(args) = command else {
+            panic!("expected model delete command");
+        };
+        assert_eq!(args.name, "gemini-3.1-pro");
     }
 }

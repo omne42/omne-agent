@@ -1,3 +1,5 @@
+use config_kit::{ConfigFormat, ConfigFormatSet, ConfigLoadOptions, try_load_typed_config_file};
+
 const OMNE_TOOL_DYNAMIC_REGISTRY_ENABLED_ENV: &str = "OMNE_TOOL_DYNAMIC_REGISTRY_ENABLED";
 const OMNE_TOOL_DYNAMIC_REGISTRY_PATH_ENV: &str = "OMNE_TOOL_DYNAMIC_REGISTRY_PATH";
 const DEFAULT_DYNAMIC_TOOL_REGISTRY_REL_PATH: &str = ".omne_data/spec/tool_registry.json";
@@ -49,7 +51,9 @@ pub(crate) fn dynamic_tool_registry_enabled() -> bool {
         .unwrap_or(false)
 }
 
-fn resolve_dynamic_registry_paths(thread_root: Option<&std::path::Path>) -> Vec<std::path::PathBuf> {
+fn resolve_dynamic_registry_paths(
+    thread_root: Option<&std::path::Path>,
+) -> Vec<std::path::PathBuf> {
     let mut out = Vec::<std::path::PathBuf>::new();
 
     if let Some(root) = thread_root {
@@ -83,22 +87,18 @@ fn default_dynamic_tool_schema() -> serde_json::Value {
     })
 }
 
+fn dynamic_registry_load_options() -> ConfigLoadOptions {
+    ConfigLoadOptions::new().with_default_format(ConfigFormat::Json)
+}
+
 fn normalize_dynamic_parameters(value: Option<serde_json::Value>) -> Option<serde_json::Value> {
     let value = value.unwrap_or_else(default_dynamic_tool_schema);
-    if value.is_object() {
-        Some(value)
-    } else {
-        None
-    }
+    if value.is_object() { Some(value) } else { None }
 }
 
 fn normalize_dynamic_fixed_args(value: Option<serde_json::Value>) -> Option<serde_json::Value> {
     let value = value.unwrap_or_else(|| serde_json::json!({}));
-    if value.is_object() {
-        Some(value)
-    } else {
-        None
-    }
+    if value.is_object() { Some(value) } else { None }
 }
 
 fn normalize_dynamic_tool_entry(
@@ -189,20 +189,15 @@ fn normalize_dynamic_tool_entry(
 }
 
 fn load_dynamic_tool_registry_file(path: &std::path::Path) -> Vec<DynamicToolSpec> {
-    let raw = match std::fs::read_to_string(path) {
-        Ok(raw) => raw,
+    let parsed = match try_load_typed_config_file::<RawDynamicRegistry>(
+        path,
+        dynamic_registry_load_options(),
+        ConfigFormatSet::JSON,
+    ) {
+        Ok(Some(parsed)) => parsed,
+        Ok(None) => return Vec::new(),
         Err(err) => {
-            if err.kind() != std::io::ErrorKind::NotFound {
-                tracing::warn!(path = %path.display(), error = %err, "failed to read dynamic tool registry");
-            }
-            return Vec::new();
-        }
-    };
-
-    let parsed: RawDynamicRegistry = match serde_json::from_str(&raw) {
-        Ok(parsed) => parsed,
-        Err(err) => {
-            tracing::warn!(path = %path.display(), error = %err, "failed to parse dynamic tool registry");
+            tracing::warn!(path = %path.display(), error = %err, "failed to load dynamic tool registry");
             return Vec::new();
         }
     };
@@ -223,7 +218,9 @@ fn load_dynamic_tool_registry_file(path: &std::path::Path) -> Vec<DynamicToolSpe
         .collect()
 }
 
-pub(crate) fn load_dynamic_tool_specs(thread_root: Option<&std::path::Path>) -> Vec<DynamicToolSpec> {
+pub(crate) fn load_dynamic_tool_specs(
+    thread_root: Option<&std::path::Path>,
+) -> Vec<DynamicToolSpec> {
     if !dynamic_tool_registry_enabled() {
         return Vec::new();
     }
@@ -293,5 +290,30 @@ mod dynamic_registry_tests {
         assert_eq!(spec.name, "dyn_read");
         assert_eq!(spec.mapped_tool, "file_read");
         assert_eq!(spec.mapped_action, "file/read");
+    }
+
+    #[test]
+    fn load_dynamic_tool_registry_file_accepts_extensionless_json() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("tool_registry");
+        std::fs::write(
+            &path,
+            serde_json::json!({
+                "version": 1,
+                "tools": [
+                    {
+                        "name": "dyn_read",
+                        "mapped_tool": "file_read",
+                        "read_only": true
+                    }
+                ]
+            })
+            .to_string(),
+        )
+        .expect("write registry");
+
+        let specs = load_dynamic_tool_registry_file(&path);
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].name, "dyn_read");
     }
 }

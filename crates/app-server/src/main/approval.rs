@@ -348,6 +348,7 @@ async fn emit_tool_denied(
         .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
             tool_id,
             status: omne_protocol::ToolStatus::Denied,
+            structured_error: structured_error_from_result_value(&result),
             error: Some(error),
             result: Some(result),
         })
@@ -363,9 +364,21 @@ fn denied_response_with_remembered<T, F>(
 ) -> anyhow::Result<Value>
 where
     T: serde::Serialize,
-    F: FnOnce(omne_protocol::ToolId, Option<bool>, Option<String>) -> T,
+    F: FnOnce(
+        omne_protocol::ToolId,
+        Option<bool>,
+        Option<structured_text_protocol::StructuredTextData>,
+        Option<String>,
+    ) -> T,
 {
-    let response = build(tool_id, remembered, Some("approval_denied".to_string()));
+    let structured_error = catalog_structured_error_with("approval_denied", |message| {
+        if let Some(remembered) = remembered {
+            message.try_with_value_arg("remembered", remembered)?;
+        }
+        Ok(())
+    })?;
+    let error_code = structured_error_code(&structured_error);
+    let response = build(tool_id, remembered, Some(structured_error), error_code);
     serde_json::to_value(response).context(context)
 }
 
@@ -400,9 +413,15 @@ async fn enforce_thread_allowed_tools(
     let allowed_json = serde_json::to_string(allowed_tools)
         .unwrap_or_else(|_| format!("{allowed_tools:?}"));
     let error = format!("tool {tool} denied by thread allowed_tools={allowed_json}");
+    let structured_error = catalog_structured_error_with("allowed_tools_denied", |message| {
+        message.try_with_value_arg("tool", tool)?;
+        Ok(())
+    })?;
     let denied_result = serde_json::json!({
         "tool": tool,
         "allowed_tools": allowed_tools,
+        "structured_error": structured_error,
+        "error_code": "allowed_tools_denied",
     });
 
     emit_tool_denied(

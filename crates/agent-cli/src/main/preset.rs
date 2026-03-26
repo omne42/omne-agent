@@ -2,7 +2,7 @@ mod preset {
     use std::path::{Path, PathBuf};
 
     use anyhow::Context;
-    use omne_protocol::{ApprovalPolicy, SandboxNetworkAccess, SandboxPolicy, ThreadId};
+    use omne_protocol::{ApprovalPolicy, SandboxNetworkAccess, ThreadId};
     use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -21,7 +21,7 @@ mod preset {
     #[serde(deny_unknown_fields)]
     struct PresetThreadConfig {
         approval_policy: ApprovalPolicy,
-        sandbox_policy: SandboxPolicy,
+        sandbox_policy: policy_meta::WriteScope,
         sandbox_network_access: SandboxNetworkAccess,
         sandbox_writable_roots: Vec<String>,
         mode: String,

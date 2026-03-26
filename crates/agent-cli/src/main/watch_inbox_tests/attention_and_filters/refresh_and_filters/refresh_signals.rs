@@ -6,6 +6,7 @@ fn should_refresh_watch_detail_summary_true_for_tool_completed() {
         omne_protocol::ThreadEventKind::ToolCompleted {
             tool_id: omne_protocol::ToolId::new(),
             status: omne_protocol::ToolStatus::Completed,
+            structured_error: None,
             error: None,
             result: None,
         },

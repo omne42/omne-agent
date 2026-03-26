@@ -54,9 +54,31 @@ async fn rel_path_is_secret_cannot_be_bypassed_via_symlink() {
     assert!(rel_path_is_secret(&rel), "expected .env to be treated as secret");
 }
 
+#[test]
+fn rel_path_is_read_blocked_handles_env_variants() {
+    assert!(rel_path_is_read_blocked(std::path::Path::new(".env")));
+    assert!(rel_path_is_read_blocked(std::path::Path::new(".env.local")));
+    assert!(rel_path_is_read_blocked(std::path::Path::new(".env.production")));
+    assert!(!rel_path_is_read_blocked(std::path::Path::new(".env.example")));
+    assert!(!rel_path_is_read_blocked(std::path::Path::new(".env.template")));
+}
+
 #[cfg(test)]
 mod fs_file_mode_override_audit_tests {
     use super::*;
+
+    async fn setup_thread_default_allow(
+    ) -> anyhow::Result<(tempfile::TempDir, std::path::PathBuf, Server, ThreadId)> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(repo_dir.join("src")).await?;
+        tokio::fs::write(repo_dir.join("src/lib.rs"), "needle\n").await?;
+
+        let server = build_test_server_shared(repo_dir.join(".omne_data"));
+        let thread_id = create_test_thread_shared(&server, repo_dir.clone()).await?;
+
+        Ok((tmp, repo_dir, server, thread_id))
+    }
 
     async fn setup_thread_with_allowed_tools_denied(
     ) -> anyhow::Result<(tempfile::TempDir, Server, ThreadId)> {
@@ -106,7 +128,7 @@ mod fs_file_mode_override_audit_tests {
             ThreadConfigureParams {
                 thread_id,
                 approval_policy: None,
-                sandbox_policy: Some(omne_protocol::SandboxPolicy::ReadOnly),
+                sandbox_policy: Some(policy_meta::WriteScope::ReadOnly),
                 sandbox_writable_roots: None,
                 sandbox_network_access: None,
                 mode: None,
@@ -161,6 +183,65 @@ modes:
         configure_test_thread_mode_shared(&server, thread_id, mode_name).await?;
 
         Ok((tmp, server, thread_id))
+    }
+
+    #[tokio::test]
+    async fn fs_mkdir_creates_directory_and_returns_created_true() -> anyhow::Result<()> {
+        let (_tmp, repo_dir, server, thread_id) = setup_thread_default_allow().await?;
+
+        let result = handle_fs_mkdir(
+            &server,
+            FsMkdirParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                path: "tmp/new-dir".to_string(),
+                recursive: true,
+            },
+        )
+        .await?;
+
+        assert_eq!(result["created"].as_bool(), Some(true));
+        let created_path = repo_dir.join("tmp/new-dir");
+        let metadata = tokio::fs::metadata(&created_path).await?;
+        assert!(metadata.is_dir(), "expected {} to be a dir", created_path.display());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn fs_mkdir_existing_directory_returns_created_false() -> anyhow::Result<()> {
+        let (_tmp, repo_dir, server, thread_id) = setup_thread_default_allow().await?;
+
+        let first = handle_fs_mkdir(
+            &server,
+            FsMkdirParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                path: "tmp/existing-dir".to_string(),
+                recursive: true,
+            },
+        )
+        .await?;
+        assert_eq!(first["created"].as_bool(), Some(true));
+
+        let second = handle_fs_mkdir(
+            &server,
+            FsMkdirParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                path: "tmp/existing-dir".to_string(),
+                recursive: true,
+            },
+        )
+        .await?;
+
+        assert_eq!(second["created"].as_bool(), Some(false));
+        let existing_path = repo_dir.join("tmp/existing-dir");
+        let metadata = tokio::fs::metadata(&existing_path).await?;
+        assert!(metadata.is_dir(), "expected {} to be a dir", existing_path.display());
+        Ok(())
     }
 
     #[tokio::test]

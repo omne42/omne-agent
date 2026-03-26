@@ -1,9 +1,26 @@
 # omne-agent 领域边界审计（2026-03-04）
 
+## 状态更新（2026-03-26）
+
+本报告成文后，`omne-agent` 已有一部分跨仓收口落地。阅读本报告时请结合以下现状：
+
+- 本报告原文中的 `agent-exec-gateway` 现在统一按当前仓内名称理解为 `omne-execution-gateway`。
+- `config-kit` 已落地到项目配置与 router 配置边界：
+  - `crates/app-server/src/project_config.rs`
+  - `crates/core/src/router.rs`
+  这意味着 `omne-agent` 已不再手写 project config / router config 的底层文件读取与格式识别。
+- `omne-execution-gateway` 已接入 `process/start` 路径：
+  - `crates/app-server/Cargo.toml`
+  - `crates/app-server/src/main/process_stream/common.rs`
+  - `crates/app-server/src/main/process_control/start.rs`
+  因此，下文“app-server 依赖中未接入执行网关”的证据已过时。当前剩余问题是 `execve_gate` 与 app 层治理链仍未完全收口。
+- `mcp-kit` 目前已复用 `Config::load(...)` 处理 `mcp.json` 配置输入边界，但连接缓存、spawn、initialize、request/notify 仍在 `crates/app-server/src/main/mcp/runtime.rs` 本地实现，因此 MCP 结论仍然成立。
+- `policy-meta-spec` 的复用已不止 `WriteScope`；当前还通过 `policy_meta::ExecutionIsolation` 接入执行隔离语义，但整体边界判断没有变化。
+
 ## 范围
 本次审计检查 `omne-agent` 是否超出自身编排层职责，侵占或重复以下组件领域：
 
-- `agent-exec-gateway`
+- `omne-execution-gateway`
 - `ditto-llm`
 - `mcp-kit`
 - `notify-kit`
@@ -16,26 +33,27 @@
 
 | 领域 | 结论 | 严重性 | 类型 |
 |---|---|---|---|
-| `agent-exec-gateway` | 存在明显重复实现（命令执行边界与决策） | 高 | 领域侵占 + 职责重复 |
-| `mcp-kit` | 存在明显重复实现（连接缓存、spawn、initialize、request） | 高 | 职责重复 + 抽象重复 |
+| `omne-execution-gateway` | 已接入网关预检与命令准备，但仍存在部分重复实现（app 层治理链与 `execve_gate` 未完全收口） | 中-高 | 领域侵占 + 职责重复 |
+| `mcp-kit` | 已复用配置加载，但 `Manager`/`Session` 层仍存在明显重复实现（连接缓存、spawn、initialize、request） | 高 | 职责重复 + 抽象重复 |
 | `ditto-llm` | 仍有 provider/协议细节残留在 `omne-agent` | 中 | 领域边界偏厚 |
 | `safe-fs-tools` | `.env` 安全规则双重实现且有语义漂移风险 | 中 | 代码重复 + 规则重复 |
 | `notify-kit` | 边界基本清晰（以调用为主） | 低/无 | 无明显侵占 |
-| `policy-meta-spec` | 当前仅复用 `WriteScope`，边界基本清晰 | 低/无 | 无明显侵占 |
+| `policy-meta-spec` | 当前复用 `WriteScope` 与部分 `ExecutionIsolation` 语义，边界基本清晰 | 低/无 | 无明显侵占 |
 
 ---
 
-## 1) `agent-exec-gateway`：高风险重复
+## 1) `omne-execution-gateway`：已接入但仍未完全收口
 
 ### 观察
-`agent-exec-gateway` 的核心定位是统一命令执行边界与 fail-closed 策略；但 `omne-agent` 侧仍维护了一整套并行的执行决策体系。
+`omne-execution-gateway` 的核心定位是统一命令执行边界与 fail-closed 策略。当前 `omne-agent` 已在 `process/start` 路径接入网关的 `preflight` / `prepare_command`，但 `process/start` 与 `execve_gate` 仍保留了一层并行的 app 侧治理与协议循环，因此边界还没有完全收口。
 
 ### 证据
-- `agent-exec-gateway` 明确强调“统一执行边界，避免分散安全逻辑”：  
-  `agent-exec-gateway/README.md:7-10`
-- 网关内置执行决策与工作区边界/isolation 校验：  
-  `agent-exec-gateway/src/gateway.rs:71-123`  
-  `agent-exec-gateway/src/gateway.rs:166-186`
+- `app-server` 当前已显式依赖 `omne-execution-gateway`：  
+  `crates/app-server/Cargo.toml:12-20`
+- `omne-agent` 已在 `process_stream/common.rs` 内构建 `ExecGateway`，并通过 `preflight` / `prepare_command` 执行网关边界检查：  
+  `crates/app-server/src/main/process_stream/common.rs:26-90`
+- `process/start` 启动真实进程前会调用 `prepare_process_exec_gateway_command(...)`：  
+  `crates/app-server/src/main/process_control/start.rs:300-323`
 - `omne-agent` 在 `process/start` 内部自行执行 sandbox/network/mode/execpolicy/approval 决策链：  
   `crates/app-server/src/main/process_control/start.rs:83-113`  
   `crates/app-server/src/main/process_control/start.rs:127-230`  
@@ -44,22 +62,23 @@
   `crates/app-server/src/main/process_control/execve_gate.rs:378-543`
 - 且 `execve_gate` 自建了 JSON-RPC/MCP 协议处理循环：  
   `crates/app-server/src/main/process_control/execve_gate.rs:88-172`
-- `app-server` 依赖中未接入 `agent-exec-gateway`：  
-  `crates/app-server/Cargo.toml:15-25`
 
 ### 风险
-- 同一安全语义在两套代码中演化，容易漂移。
-- bug 修复/策略升级需要双份改动，回归成本高。
-- 难以建立“唯一可信执行边界”。
+- 执行边界已经不再是“完全双栈”，但 app 层治理链与 gateway 语义仍可能继续漂移。
+- bug 修复/策略升级仍需要同时检查 gateway 接入层与 `execve_gate` 本地逻辑。
+- 如果后续继续在 app 层堆命令治理逻辑，会重新把已收口的执行边界拉回分散状态。
 
 ---
 
 ## 2) `mcp-kit`：高风险重复
 
 ### 观察
-`mcp-kit` 已提供 `Config + Manager + Session`，其中 `Manager` 覆盖连接缓存、spawn/connect、initialize、request/notify；但 `omne-agent` 仍在 `main/mcp/runtime.rs` 重复实现该层。
+`mcp-kit` 已经接管了 `mcp.json` 配置输入边界，但 `Manager + Session` 这层仍未收口。也就是说，配置加载已经共享，连接缓存、spawn/connect、initialize、request/notify 仍主要由 `omne-agent` 自己维护。
 
 ### 证据
+- `omne-agent` 当前已通过 `omne_mcp_kit::Config::load(...)` 复用 `mcp-kit` 的配置加载：  
+  `crates/app-server/src/main/mcp/runtime.rs:8-10`  
+  `crates/app-server/src/main/mcp/runtime.rs:65-69`
 - `mcp-kit` 对外职责说明：  
   `mcp-kit/crates/mcp-kit/src/lib.rs:6-9`
 - `Manager` 持有连接与初始化结果缓存：  
@@ -160,13 +179,13 @@
 ## 6) `policy-meta-spec`：当前边界基本健康
 
 ### 观察
-`omne-agent` 目前仅复用 `WriteScope` 作为 `SandboxPolicy`，没有重写 `policy-meta-spec` 的核心 schema。
+`omne-agent` 当前主要复用 `WriteScope`，并已在执行网关接入路径中使用 `ExecutionIsolation`；没有重写 `policy-meta-spec` 的核心 schema，整体边界仍然健康。
 
 ### 证据
 - `omne-protocol` 直接复用：  
-  `crates/agent-protocol/src/lib.rs:317`
-- 仓内未见其他 `policy_meta::*` 实际使用：  
-  全局搜索结果仅该一处。
+  `crates/agent-protocol/src/lib.rs:590-614`
+- `process_stream/common.rs` 已使用 `policy_meta::ExecutionIsolation` 对接执行网关：  
+  `crates/app-server/src/main/process_stream/common.rs:39-42`
 
 ### 结论
 当前无明显 `policy-meta-spec` 领域侵占。

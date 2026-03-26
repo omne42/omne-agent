@@ -72,6 +72,7 @@ async fn handle_file_glob(server: &Server, params: FileGlobParams) -> anyhow::Re
                     .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                         tool_id,
                         status: omne_protocol::ToolStatus::Failed,
+                        structured_error: None,
                         error: Some(err.to_string()),
                         result: Some(serde_json::json!({
                             "root": file_root.as_str(),
@@ -95,6 +96,7 @@ async fn handle_file_glob(server: &Server, params: FileGlobParams) -> anyhow::Re
                 .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
                     status: omne_protocol::ToolStatus::Completed,
+                    structured_error: None,
                     error: None,
                     result: Some(serde_json::json!({
                         "matches": paths.len(),
@@ -114,6 +116,7 @@ async fn handle_file_glob(server: &Server, params: FileGlobParams) -> anyhow::Re
                 .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
                     status: omne_protocol::ToolStatus::Failed,
+                    structured_error: None,
                     error: Some(err.to_string()),
                     result: None,
                 })

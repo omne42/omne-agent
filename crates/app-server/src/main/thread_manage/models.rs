@@ -1,3 +1,78 @@
+fn resolve_thread_models_provider_upstream_api(
+    provider_config: &ditto_core::config::ProviderConfig,
+) -> ditto_core::config::ProviderApi {
+    if let Some(upstream_api) = provider_config.upstream_api {
+        return upstream_api;
+    }
+    if provider_config
+        .capabilities
+        .is_some_and(|capabilities| capabilities.reasoning)
+    {
+        ditto_core::config::ProviderApi::OpenaiResponses
+    } else {
+        ditto_core::config::ProviderApi::OpenaiChatCompletions
+    }
+}
+
+fn default_thread_models_capabilities(
+    upstream_api: ditto_core::config::ProviderApi,
+) -> ditto_core::config::ProviderCapabilities {
+    if upstream_api.uses_openai_responses_client() {
+        return ditto_core::config::ProviderCapabilities::openai_responses();
+    }
+    ditto_core::config::ProviderCapabilities {
+        tools: true,
+        vision: false,
+        reasoning: false,
+        json_schema: false,
+        streaming: true,
+        prompt_cache: true,
+    }
+}
+
+fn resolve_thread_models_capabilities(
+    provider_config: &ditto_core::config::ProviderConfig,
+    upstream_api: ditto_core::config::ProviderApi,
+) -> ditto_core::config::ProviderCapabilities {
+    provider_config
+        .capabilities
+        .unwrap_or_else(|| default_thread_models_capabilities(upstream_api))
+}
+
+fn fallback_native_models(
+    current_model: &str,
+    default_model: Option<&str>,
+    whitelist: &[String],
+) -> Vec<String> {
+    let mut out = Vec::<String>::new();
+    let mut seen = std::collections::BTreeSet::<String>::new();
+
+    for model in whitelist {
+        let trimmed = model.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if seen.insert(trimmed.to_string()) {
+            out.push(trimmed.to_string());
+        }
+    }
+
+    for candidate in [Some(current_model), default_model] {
+        let Some(candidate) = candidate else {
+            continue;
+        };
+        let trimmed = candidate.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if seen.insert(trimmed.to_string()) {
+            out.push(trimmed.to_string());
+        }
+    }
+
+    out
+}
+
 async fn handle_thread_models(
     server: &Server,
     params: ThreadModelsParams,
@@ -18,20 +93,11 @@ async fn handle_thread_models(
                 .ok()
                 .filter(|s| !s.trim().is_empty())
         })
-        .unwrap_or_else(|| "openai-codex-apikey".to_string());
+        .unwrap_or_else(|| crate::project_config::DEFAULT_OPENAI_PROVIDER.to_string());
 
-    let builtin_provider_config = builtin_openai_provider_config(&provider);
     let provider_overrides = project.providers.get(&provider);
-    if builtin_provider_config.is_none() && provider_overrides.is_none() {
-        anyhow::bail!(
-            "unknown openai provider: {provider} (expected: openai-codex-apikey, openai-auth-command; or define [openai.providers.{provider}] in project config)"
-        );
-    }
-
-    let mut provider_config = builtin_provider_config.unwrap_or_default();
-    if let Some(overrides) = provider_overrides {
-        provider_config = merge_provider_config(provider_config, overrides);
-    }
+    let provider_config =
+        crate::project_config::resolve_provider_config(&provider, provider_overrides)?;
 
     let base_url = thread_openai_base_url
         .or(project.base_url)
@@ -42,7 +108,7 @@ async fn handle_thread_models(
         })
         .or(provider_config.base_url.clone())
         .filter(|s| !s.trim().is_empty())
-        .ok_or_else(|| anyhow::anyhow!("openai provider {provider} is missing base_url"))?;
+        .ok_or_else(|| anyhow::anyhow!("provider {provider} is missing base_url"))?;
 
     let current_model = thread_model
         .or(project.model)
@@ -54,34 +120,50 @@ async fn handle_thread_models(
         .or(provider_config.default_model.clone())
         .unwrap_or_else(|| "gpt-4.1".to_string());
 
-    let thinking = ditto_llm::select_model_config(&project.models, &current_model)
+    let thinking = ditto_core::config::select_model_config(&project.models, &current_model)
         .map(|cfg| cfg.thinking)
         .unwrap_or_default();
 
-    let provider_for_listing = ditto_llm::ProviderConfig {
+    let provider_for_listing = ditto_core::config::ProviderConfig {
+        provider: provider_config.provider.clone(),
+        enabled_capabilities: provider_config.enabled_capabilities.clone(),
         base_url: Some(base_url.clone()),
-        default_model: provider_config.default_model,
+        default_model: provider_config
+            .default_model
+            .clone()
+            .or_else(|| Some(current_model.clone())),
         model_whitelist: provider_config.model_whitelist.clone(),
-        http_headers: provider_config.http_headers,
-        http_query_params: provider_config.http_query_params,
-        auth: provider_config.auth,
+        http_headers: provider_config.http_headers.clone(),
+        http_query_params: provider_config.http_query_params.clone(),
+        auth: provider_config.auth.clone(),
         capabilities: provider_config.capabilities,
+        upstream_api: provider_config.upstream_api,
+        normalize_to: provider_config.normalize_to,
+        normalize_endpoint: provider_config.normalize_endpoint,
+        openai_compatible: provider_config.openai_compatible.clone(),
     };
 
-    let env = ditto_llm::Env {
+    let upstream_api = resolve_thread_models_provider_upstream_api(&provider_for_listing);
+    let capabilities = resolve_thread_models_capabilities(&provider_for_listing, upstream_api);
+    let env = ditto_core::config::Env {
         dotenv: project.dotenv,
     };
-    let provider_client = ditto_llm::OpenAiModelsProvider::from_config(
-        provider.clone(),
-        &provider_for_listing,
-        &env,
-    )
-    .await
-    .context("build provider client")?;
-    let capabilities = ditto_llm::Provider::capabilities(&provider_client);
-    let models = ditto_llm::Provider::list_models(&provider_client)
-        .await
-        .context("list /models")?;
+
+    let models = match upstream_api {
+        ditto_core::config::ProviderApi::OpenaiResponses | ditto_core::config::ProviderApi::OpenaiChatCompletions => {
+            let client = ditto_core::providers::OpenAI::from_config(&provider_for_listing, &env)
+                .await
+                .context("build provider client")?;
+            let listed = client.list_model_ids().await.context("list /models")?;
+            ditto_core::config::filter_models_whitelist(listed, &provider_for_listing.model_whitelist)
+        }
+        ditto_core::config::ProviderApi::GeminiGenerateContent
+        | ditto_core::config::ProviderApi::AnthropicMessages => fallback_native_models(
+            &current_model,
+            provider_for_listing.default_model.as_deref(),
+            &provider_for_listing.model_whitelist,
+        ),
+    };
 
     Ok(omne_app_server_protocol::ThreadModelsResponse {
         provider,
@@ -100,67 +182,4 @@ async fn handle_thread_models(
         },
         models,
     })
-}
-
-fn builtin_openai_provider_config(provider: &str) -> Option<ditto_llm::ProviderConfig> {
-    match provider {
-        "openai-codex-apikey" => Some(ditto_llm::ProviderConfig {
-            base_url: Some("https://api.openai.com/v1".to_string()),
-            default_model: None,
-            model_whitelist: Vec::new(),
-            http_headers: Default::default(),
-            http_query_params: Default::default(),
-            auth: Some(ditto_llm::ProviderAuth::ApiKeyEnv { keys: Vec::new() }),
-            capabilities: None,
-        }),
-        "openai-auth-command" => Some(ditto_llm::ProviderConfig {
-            base_url: Some("https://api.openai.com/v1".to_string()),
-            default_model: None,
-            model_whitelist: Vec::new(),
-            http_headers: Default::default(),
-            http_query_params: Default::default(),
-            auth: Some(ditto_llm::ProviderAuth::Command { command: Vec::new() }),
-            capabilities: None,
-        }),
-        _ => None,
-    }
-}
-
-fn merge_provider_config(
-    mut base: ditto_llm::ProviderConfig,
-    overrides: &ditto_llm::ProviderConfig,
-) -> ditto_llm::ProviderConfig {
-    if let Some(base_url) = overrides
-        .base_url
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        base.base_url = Some(base_url.to_string());
-    }
-    if let Some(default_model) = overrides
-        .default_model
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        base.default_model = Some(default_model.to_string());
-    }
-    if !overrides.model_whitelist.is_empty() {
-        base.model_whitelist = ditto_llm::normalize_string_list(overrides.model_whitelist.clone());
-    }
-    if !overrides.http_headers.is_empty() {
-        base.http_headers.extend(overrides.http_headers.clone());
-    }
-    if !overrides.http_query_params.is_empty() {
-        base.http_query_params
-            .extend(overrides.http_query_params.clone());
-    }
-    if let Some(auth) = overrides.auth.clone() {
-        base.auth = Some(auth);
-    }
-    if let Some(capabilities) = overrides.capabilities {
-        base.capabilities = Some(capabilities);
-    }
-    base
 }

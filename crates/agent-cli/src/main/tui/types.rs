@@ -1119,6 +1119,7 @@
         input: String,
         status: Option<String>,
         status_expires_at: Option<Instant>,
+        current_context_tokens_estimate: Option<u64>,
         total_tokens_used: u64,
         counted_usage_responses: HashSet<String>,
         skip_token_usage_before_seq: Option<u64>,

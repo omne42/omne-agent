@@ -10,5 +10,7 @@ pub(super) async fn handle_repo_request(
         "repo/search" => RepoSearchParams => |params| handle_repo_search(server, params),
         "repo/index" => RepoIndexParams => |params| handle_repo_index(server, params),
         "repo/symbols" => RepoSymbolsParams => |params| handle_repo_symbols(server, params),
+        "repo/goto_definition" => RepoGotoDefinitionParams => |params| handle_repo_goto_definition(server, params),
+        "repo/find_references" => RepoFindReferencesParams => |params| handle_repo_find_references(server, params),
     })
 }

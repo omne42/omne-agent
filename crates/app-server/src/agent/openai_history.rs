@@ -1,6 +1,6 @@
 use chacha20poly1305::aead::{Aead, KeyInit, OsRng, Payload, rand_core::RngCore};
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
-use sha2::{Digest, Sha256};
+use omne_integrity_primitives::Sha256Hasher;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 const OPENAI_RESPONSES_HISTORY_FILE_NAME: &str = "openai_responses_history.jsonl";
@@ -32,7 +32,9 @@ enum OpenAiResponsesHistoryStoredRecord {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum OpenAiResponsesHistoryLogicalRecord {
-    Item { item: serde_json::Value },
+    Item {
+        item: serde_json::Value,
+    },
     Compacted {
         replacement_history: Vec<serde_json::Value>,
     },
@@ -52,7 +54,9 @@ enum OpenAiResponsesHistoryLogicalRecordRef<'a> {
 impl<'a> OpenAiResponsesHistoryLogicalRecordRef<'a> {
     fn to_owned(&self) -> OpenAiResponsesHistoryLogicalRecord {
         match self {
-            Self::Item { item } => OpenAiResponsesHistoryLogicalRecord::Item { item: (*item).clone() },
+            Self::Item { item } => OpenAiResponsesHistoryLogicalRecord::Item {
+                item: (*item).clone(),
+            },
             Self::Compacted {
                 replacement_history,
             } => OpenAiResponsesHistoryLogicalRecord::Compacted {
@@ -122,7 +126,9 @@ impl OpenAiResponsesHistoryCodec {
         if !self.is_encrypted() {
             return Ok(match record {
                 OpenAiResponsesHistoryLogicalRecordRef::Item { item } => {
-                    OpenAiResponsesHistoryStoredRecord::Item { item: (*item).clone() }
+                    OpenAiResponsesHistoryStoredRecord::Item {
+                        item: (*item).clone(),
+                    }
                 }
                 OpenAiResponsesHistoryLogicalRecordRef::Compacted {
                     replacement_history,
@@ -219,10 +225,9 @@ impl OpenAiResponsesHistoryCodec {
                     )
                     .map_err(|_| anyhow::anyhow!("decrypt openai history payload failed"))?;
 
-                let logical = serde_json::from_slice::<OpenAiResponsesHistoryLogicalRecord>(
-                    &plaintext,
-                )
-                .context("parse decrypted openai history payload")?;
+                let logical =
+                    serde_json::from_slice::<OpenAiResponsesHistoryLogicalRecord>(&plaintext)
+                        .context("parse decrypted openai history payload")?;
                 Ok((logical, false))
             }
         }
@@ -294,7 +299,9 @@ fn decode_base64_bytes(value: &str, field: &str) -> anyhow::Result<Vec<u8>> {
         .with_context(|| format!("decode {field} as base64"))
 }
 
-fn parse_local_history_secret(bytes: &[u8]) -> anyhow::Result<[u8; OPENAI_RESPONSES_HISTORY_KEY_LEN]> {
+fn parse_local_history_secret(
+    bytes: &[u8],
+) -> anyhow::Result<[u8; OPENAI_RESPONSES_HISTORY_KEY_LEN]> {
     if bytes.len() == OPENAI_RESPONSES_HISTORY_KEY_LEN {
         let mut key = [0u8; OPENAI_RESPONSES_HISTORY_KEY_LEN];
         key.copy_from_slice(bytes);
@@ -339,16 +346,13 @@ fn derive_openai_responses_history_key(
     thread_id: omne_protocol::ThreadId,
     material: &[u8],
 ) -> [u8; OPENAI_RESPONSES_HISTORY_KEY_LEN] {
-    let mut hasher = Sha256::new();
+    let mut hasher = Sha256Hasher::new();
     hasher.update(OPENAI_RESPONSES_HISTORY_AAD_DOMAIN.as_bytes());
     hasher.update([0u8]);
     hasher.update(thread_id.to_string().as_bytes());
     hasher.update([0u8]);
     hasher.update(material);
-    let digest = hasher.finalize();
-    let mut key = [0u8; OPENAI_RESPONSES_HISTORY_KEY_LEN];
-    key.copy_from_slice(&digest[..OPENAI_RESPONSES_HISTORY_KEY_LEN]);
-    key
+    hasher.finalize().into_bytes()
 }
 
 async fn load_or_create_local_openai_history_secret(
@@ -493,7 +497,8 @@ async fn rewrite_openai_responses_history_as_compacted(
             replacement_history,
         },
     )?;
-    let line = serde_json::to_string(&stored).context("serialize compacted openai history record")?;
+    let line =
+        serde_json::to_string(&stored).context("serialize compacted openai history record")?;
     let path = openai_responses_history_path(thread_store, thread_id);
     tokio::fs::write(&path, format!("{line}\n").as_bytes())
         .await
@@ -528,13 +533,19 @@ async fn read_openai_responses_history(
         if line.is_empty() {
             continue;
         }
-        let record =
-            serde_json::from_str::<OpenAiResponsesHistoryStoredRecord>(line).with_context(
-            || format!("parse openai history record: {} (line={idx})", path.display()),
-        )?;
-        let (record, legacy) = codec
-            .decode_record(thread_id, record)
-            .with_context(|| format!("decode openai history record: {} (line={idx})", path.display()))?;
+        let record = serde_json::from_str::<OpenAiResponsesHistoryStoredRecord>(line)
+            .with_context(|| {
+                format!(
+                    "parse openai history record: {} (line={idx})",
+                    path.display()
+                )
+            })?;
+        let (record, legacy) = codec.decode_record(thread_id, record).with_context(|| {
+            format!(
+                "decode openai history record: {} (line={idx})",
+                path.display()
+            )
+        })?;
         saw_legacy_records |= legacy;
 
         match record {
@@ -556,21 +567,24 @@ async fn read_openai_responses_history(
 async fn compact_openai_responses_history(
     thread_store: &omne_core::ThreadStore,
     thread_id: omne_protocol::ThreadId,
-    client: &ditto_llm::OpenAI,
+    client: &ditto_core::providers::OpenAI,
     model: &str,
     instructions: &str,
     input: &[serde_json::Value],
 ) -> anyhow::Result<Vec<serde_json::Value>> {
     let replacement_history = client
-        .compact_responses_history_raw(&ditto_llm::providers::openai::OpenAIResponsesCompactionRequest {
-            model,
-            input,
-            instructions,
-        })
+        .compact_responses_history_raw(
+            &ditto_core::providers::openai::OpenAIResponsesCompactionRequest {
+                model,
+                input,
+                instructions,
+            },
+        )
         .await
         .map_err(anyhow::Error::new)?;
 
-    append_openai_responses_history_compacted(thread_store, thread_id, &replacement_history).await?;
+    append_openai_responses_history_compacted(thread_store, thread_id, &replacement_history)
+        .await?;
 
     Ok(replacement_history)
 }
@@ -583,9 +597,8 @@ mod tests {
     #[tokio::test]
     async fn openai_history_replays_compaction_replacement() -> anyhow::Result<()> {
         let dir = tempdir()?;
-        let thread_store = omne_core::ThreadStore::new(omne_core::PmPaths::new(
-            dir.path().join(".omne_data"),
-        ));
+        let thread_store =
+            omne_core::ThreadStore::new(omne_core::PmPaths::new(dir.path().join(".omne_data")));
 
         let handle = thread_store
             .create_thread(std::path::PathBuf::from("/tmp"))
@@ -600,8 +613,9 @@ mod tests {
         )
         .await?;
 
-        let replacement_history =
-            vec![serde_json::json!({"type":"message","role":"user","content":[{"type":"input_text","text":"b"}]})];
+        let replacement_history = vec![
+            serde_json::json!({"type":"message","role":"user","content":[{"type":"input_text","text":"b"}]}),
+        ];
         append_openai_responses_history_compacted(&thread_store, thread_id, &replacement_history)
             .await?;
 
@@ -625,12 +639,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn openai_history_reads_legacy_plaintext_and_migrates_when_encrypted() -> anyhow::Result<()>
-    {
+    async fn openai_history_reads_legacy_plaintext_and_migrates_when_encrypted()
+    -> anyhow::Result<()> {
         let dir = tempdir()?;
-        let thread_store = omne_core::ThreadStore::new(omne_core::PmPaths::new(
-            dir.path().join(".omne_data"),
-        ));
+        let thread_store =
+            omne_core::ThreadStore::new(omne_core::PmPaths::new(dir.path().join(".omne_data")));
 
         let handle = thread_store
             .create_thread(std::path::PathBuf::from("/tmp"))
@@ -647,7 +660,9 @@ mod tests {
         let history = read_openai_responses_history(&thread_store, thread_id).await?;
         assert_eq!(
             history,
-            vec![serde_json::json!({"type":"message","role":"user","content":[{"type":"input_text","text":"legacy"}]})]
+            vec![
+                serde_json::json!({"type":"message","role":"user","content":[{"type":"input_text","text":"legacy"}]})
+            ]
         );
 
         let raw = tokio::fs::read_to_string(&path).await?;

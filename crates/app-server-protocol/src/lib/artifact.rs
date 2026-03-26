@@ -145,6 +145,9 @@ pub struct ArtifactFanInSummaryTask {
     pub result_artifact_error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
+    pub result_artifact_structured_error: Option<StructuredTextData>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub result_artifact_error_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -206,6 +209,9 @@ pub struct ArtifactFanOutResultIsolatedWritePatchStructuredData {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub structured_error: Option<StructuredTextData>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, JsonSchema, TS)]
@@ -285,6 +291,9 @@ pub struct ArtifactFanOutResultIsolatedWriteAutoApplyStructuredData {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub structured_error: Option<StructuredTextData>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, JsonSchema, TS)]
@@ -443,6 +452,9 @@ pub struct ArtifactModeDeniedResponse {
     pub denied: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
+    pub structured_error: Option<StructuredTextData>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub error_code: Option<String>,
     pub mode: String,
     pub decision: ArtifactModeDecision,
@@ -456,6 +468,9 @@ pub struct ArtifactUnknownModeDeniedResponse {
     pub tool_id: omne_protocol::ToolId,
     #[serde(default)]
     pub denied: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub structured_error: Option<StructuredTextData>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub error_code: Option<String>,
@@ -472,6 +487,9 @@ pub struct ArtifactAllowedToolsDeniedResponse {
     pub tool_id: omne_protocol::ToolId,
     #[serde(default)]
     pub denied: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub structured_error: Option<StructuredTextData>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub error_code: Option<String>,

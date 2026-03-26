@@ -109,8 +109,10 @@ struct SubagentSpawnSchedule {
 struct TaskResultArtifactSummary {
     result_artifact_id: Option<String>,
     result_artifact_error: Option<String>,
+    result_artifact_structured_error: Option<structured_text_protocol::StructuredTextData>,
     result_artifact_error_id: Option<String>,
-    result_artifact_diagnostics: Option<omne_workflow_spec::FanInResultArtifactDiagnosticsStructuredData>,
+    result_artifact_diagnostics:
+        Option<omne_workflow_spec::FanInResultArtifactDiagnosticsStructuredData>,
 }
 
 #[derive(Default)]
@@ -278,7 +280,6 @@ impl SubagentSpawnSchedule {
         stale_proxy_approval_ids
     }
 
-
     fn mark_dependency_blocked_tasks(&mut self) {
         loop {
             let mut changed = false;
@@ -353,9 +354,7 @@ impl SubagentSpawnSchedule {
             .min_by_key(|(idx, task)| (self.aged_priority_rank(task), *idx))
             .map(|(idx, _)| idx)
     }
-
 }
-
 
 include!("subagents_schedule_approval_proxy.rs");
 include!("subagents_schedule_event_catch_up.rs");

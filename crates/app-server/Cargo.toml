@@ -9,16 +9,19 @@ anyhow.workspace = true
 async-trait.workspace = true
 base64.workspace = true
 clap.workspace = true
-diffy.workspace = true
+config-kit = { path = "../../../omne_foundation/crates/config-kit" }
+error-kit.workspace = true
 globset.workspace = true
 futures-util.workspace = true
 nix.workspace = true
-ditto-llm = { path = "../../../ditto-llm" }
-notify-kit = { path = "../../../notify-kit/crates/notify-kit" }
-omne-mcp-kit = { package = "mcp-kit", path = "../../../mcp-kit/crates/mcp-kit" }
-omne-jsonrpc = { package = "mcp-jsonrpc", path = "../../../mcp-kit/crates/jsonrpc" }
+ditto-core = { path = "../../../ditto-llm/crates/ditto-core", features = ["provider-google", "provider-openai"] }
+notify-kit = { path = "../../../omne_foundation/crates/notify-kit" }
+omne-execution-gateway = { path = "../../../omne-runtime/crates/omne-execution-gateway" }
+omne-mcp-kit = { package = "mcp-kit", path = "../../../omne_foundation/crates/mcp-kit" }
+omne-jsonrpc = { package = "mcp-jsonrpc", path = "../../../omne_foundation/crates/mcp-jsonrpc" }
 omne-artifact-store = { path = "../artifact-store" }
 omne-core = { path = "../core" }
+omne-notify-env = { path = "../notify-env" }
 omne-eventlog = { path = "../eventlog" }
 omne-execpolicy = { path = "../execpolicy" }
 omne-fs-runtime = { path = "../fs-runtime" }
@@ -27,16 +30,20 @@ omne-process-runtime = { path = "../process-runtime" }
 omne-repo-scan-runtime = { path = "../repo-scan-runtime" }
 omne-repo-symbols-runtime = { path = "../repo-symbols-runtime" }
 omne-git-runtime = { path = "../git-runtime" }
+omne-integrity-primitives = { path = "../../../omne-runtime/crates/omne-integrity-primitives" }
 omne-app-server-protocol = { path = "../app-server-protocol" }
 omne-checkpoint-runtime = { path = "../checkpoint-runtime" }
 omne-checkpoint-spec = { path = "../checkpoint-spec" }
 omne-protocol = { path = "../agent-protocol" }
 omne-workflow-spec = { path = "../workflow-spec" }
+policy-meta.workspace = true
 regex.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
+structured-text-kit.workspace = true
+structured-text-protocol.workspace = true
 time.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
@@ -46,7 +53,6 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 walkdir.workspace = true
 chacha20poly1305 = "0.10"
-sha2 = "0.10"
 
 [dev-dependencies]
 tempfile.workspace = true

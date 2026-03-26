@@ -3,6 +3,7 @@ use std::str::FromStr;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use structured_text_protocol::StructuredTextData;
 use time::OffsetDateTime;
 use ts_rs::TS;
 use uuid::Uuid;
@@ -314,8 +315,6 @@ pub enum ApprovalPolicy {
     AutoDeny,
 }
 
-pub use policy_meta::WriteScope as SandboxPolicy;
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum SandboxNetworkAccess {
@@ -526,6 +525,13 @@ pub enum ThreadEventKind {
         cwd: String,
     },
 
+    ThreadSystemPromptSnapshot {
+        prompt_sha256: String,
+        prompt_text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source: Option<String>,
+    },
+
     ThreadArchived {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
@@ -584,7 +590,7 @@ pub enum ThreadEventKind {
     ThreadConfigUpdated {
         approval_policy: ApprovalPolicy,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        sandbox_policy: Option<SandboxPolicy>,
+        sandbox_policy: Option<policy_meta::WriteScope>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         sandbox_writable_roots: Option<Vec<String>>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -638,6 +644,8 @@ pub enum ThreadEventKind {
     ToolCompleted {
         tool_id: ToolId,
         status: ToolStatus,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        structured_error: Option<StructuredTextData>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -755,6 +763,7 @@ pub enum ThreadEventKind {
 #[serde(rename_all = "snake_case")]
 pub enum ThreadEventKindTag {
     ThreadCreated,
+    ThreadSystemPromptSnapshot,
     ThreadArchived,
     ThreadUnarchived,
     ThreadPaused,
@@ -784,6 +793,7 @@ impl ThreadEventKindTag {
     pub fn as_str(self) -> &'static str {
         match self {
             ThreadEventKindTag::ThreadCreated => "thread_created",
+            ThreadEventKindTag::ThreadSystemPromptSnapshot => "thread_system_prompt_snapshot",
             ThreadEventKindTag::ThreadArchived => "thread_archived",
             ThreadEventKindTag::ThreadUnarchived => "thread_unarchived",
             ThreadEventKindTag::ThreadPaused => "thread_paused",
@@ -823,6 +833,7 @@ impl FromStr for ThreadEventKindTag {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "thread_created" => Ok(ThreadEventKindTag::ThreadCreated),
+            "thread_system_prompt_snapshot" => Ok(ThreadEventKindTag::ThreadSystemPromptSnapshot),
             "thread_archived" => Ok(ThreadEventKindTag::ThreadArchived),
             "thread_unarchived" => Ok(ThreadEventKindTag::ThreadUnarchived),
             "thread_paused" => Ok(ThreadEventKindTag::ThreadPaused),
@@ -853,6 +864,7 @@ impl FromStr for ThreadEventKindTag {
 
 pub const THREAD_EVENT_KIND_TAGS: &[&str] = &[
     "thread_created",
+    "thread_system_prompt_snapshot",
     "thread_archived",
     "thread_unarchived",
     "thread_paused",
@@ -882,6 +894,9 @@ impl ThreadEventKind {
     pub fn tag_enum(&self) -> ThreadEventKindTag {
         match self {
             ThreadEventKind::ThreadCreated { .. } => ThreadEventKindTag::ThreadCreated,
+            ThreadEventKind::ThreadSystemPromptSnapshot { .. } => {
+                ThreadEventKindTag::ThreadSystemPromptSnapshot
+            }
             ThreadEventKind::ThreadArchived { .. } => ThreadEventKindTag::ThreadArchived,
             ThreadEventKind::ThreadUnarchived { .. } => ThreadEventKindTag::ThreadUnarchived,
             ThreadEventKind::ThreadPaused { .. } => ThreadEventKindTag::ThreadPaused,

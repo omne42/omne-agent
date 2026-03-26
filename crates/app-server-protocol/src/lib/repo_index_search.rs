@@ -75,6 +75,69 @@ pub struct RepoSymbolsParams {
     pub max_symbols: Option<usize>,
 }
 
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
+pub struct RepoGotoDefinitionParams {
+    pub thread_id: omne_protocol::ThreadId,
+    #[serde(default)]
+    #[ts(optional)]
+    pub turn_id: Option<omne_protocol::TurnId>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub approval_id: Option<omne_protocol::ApprovalId>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub root: Option<FileRoot>,
+    pub symbol: String,
+    #[serde(default)]
+    #[ts(optional)]
+    pub path: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub include_glob: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub max_results: Option<usize>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub max_files: Option<usize>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub max_bytes_per_file: Option<u64>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub max_symbols: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
+pub struct RepoFindReferencesParams {
+    pub thread_id: omne_protocol::ThreadId,
+    #[serde(default)]
+    #[ts(optional)]
+    pub turn_id: Option<omne_protocol::TurnId>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub approval_id: Option<omne_protocol::ApprovalId>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub root: Option<FileRoot>,
+    pub symbol: String,
+    #[serde(default)]
+    #[ts(optional)]
+    pub path: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub include_glob: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub max_matches: Option<usize>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub max_bytes_per_file: Option<u64>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub max_files: Option<usize>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
 pub struct RepoSearchResponse {
     pub tool_id: omne_protocol::ToolId,
@@ -125,6 +188,44 @@ pub struct RepoSymbolsResponse {
     pub files_failed_parse: usize,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
+pub struct RepoGotoDefinitionResponse {
+    pub tool_id: omne_protocol::ToolId,
+    pub artifact_id: omne_protocol::ArtifactId,
+    pub created: bool,
+    pub content_path: String,
+    pub metadata_path: String,
+    pub metadata: omne_protocol::ArtifactMetadata,
+    pub root: String,
+    pub symbol: String,
+    pub definitions: usize,
+    pub resolved: bool,
+    pub files_scanned: usize,
+    pub files_parsed: usize,
+    pub truncated_files: bool,
+    pub truncated_symbols: bool,
+    pub files_skipped_too_large: usize,
+    pub files_skipped_binary: usize,
+    pub files_failed_parse: usize,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
+pub struct RepoFindReferencesResponse {
+    pub tool_id: omne_protocol::ToolId,
+    pub artifact_id: omne_protocol::ArtifactId,
+    pub created: bool,
+    pub content_path: String,
+    pub metadata_path: String,
+    pub metadata: omne_protocol::ArtifactMetadata,
+    pub root: String,
+    pub symbol: String,
+    pub references: usize,
+    pub truncated: bool,
+    pub files_scanned: usize,
+    pub files_skipped_too_large: usize,
+    pub files_skipped_binary: usize,
+}
+
 define_tool_denied_response_skip_none!(RepoDeniedResponse {});
 
 define_tool_needs_approval_response!(RepoNeedsApprovalResponse {
@@ -151,6 +252,9 @@ pub struct RepoModeDeniedResponse {
     pub tool_override_hit: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
+    pub structured_error: Option<StructuredTextData>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub error_code: Option<String>,
 }
 
@@ -167,6 +271,9 @@ pub struct RepoUnknownModeDeniedResponse {
     pub load_error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
+    pub structured_error: Option<StructuredTextData>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub error_code: Option<String>,
 }
 
@@ -178,6 +285,9 @@ pub struct RepoAllowedToolsDeniedResponse {
     pub tool: String,
     #[serde(default)]
     pub allowed_tools: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub structured_error: Option<StructuredTextData>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub error_code: Option<String>,

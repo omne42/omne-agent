@@ -1,0 +1,12 @@
+[
+  {
+    "id": "facade_artifact_delete",
+    "user_prompt": "请删除 art_001。",
+    "target_tool": "artifact",
+    "success_args": {
+      "op": "delete",
+      "artifact_id": "art_001"
+    },
+    "capability_hint": "artifact delete"
+  }
+]

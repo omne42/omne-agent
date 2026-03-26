@@ -1,0 +1,30 @@
+[
+  {
+    "name": "codex_responses",
+    "endpoint": "responses",
+    "base_url": "http://127.0.0.1:6006/v1",
+    "model": "gpt-5.3-codex",
+    "api_key_env": "OPENAI_API_KEY"
+  },
+  {
+    "name": "litellm_gemini_chat",
+    "endpoint": "chat",
+    "base_url": "https://litellm.talesofai.cn/v1",
+    "model": "gemini-3.1-pro-preview",
+    "api_key_env": "LITELLM_API_KEY"
+  },
+  {
+    "name": "litellm_doubao_chat",
+    "endpoint": "chat",
+    "base_url": "https://litellm.talesofai.cn/v1",
+    "model": "doubao-2.0-pro",
+    "api_key_env": "LITELLM_API_KEY"
+  },
+  {
+    "name": "deepseek_chat",
+    "endpoint": "chat",
+    "base_url": "https://api.deepseek.com",
+    "model": "deepseek-chat",
+    "api_key_env": "DEEPSEEK_API_KEY"
+  }
+]

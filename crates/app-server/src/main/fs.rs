@@ -30,7 +30,7 @@ async fn handle_fs_mkdir(server: &Server, params: FsMkdirParams) -> anyhow::Resu
     {
         return file_allowed_tools_denied_response(tool_id, "fs/mkdir", &allowed_tools);
     }
-    if sandbox_policy == omne_protocol::SandboxPolicy::ReadOnly {
+    if sandbox_policy == policy_meta::WriteScope::ReadOnly {
         let result = file_sandbox_policy_denied_response(tool_id, sandbox_policy)?;
         emit_file_tool_denied(
             &thread_rt,
@@ -114,20 +114,21 @@ async fn handle_fs_mkdir(server: &Server, params: FsMkdirParams) -> anyhow::Resu
             ));
         }
 
-        match tokio::fs::create_dir(&path).await {
-            Ok(()) => Ok((true, path)),
-            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
-                let meta = tokio::fs::metadata(&path)
-                    .await
-                    .with_context(|| format!("stat {}", path.display()))?;
-                if meta.is_dir() {
-                    Ok((false, path))
-                } else {
-                    anyhow::bail!("path exists and is not a directory: {}", path.display());
-                }
-            }
-            Err(err) => Err(err).with_context(|| format!("create dir {}", path.display())),
-        }
+        let root_for_runtime = thread_root.clone();
+        let path_for_runtime = resolved_rel;
+        let mkdir_result = tokio::task::spawn_blocking(move || {
+            omne_fs_runtime::mkdir_workspace(
+                "workspace".to_string(),
+                root_for_runtime,
+                path_for_runtime,
+                params.recursive,
+                true,
+            )
+        })
+        .await
+        .context("join fs/mkdir task")??;
+
+        Ok((mkdir_result.created, path))
     }
     .await;
 
@@ -137,6 +138,7 @@ async fn handle_fs_mkdir(server: &Server, params: FsMkdirParams) -> anyhow::Resu
                 .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
                     status: omne_protocol::ToolStatus::Completed,
+                    structured_error: None,
                     error: None,
                     result: Some(serde_json::json!({
                         "created": created,
@@ -156,6 +158,7 @@ async fn handle_fs_mkdir(server: &Server, params: FsMkdirParams) -> anyhow::Resu
                     .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                         tool_id,
                         status: omne_protocol::ToolStatus::Denied,
+                        structured_error: structured_error_from_result_value(&denied.result),
                         error: Some(denied.error.clone()),
                         result: Some(denied.result.clone()),
                     })
@@ -166,6 +169,7 @@ async fn handle_fs_mkdir(server: &Server, params: FsMkdirParams) -> anyhow::Resu
                     .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                         tool_id,
                         status: omne_protocol::ToolStatus::Failed,
+                        structured_error: None,
                         error: Some(err.to_string()),
                         result: None,
                     })

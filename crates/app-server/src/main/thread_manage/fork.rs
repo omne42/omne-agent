@@ -42,6 +42,9 @@ async fn handle_thread_fork(
             | omne_protocol::ThreadEventKind::ThreadUnarchived { .. }
             | omne_protocol::ThreadEventKind::ThreadPaused { .. }
             | omne_protocol::ThreadEventKind::ThreadUnpaused { .. } => {}
+            kind @ omne_protocol::ThreadEventKind::ThreadSystemPromptSnapshot { .. } => {
+                forked.append(kind).await?;
+            }
             kind @ omne_protocol::ThreadEventKind::ThreadConfigUpdated { .. } => {
                 forked.append(kind).await?;
             }

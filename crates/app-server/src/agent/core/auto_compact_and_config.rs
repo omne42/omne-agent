@@ -25,12 +25,12 @@ async fn auto_compact_summary(
     );
 
     let messages = vec![
-        ditto_llm::Message::system(SUMMARY_INSTRUCTIONS),
-        ditto_llm::Message::user(prompt),
+        ditto_core::contracts::Message::system(SUMMARY_INSTRUCTIONS),
+        ditto_core::contracts::Message::user(prompt),
     ];
-    let mut req = ditto_llm::GenerateRequest::from(messages);
+    let mut req = ditto_core::contracts::GenerateRequest::from(messages);
     req.model = Some(model.to_string());
-    req.tool_choice = Some(ditto_llm::ToolChoice::None);
+    req.tool_choice = Some(ditto_core::contracts::ToolChoice::None);
 
     let _permit = LlmWorkerPool::global().acquire(turn_priority).await?;
     let resp = match tokio::time::timeout(max_openai_request_duration, llm.generate(req)).await {
@@ -45,13 +45,11 @@ async fn auto_compact_summary(
     {
         *total_tokens_used = total_tokens_used.saturating_add(tokens);
         if *total_tokens_used > max_total_tokens {
-            return Err(
-                AgentTurnError::TokenBudgetExceeded {
-                    used: *total_tokens_used,
-                    limit: max_total_tokens,
-                }
-                .into(),
-            );
+            return Err(AgentTurnError::TokenBudgetExceeded {
+                used: *total_tokens_used,
+                limit: max_total_tokens,
+            }
+            .into());
         }
     }
 
@@ -137,70 +135,6 @@ fn resolve_user_instructions_path() -> Option<PathBuf> {
     Some(home.join(".omne_data").join("AGENTS.md"))
 }
 
-fn builtin_openai_provider_config(provider: &str) -> Option<ditto_llm::ProviderConfig> {
-    match provider {
-        "openai-codex-apikey" => Some(ditto_llm::ProviderConfig {
-            base_url: Some(DEFAULT_OPENAI_BASE_URL.to_string()),
-            default_model: None,
-            model_whitelist: Vec::new(),
-            http_headers: Default::default(),
-            http_query_params: Default::default(),
-            auth: Some(ditto_llm::ProviderAuth::ApiKeyEnv { keys: Vec::new() }),
-            capabilities: None,
-        }),
-        "openai-auth-command" => Some(ditto_llm::ProviderConfig {
-            base_url: Some(DEFAULT_OPENAI_BASE_URL.to_string()),
-            default_model: None,
-            model_whitelist: Vec::new(),
-            http_headers: Default::default(),
-            http_query_params: Default::default(),
-            auth: Some(ditto_llm::ProviderAuth::Command { command: Vec::new() }),
-            capabilities: None,
-        }),
-        _ => None,
-    }
-}
-
-fn merge_provider_config(
-    mut base: ditto_llm::ProviderConfig,
-    overrides: &ditto_llm::ProviderConfig,
-) -> ditto_llm::ProviderConfig {
-    if let Some(base_url) = overrides
-        .base_url
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        base.base_url = Some(base_url.to_string());
-    }
-    if let Some(default_model) = overrides
-        .default_model
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        base.default_model = Some(default_model.to_string());
-    }
-    if !overrides.model_whitelist.is_empty() {
-        base.model_whitelist =
-            ditto_llm::normalize_string_list(overrides.model_whitelist.clone());
-    }
-    if !overrides.http_headers.is_empty() {
-        base.http_headers.extend(overrides.http_headers.clone());
-    }
-    if !overrides.http_query_params.is_empty() {
-        base.http_query_params
-            .extend(overrides.http_query_params.clone());
-    }
-    if let Some(auth) = overrides.auth.clone() {
-        base.auth = Some(auth);
-    }
-    if let Some(capabilities) = overrides.capabilities {
-        base.capabilities = Some(capabilities);
-    }
-    base
-}
-
 fn home_dir() -> Option<PathBuf> {
     std::env::var_os("HOME")
         .filter(|s| !s.is_empty())
@@ -212,7 +146,10 @@ fn home_dir() -> Option<PathBuf> {
         })
 }
 
-async fn load_skills_from_input(input: &str, thread_cwd: Option<&str>) -> anyhow::Result<Option<String>> {
+async fn load_skills_from_input(
+    input: &str,
+    thread_cwd: Option<&str>,
+) -> anyhow::Result<Option<String>> {
     let skill_names = parse_skill_names(input);
     if skill_names.is_empty() {
         return Ok(None);
@@ -433,7 +370,8 @@ async fn load_latest_summary_artifact(
         return Ok(None);
     };
 
-    let (content_path, _metadata_path) = crate::user_artifact_paths(server, thread_id, meta.artifact_id);
+    let (content_path, _metadata_path) =
+        crate::user_artifact_paths(server, thread_id, meta.artifact_id);
     let text = tokio::fs::read_to_string(&content_path)
         .await
         .with_context(|| format!("read {}", content_path.display()))?;

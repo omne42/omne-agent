@@ -86,6 +86,7 @@ async fn handle_file_grep(server: &Server, params: FileGrepParams) -> anyhow::Re
                     .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                         tool_id,
                         status: omne_protocol::ToolStatus::Failed,
+                        structured_error: None,
                         error: Some(err.to_string()),
                         result: Some(serde_json::json!({
                             "root": file_root.as_str(),
@@ -97,30 +98,32 @@ async fn handle_file_grep(server: &Server, params: FileGrepParams) -> anyhow::Re
             }
         },
     };
+    let root_id_for_task = file_root.as_str().to_string();
     let query_for_task = params.query.clone();
     let is_regex = params.is_regex;
     let include_glob_for_task = params.include_glob.clone();
     let outcome = tokio::task::spawn_blocking(move || {
-        omne_repo_scan_runtime::search_repo(omne_repo_scan_runtime::RepoGrepRequest {
+        omne_fs_runtime::grep_read_only_paths(
+            root_id_for_task,
             root,
-            query: query_for_task,
+            query_for_task,
             is_regex,
-            include_glob: include_glob_for_task,
+            include_glob_for_task,
             max_matches,
             max_bytes_per_file,
             max_files,
-        })
+        )
     })
     .await
     .context("join grep task")?;
 
     match outcome {
-        Ok(omne_repo_scan_runtime::RepoGrepOutcome {
+        Ok(omne_fs_runtime::GrepOutcome {
             matches,
             truncated,
-            files_scanned,
-            files_skipped_too_large,
-            files_skipped_binary,
+            scanned_files,
+            skipped_too_large_files,
+            skipped_non_utf8_files,
         }) => {
             let matches = matches
                 .into_iter()
@@ -134,13 +137,14 @@ async fn handle_file_grep(server: &Server, params: FileGrepParams) -> anyhow::Re
                 .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
                     status: omne_protocol::ToolStatus::Completed,
+                    structured_error: None,
                     error: None,
                     result: Some(serde_json::json!({
                         "matches": matches.len(),
                         "truncated": truncated,
-                        "files_scanned": files_scanned,
-                        "files_skipped_too_large": files_skipped_too_large,
-                        "files_skipped_binary": files_skipped_binary,
+                        "files_scanned": scanned_files,
+                        "files_skipped_too_large": skipped_too_large_files,
+                        "files_skipped_binary": skipped_non_utf8_files,
                     })),
                 })
                 .await?;
@@ -149,9 +153,9 @@ async fn handle_file_grep(server: &Server, params: FileGrepParams) -> anyhow::Re
                 "root": file_root.as_str(),
                 "matches": matches,
                 "truncated": truncated,
-                "files_scanned": files_scanned,
-                "files_skipped_too_large": files_skipped_too_large,
-                "files_skipped_binary": files_skipped_binary,
+                "files_scanned": scanned_files,
+                "files_skipped_too_large": skipped_too_large_files,
+                "files_skipped_binary": skipped_non_utf8_files,
             }))
         }
         Err(err) => {
@@ -159,6 +163,7 @@ async fn handle_file_grep(server: &Server, params: FileGrepParams) -> anyhow::Re
                 .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
                     status: omne_protocol::ToolStatus::Failed,
+                    structured_error: None,
                     error: Some(err.to_string()),
                     result: None,
                 })

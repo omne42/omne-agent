@@ -16,30 +16,46 @@ fn thread_hook_run_denied_error_code(
     detail: &omne_app_server_protocol::ThreadProcessDeniedDetail,
 ) -> Option<String> {
     match detail {
-        omne_app_server_protocol::ThreadProcessDeniedDetail::Denied(detail) => {
-            detail.error_code.clone()
-        }
-        omne_app_server_protocol::ThreadProcessDeniedDetail::AllowedToolsDenied(detail) => {
-            detail.error_code.clone()
-        }
-        omne_app_server_protocol::ThreadProcessDeniedDetail::ModeDenied(detail) => {
-            detail.error_code.clone()
-        }
-        omne_app_server_protocol::ThreadProcessDeniedDetail::UnknownModeDenied(detail) => {
-            detail.error_code.clone()
-        }
-        omne_app_server_protocol::ThreadProcessDeniedDetail::SandboxPolicyDenied(detail) => {
-            detail.error_code.clone()
-        }
-        omne_app_server_protocol::ThreadProcessDeniedDetail::SandboxNetworkDenied(detail) => {
-            detail.error_code.clone()
-        }
-        omne_app_server_protocol::ThreadProcessDeniedDetail::ExecPolicyDenied(detail) => {
-            detail.error_code.clone()
-        }
-        omne_app_server_protocol::ThreadProcessDeniedDetail::ExecPolicyLoadDenied(detail) => {
-            detail.error_code.clone()
-        }
+        omne_app_server_protocol::ThreadProcessDeniedDetail::Denied(detail) => detail
+            .structured_error
+            .as_ref()
+            .and_then(|value| value.catalog_code().map(ToOwned::to_owned))
+            .or_else(|| detail.error_code.clone()),
+        omne_app_server_protocol::ThreadProcessDeniedDetail::AllowedToolsDenied(detail) => detail
+            .structured_error
+            .as_ref()
+            .and_then(|value| value.catalog_code().map(ToOwned::to_owned))
+            .or_else(|| detail.error_code.clone()),
+        omne_app_server_protocol::ThreadProcessDeniedDetail::ModeDenied(detail) => detail
+            .structured_error
+            .as_ref()
+            .and_then(|value| value.catalog_code().map(ToOwned::to_owned))
+            .or_else(|| detail.error_code.clone()),
+        omne_app_server_protocol::ThreadProcessDeniedDetail::UnknownModeDenied(detail) => detail
+            .structured_error
+            .as_ref()
+            .and_then(|value| value.catalog_code().map(ToOwned::to_owned))
+            .or_else(|| detail.error_code.clone()),
+        omne_app_server_protocol::ThreadProcessDeniedDetail::SandboxPolicyDenied(detail) => detail
+            .structured_error
+            .as_ref()
+            .and_then(|value| value.catalog_code().map(ToOwned::to_owned))
+            .or_else(|| detail.error_code.clone()),
+        omne_app_server_protocol::ThreadProcessDeniedDetail::SandboxNetworkDenied(detail) => detail
+            .structured_error
+            .as_ref()
+            .and_then(|value| value.catalog_code().map(ToOwned::to_owned))
+            .or_else(|| detail.error_code.clone()),
+        omne_app_server_protocol::ThreadProcessDeniedDetail::ExecPolicyDenied(detail) => detail
+            .structured_error
+            .as_ref()
+            .and_then(|value| value.catalog_code().map(ToOwned::to_owned))
+            .or_else(|| detail.error_code.clone()),
+        omne_app_server_protocol::ThreadProcessDeniedDetail::ExecPolicyLoadDenied(detail) => detail
+            .structured_error
+            .as_ref()
+            .and_then(|value| value.catalog_code().map(ToOwned::to_owned))
+            .or_else(|| detail.error_code.clone()),
     }
 }
 
@@ -52,41 +68,43 @@ async fn run_workspace_hook_inner(
     let yaml_path = config_dir.join("workspace.yaml");
     let yml_path = config_dir.join("workspace.yml");
 
-    let (config_path, config_contents) = match tokio::fs::read_to_string(&yaml_path).await {
-        Ok(contents) => (yaml_path, contents),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            match tokio::fs::read_to_string(&yml_path).await {
-                Ok(contents) => (yml_path, contents),
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                    let response = omne_app_server_protocol::ThreadHookRunResponse {
-                        ok: true,
-                        skipped: true,
-                        hook: thread_hook_key(params.hook).to_string(),
-                        reason: Some("workspace hook config not found".to_string()),
-                        searched: Some(vec![
-                            yaml_path.display().to_string(),
-                            yml_path.display().to_string(),
-                        ]),
-                        config_path: None,
-                        argv: None,
-                        process_id: None,
-                        stdout_path: None,
-                        stderr_path: None,
-                    };
-                    return Ok(omne_app_server_protocol::ThreadHookRunRpcResponse::Ok(
-                        response,
-                    ));
-                }
-                Err(err) => {
-                    return Err(err).with_context(|| format!("read {}", yml_path.display()));
-                }
-            }
-        }
-        Err(err) => return Err(err).with_context(|| format!("read {}", yaml_path.display())),
+    let (config_path, config) = if let Some(config) =
+        config_kit::try_load_typed_config_file::<WorkspaceHooksConfig>(
+            &yaml_path,
+            config_kit::ConfigLoadOptions::new(),
+            config_kit::ConfigFormatSet::YAML,
+        )
+        .with_context(|| format!("load {}", yaml_path.display()))?
+    {
+        (yaml_path, config)
+    } else if let Some(config) = config_kit::try_load_typed_config_file::<WorkspaceHooksConfig>(
+        &yml_path,
+        config_kit::ConfigLoadOptions::new(),
+        config_kit::ConfigFormatSet::YAML,
+    )
+    .with_context(|| format!("load {}", yml_path.display()))?
+    {
+        (yml_path, config)
+    } else {
+        let response = omne_app_server_protocol::ThreadHookRunResponse {
+            ok: true,
+            skipped: true,
+            hook: thread_hook_key(params.hook).to_string(),
+            reason: Some("workspace hook config not found".to_string()),
+            searched: Some(vec![
+                yaml_path.display().to_string(),
+                yml_path.display().to_string(),
+            ]),
+            config_path: None,
+            argv: None,
+            process_id: None,
+            stdout_path: None,
+            stderr_path: None,
+        };
+        return Ok(omne_app_server_protocol::ThreadHookRunRpcResponse::Ok(
+            response,
+        ));
     };
-
-    let config: WorkspaceHooksConfig = serde_yaml::from_str(&config_contents)
-        .with_context(|| format!("parse {}", config_path.display()))?;
 
     let key = thread_hook_key(params.hook);
     let argv = config
@@ -107,7 +125,9 @@ async fn run_workspace_hook_inner(
             stdout_path: None,
             stderr_path: None,
         };
-        return Ok(omne_app_server_protocol::ThreadHookRunRpcResponse::Ok(response));
+        return Ok(omne_app_server_protocol::ThreadHookRunRpcResponse::Ok(
+            response,
+        ));
     };
 
     let output = handle_process_start(
@@ -144,19 +164,19 @@ async fn run_workspace_hook_inner(
             approval_id,
             hook: key.to_string(),
         };
-        return Ok(omne_app_server_protocol::ThreadHookRunRpcResponse::NeedsApproval(
-            response,
-        ));
+        return Ok(omne_app_server_protocol::ThreadHookRunRpcResponse::NeedsApproval(response));
     }
 
     if obj.get("denied").and_then(|v| v.as_bool()).unwrap_or(false) {
-        let detail =
-            serde_json::from_value::<omne_app_server_protocol::ThreadProcessDeniedDetail>(output)
-                .context("parse thread/hook_run denied detail")?;
+        let detail = serde_json::from_value::<omne_app_server_protocol::ThreadProcessDeniedDetail>(
+            output.clone(),
+        )
+        .context("parse thread/hook_run denied detail")?;
         let response = omne_app_server_protocol::ThreadHookRunDeniedResponse {
             denied: true,
             thread_id: params.thread_id,
             hook: key.to_string(),
+            structured_error: structured_error_from_result_value(&output),
             error_code: thread_hook_run_denied_error_code(&detail),
             config_path: Some(config_path.display().to_string()),
             detail,
@@ -227,6 +247,15 @@ async fn run_auto_workspace_hook(
                 ok: false,
                 hook: thread_hook_key(hook).to_string(),
                 error: err.to_string(),
+                structured_error: catalog_structured_error_with(
+                    "thread_hook_run_failed",
+                    |message| {
+                        message.try_with_value_arg("hook", thread_hook_key(hook))?;
+                        message.try_with_value_arg("error", err.to_string())?;
+                        Ok(())
+                    },
+                )
+                .ok(),
             },
         ),
     }

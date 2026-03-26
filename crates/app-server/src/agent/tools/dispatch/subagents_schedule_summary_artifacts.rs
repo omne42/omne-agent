@@ -94,6 +94,7 @@ impl SubagentSpawnSchedule {
                     .map(|(_, status)| status.clone()),
                 result_artifact_id: result_artifact.result_artifact_id,
                 result_artifact_error: result_artifact.result_artifact_error,
+                result_artifact_structured_error: result_artifact.result_artifact_structured_error,
                 result_artifact_error_id: result_artifact.result_artifact_error_id,
                 result_artifact_diagnostics: result_artifact.result_artifact_diagnostics,
                 pending_approval,
@@ -153,10 +154,12 @@ impl SubagentSpawnSchedule {
                 omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
                     status,
+                    structured_error,
                     error,
                     result,
                 } if state.matching_tool_ids.contains(&tool_id) => {
-                    state.matched_completion_count = state.matched_completion_count.saturating_add(1);
+                    state.matched_completion_count =
+                        state.matched_completion_count.saturating_add(1);
                     state.matching_tool_ids.remove(&tool_id);
                     if status == omne_protocol::ToolStatus::Completed {
                         if let Some(artifact_id) = result
@@ -166,6 +169,7 @@ impl SubagentSpawnSchedule {
                         {
                             state.summary.result_artifact_id = Some(artifact_id.to_string());
                             state.summary.result_artifact_error = None;
+                            state.summary.result_artifact_structured_error = None;
                         }
                     } else {
                         state.summary.result_artifact_error = Some(error.unwrap_or_else(|| {
@@ -174,6 +178,7 @@ impl SubagentSpawnSchedule {
                                 task.expected_artifact_type
                             )
                         }));
+                        state.summary.result_artifact_structured_error = structured_error;
                     }
                 }
                 _ => {}

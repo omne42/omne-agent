@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
 
-use omne_execpolicy::execpolicycheck::ExecPolicyCheckCommand;
+use omne_execpolicy::ExecPolicyCheckCommand;
 
 #[derive(Parser)]
 #[command(name = "omne-execpolicy")]

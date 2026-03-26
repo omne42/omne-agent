@@ -172,20 +172,25 @@ v0.2.0 最小实现（写死边界）：
 
 v0.2.0 最小实现（写死边界）：
 
-- 触发条件：当 `OMNE_AGENT_MAX_TOTAL_TOKENS>0` 且 turn 内累计 token 使用量达到阈值时（默认 `80%`；可用 `OMNE_AGENT_AUTO_SUMMARY_THRESHOLD_PCT` 覆盖）。
+- 触发条件：当**当前要发送给模型的上下文估算值**达到 compact 阈值时触发；不再复用 thread 生命周期的累计 token 预算。
+  - 阈值优先级：
+    1. model config 的 `auto_compact_token_limit`
+    2. 否则 `context_window * OMNE_AGENT_AUTO_SUMMARY_THRESHOLD_PCT / 100`
+  - `OMNE_AGENT_AUTO_SUMMARY_THRESHOLD_PCT` 默认 `80`。
 - 产物：用 `artifact/write` 写入 `artifact_type="summary"`（文本会自动脱敏），且 provenance 指向触发的 `turn_id`。
 - 上下文重建：当 thread 存在 `summary` artifact 时，后续 turn 构建上下文会优先使用：
   - `system` summary + summary 之后最近 `K` 条事件（默认 `200`；可用 `OMNE_AGENT_SUMMARY_CONTEXT_EVENT_LIMIT` 覆盖）
   - 避免每个 turn 都把全量历史塞回模型导致继续膨胀。
 - 本次 turn 的后续请求：触发 summary 后，会把当前 in-memory 上下文压缩为 `system` summary + 最近少量 tail items（默认 `20`；可用 `OMNE_AGENT_AUTO_SUMMARY_TAIL_ITEMS` 覆盖）。
 
+与 thread budget 的边界：
+
+- `OMNE_AGENT_MAX_TOTAL_TOKENS` 只表示**thread 生命周期累计预算**（用于 warning/exceeded/stuck）。
+- compact/router 统一看的是**当前 prompt-load**，不是 `total_tokens_used`。
+
 相关参数（可选）：
 
 - `OMNE_AGENT_AUTO_SUMMARY_SOURCE_MAX_CHARS`：生成 summary 时用于拼接 transcript 的最大字符数（默认 `50000`）。
-
-仍是 TODO：
-
-- “切 long-context 模型”（Router 的上下文阈值路由；草案见 `docs/model_routing.md`）。
 
 ---
 

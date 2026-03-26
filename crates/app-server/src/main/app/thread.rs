@@ -262,6 +262,7 @@ pub(super) fn thread_token_budget_snapshot(
 fn build_thread_usage_response(
     thread_id: ThreadId,
     last_seq: u64,
+    current_context_tokens_estimate: Option<u64>,
     total_tokens_used: u64,
     input_tokens_used: u64,
     output_tokens_used: u64,
@@ -286,6 +287,7 @@ fn build_thread_usage_response(
     omne_app_server_protocol::ThreadUsageResponse {
         thread_id,
         last_seq,
+        current_context_tokens_estimate,
         total_tokens_used,
         input_tokens_used,
         output_tokens_used,
@@ -299,6 +301,28 @@ fn build_thread_usage_response(
         token_budget_utilization,
         token_budget_exceeded,
         token_budget_warning_active,
+    }
+}
+
+async fn estimate_thread_context_tokens_from_state(
+    server: &Server,
+    thread_id: ThreadId,
+    state: &omne_eventlog::ThreadState,
+) -> Option<u64> {
+    match crate::agent::estimate_thread_context_tokens(
+        server,
+        thread_id,
+        &state.mode,
+        state.cwd.as_deref(),
+        state.system_prompt_text.as_deref(),
+    )
+    .await
+    {
+        Ok(tokens) => Some(tokens),
+        Err(err) => {
+            tracing::warn!(thread_id = %thread_id, error = %err, "failed to estimate thread context tokens");
+            None
+        }
     }
 }
 
@@ -381,9 +405,12 @@ async fn handle_thread_state(
         state.total_tokens_used,
         token_budget_warning_threshold_ratio(),
     );
+    let current_context_tokens_estimate =
+        estimate_thread_context_tokens_from_state(server, handle.thread_id(), state).await;
     Ok(omne_app_server_protocol::ThreadStateResponse {
         thread_id: handle.thread_id(),
         cwd: state.cwd.clone(),
+        system_prompt_sha256: state.system_prompt_sha256.clone(),
         archived: state.archived,
         archived_at,
         archived_reason: state.archived_reason.clone(),
@@ -410,6 +437,7 @@ async fn handle_thread_state(
         token_budget_utilization,
         token_budget_exceeded,
         token_budget_warning_active,
+        current_context_tokens_estimate,
         total_tokens_used: state.total_tokens_used,
         input_tokens_used: state.input_tokens_used,
         output_tokens_used: state.output_tokens_used,
@@ -426,9 +454,12 @@ async fn handle_thread_usage(
     let handle = rt.handle.lock().await;
     let state = handle.state();
     let token_budget_limit = configured_total_token_budget_limit();
+    let current_context_tokens_estimate =
+        estimate_thread_context_tokens_from_state(server, handle.thread_id(), state).await;
     Ok(build_thread_usage_response(
         handle.thread_id(),
         handle.last_seq().0,
+        current_context_tokens_estimate,
         state.total_tokens_used,
         state.input_tokens_used,
         state.output_tokens_used,
@@ -538,8 +569,23 @@ mod thread_usage_budget_tests {
 
     #[test]
     fn build_thread_usage_response_marks_warning_at_threshold() {
-        let response =
-            build_thread_usage_response(ThreadId::new(), 7, 90, 70, 20, 35, 5, Some(100), 0.9);
+        let current_context_tokens_estimate = Some(90);
+        let total_tokens_used = 90;
+        let input_tokens_used = 55;
+        let output_tokens_used = 35;
+        let cache_input_tokens_used = 20;
+        let response = build_thread_usage_response(
+            ThreadId::new(),
+            7,
+            current_context_tokens_estimate,
+            total_tokens_used,
+            input_tokens_used,
+            output_tokens_used,
+            cache_input_tokens_used,
+            0,
+            Some(100),
+            0.9,
+        );
         assert_eq!(response.last_seq, 7);
         assert_eq!(response.non_cache_input_tokens_used, 35);
         assert_eq!(response.token_budget_remaining, Some(10));
@@ -550,8 +596,20 @@ mod thread_usage_budget_tests {
 
     #[test]
     fn build_thread_usage_response_disables_warning_when_exceeded() {
-        let response =
-            build_thread_usage_response(ThreadId::new(), 9, 101, 80, 21, 20, 3, Some(100), 0.9);
+        let current_context_tokens_estimate = Some(101);
+        let total_tokens_used = 101;
+        let response = build_thread_usage_response(
+            ThreadId::new(),
+            9,
+            current_context_tokens_estimate,
+            total_tokens_used,
+            81,
+            20,
+            3,
+            0,
+            Some(100),
+            0.9,
+        );
         assert_eq!(response.token_budget_remaining, Some(0));
         assert_eq!(response.token_budget_exceeded, Some(true));
         assert_eq!(response.token_budget_warning_active, Some(false));
@@ -560,7 +618,8 @@ mod thread_usage_budget_tests {
 
     #[test]
     fn build_thread_usage_response_without_budget_keeps_budget_fields_empty() {
-        let response = build_thread_usage_response(ThreadId::new(), 1, 50, 40, 10, 5, 0, None, 0.9);
+        let response =
+            build_thread_usage_response(ThreadId::new(), 1, Some(50), 40, 10, 5, 0, 0, None, 0.9);
         assert_eq!(response.token_budget_limit, None);
         assert_eq!(response.token_budget_remaining, None);
         assert_eq!(response.token_budget_utilization, None);

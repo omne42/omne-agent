@@ -61,9 +61,11 @@ fn plan_architect_base_decision(
         | "thread/request_user_input"
         | "subagent/wait" => mode.permissions.read,
         "web/search" | "web/fetch" | "web/view_image" => mode.permissions.browser,
-        "repo/search" | "repo/index" | "repo/symbols" => {
-            mode.permissions.read.combine(mode.permissions.artifact)
-        }
+        "repo/search"
+        | "repo/index"
+        | "repo/symbols"
+        | "repo/goto_definition"
+        | "repo/find_references" => mode.permissions.read.combine(mode.permissions.artifact),
         "mcp/list_servers" | "mcp/list_tools" | "mcp/list_resources" => mode.permissions.read,
         "process/inspect" | "process/tail" | "process/follow" => mode.permissions.process.inspect,
         "artifact/list" | "artifact/read" => mode.permissions.artifact,
@@ -400,6 +402,40 @@ async fn plan_architect_repo_symbols_decision(
     Some(crate::resolve_mode_decision_audit(mode, "repo/symbols", base_decision).decision)
 }
 
+async fn plan_architect_repo_goto_definition_decision(
+    mode: &omne_core::modes::ModeDef,
+    thread_root: &std::path::Path,
+    args: &Value,
+) -> Option<omne_core::modes::Decision> {
+    let parsed: RepoGotoDefinitionArgs = serde_json::from_value(args.clone()).ok()?;
+    let root = parsed.root.unwrap_or(crate::FileRoot::Workspace);
+    let target_root = resolve_plan_target_root(thread_root, root).await?;
+
+    let base_decision = plan_architect_repo_base_decision_after_path_gate(
+        mode,
+        &target_root,
+        parsed.include_glob.as_deref(),
+    );
+    Some(crate::resolve_mode_decision_audit(mode, "repo/goto_definition", base_decision).decision)
+}
+
+async fn plan_architect_repo_find_references_decision(
+    mode: &omne_core::modes::ModeDef,
+    thread_root: &std::path::Path,
+    args: &Value,
+) -> Option<omne_core::modes::Decision> {
+    let parsed: RepoFindReferencesArgs = serde_json::from_value(args.clone()).ok()?;
+    let root = parsed.root.unwrap_or(crate::FileRoot::Workspace);
+    let target_root = resolve_plan_target_root(thread_root, root).await?;
+
+    let base_decision = plan_architect_repo_base_decision_after_path_gate(
+        mode,
+        &target_root,
+        parsed.include_glob.as_deref(),
+    );
+    Some(crate::resolve_mode_decision_audit(mode, "repo/find_references", base_decision).decision)
+}
+
 async fn plan_architect_effective_decision_for_call(
     server: &super::Server,
     mode: &omne_core::modes::ModeDef,
@@ -415,6 +451,12 @@ async fn plan_architect_effective_decision_for_call(
         "repo/search" => plan_architect_repo_search_decision(mode, thread_root, args).await,
         "repo/index" => plan_architect_repo_index_decision(mode, thread_root, args).await,
         "repo/symbols" => plan_architect_repo_symbols_decision(mode, thread_root, args).await,
+        "repo/goto_definition" => {
+            plan_architect_repo_goto_definition_decision(mode, thread_root, args).await
+        }
+        "repo/find_references" => {
+            plan_architect_repo_find_references_decision(mode, thread_root, args).await
+        }
         "thread/state" => plan_architect_thread_state_decision(mode, thread_id, args),
         "thread/usage" => plan_architect_thread_usage_decision(mode, thread_id, args),
         "thread/events" => plan_architect_thread_events_decision(mode, thread_id, args),
@@ -666,7 +708,9 @@ struct NormalizedUpdatePlanStep {
 }
 
 fn normalize_optional_string(value: Option<String>) -> Option<String> {
-    value.map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
+    value
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
 }
 
 fn normalize_update_plan_status(status: &str) -> Option<&'static str> {
@@ -694,9 +738,7 @@ fn normalize_update_plan_steps(
             anyhow::bail!("plan[{idx}].step must not be empty");
         }
         let Some(status) = normalize_update_plan_status(&step.status) else {
-            anyhow::bail!(
-                "plan[{idx}].status must be one of: pending, in_progress, completed"
-            );
+            anyhow::bail!("plan[{idx}].status must be one of: pending, in_progress, completed");
         };
         if status == "in_progress" {
             in_progress_count += 1;
@@ -748,12 +790,7 @@ fn render_update_plan_artifact_text(
 
     text.push_str("## Steps\n\n");
     for (idx, step) in plan.iter().enumerate() {
-        text.push_str(&format!(
-            "{}. [{}] {}\n",
-            idx + 1,
-            step.status,
-            step.step
-        ));
+        text.push_str(&format!("{}. [{}] {}\n", idx + 1, step.status, step.step));
     }
     text
 }
@@ -796,9 +833,7 @@ fn normalize_request_user_input_args(
         anyhow::bail!("questions must not be empty");
     }
     if args.questions.len() > REQUEST_USER_INPUT_MAX_QUESTIONS {
-        anyhow::bail!(
-            "questions supports at most {REQUEST_USER_INPUT_MAX_QUESTIONS} items"
-        );
+        anyhow::bail!("questions supports at most {REQUEST_USER_INPUT_MAX_QUESTIONS} items");
     }
 
     let mut seen_ids = std::collections::BTreeSet::<String>::new();
@@ -841,7 +876,8 @@ fn normalize_request_user_input_args(
         }
 
         let mut option_labels_seen = std::collections::BTreeSet::<String>::new();
-        let mut options = Vec::<NormalizedRequestUserInputOption>::with_capacity(question.options.len());
+        let mut options =
+            Vec::<NormalizedRequestUserInputOption>::with_capacity(question.options.len());
         for (option_idx, option) in question.options.into_iter().enumerate() {
             let label = option.label.trim().to_string();
             if label.is_empty() {
@@ -851,9 +887,7 @@ fn normalize_request_user_input_args(
             }
             let label_key = label.to_ascii_lowercase();
             if !option_labels_seen.insert(label_key) {
-                anyhow::bail!(
-                    "questions[{question_idx}].options contains duplicate labels"
-                );
+                anyhow::bail!("questions[{question_idx}].options contains duplicate labels");
             }
 
             let description = option.description.trim().to_string();
@@ -903,9 +937,7 @@ fn request_user_input_questions_to_json(
         .collect()
 }
 
-fn request_user_input_approval_params(
-    questions: &[NormalizedRequestUserInputQuestion],
-) -> Value {
+fn request_user_input_approval_params(questions: &[NormalizedRequestUserInputQuestion]) -> Value {
     serde_json::json!({
         "questions": request_user_input_questions_to_json(questions),
         "response_format": {
@@ -971,11 +1003,17 @@ fn parse_request_user_input_answer_map(
                 return answers;
             }
             Value::String(value) => {
-                answers.insert(REQUEST_USER_INPUT_SINGLE_KEY.to_string(), Value::String(value));
+                answers.insert(
+                    REQUEST_USER_INPUT_SINGLE_KEY.to_string(),
+                    Value::String(value),
+                );
                 return answers;
             }
             Value::Number(value) => {
-                answers.insert(REQUEST_USER_INPUT_SINGLE_KEY.to_string(), Value::Number(value));
+                answers.insert(
+                    REQUEST_USER_INPUT_SINGLE_KEY.to_string(),
+                    Value::Number(value),
+                );
                 return answers;
             }
             _ => {}
@@ -1054,8 +1092,8 @@ fn resolve_request_user_input_answers(
             answered_count += 1;
         }
 
-        let selected_index =
-            answer_value.and_then(|value| match_request_user_input_option_index(value, &question.options));
+        let selected_index = answer_value
+            .and_then(|value| match_request_user_input_option_index(value, &question.options));
         let selected_option = selected_index.and_then(|index| question.options.get(index));
 
         answers.push(serde_json::json!({
@@ -1115,8 +1153,8 @@ async fn handle_request_user_input_tool(
         }
     }
 
-    let approval_id =
-        approval_id.ok_or_else(|| anyhow::anyhow!("request_user_input approved without approval_id"))?;
+    let approval_id = approval_id
+        .ok_or_else(|| anyhow::anyhow!("request_user_input approved without approval_id"))?;
     let reason = load_approval_decision_reason(server, thread_id, approval_id).await?;
     let (answers, answered_count) =
         resolve_request_user_input_answers(reason.as_deref(), &questions);
@@ -1305,12 +1343,14 @@ async fn fetch_http_bytes_limited(
     client: &reqwest::Client,
     url: reqwest::Url,
     max_bytes: u64,
-) -> anyhow::Result<(reqwest::StatusCode, reqwest::Url, Option<String>, Vec<u8>, bool)> {
-    let response = client
-        .get(url)
-        .send()
-        .await
-        .context("send web request")?;
+) -> anyhow::Result<(
+    reqwest::StatusCode,
+    reqwest::Url,
+    Option<String>,
+    Vec<u8>,
+    bool,
+)> {
+    let response = client.get(url).send().await.context("send web request")?;
     let status = response.status();
     let final_url = response.url().clone();
     let content_type = response
@@ -1373,25 +1413,31 @@ async fn enforce_browser_mode_and_approval(
     let catalog = omne_core::modes::ModeCatalog::load(&thread_root).await;
     let Some(mode) = catalog.mode(&mode_name) else {
         let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
-        return Ok(Some(serde_json::json!({
-            "denied": true,
-            "mode": mode_name,
-            "decision": "deny",
-            "available_modes": available,
-            "error_code": "mode_unknown",
-        })));
+        return Ok(Some(ensure_machine_error_fields(
+            serde_json::json!({
+                "denied": true,
+                "mode": mode_name,
+                "decision": "deny",
+                "available_modes": available,
+                "error_code": "mode_unknown",
+            }),
+            "mode_unknown",
+        )));
     };
 
     let mode_decision = crate::resolve_mode_decision_audit(mode, action, mode.permissions.browser);
     if mode_decision.decision == omne_core::modes::Decision::Deny {
-        return Ok(Some(serde_json::json!({
-            "denied": true,
-            "mode": mode_name,
-            "decision": mode_decision.decision,
-            "decision_source": mode_decision.decision_source,
-            "tool_override_hit": mode_decision.tool_override_hit,
-            "error_code": "mode_denied",
-        })));
+        return Ok(Some(ensure_machine_error_fields(
+            serde_json::json!({
+                "denied": true,
+                "mode": mode_name,
+                "decision": mode_decision.decision,
+                "decision_source": mode_decision.decision_source,
+                "tool_override_hit": mode_decision.tool_override_hit,
+                "error_code": "mode_denied",
+            }),
+            "mode_denied",
+        )));
     }
 
     if mode_decision.decision == omne_core::modes::Decision::Prompt {
@@ -1411,10 +1457,14 @@ async fn enforce_browser_mode_and_approval(
         {
             super::ApprovalGate::Approved => {}
             super::ApprovalGate::Denied { remembered } => {
-                return Ok(Some(serde_json::json!({
-                    "denied": true,
-                    "remembered": remembered,
-                })));
+                return Ok(Some(ensure_machine_error_fields(
+                    serde_json::json!({
+                        "denied": true,
+                        "remembered": remembered,
+                        "error_code": "approval_denied",
+                    }),
+                    "approval_denied",
+                )));
             }
             super::ApprovalGate::NeedsApproval { approval_id } => {
                 return Ok(Some(serde_json::json!({
@@ -1494,7 +1544,11 @@ async fn handle_webfetch_tool(
     args: WebFetchArgs,
 ) -> anyhow::Result<Value> {
     let url = validate_http_url(&args.url)?;
-    let max_bytes = clamp_max_bytes(args.max_bytes, WEB_FETCH_DEFAULT_MAX_BYTES, WEB_FETCH_MAX_BYTES_LIMIT);
+    let max_bytes = clamp_max_bytes(
+        args.max_bytes,
+        WEB_FETCH_DEFAULT_MAX_BYTES,
+        WEB_FETCH_MAX_BYTES_LIMIT,
+    );
     let approval_params = serde_json::json!({
         "url": url.as_str(),
         "max_bytes": max_bytes,
@@ -1587,8 +1641,7 @@ fn probe_jpeg_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
 
         let is_sof = matches!(
             marker,
-            0xC0
-                | 0xC1
+            0xC0 | 0xC1
                 | 0xC2
                 | 0xC3
                 | 0xC5
@@ -1632,9 +1685,7 @@ fn guess_image_mime_from_name(name: Option<&str>) -> Option<(&'static str, &'sta
 }
 
 fn probe_image(bytes: &[u8], name_hint: Option<&str>) -> ImageProbe {
-    if bytes.len() >= 24
-        && bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A])
-    {
+    if bytes.len() >= 24 && bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
         let width = u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]);
         let height = u32::from_be_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]);
         return ImageProbe {
@@ -1656,9 +1707,7 @@ fn probe_image(bytes: &[u8], name_hint: Option<&str>) -> ImageProbe {
         };
     }
 
-    if bytes.len() >= 12
-        && bytes.starts_with(b"RIFF")
-        && bytes.get(8..12) == Some(b"WEBP" as &[u8])
+    if bytes.len() >= 12 && bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP" as &[u8])
     {
         return ImageProbe {
             format: "webp",
@@ -1716,7 +1765,10 @@ fn probe_image(bytes: &[u8], name_hint: Option<&str>) -> ImageProbe {
     }
 }
 
-async fn read_local_file_limited(path: &std::path::Path, max_bytes: u64) -> anyhow::Result<(Vec<u8>, bool, u64)> {
+async fn read_local_file_limited(
+    path: &std::path::Path,
+    max_bytes: u64,
+) -> anyhow::Result<(Vec<u8>, bool, u64)> {
     use tokio::io::AsyncReadExt;
 
     let mut file = tokio::fs::File::open(path)
@@ -1765,7 +1817,11 @@ async fn handle_view_image_tool(
         anyhow::bail!("exactly one of path or url is required");
     }
 
-    let max_bytes = clamp_max_bytes(args.max_bytes, VIEW_IMAGE_DEFAULT_MAX_BYTES, VIEW_IMAGE_MAX_BYTES_LIMIT);
+    let max_bytes = clamp_max_bytes(
+        args.max_bytes,
+        VIEW_IMAGE_DEFAULT_MAX_BYTES,
+        VIEW_IMAGE_MAX_BYTES_LIMIT,
+    );
     let approval_params = serde_json::json!({
         "path": path,
         "url": url,
@@ -1798,7 +1854,10 @@ async fn handle_view_image_tool(
                 None,
                 Some(final_url.to_string()),
                 total_size,
-                final_url.path_segments().and_then(|mut segments| segments.next_back()).map(|s| s.to_string()),
+                final_url
+                    .path_segments()
+                    .and_then(|mut segments| segments.next_back())
+                    .map(|s| s.to_string()),
             )
         } else {
             let path = path.expect("path checked above");
@@ -1807,10 +1866,14 @@ async fn handle_view_image_tool(
             let target_root = resolve_plan_target_root(&thread_root, root)
                 .await
                 .ok_or_else(|| anyhow::anyhow!("reference repo root is not configured"))?;
-            let rel = omne_core::modes::relative_path_under_root(&target_root, std::path::Path::new(&path))
-                .with_context(|| format!("path escapes root: {path}"))?;
+            let rel = omne_core::modes::relative_path_under_root(
+                &target_root,
+                std::path::Path::new(&path),
+            )
+            .with_context(|| format!("path escapes root: {path}"))?;
             let resolved_path = target_root.join(&rel);
-            let (bytes, truncated, total_size) = read_local_file_limited(&resolved_path, max_bytes).await?;
+            let (bytes, truncated, total_size) =
+                read_local_file_limited(&resolved_path, max_bytes).await?;
             (
                 bytes,
                 truncated,
@@ -1818,15 +1881,13 @@ async fn handle_view_image_tool(
                 Some(rel.display().to_string()),
                 None,
                 total_size,
-                rel.file_name().map(|value| value.to_string_lossy().to_string()),
+                rel.file_name()
+                    .map(|value| value.to_string_lossy().to_string()),
             )
         };
 
     let probe = probe_image(&bytes, name_hint.as_deref());
-    let sha256 = {
-        let digest = sha2::Sha256::digest(&bytes);
-        format!("{digest:x}")
-    };
+    let sha256 = omne_integrity_primitives::hash_sha256(&bytes).to_string();
 
     Ok(serde_json::json!({
         "source": source_label,
@@ -2023,7 +2084,10 @@ mod request_user_input_tests {
         let (answers, answered_count) =
             resolve_request_user_input_answers(Some("investigate"), &questions);
         assert_eq!(answered_count, 1);
-        assert_eq!(answers[0]["selected_option_label"].as_str(), Some("investigate"));
+        assert_eq!(
+            answers[0]["selected_option_label"].as_str(),
+            Some("investigate")
+        );
     }
 }
 
@@ -2043,7 +2107,10 @@ mod web_tools_tests {
         assert_eq!(results.len(), 2);
         assert_eq!(results[0]["url"].as_str(), Some("https://example.com/doc"));
         assert_eq!(results[0]["title"].as_str(), Some("Example & Title"));
-        assert_eq!(results[1]["url"].as_str(), Some("https://example.org/guide"));
+        assert_eq!(
+            results[1]["url"].as_str(),
+            Some("https://example.org/guide")
+        );
     }
 
     #[test]
@@ -2069,6 +2136,149 @@ mod web_tools_tests {
 #[cfg(test)]
 mod facade_tool_tests {
     use super::*;
+
+    #[test]
+    fn facade_collect_mapped_args_accepts_top_level_legacy_shape() {
+        let request: FacadeToolArgs = serde_json::from_value(serde_json::json!({
+            "op": "read",
+            "path": "README.md",
+            "root": "workspace",
+        }))
+        .expect("parse facade request");
+
+        let args = facade_collect_mapped_args(&request).expect("collect args");
+        assert_eq!(args.get("path").and_then(Value::as_str), Some("README.md"));
+        assert_eq!(args.get("root").and_then(Value::as_str), Some("workspace"));
+    }
+
+    #[test]
+    fn facade_collect_and_normalize_workspace_glob_uses_reserved_topic_field() {
+        let request: FacadeToolArgs = serde_json::from_value(serde_json::json!({
+            "op": "glob",
+            "topic": "safe-fs-tools/cli/**/*"
+        }))
+        .expect("parse facade request");
+
+        let mapped = facade_collect_mapped_args(&request).expect("collect args");
+        let normalized = facade_normalize_mapped_args(FacadeToolKind::Workspace, "glob", mapped);
+        assert_eq!(
+            normalized.get("pattern").and_then(Value::as_str),
+            Some("safe-fs-tools/cli/**/*")
+        );
+    }
+
+    #[test]
+    fn facade_collect_mapped_args_rejects_nested_args_wrapper() {
+        let request: FacadeToolArgs = serde_json::from_value(serde_json::json!({
+            "op": "write",
+            "path": "README.md",
+            "args": { "text": "hello", "path": "tmp/a.txt" }
+        }))
+        .expect("parse facade request");
+
+        let err = facade_collect_mapped_args(&request).expect_err("should reject args wrapper");
+        assert!(
+            err.to_string()
+                .contains("args wrapper is not allowed for facade calls")
+        );
+    }
+
+    #[test]
+    fn facade_normalize_workspace_edit_translates_old_text_shape() {
+        let normalized = facade_normalize_mapped_args(
+            FacadeToolKind::Workspace,
+            "edit",
+            serde_json::json!({
+                "path": "README.md",
+                "old_text": "OmneAgent",
+                "new_text": "Omne Agent",
+            }),
+        );
+        let edits = normalized
+            .get("edits")
+            .and_then(Value::as_array)
+            .expect("edits");
+        assert_eq!(edits.len(), 1);
+        assert_eq!(
+            edits[0].get("old").and_then(Value::as_str),
+            Some("OmneAgent")
+        );
+        assert_eq!(
+            edits[0].get("new").and_then(Value::as_str),
+            Some("Omne Agent")
+        );
+    }
+
+    #[test]
+    fn facade_normalize_workspace_glob_maps_topic_alias_to_pattern() {
+        let normalized = facade_normalize_mapped_args(
+            FacadeToolKind::Workspace,
+            "glob",
+            serde_json::json!({
+                "topic": "safe-fs-tools/cli/**/*",
+            }),
+        );
+        assert_eq!(
+            normalized.get("pattern").and_then(Value::as_str),
+            Some("safe-fs-tools/cli/**/*")
+        );
+    }
+
+    #[test]
+    fn facade_normalize_workspace_glob_keeps_pattern_and_drops_aliases() {
+        let normalized = facade_normalize_mapped_args(
+            FacadeToolKind::Workspace,
+            "glob",
+            serde_json::json!({
+                "pattern": "**/*.rs",
+                "topic": "ignored",
+                "path": "ignored",
+                "query": "ignored",
+            }),
+        );
+        assert_eq!(
+            normalized.get("pattern").and_then(Value::as_str),
+            Some("**/*.rs")
+        );
+        assert!(normalized.get("topic").is_none());
+        assert!(normalized.get("path").is_none());
+        assert!(normalized.get("query").is_none());
+    }
+
+    #[test]
+    fn facade_normalize_process_start_supports_command_alias() {
+        let normalized = facade_normalize_mapped_args(
+            FacadeToolKind::Process,
+            "start",
+            serde_json::json!({
+                "command": ["echo", "hello"],
+            }),
+        );
+        let argv = normalized
+            .get("argv")
+            .and_then(Value::as_array)
+            .expect("argv");
+        assert_eq!(argv.len(), 2);
+        assert_eq!(argv[0].as_str(), Some("echo"));
+        assert_eq!(argv[1].as_str(), Some("hello"));
+    }
+
+    #[test]
+    fn facade_normalize_thread_send_input_supports_subagent_alias() {
+        let normalized = facade_normalize_mapped_args(
+            FacadeToolKind::Thread,
+            "send_input",
+            serde_json::json!({
+                "subagent_id": "sa_001",
+                "input": "continue",
+            }),
+        );
+        assert_eq!(normalized.get("id").and_then(Value::as_str), Some("sa_001"));
+        assert_eq!(
+            normalized.get("message").and_then(Value::as_str),
+            Some("continue")
+        );
+    }
 
     #[test]
     fn facade_help_returns_quickstart_and_advanced() {
@@ -2136,6 +2346,64 @@ mod facade_tool_tests {
                 .and_then(|error| error.get("code"))
                 .and_then(Value::as_str),
             Some(FACADE_ERROR_INVALID_PARAMS)
+        );
+    }
+}
+
+#[cfg(test)]
+mod mcp_call_args_tests {
+    use super::*;
+
+    #[test]
+    fn mcp_call_accepts_flattened_top_level_fields() {
+        let parsed = parse_mcp_call_args_with_flatten_compat(serde_json::json!({
+            "server": "default",
+            "tool": "echo",
+            "text": "hello",
+        }))
+        .expect("flattened args should be accepted");
+
+        assert_eq!(parsed.server, "default");
+        assert_eq!(parsed.tool, "echo");
+        assert_eq!(
+            parsed.arguments.get("text").and_then(Value::as_str),
+            Some("hello")
+        );
+    }
+
+    #[test]
+    fn mcp_call_unwraps_input_wrapper_object() {
+        let parsed = parse_mcp_call_args_with_flatten_compat(serde_json::json!({
+            "server": "default",
+            "tool": "echo",
+            "input": { "text": "hello" },
+        }))
+        .expect("wrapped input args should be accepted");
+
+        assert_eq!(
+            parsed.arguments.get("text").and_then(Value::as_str),
+            Some("hello")
+        );
+        assert!(parsed.arguments.get("input").is_none());
+    }
+
+    #[test]
+    fn mcp_call_merges_explicit_arguments_and_top_level_supplements() {
+        let parsed = parse_mcp_call_args_with_flatten_compat(serde_json::json!({
+            "server": "default",
+            "tool": "echo",
+            "arguments": { "text": "hello" },
+            "lang": "zh-CN",
+        }))
+        .expect("mixed arguments should be accepted");
+
+        assert_eq!(
+            parsed.arguments.get("text").and_then(Value::as_str),
+            Some("hello")
+        );
+        assert_eq!(
+            parsed.arguments.get("lang").and_then(Value::as_str),
+            Some("zh-CN")
         );
     }
 }
@@ -2308,7 +2576,8 @@ async fn start_agent_spawn_schedule(
 ) -> anyhow::Result<Vec<Value>> {
     let mut tasks = Vec::<SubagentSpawnTask>::with_capacity(plans.len());
     for plan in plans {
-        let isolated_cwd = if matches!(plan.workspace_mode, AgentSpawnWorkspaceMode::IsolatedWrite) {
+        let isolated_cwd = if matches!(plan.workspace_mode, AgentSpawnWorkspaceMode::IsolatedWrite)
+        {
             Some(prepare_isolated_workspace(server, thread_id, &plan.id, thread_root).await?)
         } else {
             None
@@ -2341,8 +2610,8 @@ async fn start_agent_spawn_schedule(
             None
         };
         let sandbox_policy = match plan.workspace_mode {
-            AgentSpawnWorkspaceMode::ReadOnly => omne_protocol::SandboxPolicy::ReadOnly,
-            AgentSpawnWorkspaceMode::IsolatedWrite => omne_protocol::SandboxPolicy::WorkspaceWrite,
+            AgentSpawnWorkspaceMode::ReadOnly => policy_meta::WriteScope::ReadOnly,
+            AgentSpawnWorkspaceMode::IsolatedWrite => policy_meta::WriteScope::WorkspaceWrite,
         };
         super::handle_thread_configure(
             server,
@@ -2444,6 +2713,230 @@ fn facade_normalized_op(request: &FacadeToolArgs) -> Option<String> {
     (!op.is_empty()).then_some(op)
 }
 
+fn facade_collect_mapped_args(request: &FacadeToolArgs) -> anyhow::Result<Value> {
+    let mut merged = request.extra.clone();
+    if merged.contains_key("args") {
+        anyhow::bail!(
+            "args wrapper is not allowed for facade calls; use flat root-level parameters"
+        );
+    }
+    if let Some(topic) = request
+        .topic
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        merged
+            .entry("topic".to_string())
+            .or_insert_with(|| Value::String(topic.to_string()));
+    }
+    Ok(Value::Object(merged))
+}
+
+fn facade_normalize_mapped_args(kind: FacadeToolKind, op: &str, mapped_args: Value) -> Value {
+    let Value::Object(mut object) = mapped_args else {
+        return mapped_args;
+    };
+
+    match kind {
+        FacadeToolKind::Workspace => match op {
+            "write" => {
+                if !object.contains_key("text") {
+                    if let Some(content) = object.remove("content") {
+                        object.insert("text".to_string(), content);
+                    }
+                } else {
+                    object.remove("content");
+                }
+            }
+            "edit" => {
+                if !object.contains_key("edits") {
+                    let old_text = object.get("old_text").cloned();
+                    let new_text = object.get("new_text").cloned();
+                    if let (Some(old), Some(new)) = (old_text, new_text) {
+                        object.remove("old_text");
+                        object.remove("new_text");
+                        let mut edit = serde_json::Map::new();
+                        edit.insert("old".to_string(), old);
+                        edit.insert("new".to_string(), new);
+                        if let Some(expected) = object.remove("expected_replacements") {
+                            edit.insert("expected_replacements".to_string(), expected);
+                        }
+                        object.insert("edits".to_string(), Value::Array(vec![Value::Object(edit)]));
+                    }
+                }
+            }
+            "glob" => {
+                if !object.contains_key("pattern") {
+                    if let Some(pattern) = object
+                        .remove("topic")
+                        .or_else(|| object.remove("path"))
+                        .or_else(|| object.remove("query"))
+                    {
+                        object.insert("pattern".to_string(), pattern);
+                    }
+                } else {
+                    object.remove("topic");
+                    object.remove("path");
+                    object.remove("query");
+                }
+            }
+            _ => {}
+        },
+        FacadeToolKind::Process => {
+            if op == "start" && !object.contains_key("argv") {
+                if let Some(command) = object.remove("command") {
+                    match command {
+                        Value::Array(_) => {
+                            object.insert("argv".to_string(), command);
+                        }
+                        Value::String(raw) => {
+                            let argv = raw
+                                .split_whitespace()
+                                .filter(|token| !token.is_empty())
+                                .map(|token| Value::String(token.to_string()))
+                                .collect::<Vec<_>>();
+                            if !argv.is_empty() {
+                                object.insert("argv".to_string(), Value::Array(argv));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        FacadeToolKind::Thread => match op {
+            "request_input" => {
+                if !object.contains_key("questions") {
+                    let prompt = object
+                        .get("input")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(ToOwned::to_owned);
+                    if let Some(prompt) = prompt {
+                        object.insert(
+                            "questions".to_string(),
+                            serde_json::json!([{
+                                "header": "Input",
+                                "id": "q1",
+                                "question": prompt,
+                                "options": [
+                                    {"label": "Yes", "description": "Continue"},
+                                    {"label": "No", "description": "Stop"}
+                                ]
+                            }]),
+                        );
+                    }
+                }
+            }
+            "spawn_agent" | "agent_spawn" => {
+                if !object.contains_key("tasks") {
+                    let goal = object
+                        .get("goal")
+                        .or_else(|| object.get("input"))
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(ToOwned::to_owned);
+                    if let Some(goal) = goal {
+                        object.insert(
+                            "tasks".to_string(),
+                            serde_json::json!([{ "id": "task_1", "input": goal }]),
+                        );
+                    }
+                }
+            }
+            "send_input" => {
+                if !object.contains_key("id") {
+                    if let Some(id) = object.get("subagent_id").cloned() {
+                        object.insert("id".to_string(), id);
+                    }
+                }
+                if !object.contains_key("message") {
+                    if let Some(message) = object.get("input").cloned() {
+                        object.insert("message".to_string(), message);
+                    }
+                }
+            }
+            "wait" => {
+                if !object.contains_key("ids") {
+                    if let Some(id) = object.get("subagent_id").cloned() {
+                        object.insert("ids".to_string(), Value::Array(vec![id]));
+                    }
+                }
+            }
+            "close" | "close_agent" => {
+                if !object.contains_key("id") {
+                    if let Some(id) = object.get("subagent_id").cloned() {
+                        object.insert("id".to_string(), id);
+                    }
+                }
+            }
+            _ => {}
+        },
+        FacadeToolKind::Artifact => match op {
+            "write" => {
+                if !object.contains_key("text") {
+                    if let Some(content) = object.remove("content") {
+                        object.insert("text".to_string(), content);
+                    }
+                } else {
+                    object.remove("content");
+                }
+            }
+            "update_plan" => {
+                if let Some(plan) = object.remove("plan") {
+                    let normalized = match plan {
+                        Value::Object(step) => Value::Array(vec![Value::Object(step)]),
+                        other => other,
+                    };
+                    object.insert("plan".to_string(), normalized);
+                } else {
+                    let step = object.get("step").cloned();
+                    let status = object.get("status").cloned();
+                    if let (Some(step), Some(status)) = (step, status) {
+                        object.insert(
+                            "plan".to_string(),
+                            Value::Array(vec![serde_json::json!({
+                                "step": step,
+                                "status": status,
+                            })]),
+                        );
+                    }
+                }
+            }
+            _ => {}
+        },
+        FacadeToolKind::Integration => match op {
+            "web_search" => {
+                if !object.contains_key("query") {
+                    if let Some(query) = object.remove("q") {
+                        object.insert("query".to_string(), query);
+                    }
+                }
+            }
+            "web_fetch" | "webfetch" => {
+                if !object.contains_key("url") {
+                    if let Some(url) = object.remove("link") {
+                        object.insert("url".to_string(), url);
+                    }
+                }
+            }
+            "view_image" => {
+                if !object.contains_key("path") {
+                    if let Some(path) = object.remove("file") {
+                        object.insert("path".to_string(), path);
+                    }
+                }
+            }
+            _ => {}
+        },
+    }
+
+    Value::Object(object)
+}
+
 fn facade_error_value(
     facade_tool: &'static str,
     op: Option<String>,
@@ -2473,17 +2966,23 @@ fn facade_error_value(
     })
 }
 
-fn facade_help_spec(kind: FacadeToolKind) -> (Vec<FacadeQuickstartExample>, Vec<FacadeAdvancedTopic>) {
+fn facade_help_spec(
+    kind: FacadeToolKind,
+) -> (Vec<FacadeQuickstartExample>, Vec<FacadeAdvancedTopic>) {
     match kind {
         FacadeToolKind::Workspace => (
             vec![
                 FacadeQuickstartExample {
                     op: "read",
-                    args: serde_json::json!({ "path": "README.md" }),
+                    example: serde_json::json!({ "op": "read", "path": "README.md" }),
                 },
                 FacadeQuickstartExample {
                     op: "grep",
-                    args: serde_json::json!({ "query": "TODO", "include_glob": "**/*.rs" }),
+                    example: serde_json::json!({
+                        "op": "grep",
+                        "query": "TODO",
+                        "include_glob": "**/*.rs"
+                    }),
                 },
             ],
             vec![
@@ -2521,7 +3020,9 @@ fn facade_help_spec(kind: FacadeToolKind) -> (Vec<FacadeQuickstartExample>, Vec<
                     args_schema_hint: serde_json::json!({
                         "repo_search": { "query": "string", "is_regex?": "bool", "max_matches?": "integer" },
                         "repo_index": { "include_glob?": "string", "max_files?": "integer" },
-                        "repo_symbols": { "include_glob?": "string", "max_symbols?": "integer" }
+                        "repo_symbols": { "include_glob?": "string", "max_symbols?": "integer" },
+                        "repo_goto_definition": { "symbol": "string", "path?": "string", "include_glob?": "string", "max_results?": "integer" },
+                        "repo_find_references": { "symbol": "string", "path?": "string", "include_glob?": "string", "max_matches?": "integer" }
                     }),
                     error_examples: vec![serde_json::json!({
                         "code": FACADE_ERROR_POLICY_DENIED,
@@ -2534,11 +3035,14 @@ fn facade_help_spec(kind: FacadeToolKind) -> (Vec<FacadeQuickstartExample>, Vec<
             vec![
                 FacadeQuickstartExample {
                     op: "start",
-                    args: serde_json::json!({ "argv": ["bash", "-lc", "echo hello"] }),
+                    example: serde_json::json!({
+                        "op": "start",
+                        "argv": ["bash", "-lc", "echo hello"]
+                    }),
                 },
                 FacadeQuickstartExample {
                     op: "inspect",
-                    args: serde_json::json!({ "process_id": "proc_xxx" }),
+                    example: serde_json::json!({ "op": "inspect", "process_id": "proc_xxx" }),
                 },
             ],
             vec![
@@ -2575,11 +3079,12 @@ fn facade_help_spec(kind: FacadeToolKind) -> (Vec<FacadeQuickstartExample>, Vec<
             vec![
                 FacadeQuickstartExample {
                     op: "diff",
-                    args: serde_json::json!({}),
+                    example: serde_json::json!({ "op": "diff" }),
                 },
                 FacadeQuickstartExample {
                     op: "request_input",
-                    args: serde_json::json!({
+                    example: serde_json::json!({
+                        "op": "request_input",
                         "questions": [{
                             "header": "Confirm",
                             "id": "confirm",
@@ -2593,7 +3098,8 @@ fn facade_help_spec(kind: FacadeToolKind) -> (Vec<FacadeQuickstartExample>, Vec<
                 },
                 FacadeQuickstartExample {
                     op: "send_input",
-                    args: serde_json::json!({
+                    example: serde_json::json!({
+                        "op": "send_input",
                         "id": "thread_xxx",
                         "message": "Continue with the next validation step.",
                         "interrupt": false
@@ -2683,7 +3189,8 @@ fn facade_help_spec(kind: FacadeToolKind) -> (Vec<FacadeQuickstartExample>, Vec<
             vec![
                 FacadeQuickstartExample {
                     op: "write",
-                    args: serde_json::json!({
+                    example: serde_json::json!({
+                        "op": "write",
                         "artifact_type": "note",
                         "summary": "short summary",
                         "text": "# Notes"
@@ -2691,7 +3198,7 @@ fn facade_help_spec(kind: FacadeToolKind) -> (Vec<FacadeQuickstartExample>, Vec<
                 },
                 FacadeQuickstartExample {
                     op: "list",
-                    args: serde_json::json!({}),
+                    example: serde_json::json!({ "op": "list" }),
                 },
             ],
             vec![
@@ -2726,11 +3233,15 @@ fn facade_help_spec(kind: FacadeToolKind) -> (Vec<FacadeQuickstartExample>, Vec<
             vec![
                 FacadeQuickstartExample {
                     op: "web_search",
-                    args: serde_json::json!({ "query": "Rust async tutorial", "max_results": 5 }),
+                    example: serde_json::json!({
+                        "op": "web_search",
+                        "query": "Rust async tutorial",
+                        "max_results": 5
+                    }),
                 },
                 FacadeQuickstartExample {
                     op: "mcp_list_servers",
-                    args: serde_json::json!({}),
+                    example: serde_json::json!({ "op": "mcp_list_servers" }),
                 },
             ],
             vec![
@@ -2754,7 +3265,12 @@ fn facade_help_spec(kind: FacadeToolKind) -> (Vec<FacadeQuickstartExample>, Vec<
                         "mcp_list_servers": {},
                         "mcp_list_tools": { "server": "string" },
                         "mcp_list_resources": { "server": "string" },
-                        "mcp_call": { "server": "string", "tool": "string", "arguments?": "json" }
+                        "mcp_call": {
+                            "server": "string",
+                            "tool": "string",
+                            "arguments?": "object(optional)",
+                            "<extra root fields>": "allowed; runtime auto-packs them into arguments"
+                        }
                     }),
                     error_examples: vec![serde_json::json!({
                         "code": FACADE_ERROR_POLICY_DENIED,
@@ -2766,10 +3282,7 @@ fn facade_help_spec(kind: FacadeToolKind) -> (Vec<FacadeQuickstartExample>, Vec<
     }
 }
 
-fn facade_help_value(
-    kind: FacadeToolKind,
-    topic: Option<String>,
-) -> anyhow::Result<Value> {
+fn facade_help_value(kind: FacadeToolKind, topic: Option<String>) -> anyhow::Result<Value> {
     let (quickstart, advanced) = facade_help_spec(kind);
     let topic = topic.and_then(|value| {
         let normalized = value.trim().to_ascii_lowercase();
@@ -2826,6 +3339,12 @@ fn facade_route(kind: FacadeToolKind, op: &str) -> Option<(&'static str, &'stati
             "repo_search" | "search" => Some(("repo_search", "repo/search")),
             "repo_index" | "index" => Some(("repo_index", "repo/index")),
             "repo_symbols" | "symbols" => Some(("repo_symbols", "repo/symbols")),
+            "repo_goto_definition" | "goto_definition" => {
+                Some(("repo_goto_definition", "repo/goto_definition"))
+            }
+            "repo_find_references" | "find_references" => {
+                Some(("repo_find_references", "repo/find_references"))
+            }
             "write" => Some(("file_write", "file/write")),
             "patch" => Some(("file_patch", "file/patch")),
             "edit" => Some(("file_edit", "file/edit")),
@@ -2900,21 +3419,42 @@ fn facade_annotate_result(
         "mapped_action".to_string(),
         Value::String(mapped_action.to_string()),
     );
-    if object
+    let value = Value::Object(object);
+    if value
         .get("denied")
         .and_then(Value::as_bool)
         .unwrap_or(false)
-        && object.get("error_code").is_none()
     {
-        object.insert(
-            "error_code".to_string(),
-            Value::String(FACADE_ERROR_POLICY_DENIED.to_string()),
-        );
+        return ensure_machine_error_fields(value, FACADE_ERROR_POLICY_DENIED);
     }
-    Value::Object(object)
+    value
 }
 
 const DYNAMIC_ERROR_INVALID_PARAMS: &str = "dynamic_invalid_params";
+
+fn ensure_machine_error_fields(value: Value, error_code: &'static str) -> Value {
+    let mut object = match value {
+        Value::Object(map) => map,
+        other => {
+            let mut map = serde_json::Map::new();
+            map.insert("output".to_string(), other);
+            map
+        }
+    };
+    if !object.contains_key("error_code") {
+        object.insert(
+            "error_code".to_string(),
+            Value::String(error_code.to_string()),
+        );
+    }
+    if !object.contains_key("structured_error")
+        && let Ok(structured_error) = crate::catalog_structured_error(error_code)
+        && let Ok(serialized) = serde_json::to_value(structured_error)
+    {
+        object.insert("structured_error".to_string(), serialized);
+    }
+    Value::Object(object)
+}
 
 fn dynamic_error_value(
     dynamic_tool: &str,
@@ -2923,13 +3463,16 @@ fn dynamic_error_value(
     error_code: &'static str,
     message: impl Into<String>,
 ) -> Value {
-    serde_json::json!({
-        "dynamic_tool": dynamic_tool,
-        "mapped_tool": mapped_tool,
-        "mapped_action": mapped_action,
-        "error_code": error_code,
-        "message": message.into(),
-    })
+    ensure_machine_error_fields(
+        serde_json::json!({
+            "dynamic_tool": dynamic_tool,
+            "mapped_tool": mapped_tool,
+            "mapped_action": mapped_action,
+            "error_code": error_code,
+            "message": message.into(),
+        }),
+        error_code,
+    )
 }
 
 fn dynamic_annotate_result(result: Value, spec: &DynamicToolSpec) -> Value {
@@ -2941,10 +3484,7 @@ fn dynamic_annotate_result(result: Value, spec: &DynamicToolSpec) -> Value {
             map
         }
     };
-    object.insert(
-        "dynamic_tool".to_string(),
-        Value::String(spec.name.clone()),
-    );
+    object.insert("dynamic_tool".to_string(), Value::String(spec.name.clone()));
     object.insert(
         "mapped_tool".to_string(),
         Value::String(spec.mapped_tool.clone()),
@@ -2976,9 +3516,7 @@ async fn append_dynamic_audit_events(
     turn_id: Option<TurnId>,
     spec: &DynamicToolSpec,
     mapped_args: &Value,
-    mapped_call: std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<Value>> + '_>,
-    >,
+    mapped_call: std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<Value>> + '_>>,
 ) -> anyhow::Result<Value> {
     let (thread_rt, _) = super::load_thread_root(server, thread_id).await?;
     let tool_id = omne_protocol::ToolId::new();
@@ -3014,6 +3552,7 @@ async fn append_dynamic_audit_events(
                 .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
                     status,
+                    structured_error: crate::structured_error_from_result_value(&annotated),
                     error: None,
                     result: Some(annotated.clone()),
                 })
@@ -3021,17 +3560,22 @@ async fn append_dynamic_audit_events(
             Ok(annotated)
         }
         Err(err) => {
+            let result = ensure_machine_error_fields(
+                serde_json::json!({
+                    "dynamic_tool": spec.name,
+                    "mapped_tool": spec.mapped_tool,
+                    "mapped_action": spec.mapped_action,
+                    "error_code": "dynamic_dispatch_failed",
+                }),
+                "dynamic_dispatch_failed",
+            );
             thread_rt
                 .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
                     status: omne_protocol::ToolStatus::Failed,
+                    structured_error: crate::structured_error_from_result_value(&result),
                     error: Some(err.to_string()),
-                    result: Some(serde_json::json!({
-                        "dynamic_tool": spec.name,
-                        "mapped_tool": spec.mapped_tool,
-                        "mapped_action": spec.mapped_action,
-                        "error_code": "dynamic_dispatch_failed",
-                    })),
+                    result: Some(result),
                 })
                 .await?;
             Err(err)
@@ -3047,9 +3591,7 @@ async fn append_facade_audit_events(
     op: &str,
     mapped_action: &str,
     mapped_args: &Value,
-    mapped_call: std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<Value>> + '_>,
-    >,
+    mapped_call: std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<Value>> + '_>>,
 ) -> anyhow::Result<Value> {
     let (thread_rt, _) = super::load_thread_root(server, thread_id).await?;
     let facade_tool_id = omne_protocol::ToolId::new();
@@ -3084,6 +3626,7 @@ async fn append_facade_audit_events(
                 .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id: facade_tool_id,
                     status,
+                    structured_error: crate::structured_error_from_result_value(&annotated),
                     error: None,
                     result: Some(annotated.clone()),
                 })
@@ -3091,17 +3634,22 @@ async fn append_facade_audit_events(
             Ok(annotated)
         }
         Err(err) => {
+            let result = ensure_machine_error_fields(
+                serde_json::json!({
+                    "facade_tool": facade_tool,
+                    "op": op,
+                    "mapped_action": mapped_action,
+                    "error_code": FACADE_ERROR_POLICY_DENIED,
+                }),
+                FACADE_ERROR_POLICY_DENIED,
+            );
             thread_rt
                 .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id: facade_tool_id,
                     status: omne_protocol::ToolStatus::Failed,
+                    structured_error: crate::structured_error_from_result_value(&result),
                     error: Some(err.to_string()),
-                    result: Some(serde_json::json!({
-                        "facade_tool": facade_tool,
-                        "op": op,
-                        "mapped_action": mapped_action,
-                        "error_code": FACADE_ERROR_POLICY_DENIED,
-                    })),
+                    result: Some(result),
                 })
                 .await?;
             Err(err)
@@ -3155,16 +3703,28 @@ async fn dispatch_facade_tool_call(
         ));
     };
 
-    let mapped_args = request.args.unwrap_or_else(|| serde_json::json!({}));
+    let mapped_args = match facade_collect_mapped_args(&request) {
+        Ok(args) => args,
+        Err(err) => {
+            return Ok(facade_error_value(
+                facade_tool,
+                Some(op),
+                Some(mapped_action.to_string()),
+                FACADE_ERROR_INVALID_PARAMS,
+                err.to_string(),
+            ));
+        }
+    };
     if !mapped_args.is_object() {
         return Ok(facade_error_value(
             facade_tool,
             Some(op),
             Some(mapped_action.to_string()),
             FACADE_ERROR_INVALID_PARAMS,
-            "field args must be a JSON object",
+            "facade parameters must be a JSON object with root-level fields",
         ));
     }
+    let mapped_args = facade_normalize_mapped_args(facade_kind, &op, mapped_args);
     let mapped_args_for_call = mapped_args.clone();
 
     append_facade_audit_events(
@@ -3234,28 +3794,13 @@ async fn dispatch_dynamic_tool_call(
             )
             .await
             .map(|value| {
-                if value
-                    .get("error_code")
-                    .and_then(Value::as_str)
-                    .is_none()
+                if value.get("error_code").and_then(Value::as_str).is_none()
                     && value
                         .get("denied")
                         .and_then(Value::as_bool)
                         .unwrap_or(false)
                 {
-                    let mut object = match value {
-                        Value::Object(map) => map,
-                        other => {
-                            let mut map = serde_json::Map::new();
-                            map.insert("output".to_string(), other);
-                            map
-                        }
-                    };
-                    object.insert(
-                        "error_code".to_string(),
-                        Value::String("dynamic_policy_denied".to_string()),
-                    );
-                    Value::Object(object)
+                    ensure_machine_error_fields(value, "dynamic_policy_denied")
                 } else {
                     value
                 }
@@ -3274,6 +3819,82 @@ async fn dispatch_dynamic_tool_call(
     };
     out.insert("mapped_action".to_string(), Value::String(mapped_action));
     Ok(Some(Value::Object(out)))
+}
+
+fn parse_mcp_call_args_with_flatten_compat(raw_args: Value) -> anyhow::Result<McpCallArgs> {
+    let strict_err = match serde_json::from_value::<McpCallArgs>(raw_args.clone()) {
+        Ok(parsed) => {
+            let has_extra_fields = raw_args
+                .as_object()
+                .map(|object| {
+                    object
+                        .keys()
+                        .any(|key| !matches!(key.as_str(), "server" | "tool" | "arguments"))
+                })
+                .unwrap_or(false);
+            if !has_extra_fields {
+                return Ok(parsed);
+            }
+            // Continue with compatibility merge so extra top-level fields are folded into arguments.
+            anyhow::Error::msg("compatibility merge required")
+        }
+        Err(err) => err.into(),
+    };
+    let strict_err_text = strict_err.to_string();
+    let strict_err = || anyhow::anyhow!("invalid mcp_call args: {strict_err_text}");
+
+    let Value::Object(mut object) = raw_args else {
+        return Err(strict_err());
+    };
+
+    let server = match object.remove("server") {
+        Some(Value::String(value)) if !value.trim().is_empty() => value,
+        _ => return Err(strict_err()),
+    };
+    let tool = match object.remove("tool") {
+        Some(Value::String(value)) if !value.trim().is_empty() => value,
+        _ => return Err(strict_err()),
+    };
+
+    let mut arguments = match object.remove("arguments") {
+        Some(Value::Object(map)) => map,
+        Some(Value::String(raw)) => {
+            // Be tolerant when the model serializes arguments as a JSON string.
+            let parsed = serde_json::from_str::<Value>(&raw).ok();
+            match parsed {
+                Some(Value::Object(map)) => map,
+                _ => return Err(strict_err()),
+            }
+        }
+        Some(_) => return Err(strict_err()),
+        None => serde_json::Map::new(),
+    };
+
+    // Common wrapper keys produced by models.
+    for wrapper in ["input", "params", "payload", "args"] {
+        match object.remove(wrapper) {
+            Some(Value::Object(map)) => {
+                for (key, value) in map {
+                    arguments.entry(key).or_insert(value);
+                }
+            }
+            Some(value) => {
+                arguments.entry(wrapper.to_string()).or_insert(value);
+            }
+            None => {}
+        }
+    }
+
+    // Compatibility fallback: fold remaining top-level fields into MCP arguments.
+    for (key, value) in object {
+        arguments.entry(key).or_insert(value);
+    }
+
+    Ok(McpCallArgs {
+        server,
+        tool,
+        arguments,
+    })
 }
 
 async fn run_tool_call_once(
@@ -3408,6 +4029,45 @@ async fn run_tool_call_once(
             )
             .await
         }
+        "repo_goto_definition" => {
+            let args: RepoGotoDefinitionArgs = serde_json::from_value(args)?;
+            super::handle_repo_goto_definition(
+                server,
+                super::RepoGotoDefinitionParams {
+                    thread_id,
+                    turn_id,
+                    approval_id,
+                    root: args.root,
+                    symbol: args.symbol,
+                    path: args.path,
+                    include_glob: args.include_glob,
+                    max_results: args.max_results,
+                    max_files: args.max_files,
+                    max_bytes_per_file: args.max_bytes_per_file,
+                    max_symbols: args.max_symbols,
+                },
+            )
+            .await
+        }
+        "repo_find_references" => {
+            let args: RepoFindReferencesArgs = serde_json::from_value(args)?;
+            super::handle_repo_find_references(
+                server,
+                super::RepoFindReferencesParams {
+                    thread_id,
+                    turn_id,
+                    approval_id,
+                    root: args.root,
+                    symbol: args.symbol,
+                    path: args.path,
+                    include_glob: args.include_glob,
+                    max_matches: args.max_matches,
+                    max_bytes_per_file: args.max_bytes_per_file,
+                    max_files: args.max_files,
+                },
+            )
+            .await
+        }
         "mcp_list_servers" => {
             super::handle_mcp_list_servers(
                 server,
@@ -3446,7 +4106,7 @@ async fn run_tool_call_once(
             .await
         }
         "mcp_call" => {
-            let args: McpCallArgs = serde_json::from_value(args)?;
+            let args = parse_mcp_call_args_with_flatten_compat(args)?;
             super::handle_mcp_call(
                 server,
                 super::McpCallParams {
@@ -3455,7 +4115,7 @@ async fn run_tool_call_once(
                     approval_id,
                     server: args.server,
                     tool: args.tool,
-                    arguments: args.arguments,
+                    arguments: Some(serde_json::Value::Object(args.arguments)),
                 },
             )
             .await
@@ -3792,12 +4452,24 @@ async fn handle_agent_spawn_tool(
         let state = handle.state();
         (state.approval_policy, state.mode.clone(), state.cwd.clone())
     };
-    let thread_cwd = thread_cwd.ok_or_else(|| anyhow::anyhow!("thread cwd is missing: {thread_id}"))?;
+    let thread_cwd =
+        thread_cwd.ok_or_else(|| anyhow::anyhow!("thread cwd is missing: {thread_id}"))?;
 
     let catalog = omne_core::modes::ModeCatalog::load(&thread_root).await;
     let Some(mode) = catalog.mode(&mode_name) else {
         let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
         let decision = omne_core::modes::Decision::Deny;
+        let denied = ensure_machine_error_fields(
+            serde_json::json!({
+                "tool_id": tool_id,
+                "denied": true,
+                "mode": mode_name,
+                "decision": decision,
+                "available": available,
+                "load_error": catalog.load_error,
+            }),
+            "mode_unknown",
+        );
         thread_rt
             .append_event(omne_protocol::ThreadEventKind::ToolStarted {
                 tool_id,
@@ -3810,23 +4482,12 @@ async fn handle_agent_spawn_tool(
             .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                 tool_id,
                 status: omne_protocol::ToolStatus::Denied,
+                structured_error: crate::structured_error_from_result_value(&denied),
                 error: Some("unknown mode".to_string()),
-                result: Some(serde_json::json!({
-                    "mode": mode_name,
-                    "decision": decision,
-                    "available": available,
-                    "load_error": catalog.load_error.clone(),
-                })),
+                result: Some(denied.clone()),
             })
             .await?;
-        return Ok(serde_json::json!({
-            "tool_id": tool_id,
-            "denied": true,
-            "mode": mode_name,
-            "decision": decision,
-            "available": available,
-            "load_error": catalog.load_error,
-        }));
+        return Ok(denied);
     };
 
     let mode_decision = crate::resolve_mode_decision_audit(
@@ -3839,6 +4500,17 @@ async fn handle_agent_spawn_tool(
     let decision_source = mode_decision.decision_source;
 
     if effective_decision == omne_core::modes::Decision::Deny {
+        let denied = ensure_machine_error_fields(
+            serde_json::json!({
+                "tool_id": tool_id,
+                "denied": true,
+                "mode": mode_name,
+                "decision_source": decision_source,
+                "tool_override_hit": tool_override_hit,
+                "decision": effective_decision,
+            }),
+            "mode_denied",
+        );
         thread_rt
             .append_event(omne_protocol::ThreadEventKind::ToolStarted {
                 tool_id,
@@ -3851,31 +4523,18 @@ async fn handle_agent_spawn_tool(
             .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                 tool_id,
                 status: omne_protocol::ToolStatus::Denied,
+                structured_error: crate::structured_error_from_result_value(&denied),
                 error: Some("mode denies subagent/spawn".to_string()),
-                result: Some(serde_json::json!({
-                    "mode": mode_name,
-                    "decision_source": decision_source,
-                    "tool_override_hit": tool_override_hit,
-                    "decision": effective_decision,
-                })),
+                result: Some(denied.clone()),
             })
             .await?;
-        return Ok(serde_json::json!({
-            "tool_id": tool_id,
-            "denied": true,
-            "mode": mode_name,
-            "decision_source": decision_source,
-            "tool_override_hit": tool_override_hit,
-            "decision": effective_decision,
-        }));
+        return Ok(denied);
     }
 
     let env_max_concurrent_subagents = parse_env_usize("OMNE_MAX_CONCURRENT_SUBAGENTS", 4, 0, 64);
     let mode_max_concurrent_subagents = mode.permissions.subagent.spawn.max_threads;
-    let limit = combine_subagent_spawn_limits(
-        env_max_concurrent_subagents,
-        mode_max_concurrent_subagents,
-    );
+    let limit =
+        combine_subagent_spawn_limits(env_max_concurrent_subagents, mode_max_concurrent_subagents);
     let max_concurrent_subagents = limit.effective;
     if let Some(allowed) = mode.permissions.subagent.spawn.allowed_modes.as_ref() {
         let mut disallowed = std::collections::BTreeSet::<String>::new();
@@ -3886,6 +4545,25 @@ async fn handle_agent_spawn_tool(
         }
         if !disallowed.is_empty() {
             let requested_modes = disallowed.into_iter().collect::<Vec<_>>();
+            let denied = ensure_machine_error_fields(
+                serde_json::json!({
+                    "tool_id": tool_id,
+                    "denied": true,
+                    "mode": mode_name,
+                    "decision_source": decision_source,
+                    "tool_override_hit": tool_override_hit,
+                    "decision": effective_decision,
+                    "requested_modes": requested_modes,
+                    "allowed_modes": allowed,
+                    "priority_aging_rounds": priority_aging_rounds,
+                    "limit_policy": "min_non_zero",
+                    "limit_source": limit.source.as_str(),
+                    "env_max_concurrent_subagents": env_max_concurrent_subagents,
+                    "mode_max_concurrent_subagents": mode_max_concurrent_subagents,
+                    "max_concurrent_subagents": max_concurrent_subagents,
+                }),
+                "subagent_spawn_allowed_modes_denied",
+            );
             thread_rt
                 .append_event(omne_protocol::ThreadEventKind::ToolStarted {
                     tool_id,
@@ -3898,32 +4576,12 @@ async fn handle_agent_spawn_tool(
                 .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
                     status: omne_protocol::ToolStatus::Denied,
+                    structured_error: crate::structured_error_from_result_value(&denied),
                     error: Some("mode forbids spawning this subagent mode".to_string()),
-                    result: Some(serde_json::json!({
-                        "mode": mode_name,
-                        "decision_source": decision_source,
-                        "tool_override_hit": tool_override_hit,
-                        "decision": effective_decision,
-                        "requested_modes": requested_modes,
-                        "allowed_modes": allowed,
-                    })),
+                    result: Some(denied.clone()),
                 })
                 .await?;
-            return Ok(serde_json::json!({
-                "tool_id": tool_id,
-                "denied": true,
-                "mode": mode_name,
-                "decision_source": decision_source,
-                "tool_override_hit": tool_override_hit,
-                "decision": effective_decision,
-                "allowed_modes": allowed,
-                "priority_aging_rounds": priority_aging_rounds,
-                "limit_policy": "min_non_zero",
-                "limit_source": limit.source.as_str(),
-                "env_max_concurrent_subagents": env_max_concurrent_subagents,
-                "mode_max_concurrent_subagents": mode_max_concurrent_subagents,
-                "max_concurrent_subagents": max_concurrent_subagents,
-            }));
+            return Ok(denied);
         }
     }
 
@@ -3938,6 +4596,21 @@ async fn handle_agent_spawn_tool(
             .iter()
             .map(|id| id.to_string())
             .collect::<Vec<_>>();
+        let denied = ensure_machine_error_fields(
+            serde_json::json!({
+                "tool_id": tool_id,
+                "denied": true,
+                "limit_policy": "min_non_zero",
+                "limit_source": limit.source.as_str(),
+                "priority_aging_rounds": priority_aging_rounds,
+                "env_max_concurrent_subagents": env_max_concurrent_subagents,
+                "mode_max_concurrent_subagents": mode_max_concurrent_subagents,
+                "max_concurrent_subagents": max_concurrent_subagents,
+                "active": active,
+                "active_threads": active_thread_ids,
+            }),
+            "subagent_spawn_limit_reached",
+        );
 
         thread_rt
             .append_event(omne_protocol::ThreadEventKind::ToolStarted {
@@ -3951,32 +4624,14 @@ async fn handle_agent_spawn_tool(
             .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                 tool_id,
                 status: omne_protocol::ToolStatus::Denied,
+                structured_error: crate::structured_error_from_result_value(&denied),
                 error: Some(format!(
                     "max_concurrent_subagents limit reached: active={active}, max={max_concurrent_subagents}"
                 )),
-                result: Some(serde_json::json!({
-                    "limit_policy": "min_non_zero",
-                    "limit_source": limit.source.as_str(),
-                    "priority_aging_rounds": priority_aging_rounds,
-                    "env_max_concurrent_subagents": env_max_concurrent_subagents,
-                    "mode_max_concurrent_subagents": mode_max_concurrent_subagents,
-                    "max_concurrent_subagents": max_concurrent_subagents,
-                    "active": active,
-                    "active_threads": active_thread_ids,
-                })),
+                result: Some(denied.clone()),
             })
             .await?;
-        return Ok(serde_json::json!({
-            "tool_id": tool_id,
-            "denied": true,
-            "limit_policy": "min_non_zero",
-            "limit_source": limit.source.as_str(),
-            "priority_aging_rounds": priority_aging_rounds,
-            "env_max_concurrent_subagents": env_max_concurrent_subagents,
-            "mode_max_concurrent_subagents": mode_max_concurrent_subagents,
-            "max_concurrent_subagents": max_concurrent_subagents,
-            "active": active,
-        }));
+        return Ok(denied);
     }
 
     if effective_decision == omne_core::modes::Decision::Prompt {
@@ -3996,6 +4651,15 @@ async fn handle_agent_spawn_tool(
         {
             super::ApprovalGate::Approved => {}
             super::ApprovalGate::Denied { remembered } => {
+                let denied = ensure_machine_error_fields(
+                    serde_json::json!({
+                        "tool_id": tool_id,
+                        "denied": true,
+                        "remembered": remembered,
+                        "approval_policy": approval_policy,
+                    }),
+                    "approval_denied",
+                );
                 thread_rt
                     .append_event(omne_protocol::ThreadEventKind::ToolStarted {
                         tool_id,
@@ -4008,17 +4672,12 @@ async fn handle_agent_spawn_tool(
                     .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                         tool_id,
                         status: omne_protocol::ToolStatus::Denied,
+                        structured_error: crate::structured_error_from_result_value(&denied),
                         error: Some(super::approval_denied_error(remembered).to_string()),
-                        result: Some(serde_json::json!({
-                            "approval_policy": approval_policy,
-                        })),
+                        result: Some(denied.clone()),
                     })
                     .await?;
-                return Ok(serde_json::json!({
-                    "tool_id": tool_id,
-                    "denied": true,
-                    "remembered": remembered,
-                }));
+                return Ok(denied);
             }
             super::ApprovalGate::NeedsApproval { approval_id } => {
                 return Ok(serde_json::json!({
@@ -4058,6 +4717,7 @@ async fn handle_agent_spawn_tool(
                 .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
                     status: omne_protocol::ToolStatus::Completed,
+                    structured_error: None,
                     error: None,
                     result: Some(serde_json::json!({
                         "tasks": tasks,
@@ -4087,6 +4747,7 @@ async fn handle_agent_spawn_tool(
                 .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
                     status: omne_protocol::ToolStatus::Failed,
+                    structured_error: None,
                     error: Some(err.to_string()),
                     result: None,
                 })
@@ -4155,7 +4816,7 @@ async fn gate_subagent_lifecycle_action(
         )
     };
 
-    if let Some(mut denied) = crate::enforce_thread_allowed_tools(
+    if let Some(denied) = crate::enforce_thread_allowed_tools(
         &thread_rt,
         tool_id,
         turn_id,
@@ -4165,27 +4826,26 @@ async fn gate_subagent_lifecycle_action(
     )
     .await?
     {
-        if let Value::Object(map) = &mut denied {
-            map.insert(
-                "error_code".to_string(),
-                Value::String("allowed_tools_denied".to_string()),
-            );
-        }
-        return Ok(SubagentLifecycleGateOutcome::Return(denied));
+        return Ok(SubagentLifecycleGateOutcome::Return(
+            ensure_machine_error_fields(denied, "allowed_tools_denied"),
+        ));
     }
 
     let catalog = omne_core::modes::ModeCatalog::load(&thread_root).await;
     let Some(mode) = catalog.mode(&mode_name) else {
         let available = catalog.mode_names().collect::<Vec<_>>().join(", ");
-        let denied = serde_json::json!({
-            "tool_id": tool_id,
-            "denied": true,
-            "mode": mode_name,
-            "decision": "deny",
-            "available": available,
-            "load_error": catalog.load_error,
-            "error_code": "mode_unknown",
-        });
+        let denied = ensure_machine_error_fields(
+            serde_json::json!({
+                "tool_id": tool_id,
+                "denied": true,
+                "mode": mode_name,
+                "decision": "deny",
+                "available": available,
+                "load_error": catalog.load_error,
+                "error_code": "mode_unknown",
+            }),
+            "mode_unknown",
+        );
         thread_rt
             .append_event(omne_protocol::ThreadEventKind::ToolStarted {
                 tool_id,
@@ -4198,6 +4858,7 @@ async fn gate_subagent_lifecycle_action(
             .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                 tool_id,
                 status: omne_protocol::ToolStatus::Denied,
+                structured_error: crate::structured_error_from_result_value(&denied),
                 error: Some("unknown mode".to_string()),
                 result: Some(denied.clone()),
             })
@@ -4205,21 +4866,21 @@ async fn gate_subagent_lifecycle_action(
         return Ok(SubagentLifecycleGateOutcome::Return(denied));
     };
 
-    let mode_decision = crate::resolve_mode_decision_audit(
-        mode,
-        action_name,
-        action.base_mode_decision(mode),
-    );
+    let mode_decision =
+        crate::resolve_mode_decision_audit(mode, action_name, action.base_mode_decision(mode));
     if mode_decision.decision == omne_core::modes::Decision::Deny {
-        let denied = serde_json::json!({
-            "tool_id": tool_id,
-            "denied": true,
-            "mode": mode_name,
-            "decision": mode_decision.decision,
-            "decision_source": mode_decision.decision_source,
-            "tool_override_hit": mode_decision.tool_override_hit,
-            "error_code": "mode_denied",
-        });
+        let denied = ensure_machine_error_fields(
+            serde_json::json!({
+                "tool_id": tool_id,
+                "denied": true,
+                "mode": mode_name,
+                "decision": mode_decision.decision,
+                "decision_source": mode_decision.decision_source,
+                "tool_override_hit": mode_decision.tool_override_hit,
+                "error_code": "mode_denied",
+            }),
+            "mode_denied",
+        );
         thread_rt
             .append_event(omne_protocol::ThreadEventKind::ToolStarted {
                 tool_id,
@@ -4232,6 +4893,7 @@ async fn gate_subagent_lifecycle_action(
             .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                 tool_id,
                 status: omne_protocol::ToolStatus::Denied,
+                structured_error: crate::structured_error_from_result_value(&denied),
                 error: Some(format!("mode denies {action_name}")),
                 result: Some(denied.clone()),
             })
@@ -4256,13 +4918,16 @@ async fn gate_subagent_lifecycle_action(
         {
             super::ApprovalGate::Approved => {}
             super::ApprovalGate::Denied { remembered } => {
-                let denied = serde_json::json!({
-                    "tool_id": tool_id,
-                    "denied": true,
-                    "remembered": remembered,
-                    "approval_policy": approval_policy,
-                    "error_code": "approval_denied",
-                });
+                let denied = ensure_machine_error_fields(
+                    serde_json::json!({
+                        "tool_id": tool_id,
+                        "denied": true,
+                        "remembered": remembered,
+                        "approval_policy": approval_policy,
+                        "error_code": "approval_denied",
+                    }),
+                    "approval_denied",
+                );
                 thread_rt
                     .append_event(omne_protocol::ThreadEventKind::ToolStarted {
                         tool_id,
@@ -4275,6 +4940,7 @@ async fn gate_subagent_lifecycle_action(
                     .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                         tool_id,
                         status: omne_protocol::ToolStatus::Denied,
+                        structured_error: crate::structured_error_from_result_value(&denied),
                         error: Some(super::approval_denied_error(remembered).to_string()),
                         result: Some(denied.clone()),
                     })
@@ -4360,8 +5026,13 @@ async fn handle_subagent_send_input_tool(
                 let server_arc = std::sync::Arc::new(server.clone());
                 tokio::spawn(async move {
                     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                    crate::kill_processes_for_turn(&server_arc, child_thread_id, active_turn_id, reason)
-                        .await;
+                    crate::kill_processes_for_turn(
+                        &server_arc,
+                        child_thread_id,
+                        active_turn_id,
+                        reason,
+                    )
+                    .await;
                 });
                 interrupted_turn_id = Some(active_turn_id);
             }
@@ -4393,6 +5064,7 @@ async fn handle_subagent_send_input_tool(
                 .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
                     status: omne_protocol::ToolStatus::Completed,
+                    structured_error: None,
                     error: None,
                     result: Some(result.clone()),
                 })
@@ -4404,6 +5076,7 @@ async fn handle_subagent_send_input_tool(
                 .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
                     status: omne_protocol::ToolStatus::Failed,
+                    structured_error: None,
                     error: Some(err.to_string()),
                     result: None,
                 })
@@ -4426,10 +5099,7 @@ async fn handle_subagent_wait_tool(
     let timeout_ms = args
         .timeout_ms
         .unwrap_or(DEFAULT_SUBAGENT_WAIT_TIMEOUT_MS)
-        .clamp(
-            MIN_SUBAGENT_WAIT_TIMEOUT_MS,
-            MAX_SUBAGENT_WAIT_TIMEOUT_MS,
-        );
+        .clamp(MIN_SUBAGENT_WAIT_TIMEOUT_MS, MAX_SUBAGENT_WAIT_TIMEOUT_MS);
     let approval_params = serde_json::json!({
         "ids": args.ids.clone(),
         "timeout_ms": timeout_ms,
@@ -4455,8 +5125,7 @@ async fn handle_subagent_wait_tool(
             .map(|id| id.parse::<ThreadId>())
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
-        let deadline =
-            tokio::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
         let mut statuses = serde_json::Map::<String, Value>::new();
         let mut timed_out = false;
 
@@ -4539,6 +5208,7 @@ async fn handle_subagent_wait_tool(
                 .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
                     status: omne_protocol::ToolStatus::Completed,
+                    structured_error: None,
                     error: None,
                     result: Some(result.clone()),
                 })
@@ -4550,6 +5220,7 @@ async fn handle_subagent_wait_tool(
                 .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
                     status: omne_protocol::ToolStatus::Failed,
+                    structured_error: None,
                     error: Some(err.to_string()),
                     result: None,
                 })
@@ -4587,10 +5258,11 @@ async fn handle_subagent_close_tool(
 
     let outcome: anyhow::Result<Value> = async {
         let child_thread_id: ThreadId = args.id.parse()?;
-        let reason = args
-            .reason
-            .clone()
-            .or_else(|| Some(format!("subagent close requested by parent thread {thread_id}")));
+        let reason = args.reason.clone().or_else(|| {
+            Some(format!(
+                "subagent close requested by parent thread {thread_id}"
+            ))
+        });
         let response = crate::handle_thread_archive(
             &std::sync::Arc::new(server.clone()),
             crate::ThreadArchiveParams {
@@ -4616,6 +5288,7 @@ async fn handle_subagent_close_tool(
                 .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
                     status: omne_protocol::ToolStatus::Completed,
+                    structured_error: crate::structured_error_from_result_value(&result),
                     error: None,
                     result: Some(result.clone()),
                 })
@@ -4627,6 +5300,7 @@ async fn handle_subagent_close_tool(
                 .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
                     status: omne_protocol::ToolStatus::Failed,
+                    structured_error: None,
                     error: Some(err.to_string()),
                     result: None,
                 })
@@ -4636,7 +5310,10 @@ async fn handle_subagent_close_tool(
     }
 }
 
-async fn handle_thread_state_tool(server: &super::Server, args: ThreadStateArgs) -> anyhow::Result<Value> {
+async fn handle_thread_state_tool(
+    server: &super::Server,
+    args: ThreadStateArgs,
+) -> anyhow::Result<Value> {
     let thread_id: omne_protocol::ThreadId = args.thread_id.parse()?;
     let rt = server.get_or_load_thread(thread_id).await?;
     let handle = rt.handle.lock().await;
@@ -4665,7 +5342,10 @@ async fn handle_thread_state_tool(server: &super::Server, args: ThreadStateArgs)
     }))
 }
 
-async fn handle_thread_usage_tool(server: &super::Server, args: ThreadUsageArgs) -> anyhow::Result<Value> {
+async fn handle_thread_usage_tool(
+    server: &super::Server,
+    args: ThreadUsageArgs,
+) -> anyhow::Result<Value> {
     let thread_id: omne_protocol::ThreadId = args.thread_id.parse()?;
     let rt = server.get_or_load_thread(thread_id).await?;
     let handle = rt.handle.lock().await;
@@ -4694,7 +5374,10 @@ async fn handle_thread_usage_tool(server: &super::Server, args: ThreadUsageArgs)
     }))
 }
 
-async fn handle_thread_events_tool(server: &super::Server, args: ThreadEventsArgs) -> anyhow::Result<Value> {
+async fn handle_thread_events_tool(
+    server: &super::Server,
+    args: ThreadEventsArgs,
+) -> anyhow::Result<Value> {
     let thread_id: omne_protocol::ThreadId = args.thread_id.parse()?;
     let since = EventSeq(args.since_seq);
 

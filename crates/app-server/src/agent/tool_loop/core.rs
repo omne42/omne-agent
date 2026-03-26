@@ -10,12 +10,11 @@ struct ToolLoopConfig {
     max_total_tokens: u64,
     starting_total_tokens_used: u64,
     auto_compact_token_limit: Option<u64>,
-    auto_summary_threshold_pct: u64,
     auto_summary_source_max_chars: usize,
     auto_summary_tail_items: usize,
     parallel_tool_calls: bool,
     max_parallel_tool_calls: usize,
-    response_format: Option<ditto_llm::ResponseFormat>,
+    response_format: Option<ditto_core::provider_options::ResponseFormat>,
     show_thinking: bool,
 }
 
@@ -35,20 +34,19 @@ struct ToolLoop {
     cancel: CancellationToken,
     turn_priority: TurnPriority,
     final_model: String,
-    provider: String,
-    provider_candidates: Vec<String>,
+    completion_provider_candidates: Vec<ProviderRouteTarget>,
+    thinking_provider_candidates: Vec<ProviderRouteTarget>,
     provider_cache: std::collections::BTreeMap<String, ProviderRuntime>,
-    provider_config: ditto_llm::ProviderConfig,
-    project_overrides: ProjectOpenAiOverrides,
-    base_url_override: Option<String>,
-    env: ditto_llm::Env,
-    tools: Vec<ditto_llm::Tool>,
+    model_configs: std::collections::BTreeMap<String, ditto_core::config::ModelConfig>,
+    env: ditto_core::config::Env,
+    tools: Vec<ditto_core::contracts::Tool>,
     instructions: String,
     turn_input: String,
     input_items: Vec<OpenAiItem>,
     tool_model: Option<String>,
-    model_fallbacks: Vec<String>,
-    model_client: Arc<dyn ditto_llm::LanguageModel>,
+    completion_model_fallbacks: Vec<String>,
+    thinking_model_fallbacks: Vec<String>,
+    model_client: Arc<dyn ditto_core::llm_core::model::LanguageModel>,
     resolved_attachments: Vec<ResolvedAttachment>,
     pdf_file_id_upload_min_bytes: u64,
     rule_source: omne_protocol::ModelRoutingRuleSource,
@@ -66,19 +64,18 @@ impl ToolLoop {
             cancel,
             turn_priority,
             final_model,
-            provider,
-            provider_candidates,
+            completion_provider_candidates,
+            thinking_provider_candidates,
             mut provider_cache,
-            provider_config,
-            project_overrides,
-            base_url_override,
+            model_configs,
             env,
             tools,
             instructions,
             turn_input,
             mut input_items,
             tool_model,
-            model_fallbacks,
+            completion_model_fallbacks,
+            thinking_model_fallbacks,
             model_client,
             resolved_attachments,
             pdf_file_id_upload_min_bytes,
@@ -87,11 +84,15 @@ impl ToolLoop {
             cfg,
         } = self;
 
+        let completion_primary_id = completion_provider_candidates
+            .first()
+            .map(|target| target.id.clone())
+            .ok_or_else(|| anyhow::anyhow!("provider routing resolved no completion target"))?;
         let openai_responses_codex_parity =
             parse_env_bool("OMNE_OPENAI_RESPONSES_CODEX_PARITY", true)
                 && provider_cache
-                    .get(&provider)
-                    .is_some_and(|runtime| runtime.capabilities.reasoning);
+                    .get(&completion_primary_id)
+                    .is_some_and(ProviderRuntime::supports_openai_responses_codex_parity);
         if openai_responses_codex_parity {
             return run_openai_responses_codex_parity_loop(
                 server,
@@ -101,19 +102,18 @@ impl ToolLoop {
                 cancel,
                 turn_priority,
                 final_model,
-                provider,
-                provider_candidates,
+                completion_provider_candidates,
+                thinking_provider_candidates,
                 provider_cache,
-                provider_config,
-                project_overrides,
-                base_url_override,
+                model_configs,
                 env,
                 tools,
                 instructions,
                 turn_input,
                 input_items,
                 tool_model,
-                model_fallbacks,
+                completion_model_fallbacks,
+                thinking_model_fallbacks,
                 resolved_attachments,
                 pdf_file_id_upload_min_bytes,
                 rule_source,
@@ -135,24 +135,35 @@ impl ToolLoop {
         let started_at = tokio::time::Instant::now();
         let mut active_provider_idx = 0usize;
         let mut attachment_parts_cache =
-            std::collections::BTreeMap::<String, Vec<ditto_llm::ContentPart>>::new();
+            std::collections::BTreeMap::<String, Vec<ditto_core::contracts::ContentPart>>::new();
+
+        let phase_model_fallbacks = |tool_phase: bool| {
+            let mut values = if tool_phase {
+                thinking_model_fallbacks.clone()
+            } else {
+                completion_model_fallbacks.clone()
+            };
+            let primary = if tool_phase && !thinking_provider_candidates.is_empty() {
+                thinking_provider_candidates.first()
+            } else {
+                completion_provider_candidates.first()
+            };
+            if let Some(target) = primary {
+                values.extend(target.model_fallbacks.clone());
+            }
+            ditto_core::config::normalize_string_list(values)
+        };
 
         let mut tool_phase_active = tool_model.is_some();
         let mut model = tool_model.clone().unwrap_or_else(|| final_model.clone());
-        let mut model_candidates = build_model_candidates(&model, model_fallbacks.clone());
-        if !provider_config.model_whitelist.is_empty() {
-            model_candidates.retain(|candidate| {
-                model_allowed_by_whitelist(candidate, &provider_config.model_whitelist)
-            });
-        }
+        let mut model_candidates =
+            build_model_candidates(&model, phase_model_fallbacks(tool_phase_active));
         let mut model_idx = 0usize;
 
         if !attempted_auto_summary
             && should_auto_compact(
-                total_tokens_used,
+                estimate_context_tokens(&instructions, &input_items),
                 cfg.auto_compact_token_limit,
-                cfg.max_total_tokens,
-                cfg.auto_summary_threshold_pct,
             )
         {
             attempted_auto_summary = true;
@@ -194,13 +205,22 @@ impl ToolLoop {
             let emit_deltas = tool_model.is_none() || !tool_phase_active;
             let keep_assistant_messages = emit_deltas;
 
+            let phase_provider_candidates =
+                if tool_phase_active && !thinking_provider_candidates.is_empty() {
+                    &thinking_provider_candidates
+                } else {
+                    &completion_provider_candidates
+                };
+            if phase_provider_candidates.is_empty() {
+                anyhow::bail!("no usable provider candidates available for current phase");
+            }
             let mut provider_index =
-                active_provider_idx.min(provider_candidates.len().saturating_sub(1));
+                active_provider_idx.min(phase_provider_candidates.len().saturating_sub(1));
             let mut attempts = 0usize;
             let mut failure_count = 0usize;
             let mut last_failure: Option<LlmAttemptFailure> = None;
 
-            let resp = loop {
+            let (resp, active_target) = loop {
                 if cancel.is_cancelled() {
                     return Err(AgentTurnError::Cancelled.into());
                 }
@@ -210,7 +230,7 @@ impl ToolLoop {
                     }
                     .into());
                 }
-                if provider_index >= provider_candidates.len() {
+                if provider_index >= phase_provider_candidates.len() {
                     if let Some(failure) = last_failure.as_ref()
                         && llm_error_prefers_model_fallback(&failure.error)
                         && model_idx + 1 < model_candidates.len()
@@ -224,7 +244,8 @@ impl ToolLoop {
                         failure_count = 0;
                         last_failure = None;
 
-                        let reason = format!("model_fallback: from={prev} to={model}; cause={cause}");
+                        let reason =
+                            format!("model_fallback: from={prev} to={model}; cause={cause}");
                         let _ = thread_rt
                             .append_event(ThreadEventKind::ModelRouted {
                                 turn_id,
@@ -243,7 +264,7 @@ impl ToolLoop {
                             ..
                         }) => return Err(AgentTurnError::OpenAiRequestTimedOut.into()),
                         Some(LlmAttemptFailure { error, .. }) => {
-                            return Err(anyhow::Error::new(error).context("llm stream failed"))
+                            return Err(anyhow::Error::new(error).context("llm stream failed"));
                         }
                         None => {
                             anyhow::bail!("no usable openai provider available for model={model}")
@@ -251,29 +272,22 @@ impl ToolLoop {
                     }
                 }
 
-                let provider_name = provider_candidates
-                    .get(provider_index)
-                    .cloned()
-                    .unwrap_or_else(|| provider.clone());
-                let runtime = match provider_cache.get(&provider_name).cloned() {
+                let Some(target) = phase_provider_candidates.get(provider_index).cloned() else {
+                    provider_index = provider_index.saturating_add(1);
+                    continue;
+                };
+                let runtime = match provider_cache.get(&target.id).cloned() {
                     Some(runtime) => runtime,
-                    None => match build_provider_runtime(
-                        &provider_name,
-                        &project_overrides,
-                        base_url_override.as_deref(),
-                        &env,
-                    )
-                    .await
-                    {
+                    None => match build_provider_runtime(&target, &env).await {
                         Ok(runtime) => {
-                            provider_cache.insert(provider_name.clone(), runtime.clone());
+                            provider_cache.insert(target.id.clone(), runtime.clone());
                             runtime
                         }
                         Err(err) => {
                             tracing::warn!(
                                 thread_id = %thread_id,
                                 turn_id = %turn_id,
-                                provider = provider_name,
+                                provider = target.provider,
                                 error = %err,
                                 "failed to build provider client; skipping"
                             );
@@ -283,55 +297,76 @@ impl ToolLoop {
                     },
                 };
 
+                if let Some(effective_base_url) = runtime.config.base_url.as_deref()
+                    && let Some(warning) =
+                        crate::project_config::openai_provider_base_url_override_warning(
+                            &target.provider,
+                            effective_base_url,
+                        )
+                {
+                    thread_rt
+                        .emit_item_delta_warning_once(
+                            warning.code,
+                            thread_id,
+                            turn_id,
+                            warning.message,
+                        )
+                        .await;
+                }
+
                 if !model_allowed_by_whitelist(&model, &runtime.config.model_whitelist) {
                     provider_index = provider_index.saturating_add(1);
                     continue;
                 }
 
                 let reasoning_effort = if runtime.capabilities.reasoning {
-                    match ditto_llm::select_model_config(&project_overrides.models, &model)
+                    match ditto_core::config::select_model_config(&model_configs, &model)
                         .map(|cfg| cfg.thinking)
                         .unwrap_or_default()
                     {
                         ThinkingIntensity::Unsupported => None,
-                        ThinkingIntensity::Small => Some(ditto_llm::ReasoningEffort::Low),
-                        ThinkingIntensity::Medium => Some(ditto_llm::ReasoningEffort::Medium),
-                        ThinkingIntensity::High => Some(ditto_llm::ReasoningEffort::High),
-                        ThinkingIntensity::XHigh => Some(ditto_llm::ReasoningEffort::XHigh),
+                        ThinkingIntensity::Small => Some(ditto_core::provider_options::ReasoningEffort::Low),
+                        ThinkingIntensity::Medium => Some(ditto_core::provider_options::ReasoningEffort::Medium),
+                        ThinkingIntensity::High => Some(ditto_core::provider_options::ReasoningEffort::High),
+                        ThinkingIntensity::XHigh => Some(ditto_core::provider_options::ReasoningEffort::XHigh),
                     }
                 } else {
                     None
                 };
 
-                let provider_options = ditto_llm::ProviderOptions {
+                let provider_options = ditto_core::provider_options::ProviderOptions {
                     reasoning_effort,
                     response_format: cfg.response_format.clone(),
                     parallel_tool_calls: Some(cfg.parallel_tool_calls),
-                    // Always set a stable cache key so OpenAI-compatible gateways can do prefix
-                    // prompt caching across turns (OpenCode uses a session id for this).
-                    prompt_cache_key: Some(thread_id.to_string()),
+                    // Let ditto-llm provider quirks decide whether to serialize
+                    // prompt_cache_key on chat-completions requests.
+                    prompt_cache_key: runtime
+                        .capabilities
+                        .prompt_cache
+                        .then(|| thread_id.to_string()),
                 };
                 if !resolved_attachments.is_empty()
-                    && !attachment_parts_cache.contains_key(&provider_name)
+                    && !attachment_parts_cache.contains_key(&target.id)
                 {
                     let parts = attachments_to_ditto_parts_for_provider(
                         thread_id,
                         turn_id,
-                        provider_name.as_str(),
+                        target.provider.as_str(),
                         &runtime,
                         &resolved_attachments,
                         pdf_file_id_upload_min_bytes,
                     )
                     .await?;
-                    attachment_parts_cache.insert(provider_name.clone(), parts);
+                    attachment_parts_cache.insert(target.id.clone(), parts);
                 }
 
                 let attachment_parts = attachment_parts_cache
-                    .get(&provider_name)
+                    .get(&target.id)
                     .map(|parts| parts.as_slice())
                     .unwrap_or(&[]);
-                let messages = apply_attachments_to_messages(base_messages.clone(), attachment_parts);
-                let mut req_base = ditto_llm::GenerateRequest::from(messages);
+                let messages =
+                    apply_attachments_to_messages(base_messages.clone(), attachment_parts);
+                let mut req_base = ditto_core::contracts::GenerateRequest::from(messages);
                 req_base.model = Some(model.clone());
                 // Set a stable user/session id in addition to prompt_cache_key.
                 // Some OpenAI-compatible gateways use this field to improve request stickiness,
@@ -339,14 +374,13 @@ impl ToolLoop {
                 req_base.user = Some(thread_id.to_string());
                 if tools_enabled {
                     req_base.tools = Some(tools.clone());
-                    req_base.tool_choice = Some(ditto_llm::ToolChoice::Auto);
+                    req_base.tool_choice = Some(ditto_core::contracts::ToolChoice::Auto);
                 } else {
                     req_base.tools = None;
-                    req_base.tool_choice = Some(ditto_llm::ToolChoice::None);
+                    req_base.tool_choice = Some(ditto_core::contracts::ToolChoice::None);
                 }
 
-                let req = req_base
-                    .with_provider_options(provider_options)
+                let req = ditto_core::provider_options::request_with_provider_options(req_base, provider_options)
                     .context("encode provider_options")?;
 
                 attempts += 1;
@@ -379,11 +413,11 @@ impl ToolLoop {
                 match llm_attempt {
                     Ok(resp) => {
                         active_provider_idx = provider_index;
-                        break resp;
+                        break (resp, target.clone());
                     }
                     Err(failure) => {
                         let should_fallback = llm_error_prefers_provider_fallback(&failure.error)
-                            && provider_index + 1 < provider_candidates.len();
+                            && provider_index + 1 < phase_provider_candidates.len();
                         let is_retryable = llm_error_is_retryable(&failure.error);
                         last_failure = Some(failure);
 
@@ -408,8 +442,9 @@ impl ToolLoop {
                                 failure_count = 0;
                                 last_failure = None;
 
-                                let reason =
-                                    format!("model_fallback: from={prev} to={model}; cause={cause}");
+                                let reason = format!(
+                                    "model_fallback: from={prev} to={model}; cause={cause}"
+                                );
                                 let _ = thread_rt
                                     .append_event(ThreadEventKind::ModelRouted {
                                         turn_id,
@@ -424,7 +459,7 @@ impl ToolLoop {
 
                             match &failure.error {
                                 LlmAttemptError::TimedOut => {
-                                    return Err(AgentTurnError::OpenAiRequestTimedOut.into())
+                                    return Err(AgentTurnError::OpenAiRequestTimedOut.into());
                                 }
                                 _ => {
                                     let summary = llm_error_summary(&failure.error);
@@ -436,11 +471,11 @@ impl ToolLoop {
                         }
 
                         if should_fallback {
-                            let prev = provider_name.clone();
+                            let prev = target.provider.clone();
                             provider_index += 1;
-                            let next = provider_candidates
+                            let next = phase_provider_candidates
                                 .get(provider_index)
-                                .cloned()
+                                .map(|candidate| candidate.provider.clone())
                                 .unwrap_or_else(|| "<unknown>".to_string());
                             let cause = llm_error_summary(&failure.error);
                             let reason =
@@ -470,8 +505,9 @@ impl ToolLoop {
                                 failure_count = 0;
                                 last_failure = None;
 
-                                let reason =
-                                    format!("model_fallback: from={prev} to={model}; cause={cause}");
+                                let reason = format!(
+                                    "model_fallback: from={prev} to={model}; cause={cause}"
+                                );
                                 let _ = thread_rt
                                     .append_event(ThreadEventKind::ModelRouted {
                                         turn_id,
@@ -504,6 +540,32 @@ impl ToolLoop {
                 }
             };
 
+            if let Some(runtime) = provider_cache.get(&active_target.id)
+                && runtime.capabilities.prompt_cache
+                && resp
+                    .usage
+                    .as_ref()
+                    .and_then(|usage| usage.get("cache_input_tokens"))
+                    .is_none()
+            {
+                if runtime.openai_responses_client.is_none() {
+                    thread_rt
+                        .emit_item_delta_warning_once(
+                            format!(
+                                "openai_compat_prompt_cache_usage_missing:{}:{}",
+                                active_target.provider, active_target.id
+                            ),
+                            thread_id,
+                            turn_id,
+                            format!(
+                                "provider={} route_target={} advertises prompt_cache=true, but usage has no cache_input_tokens. This endpoint may support cache internally but not expose cached token counters.",
+                                active_target.provider, active_target.id
+                            ),
+                        )
+                        .await;
+                }
+            }
+
             if !resp.warnings.is_empty() {
                 log_llm_warnings(thread_id, turn_id, &resp.warnings);
             }
@@ -519,13 +581,11 @@ impl ToolLoop {
                 if let Some(tokens) = resp.usage.as_ref().and_then(usage_total_tokens) {
                     total_tokens_used = total_tokens_used.saturating_add(tokens);
                     if total_tokens_used > cfg.max_total_tokens {
-                        return Err(
-                            AgentTurnError::TokenBudgetExceeded {
-                                used: total_tokens_used,
-                                limit: cfg.max_total_tokens,
-                            }
-                            .into(),
-                        );
+                        return Err(AgentTurnError::TokenBudgetExceeded {
+                            used: total_tokens_used,
+                            limit: cfg.max_total_tokens,
+                        }
+                        .into());
                     }
                 }
             }
@@ -584,20 +644,21 @@ impl ToolLoop {
 
                 if tool_model.is_some() && tool_phase_active {
                     tool_phase_active = false;
+                    active_provider_idx = 0;
 
                     let prev = model.clone();
                     model = final_model.clone();
-                    model_candidates = build_model_candidates(&model, model_fallbacks.clone());
-                    if !provider_config.model_whitelist.is_empty() {
-                        model_candidates.retain(|candidate| {
-                            model_allowed_by_whitelist(candidate, &provider_config.model_whitelist)
-                        });
-                    }
+                    model_candidates = build_model_candidates(&model, phase_model_fallbacks(false));
                     model_idx = 0;
 
                     if prev != model {
-                        let reason =
-                            format!("tool_model_final: from={prev} to={model}; provider={provider}");
+                        let provider = completion_provider_candidates
+                            .first()
+                            .map(|target| target.provider.as_str())
+                            .unwrap_or("<unknown>");
+                        let reason = format!(
+                            "tool_model_final: from={prev} to={model}; provider={provider}"
+                        );
                         let _ = thread_rt
                             .append_event(ThreadEventKind::ModelRouted {
                                 turn_id,
@@ -659,12 +720,10 @@ impl ToolLoop {
                 }
                 tool_calls_total += batch_size;
 
-                let mut outputs =
-                    vec![None::<(String, Value, Vec<OpenAiItem>)>; batch_size];
+                let mut outputs = vec![None::<(String, Value, Vec<OpenAiItem>)>; batch_size];
                 let mut calls = Vec::new();
 
-                for (idx, (tool_name, arguments, call_id)) in
-                    function_calls.into_iter().enumerate()
+                for (idx, (tool_name, arguments, call_id)) in function_calls.into_iter().enumerate()
                 {
                     let args_json: Value = match serde_json::from_str(&arguments) {
                         Ok(v) => v,
@@ -791,10 +850,8 @@ impl ToolLoop {
 
             if !attempted_auto_summary
                 && should_auto_compact(
-                    total_tokens_used,
+                    estimate_context_tokens(&instructions, &input_items),
                     cfg.auto_compact_token_limit,
-                    cfg.max_total_tokens,
-                    cfg.auto_summary_threshold_pct,
                 )
             {
                 attempted_auto_summary = true;

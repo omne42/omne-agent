@@ -48,8 +48,7 @@ impl App {
             argv
         };
 
-        let daemon_autostart =
-            parse_env_bool("OMNE_RPC_AUTOSTART_DAEMON", true) && cfg!(unix);
+        let daemon_autostart = parse_env_bool("OMNE_RPC_AUTOSTART_DAEMON", true) && cfg!(unix);
         let debug_connect = parse_env_bool("OMNE_RPC_DEBUG_CONNECT", false);
         let daemon_start_timeout = std::env::var("OMNE_RPC_DAEMON_START_TIMEOUT_MS")
             .ok()
@@ -165,7 +164,11 @@ impl App {
         if debug_connect {
             eprintln!(
                 "debug: rpc_connect selected_path={} init_timeout_ms={}",
-                if used_daemon { "daemon" } else { "direct_spawn" },
+                if used_daemon {
+                    "daemon"
+                } else {
+                    "direct_spawn"
+                },
                 init_timeout.as_millis()
             );
         }
@@ -234,6 +237,11 @@ impl App {
         rpc_artifact_versions_value,
         "artifact/versions",
         omne_app_server_protocol::ArtifactVersionsParams
+    );
+    define_rpc_value_passthrough!(
+        rpc_artifact_write_value,
+        "artifact/write",
+        omne_app_server_protocol::ArtifactWriteParams
     );
     define_rpc_value_passthrough!(
         rpc_process_inspect_value,
@@ -548,7 +556,9 @@ impl App {
         .await
     }
 
-    async fn thread_list(&mut self) -> anyhow::Result<omne_app_server_protocol::ThreadListResponse> {
+    async fn thread_list(
+        &mut self,
+    ) -> anyhow::Result<omne_app_server_protocol::ThreadListResponse> {
         self.rpc_typed("thread/list", omne_app_server_protocol::ThreadListParams {})
             .await
     }
@@ -607,9 +617,7 @@ impl App {
     ) -> anyhow::Result<ThreadConfigExplainResponse> {
         self.rpc_typed(
             "thread/config/explain",
-            omne_app_server_protocol::ThreadConfigExplainParams {
-                thread_id,
-            },
+            omne_app_server_protocol::ThreadConfigExplainParams { thread_id },
         )
         .await
     }
@@ -679,15 +687,13 @@ impl App {
             );
         }
         let approval_policy: Option<ApprovalPolicy> = args.approval_policy.map(Into::into);
-        let sandbox_policy: Option<SandboxPolicy> = args.sandbox_policy.map(Into::into);
+        let sandbox_policy: Option<policy_meta::WriteScope> = args.sandbox_policy.map(Into::into);
         let sandbox_network_access: Option<omne_protocol::SandboxNetworkAccess> =
             args.sandbox_network_access.map(Into::into);
         let allowed_tools = if args.clear_allowed_tools {
             Some(None)
         } else {
-            args.allowed_tools
-                .map(normalize_string_list)
-                .map(Some)
+            args.allowed_tools.map(normalize_string_list).map(Some)
         };
         let execpolicy_rules = if args.clear_execpolicy_rules {
             Some(Vec::<String>::new())

@@ -164,6 +164,9 @@ pub struct ThreadStateResponse {
     #[serde(default)]
     #[ts(optional)]
     pub cwd: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub system_prompt_sha256: Option<String>,
     pub archived: bool,
     #[serde(default)]
     #[ts(optional)]
@@ -179,7 +182,7 @@ pub struct ThreadStateResponse {
     #[ts(optional)]
     pub paused_reason: Option<String>,
     pub approval_policy: omne_protocol::ApprovalPolicy,
-    pub sandbox_policy: omne_protocol::SandboxPolicy,
+    pub sandbox_policy: policy_meta::WriteScope,
     #[serde(default)]
     pub sandbox_writable_roots: Vec<String>,
     pub sandbox_network_access: omne_protocol::SandboxNetworkAccess,
@@ -229,6 +232,10 @@ pub struct ThreadStateResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub token_budget_warning_active: Option<bool>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub current_context_tokens_estimate: Option<u64>,
     pub total_tokens_used: u64,
     #[serde(default)]
     pub input_tokens_used: u64,
@@ -288,6 +295,10 @@ pub struct ThreadUsageResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub token_budget_warning_active: Option<bool>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub current_context_tokens_estimate: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
@@ -431,6 +442,10 @@ pub enum ThreadApprovalActionId {
     RepoIndex,
     #[serde(rename = "repo/symbols")]
     RepoSymbols,
+    #[serde(rename = "repo/goto_definition")]
+    RepoGotoDefinition,
+    #[serde(rename = "repo/find_references")]
+    RepoFindReferences,
     #[serde(rename = "mcp/list_servers")]
     McpListServers,
     #[serde(rename = "mcp/list_tools")]
@@ -613,7 +628,7 @@ pub struct ThreadAttentionResponse {
     #[serde(default)]
     pub failed_processes: Vec<omne_protocol::ProcessId>,
     pub approval_policy: omne_protocol::ApprovalPolicy,
-    pub sandbox_policy: omne_protocol::SandboxPolicy,
+    pub sandbox_policy: policy_meta::WriteScope,
     #[serde(default)]
     #[ts(optional)]
     pub model: Option<String>,
@@ -713,7 +728,7 @@ pub struct ThreadListMetaItem {
     #[ts(optional)]
     pub archived_reason: Option<String>,
     pub approval_policy: omne_protocol::ApprovalPolicy,
-    pub sandbox_policy: omne_protocol::SandboxPolicy,
+    pub sandbox_policy: policy_meta::WriteScope,
     #[serde(default)]
     #[ts(optional)]
     pub model: Option<String>,
@@ -908,6 +923,9 @@ pub struct ThreadGitSnapshotDeniedResponse {
     pub thread_id: omne_protocol::ThreadId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
+    pub structured_error: Option<StructuredTextData>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub error_code: Option<String>,
     pub detail: ThreadGitSnapshotDeniedDetail,
 }
@@ -992,10 +1010,13 @@ pub struct ThreadCheckpointRestoreDeniedResponse {
     pub denied: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
+    pub structured_error: Option<StructuredTextData>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub error_code: Option<String>,
     #[serde(default)]
     #[ts(optional)]
-    pub sandbox_policy: Option<omne_protocol::SandboxPolicy>,
+    pub sandbox_policy: Option<policy_meta::WriteScope>,
     #[serde(default)]
     #[ts(optional)]
     pub mode: Option<String>,
@@ -1167,6 +1188,9 @@ pub struct ThreadHookRunDeniedResponse {
     pub hook: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
+    pub structured_error: Option<StructuredTextData>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub error_code: Option<String>,
     #[serde(default)]
     #[ts(optional)]
@@ -1179,6 +1203,9 @@ pub struct ThreadHookRunErrorResponse {
     pub ok: bool,
     pub hook: String,
     pub error: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub structured_error: Option<StructuredTextData>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
@@ -1206,7 +1233,7 @@ pub struct ThreadConfigureParams {
     pub approval_policy: Option<omne_protocol::ApprovalPolicy>,
     #[serde(default)]
     #[ts(optional)]
-    pub sandbox_policy: Option<omne_protocol::SandboxPolicy>,
+    pub sandbox_policy: Option<policy_meta::WriteScope>,
     #[serde(default)]
     #[ts(optional)]
     pub sandbox_writable_roots: Option<Vec<String>>,
@@ -1264,7 +1291,7 @@ pub struct ThreadConfigExplainResponse {
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
 pub struct ThreadConfigExplainEffective {
     pub approval_policy: omne_protocol::ApprovalPolicy,
-    pub sandbox_policy: omne_protocol::SandboxPolicy,
+    pub sandbox_policy: policy_meta::WriteScope,
     #[serde(default)]
     pub sandbox_writable_roots: Vec<String>,
     pub sandbox_network_access: omne_protocol::SandboxNetworkAccess,

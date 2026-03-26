@@ -42,7 +42,7 @@ async fn run_mcp_serve(app: &mut App, args: McpServeArgs) -> anyhow::Result<()> 
             app.thread_configure_rpc(omne_app_server_protocol::ThreadConfigureParams {
                 thread_id,
                 approval_policy: None,
-                sandbox_policy: Some(omne_protocol::SandboxPolicy::ReadOnly),
+                sandbox_policy: Some(policy_meta::WriteScope::ReadOnly),
                 sandbox_writable_roots: None,
                 sandbox_network_access: None,
                 mode: Some("reviewer".to_string()),

@@ -1,6 +1,6 @@
-use super::*;
 #[cfg(test)]
 use super::attention_and_subscribe::compute_stale_processes;
+use super::*;
 use omne_git_runtime::{SnapshotKind, SnapshotRecipe, normalize_limits, recipe};
 
 #[derive(Debug)]
@@ -202,10 +202,9 @@ pub(super) async fn handle_thread_disk_report(
         },
     )
     .await?;
-    let artifact = serde_json::from_value::<omne_app_server_protocol::ArtifactWriteResponse>(
-        artifact,
-    )
-    .context("parse artifact/write response for thread disk report")?;
+    let artifact =
+        serde_json::from_value::<omne_app_server_protocol::ArtifactWriteResponse>(artifact)
+            .context("parse artifact/write response for thread disk report")?;
 
     Ok(omne_app_server_protocol::ThreadDiskReportResponse {
         thread_id: params.thread_id,
@@ -234,43 +233,81 @@ fn thread_git_snapshot_denied_error_code(
 ) -> Option<String> {
     match detail {
         omne_app_server_protocol::ThreadGitSnapshotDeniedDetail::Process(detail) => match detail {
-            omne_app_server_protocol::ThreadProcessDeniedDetail::Denied(detail) => {
-                detail.error_code.clone()
-            }
+            omne_app_server_protocol::ThreadProcessDeniedDetail::Denied(detail) => detail
+                .structured_error
+                .as_ref()
+                .and_then(|value| value.catalog_code().map(ToOwned::to_owned))
+                .or_else(|| detail.error_code.clone()),
             omne_app_server_protocol::ThreadProcessDeniedDetail::AllowedToolsDenied(detail) => {
-                detail.error_code.clone()
+                detail
+                    .structured_error
+                    .as_ref()
+                    .and_then(|value| value.catalog_code().map(ToOwned::to_owned))
+                    .or_else(|| detail.error_code.clone())
             }
-            omne_app_server_protocol::ThreadProcessDeniedDetail::ModeDenied(detail) => {
-                detail.error_code.clone()
-            }
+            omne_app_server_protocol::ThreadProcessDeniedDetail::ModeDenied(detail) => detail
+                .structured_error
+                .as_ref()
+                .and_then(|value| value.catalog_code().map(ToOwned::to_owned))
+                .or_else(|| detail.error_code.clone()),
             omne_app_server_protocol::ThreadProcessDeniedDetail::UnknownModeDenied(detail) => {
-                detail.error_code.clone()
+                detail
+                    .structured_error
+                    .as_ref()
+                    .and_then(|value| value.catalog_code().map(ToOwned::to_owned))
+                    .or_else(|| detail.error_code.clone())
             }
             omne_app_server_protocol::ThreadProcessDeniedDetail::SandboxPolicyDenied(detail) => {
-                detail.error_code.clone()
+                detail
+                    .structured_error
+                    .as_ref()
+                    .and_then(|value| value.catalog_code().map(ToOwned::to_owned))
+                    .or_else(|| detail.error_code.clone())
             }
             omne_app_server_protocol::ThreadProcessDeniedDetail::SandboxNetworkDenied(detail) => {
-                detail.error_code.clone()
+                detail
+                    .structured_error
+                    .as_ref()
+                    .and_then(|value| value.catalog_code().map(ToOwned::to_owned))
+                    .or_else(|| detail.error_code.clone())
             }
-            omne_app_server_protocol::ThreadProcessDeniedDetail::ExecPolicyDenied(detail) => {
-                detail.error_code.clone()
-            }
+            omne_app_server_protocol::ThreadProcessDeniedDetail::ExecPolicyDenied(detail) => detail
+                .structured_error
+                .as_ref()
+                .and_then(|value| value.catalog_code().map(ToOwned::to_owned))
+                .or_else(|| detail.error_code.clone()),
             omne_app_server_protocol::ThreadProcessDeniedDetail::ExecPolicyLoadDenied(detail) => {
-                detail.error_code.clone()
+                detail
+                    .structured_error
+                    .as_ref()
+                    .and_then(|value| value.catalog_code().map(ToOwned::to_owned))
+                    .or_else(|| detail.error_code.clone())
             }
         },
         omne_app_server_protocol::ThreadGitSnapshotDeniedDetail::Artifact(detail) => match detail {
-            omne_app_server_protocol::ThreadArtifactDeniedDetail::Denied(detail) => {
-                detail.error_code.clone()
-            }
+            omne_app_server_protocol::ThreadArtifactDeniedDetail::Denied(detail) => detail
+                .structured_error
+                .as_ref()
+                .and_then(|value| value.catalog_code().map(ToOwned::to_owned))
+                .or_else(|| detail.error_code.clone()),
             omne_app_server_protocol::ThreadArtifactDeniedDetail::AllowedToolsDenied(detail) => {
-                detail.error_code.clone()
+                detail
+                    .structured_error
+                    .as_ref()
+                    .and_then(|value| value.catalog_code().map(ToOwned::to_owned))
+                    .or_else(|| detail.error_code.clone())
             }
-            omne_app_server_protocol::ThreadArtifactDeniedDetail::ModeDenied(detail) => {
-                detail.error_code.clone()
-            }
+            omne_app_server_protocol::ThreadArtifactDeniedDetail::ModeDenied(detail) => detail
+                .structured_error
+                .as_ref()
+                .and_then(|value| value.catalog_code().map(ToOwned::to_owned))
+                .or_else(|| detail.error_code.clone()),
             omne_app_server_protocol::ThreadArtifactDeniedDetail::UnknownModeDenied(detail) => {
-                detail.error_code.clone()
+                detail
+                    .structured_error
+                    .as_ref()
+                    .and_then(|value| value.catalog_code().map(ToOwned::to_owned))
+                    .or_else(|| detail.error_code.clone())
             }
         },
     }
@@ -301,10 +338,11 @@ pub(super) async fn handle_thread_git_snapshot(
         .and_then(|v| v.as_bool())
         .unwrap_or(false)
     {
-        let parsed = serde_json::from_value::<omne_app_server_protocol::ProcessNeedsApprovalResponse>(
-            process,
-        )
-        .context("parse process needs_approval response for thread git snapshot")?;
+        let parsed =
+            serde_json::from_value::<omne_app_server_protocol::ProcessNeedsApprovalResponse>(
+                process,
+            )
+            .context("parse process needs_approval response for thread git snapshot")?;
         let response = omne_app_server_protocol::ThreadGitSnapshotNeedsApprovalResponse {
             needs_approval: true,
             thread_id: spec.thread_id,
@@ -317,14 +355,15 @@ pub(super) async fn handle_thread_git_snapshot(
         .and_then(|v| v.as_bool())
         .unwrap_or(false)
     {
-        let detail =
-            serde_json::from_value::<omne_app_server_protocol::ThreadProcessDeniedDetail>(process)
-                .context("parse process denied detail for thread git snapshot")?;
-        let detail =
-            omne_app_server_protocol::ThreadGitSnapshotDeniedDetail::Process(detail);
+        let detail = serde_json::from_value::<omne_app_server_protocol::ThreadProcessDeniedDetail>(
+            process.clone(),
+        )
+        .context("parse process denied detail for thread git snapshot")?;
+        let detail = omne_app_server_protocol::ThreadGitSnapshotDeniedDetail::Process(detail);
         let response = omne_app_server_protocol::ThreadGitSnapshotDeniedResponse {
             denied: true,
             thread_id: spec.thread_id,
+            structured_error: structured_error_from_result_value(&process),
             error_code: thread_git_snapshot_denied_error_code(&detail),
             detail,
         };
@@ -359,10 +398,7 @@ pub(super) async fn handle_thread_git_snapshot(
             if !matches!(info.status, ProcessStatus::Running) {
                 return Ok::<_, anyhow::Error>(info);
             }
-            tokio::time::sleep(Duration::from_millis(
-                omne_git_runtime::POLL_INTERVAL_MS,
-            ))
-            .await;
+            tokio::time::sleep(Duration::from_millis(omne_git_runtime::POLL_INTERVAL_MS)).await;
         }
     })
     .await;
@@ -384,11 +420,8 @@ pub(super) async fn handle_thread_git_snapshot(
 
     if info.exit_code != Some(0) {
         let (stderr_bytes, stderr_truncated) =
-            read_rotating_log_prefix(
-                Path::new(&stderr_path),
-                omne_git_runtime::MAX_STDERR_BYTES,
-            )
-            .await?;
+            read_rotating_log_prefix(Path::new(&stderr_path), omne_git_runtime::MAX_STDERR_BYTES)
+                .await?;
         let stderr_text = String::from_utf8_lossy(&stderr_bytes).trim().to_string();
         let stderr_suffix = if stderr_truncated { " (truncated)" } else { "" };
         anyhow::bail!(
@@ -433,11 +466,10 @@ pub(super) async fn handle_thread_git_snapshot(
         .and_then(|v| v.as_bool())
         .unwrap_or(false)
     {
-        let parsed =
-            serde_json::from_value::<omne_app_server_protocol::ArtifactNeedsApprovalResponse>(
-                artifact,
-            )
-            .context("parse artifact needs_approval response for thread git snapshot")?;
+        let parsed = serde_json::from_value::<
+            omne_app_server_protocol::ArtifactNeedsApprovalResponse,
+        >(artifact)
+        .context("parse artifact needs_approval response for thread git snapshot")?;
         let response = omne_app_server_protocol::ThreadGitSnapshotNeedsApprovalResponse {
             needs_approval: true,
             thread_id: spec.thread_id,
@@ -451,22 +483,23 @@ pub(super) async fn handle_thread_git_snapshot(
         .unwrap_or(false)
     {
         let detail =
-            serde_json::from_value::<omne_app_server_protocol::ThreadArtifactDeniedDetail>(artifact)
-                .context("parse artifact denied detail for thread git snapshot")?;
-        let detail =
-            omne_app_server_protocol::ThreadGitSnapshotDeniedDetail::Artifact(detail);
+            serde_json::from_value::<omne_app_server_protocol::ThreadArtifactDeniedDetail>(
+                artifact.clone(),
+            )
+            .context("parse artifact denied detail for thread git snapshot")?;
+        let detail = omne_app_server_protocol::ThreadGitSnapshotDeniedDetail::Artifact(detail);
         let response = omne_app_server_protocol::ThreadGitSnapshotDeniedResponse {
             denied: true,
             thread_id: spec.thread_id,
+            structured_error: structured_error_from_result_value(&artifact),
             error_code: thread_git_snapshot_denied_error_code(&detail),
             detail,
         };
         return Ok(omne_app_server_protocol::ThreadGitSnapshotRpcResponse::Denied(response));
     }
-    let artifact = serde_json::from_value::<omne_app_server_protocol::ArtifactWriteResponse>(
-        artifact,
-    )
-    .context("parse artifact/write response for thread git snapshot")?;
+    let artifact =
+        serde_json::from_value::<omne_app_server_protocol::ArtifactWriteResponse>(artifact)
+            .context("parse artifact/write response for thread git snapshot")?;
 
     let response = omne_app_server_protocol::ThreadGitSnapshotResponse {
         thread_id: spec.thread_id,

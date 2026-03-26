@@ -2,16 +2,16 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
+use crate::model_limits::resolve_model_limits;
+use crate::project_config::ProjectOpenAiOverrides;
 use anyhow::Context;
 use async_trait::async_trait;
-use crate::project_config::ProjectOpenAiOverrides;
-use crate::model_limits::resolve_model_limits;
 use base64::Engine;
+use ditto_core::config::ThinkingIntensity;
 use futures_util::stream::{self, StreamExt};
-use ditto_llm::ThinkingIntensity;
 use omne_protocol::{
-    ApprovalDecision, ApprovalId, ArtifactId, ArtifactMetadata, EventSeq, ThreadEventKind, ThreadId,
-    TurnId, TurnPriority,
+    ApprovalDecision, ApprovalId, ArtifactId, ArtifactMetadata, EventSeq, ThreadEventKind,
+    ThreadId, TurnId, TurnPriority,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -23,8 +23,8 @@ use tokio_util::sync::CancellationToken;
 type OpenAiItem = Value;
 
 const DEFAULT_MODEL: &str = "gpt-4.1";
-const DEFAULT_OPENAI_PROVIDER: &str = "openai-codex-apikey";
-const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
+const DEFAULT_OPENAI_PROVIDER: &str = crate::project_config::DEFAULT_OPENAI_PROVIDER;
+const DEFAULT_OPENAI_BASE_URL: &str = crate::project_config::DEFAULT_OPENAI_BASE_URL;
 const DEFAULT_MAX_AGENT_STEPS: usize = 24;
 const DEFAULT_MAX_TOOL_CALLS: usize = 128;
 const DEFAULT_MAX_PARALLEL_TOOL_CALLS: usize = 8;
@@ -59,8 +59,6 @@ const LOOP_DETECTOR_HISTORY_LIMIT: usize = 8;
 const LOOP_DETECTOR_CONSECUTIVE_LIMIT: usize = 3;
 const LOOP_DETECTOR_CYCLE_LENGTH: usize = 2;
 
-const DEFAULT_AUTO_SUMMARY_THRESHOLD_PCT: u64 = 80;
-const MAX_AUTO_SUMMARY_THRESHOLD_PCT: u64 = 99;
 const DEFAULT_AUTO_SUMMARY_SOURCE_MAX_CHARS: usize = 50_000;
 const MAX_AUTO_SUMMARY_SOURCE_MAX_CHARS: usize = 200_000;
 const DEFAULT_AUTO_SUMMARY_TAIL_ITEMS: usize = 20;
@@ -109,7 +107,7 @@ enum LlmAttemptError {
     #[error("llm request timed out")]
     TimedOut,
     #[error(transparent)]
-    Ditto(#[from] ditto_llm::DittoError),
+    Ditto(#[from] ditto_core::error::DittoError),
 }
 
 #[derive(Debug)]
@@ -227,7 +225,10 @@ impl LoopDetector {
     fn observe(&mut self, signature: u64) -> Option<&'static str> {
         self.recent.push(signature);
         if self.recent.len() > LOOP_DETECTOR_HISTORY_LIMIT {
-            let drain = self.recent.len().saturating_sub(LOOP_DETECTOR_HISTORY_LIMIT);
+            let drain = self
+                .recent
+                .len()
+                .saturating_sub(LOOP_DETECTOR_HISTORY_LIMIT);
             self.recent.drain(0..drain);
         }
 
@@ -338,20 +339,10 @@ fn hash_json_value(value: &Value, state: &mut impl std::hash::Hasher) {
 }
 
 fn should_auto_compact(
-    total_tokens_used: u64,
+    context_tokens_estimate: u64,
     auto_compact_token_limit: Option<u64>,
-    max_total_tokens: u64,
-    threshold_pct: u64,
 ) -> bool {
-    if let Some(limit) = auto_compact_token_limit {
-        return limit > 0 && total_tokens_used >= limit;
-    }
-    if max_total_tokens == 0 || threshold_pct == 0 {
-        return false;
-    }
-    let threshold_pct = threshold_pct.min(MAX_AUTO_SUMMARY_THRESHOLD_PCT);
-    let threshold = max_total_tokens.saturating_mul(threshold_pct) / 100;
-    threshold > 0 && total_tokens_used >= threshold
+    auto_compact_token_limit.is_some_and(|limit| limit > 0 && context_tokens_estimate >= limit)
 }
 
 fn estimate_context_tokens(instructions: &str, input_items: &[OpenAiItem]) -> u64 {
@@ -366,16 +357,16 @@ fn estimate_openai_item_chars(item: &OpenAiItem) -> u64 {
     let kind = item.get("type").and_then(Value::as_str).unwrap_or("");
     match kind {
         "message" => {
-            let role = item
-                .get("role")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
+            let role = item.get("role").and_then(Value::as_str).unwrap_or_default();
             let mut chars = role.chars().count() as u64;
             let content = item.get("content").and_then(Value::as_array);
             if let Some(content) = content {
                 for part in content {
                     let part_kind = part.get("type").and_then(Value::as_str).unwrap_or("");
-                    if part_kind != "input_text" && part_kind != "output_text" {
+                    if part_kind != "input_text"
+                        && part_kind != "output_text"
+                        && part_kind != "reasoning_text"
+                    {
                         continue;
                     }
                     if let Some(text) = part.get("text").and_then(Value::as_str) {
@@ -404,7 +395,10 @@ fn estimate_openai_item_chars(item: &OpenAiItem) -> u64 {
                 .get("call_id")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            let output = item.get("output").and_then(Value::as_str).unwrap_or_default();
+            let output = item
+                .get("output")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             (call_id.chars().count() as u64).saturating_add(output.chars().count() as u64)
         }
         _ => 0,
@@ -418,14 +412,14 @@ fn render_items_for_summary(items: &[OpenAiItem], max_chars: usize) -> String {
         let kind = item.get("type").and_then(Value::as_str).unwrap_or("");
         match kind {
             "message" => {
-                let role = item
-                    .get("role")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
+                let role = item.get("role").and_then(Value::as_str).unwrap_or_default();
                 if let Some(content) = item.get("content").and_then(Value::as_array) {
                     for part in content {
                         let part_kind = part.get("type").and_then(Value::as_str).unwrap_or("");
-                        if part_kind != "input_text" && part_kind != "output_text" {
+                        if part_kind != "input_text"
+                            && part_kind != "output_text"
+                            && part_kind != "reasoning_text"
+                        {
                             continue;
                         }
                         let Some(text) = part.get("text").and_then(Value::as_str) else {
@@ -486,10 +480,10 @@ struct AgentLlmResponse {
     id: String,
     output: Vec<OpenAiItem>,
     usage: Option<Value>,
-    warnings: Vec<ditto_llm::Warning>,
+    warnings: Vec<ditto_core::contracts::Warning>,
 }
 
-fn token_usage_json_from_ditto_usage(usage: &ditto_llm::Usage) -> Option<Value> {
+fn token_usage_json_from_ditto_usage(usage: &ditto_core::contracts::Usage) -> Option<Value> {
     if usage.input_tokens.is_none()
         && usage.cache_input_tokens.is_none()
         && usage.cache_creation_input_tokens.is_none()
@@ -511,49 +505,54 @@ fn token_usage_json_from_ditto_usage(usage: &ditto_llm::Usage) -> Option<Value> 
 fn response_items_to_ditto_messages(
     instructions: &str,
     items: &[OpenAiItem],
-    attachments: &[ditto_llm::ContentPart],
-) -> Vec<ditto_llm::Message> {
-    let mut out = Vec::<ditto_llm::Message>::new();
+    attachments: &[ditto_core::contracts::ContentPart],
+) -> Vec<ditto_core::contracts::Message> {
+    let mut out = Vec::<ditto_core::contracts::Message>::new();
     if !instructions.trim().is_empty() {
-        out.push(ditto_llm::Message::system(instructions.to_string()));
+        out.push(ditto_core::contracts::Message::system(instructions.to_string()));
     }
 
     for item in items {
         let kind = item.get("type").and_then(Value::as_str).unwrap_or("");
         match kind {
             "message" => {
-                let role = item
-                    .get("role")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
+                let role = item.get("role").and_then(Value::as_str).unwrap_or_default();
                 let role = match role {
-                    "system" => ditto_llm::Role::System,
-                    "user" => ditto_llm::Role::User,
-                    "assistant" => ditto_llm::Role::Assistant,
-                    "tool" => ditto_llm::Role::Tool,
-                    _ => ditto_llm::Role::User,
+                    "system" => ditto_core::contracts::Role::System,
+                    "user" => ditto_core::contracts::Role::User,
+                    "assistant" => ditto_core::contracts::Role::Assistant,
+                    "tool" => ditto_core::contracts::Role::Tool,
+                    _ => ditto_core::contracts::Role::User,
                 };
 
-                let mut parts = Vec::<ditto_llm::ContentPart>::new();
+                let mut parts = Vec::<ditto_core::contracts::ContentPart>::new();
                 if let Some(content) = item.get("content").and_then(Value::as_array) {
                     for part in content {
                         let part_kind = part.get("type").and_then(Value::as_str).unwrap_or("");
-                        if part_kind != "input_text" && part_kind != "output_text" {
-                            continue;
-                        }
                         let Some(text) = part.get("text").and_then(Value::as_str) else {
                             continue;
                         };
                         if text.is_empty() {
                             continue;
                         }
-                        parts.push(ditto_llm::ContentPart::Text {
-                            text: text.to_string(),
-                        });
+                        match part_kind {
+                            "input_text" | "output_text" => {
+                                parts.push(ditto_core::contracts::ContentPart::Text {
+                                    text: text.to_string(),
+                                })
+                            }
+                            "reasoning_text" => parts.push(ditto_core::contracts::ContentPart::Reasoning {
+                                text: text.to_string(),
+                            }),
+                            _ => {}
+                        }
                     }
                 }
                 if !parts.is_empty() {
-                    out.push(ditto_llm::Message { role, content: parts });
+                    out.push(ditto_core::contracts::Message {
+                        role,
+                        content: parts,
+                    });
                 }
             }
             "function_call" => {
@@ -568,14 +567,21 @@ fn response_items_to_ditto_messages(
                 let raw_json = if raw.is_empty() { "{}" } else { raw };
                 let args = serde_json::from_str::<Value>(raw_json)
                     .unwrap_or_else(|_| Value::String(arguments_raw.to_string()));
-                out.push(ditto_llm::Message {
-                    role: ditto_llm::Role::Assistant,
-                    content: vec![ditto_llm::ContentPart::ToolCall {
-                        id: call_id.to_string(),
-                        name: name.to_string(),
-                        arguments: args,
-                    }],
-                });
+                let tool_call = ditto_core::contracts::ContentPart::ToolCall {
+                    id: call_id.to_string(),
+                    name: name.to_string(),
+                    arguments: args,
+                };
+                if let Some(last) = out.last_mut()
+                    && last.role == ditto_core::contracts::Role::Assistant
+                {
+                    last.content.push(tool_call);
+                } else {
+                    out.push(ditto_core::contracts::Message {
+                        role: ditto_core::contracts::Role::Assistant,
+                        content: vec![tool_call],
+                    });
+                }
             }
             "function_call_output" => {
                 let Some(call_id) = item.get("call_id").and_then(Value::as_str) else {
@@ -585,9 +591,9 @@ fn response_items_to_ditto_messages(
                     .get("output")
                     .and_then(Value::as_str)
                     .unwrap_or_default();
-                out.push(ditto_llm::Message {
-                    role: ditto_llm::Role::Tool,
-                    content: vec![ditto_llm::ContentPart::ToolResult {
+                out.push(ditto_core::contracts::Message {
+                    role: ditto_core::contracts::Role::Tool,
+                    content: vec![ditto_core::contracts::ContentPart::ToolResult {
                         tool_call_id: call_id.to_string(),
                         content: output.to_string(),
                         is_error: None,
@@ -599,11 +605,14 @@ fn response_items_to_ditto_messages(
     }
 
     if !attachments.is_empty() {
-        if let Some(idx) = out.iter().rposition(|msg| msg.role == ditto_llm::Role::User) {
+        if let Some(idx) = out
+            .iter()
+            .rposition(|msg| msg.role == ditto_core::contracts::Role::User)
+        {
             out[idx].content.extend_from_slice(attachments);
         } else {
-            out.push(ditto_llm::Message {
-                role: ditto_llm::Role::User,
+            out.push(ditto_core::contracts::Message {
+                role: ditto_core::contracts::Role::User,
                 content: attachments.to_vec(),
             });
         }
@@ -613,18 +622,21 @@ fn response_items_to_ditto_messages(
 }
 
 fn apply_attachments_to_messages(
-    mut messages: Vec<ditto_llm::Message>,
-    attachments: &[ditto_llm::ContentPart],
-) -> Vec<ditto_llm::Message> {
+    mut messages: Vec<ditto_core::contracts::Message>,
+    attachments: &[ditto_core::contracts::ContentPart],
+) -> Vec<ditto_core::contracts::Message> {
     if attachments.is_empty() {
         return messages;
     }
 
-    if let Some(idx) = messages.iter().rposition(|msg| msg.role == ditto_llm::Role::User) {
+    if let Some(idx) = messages
+        .iter()
+        .rposition(|msg| msg.role == ditto_core::contracts::Role::User)
+    {
         messages[idx].content.extend_from_slice(attachments);
     } else {
-        messages.push(ditto_llm::Message {
-            role: ditto_llm::Role::User,
+        messages.push(ditto_core::contracts::Message {
+            role: ditto_core::contracts::Role::User,
             content: attachments.to_vec(),
         });
     }
@@ -632,8 +644,8 @@ fn apply_attachments_to_messages(
     messages
 }
 
-fn tool_specs_to_ditto_tools(specs: &[Value]) -> anyhow::Result<Vec<ditto_llm::Tool>> {
-    let mut out = Vec::<ditto_llm::Tool>::new();
+fn tool_specs_to_ditto_tools(specs: &[Value]) -> anyhow::Result<Vec<ditto_core::contracts::Tool>> {
+    let mut out = Vec::<ditto_core::contracts::Tool>::new();
     for spec in specs {
         let obj = spec
             .as_object()
@@ -655,7 +667,7 @@ fn tool_specs_to_ditto_tools(specs: &[Value]) -> anyhow::Result<Vec<ditto_llm::T
             .and_then(Value::as_str)
             .map(|s| s.to_string());
         let parameters = function.get("parameters").cloned().unwrap_or(Value::Null);
-        out.push(ditto_llm::Tool {
+        out.push(ditto_core::contracts::Tool {
             name: name.to_string(),
             description,
             parameters,
@@ -668,11 +680,15 @@ fn tool_specs_to_ditto_tools(specs: &[Value]) -> anyhow::Result<Vec<ditto_llm::T
 fn tool_specs_total_json_bytes(specs: &[Value]) -> usize {
     specs
         .iter()
-        .map(|spec| serde_json::to_vec(spec).map(|bytes| bytes.len()).unwrap_or(0))
+        .map(|spec| {
+            serde_json::to_vec(spec)
+                .map(|bytes| bytes.len())
+                .unwrap_or(0)
+        })
         .sum()
 }
 
-fn log_llm_warnings(thread_id: ThreadId, turn_id: TurnId, warnings: &[ditto_llm::Warning]) {
+fn log_llm_warnings(thread_id: ThreadId, turn_id: TurnId, warnings: &[ditto_core::contracts::Warning]) {
     if warnings.is_empty() {
         return;
     }
@@ -691,18 +707,18 @@ trait FileUploader: Send + Sync {
 }
 
 #[async_trait]
-impl FileUploader for ditto_llm::OpenAI {
+impl FileUploader for ditto_core::providers::OpenAI {
     async fn upload_file(&self, filename: String, bytes: Vec<u8>) -> anyhow::Result<String> {
-        ditto_llm::OpenAI::upload_file(self, filename, bytes)
+        ditto_core::providers::OpenAI::upload_file(self, filename, bytes)
             .await
             .map_err(anyhow::Error::new)
     }
 }
 
 #[async_trait]
-impl FileUploader for ditto_llm::OpenAICompatible {
+impl FileUploader for ditto_core::providers::OpenAICompatible {
     async fn upload_file(&self, filename: String, bytes: Vec<u8>) -> anyhow::Result<String> {
-        ditto_llm::OpenAICompatible::upload_file(self, filename, bytes)
+        ditto_core::providers::OpenAICompatible::upload_file(self, filename, bytes)
             .await
             .map_err(anyhow::Error::new)
     }
@@ -710,11 +726,68 @@ impl FileUploader for ditto_llm::OpenAICompatible {
 
 #[derive(Clone)]
 pub(crate) struct ProviderRuntime {
-    config: ditto_llm::ProviderConfig,
-    capabilities: ditto_llm::ProviderCapabilities,
-    client: Arc<dyn ditto_llm::LanguageModel>,
-    openai_responses_client: Option<Arc<ditto_llm::OpenAI>>,
+    config: ditto_core::config::ProviderConfig,
+    capabilities: ditto_core::config::ProviderCapabilities,
+    client: Arc<dyn ditto_core::llm_core::model::LanguageModel>,
+    openai_responses_client: Option<Arc<ditto_core::providers::OpenAI>>,
     file_uploader: Option<Arc<dyn FileUploader>>,
+}
+
+impl ProviderRuntime {
+    fn supports_openai_responses_codex_parity(&self) -> bool {
+        self.openai_responses_client.is_some()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ProviderRouteTarget {
+    pub id: String,
+    pub provider: String,
+    pub model: String,
+    pub model_fallbacks: Vec<String>,
+    pub provider_config: ditto_core::config::ProviderConfig,
+}
+
+impl ProviderRouteTarget {
+    fn runtime_cache_key(&self) -> String {
+        let upstream_api = resolve_provider_upstream_api(&self.provider_config);
+        let capabilities = resolve_provider_capabilities(&self.provider_config, upstream_api);
+        let normalize_to = self.provider_config.normalize_to.unwrap_or(upstream_api);
+        let base_url = self
+            .provider_config
+            .base_url
+            .as_deref()
+            .unwrap_or(DEFAULT_OPENAI_BASE_URL);
+        let normalize_endpoint = self
+            .provider_config
+            .normalize_endpoint
+            .as_deref()
+            .unwrap_or("");
+        format!(
+            "{}|{}|{}|upstream_api={};normalize_to={};normalize_endpoint={}|tools={};streaming={};reasoning={};vision={};json_schema={};prompt_cache={}",
+            self.id,
+            self.provider,
+            base_url.trim(),
+            provider_api_name(upstream_api),
+            provider_api_name(normalize_to),
+            normalize_endpoint.trim(),
+            capabilities.tools,
+            capabilities.streaming,
+            capabilities.reasoning,
+            capabilities.vision,
+            capabilities.json_schema,
+            capabilities.prompt_cache
+        )
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ProviderRouteSelection {
+    pub completion_targets: Vec<ProviderRouteTarget>,
+    pub completion_model_fallbacks: Vec<String>,
+    pub thinking_targets: Vec<ProviderRouteTarget>,
+    pub thinking_model_fallbacks: Vec<String>,
+    pub explicit: bool,
 }
 
 fn parse_csv_list(raw: &str) -> Vec<String> {
@@ -747,6 +820,226 @@ fn build_provider_candidates(primary: &str, fallbacks: Vec<String>) -> Vec<Strin
     out
 }
 
+fn normalize_non_empty(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
+fn provider_api_name(api: ditto_core::config::ProviderApi) -> &'static str {
+    match api {
+        ditto_core::config::ProviderApi::OpenaiChatCompletions => "openai_chat_completions",
+        ditto_core::config::ProviderApi::OpenaiResponses => "openai_responses",
+        ditto_core::config::ProviderApi::GeminiGenerateContent => "gemini_generate_content",
+        ditto_core::config::ProviderApi::AnthropicMessages => "anthropic_messages",
+    }
+}
+
+fn resolve_provider_upstream_api(
+    provider_config: &ditto_core::config::ProviderConfig,
+) -> ditto_core::config::ProviderApi {
+    if let Some(upstream_api) = provider_config.upstream_api {
+        return upstream_api;
+    }
+    if provider_config
+        .capabilities
+        .is_some_and(|capabilities| capabilities.reasoning)
+    {
+        ditto_core::config::ProviderApi::OpenaiResponses
+    } else {
+        ditto_core::config::ProviderApi::OpenaiChatCompletions
+    }
+}
+
+fn default_provider_capabilities_for_upstream_api(
+    upstream_api: ditto_core::config::ProviderApi,
+) -> ditto_core::config::ProviderCapabilities {
+    if upstream_api.uses_openai_responses_client() {
+        return ditto_core::config::ProviderCapabilities::openai_responses();
+    }
+    ditto_core::config::ProviderCapabilities {
+        tools: true,
+        vision: false,
+        reasoning: false,
+        json_schema: false,
+        streaming: true,
+        prompt_cache: true,
+    }
+}
+
+fn default_base_url_for_upstream_api(upstream_api: ditto_core::config::ProviderApi) -> &'static str {
+    match upstream_api {
+        ditto_core::config::ProviderApi::GeminiGenerateContent => {
+            "https://generativelanguage.googleapis.com/v1beta"
+        }
+        ditto_core::config::ProviderApi::AnthropicMessages => "https://api.anthropic.com/v1",
+        ditto_core::config::ProviderApi::OpenaiResponses | ditto_core::config::ProviderApi::OpenaiChatCompletions => {
+            DEFAULT_OPENAI_BASE_URL
+        }
+    }
+}
+
+fn resolve_provider_capabilities(
+    provider_config: &ditto_core::config::ProviderConfig,
+    upstream_api: ditto_core::config::ProviderApi,
+) -> ditto_core::config::ProviderCapabilities {
+    provider_config
+        .capabilities
+        .unwrap_or_else(|| default_provider_capabilities_for_upstream_api(upstream_api))
+}
+
+fn override_provider_base_url(
+    provider_config: &mut ditto_core::config::ProviderConfig,
+    base_url_override: Option<&str>,
+) {
+    if let Some(base_url) = normalize_non_empty(base_url_override) {
+        provider_config.base_url = Some(base_url);
+    }
+}
+
+fn routing_phase_name(phase: ditto_core::config::RoutingPhase) -> &'static str {
+    match phase {
+        ditto_core::config::RoutingPhase::Completion => "completion",
+        ditto_core::config::RoutingPhase::Thinking => "thinking",
+    }
+}
+
+fn resolved_target_to_route_target(
+    phase: ditto_core::config::RoutingPhase,
+    idx: usize,
+    target: ditto_core::config::ResolvedRoutingTarget,
+    base_url_override: Option<&str>,
+) -> ProviderRouteTarget {
+    let mut provider_config = target.provider_config;
+    override_provider_base_url(&mut provider_config, base_url_override);
+    provider_config.default_model = Some(target.model.clone());
+
+    ProviderRouteTarget {
+        id: format!(
+            "routing:{}:{}:{}",
+            routing_phase_name(phase),
+            target.profile,
+            idx
+        ),
+        provider: target.provider,
+        model: target.model,
+        model_fallbacks: target.model_fallbacks,
+        provider_config,
+    }
+}
+
+fn resolve_legacy_route_selection(
+    project_overrides: &ProjectOpenAiOverrides,
+    primary_provider: &str,
+    fallback_providers: Vec<String>,
+    default_model: &str,
+    base_url_override: Option<&str>,
+) -> anyhow::Result<ProviderRouteSelection> {
+    let provider_candidates = build_provider_candidates(primary_provider, fallback_providers);
+    let mut completion_targets = Vec::<ProviderRouteTarget>::new();
+    for (idx, provider_name) in provider_candidates.into_iter().enumerate() {
+        let provider_overrides = project_overrides.providers.get(&provider_name);
+        let mut provider_config =
+            crate::project_config::resolve_provider_config(&provider_name, provider_overrides)?;
+        override_provider_base_url(&mut provider_config, base_url_override);
+        provider_config.default_model = Some(default_model.to_string());
+
+        completion_targets.push(ProviderRouteTarget {
+            id: format!("legacy:{}:{}", provider_name, idx),
+            provider: provider_name,
+            model: default_model.to_string(),
+            model_fallbacks: Vec::new(),
+            provider_config,
+        });
+    }
+
+    Ok(ProviderRouteSelection {
+        completion_targets,
+        completion_model_fallbacks: Vec::new(),
+        thinking_targets: Vec::new(),
+        thinking_model_fallbacks: Vec::new(),
+        explicit: false,
+    })
+}
+
+fn resolve_provider_route_selection(
+    project_overrides: &ProjectOpenAiOverrides,
+    route_role: &str,
+    route_scenario: Option<&str>,
+    route_seed_hash: Option<u64>,
+    legacy_primary_provider: &str,
+    legacy_fallback_providers: Vec<String>,
+    legacy_default_model: &str,
+    base_url_override: Option<&str>,
+) -> anyhow::Result<ProviderRouteSelection> {
+    if let Some(routing) = project_overrides.routing.as_ref() {
+        let completion_plan = routing
+            .resolve_plan(ditto_core::config::RoutingContext {
+                role: Some(route_role),
+                scenario: route_scenario,
+                phase: ditto_core::config::RoutingPhase::Completion,
+                seed_hash: route_seed_hash,
+            })
+            .map_err(anyhow::Error::msg)?;
+        let thinking_plan = routing
+            .resolve_plan(ditto_core::config::RoutingContext {
+                role: Some(route_role),
+                scenario: route_scenario,
+                phase: ditto_core::config::RoutingPhase::Thinking,
+                seed_hash: route_seed_hash,
+            })
+            .map_err(anyhow::Error::msg)?;
+
+        let completion_targets = completion_plan
+            .targets
+            .into_iter()
+            .enumerate()
+            .map(|(idx, target)| {
+                resolved_target_to_route_target(
+                    ditto_core::config::RoutingPhase::Completion,
+                    idx,
+                    target,
+                    base_url_override,
+                )
+            })
+            .collect::<Vec<_>>();
+        if completion_targets.is_empty() {
+            anyhow::bail!("routing completion stage has no usable targets");
+        }
+
+        let thinking_targets = thinking_plan
+            .targets
+            .into_iter()
+            .enumerate()
+            .map(|(idx, target)| {
+                resolved_target_to_route_target(
+                    ditto_core::config::RoutingPhase::Thinking,
+                    idx,
+                    target,
+                    base_url_override,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        return Ok(ProviderRouteSelection {
+            completion_targets,
+            completion_model_fallbacks: completion_plan.model_fallbacks,
+            thinking_targets,
+            thinking_model_fallbacks: thinking_plan.model_fallbacks,
+            explicit: true,
+        });
+    }
+
+    resolve_legacy_route_selection(
+        project_overrides,
+        legacy_primary_provider,
+        legacy_fallback_providers,
+        legacy_default_model,
+        base_url_override,
+    )
+}
+
 fn build_model_candidates(primary: &str, fallbacks: Vec<String>) -> Vec<String> {
     let mut out = vec![primary.to_string()];
     for model in fallbacks {
@@ -768,21 +1061,26 @@ fn model_allowed_by_whitelist(model: &str, whitelist: &[String]) -> bool {
 fn llm_error_is_retryable(err: &LlmAttemptError) -> bool {
     match err {
         LlmAttemptError::TimedOut => true,
-        LlmAttemptError::Ditto(ditto_llm::DittoError::Api { status, .. }) => {
+        LlmAttemptError::Ditto(ditto_core::error::DittoError::Api { status, .. }) => {
             status.as_u16() == 429 || status.is_server_error()
         }
-        LlmAttemptError::Ditto(ditto_llm::DittoError::Http(err)) => err.is_timeout() || err.is_connect(),
-        LlmAttemptError::Ditto(ditto_llm::DittoError::Io(_)) => true,
-        LlmAttemptError::Ditto(ditto_llm::DittoError::InvalidResponse(_))
-        | LlmAttemptError::Ditto(ditto_llm::DittoError::AuthCommand(_))
-        | LlmAttemptError::Ditto(ditto_llm::DittoError::Json(_)) => false,
+        LlmAttemptError::Ditto(ditto_core::error::DittoError::Http(err)) => {
+            err.is_timeout() || err.is_connect()
+        }
+        LlmAttemptError::Ditto(ditto_core::error::DittoError::Io(_)) => true,
+        LlmAttemptError::Ditto(ditto_core::error::DittoError::InvalidResponse(_))
+        | LlmAttemptError::Ditto(ditto_core::error::DittoError::ProviderResolution(_))
+        | LlmAttemptError::Ditto(ditto_core::error::DittoError::AuthCommand(_))
+        | LlmAttemptError::Ditto(ditto_core::error::DittoError::SecretCommand(_))
+        | LlmAttemptError::Ditto(ditto_core::error::DittoError::Config(_))
+        | LlmAttemptError::Ditto(ditto_core::error::DittoError::Json(_)) => false,
     }
 }
 
 fn llm_error_prefers_provider_fallback(err: &LlmAttemptError) -> bool {
     match err {
         LlmAttemptError::TimedOut => true,
-        LlmAttemptError::Ditto(ditto_llm::DittoError::Api { status, .. }) => {
+        LlmAttemptError::Ditto(ditto_core::error::DittoError::Api { status, .. }) => {
             status.as_u16() == 429 || status.is_server_error()
         }
         _ => false,
@@ -791,7 +1089,7 @@ fn llm_error_prefers_provider_fallback(err: &LlmAttemptError) -> bool {
 
 fn llm_error_prefers_model_fallback(err: &LlmAttemptError) -> bool {
     match err {
-        LlmAttemptError::Ditto(ditto_llm::DittoError::Api { status, .. }) => {
+        LlmAttemptError::Ditto(ditto_core::error::DittoError::Api { status, .. }) => {
             matches!(status.as_u16(), 400 | 404 | 413 | 422)
         }
         _ => false,
@@ -814,70 +1112,82 @@ fn retry_backoff_delay(failure_count: usize, base: Duration, max: Duration) -> D
 }
 
 async fn build_provider_runtime(
-    provider: &str,
-    project_overrides: &ProjectOpenAiOverrides,
-    base_url_override: Option<&str>,
-    env: &ditto_llm::Env,
+    target: &ProviderRouteTarget,
+    env: &ditto_core::config::Env,
 ) -> anyhow::Result<ProviderRuntime> {
-    let builtin_provider_config = builtin_openai_provider_config(provider);
-    let provider_overrides = project_overrides.providers.get(provider);
-    if builtin_provider_config.is_none() && provider_overrides.is_none() {
-        anyhow::bail!(
-            "unknown openai provider: {provider} (expected: openai-codex-apikey, openai-auth-command; or define [openai.providers.{provider}] in project config)"
-        );
-    }
-
-    let mut provider_config = builtin_provider_config.unwrap_or_default();
-    if let Some(overrides) = provider_overrides {
-        provider_config = merge_provider_config(provider_config, overrides);
-    }
-
-    let provider_capabilities = provider_config
-        .capabilities
-        .unwrap_or_else(ditto_llm::ProviderCapabilities::openai_responses);
+    let provider = target.provider.as_str();
+    let provider_config = target.provider_config.clone();
+    let provider_upstream_api = resolve_provider_upstream_api(&provider_config);
+    let provider_capabilities =
+        resolve_provider_capabilities(&provider_config, provider_upstream_api);
     if !provider_capabilities.tools {
         anyhow::bail!(
-            "provider does not support tools: provider={provider} (omne requires tool calling; set [openai.providers.{provider}.capabilities.tools]=true)"
+            "provider does not support tools: provider={provider} (omne requires tool calling; set [<family>.providers.<name>.capabilities.tools]=true)"
         );
     }
 
-    let base_url = base_url_override
-        .map(|value| value.to_string())
-        .or(provider_config.base_url.clone())
-        .unwrap_or_else(|| DEFAULT_OPENAI_BASE_URL.to_string());
+    let base_url = provider_config
+        .base_url
+        .clone()
+        .unwrap_or_else(|| default_base_url_for_upstream_api(provider_upstream_api).to_string());
     let base_url = base_url.trim().to_string();
     if base_url.is_empty() {
-        anyhow::bail!("openai provider {provider} is missing base_url");
+        anyhow::bail!("provider {provider} is missing base_url");
     }
-
-    let provider_for_llm = ditto_llm::ProviderConfig {
+    let provider_for_llm = ditto_core::config::ProviderConfig {
+        provider: provider_config.provider.clone(),
+        enabled_capabilities: provider_config.enabled_capabilities.clone(),
         base_url: Some(base_url),
-        default_model: provider_config.default_model.clone(),
+        default_model: provider_config
+            .default_model
+            .clone()
+            .or_else(|| Some(target.model.clone())),
         model_whitelist: provider_config.model_whitelist.clone(),
         http_headers: provider_config.http_headers.clone(),
         http_query_params: provider_config.http_query_params.clone(),
         auth: provider_config.auth.clone(),
         capabilities: Some(provider_capabilities),
+        upstream_api: Some(provider_upstream_api),
+        normalize_to: provider_config.normalize_to.or(Some(provider_upstream_api)),
+        normalize_endpoint: provider_config.normalize_endpoint.clone(),
+        openai_compatible: provider_config.openai_compatible.clone(),
     };
 
-    let (client, openai_responses_client, file_uploader) = if provider_capabilities.reasoning {
-        let openai = Arc::new(
-            ditto_llm::OpenAI::from_config(&provider_for_llm, env)
-                .await
-                .context("build OpenAI Responses client")?,
-        );
-        let client: Arc<dyn ditto_llm::LanguageModel> = openai.clone();
-        let file_uploader: Arc<dyn FileUploader> = openai.clone();
-        (client, Some(openai), Some(file_uploader))
-    } else {
-        let chat = Arc::new(
-            ditto_llm::OpenAICompatible::from_config(&provider_for_llm, env)
-                .await
-                .context("build OpenAI-compatible Chat Completions client")?,
-        );
-        let client: Arc<dyn ditto_llm::LanguageModel> = chat.clone();
-        let file_uploader: Arc<dyn FileUploader> = chat;
-        (client, None, Some(file_uploader))
+    let (client, openai_responses_client, file_uploader) = match provider_upstream_api {
+        ditto_core::config::ProviderApi::OpenaiResponses => {
+            let openai = Arc::new(
+                ditto_core::providers::OpenAI::from_config(&provider_for_llm, env)
+                    .await
+                    .context("build OpenAI Responses client")?,
+            );
+            let client: Arc<dyn ditto_core::llm_core::model::LanguageModel> = openai.clone();
+            let file_uploader: Arc<dyn FileUploader> = openai.clone();
+            (client, Some(openai), Some(file_uploader))
+        }
+        ditto_core::config::ProviderApi::OpenaiChatCompletions => {
+            let chat = Arc::new(
+                ditto_core::providers::OpenAICompatible::from_config(&provider_for_llm, env)
+                    .await
+                    .context("build OpenAI-compatible Chat Completions client")?,
+            );
+            let client: Arc<dyn ditto_core::llm_core::model::LanguageModel> = chat.clone();
+            let file_uploader: Arc<dyn FileUploader> = chat;
+            (client, None, Some(file_uploader))
+        }
+        ditto_core::config::ProviderApi::GeminiGenerateContent => {
+            let google = Arc::new(
+                ditto_core::providers::Google::from_config(&provider_for_llm, env)
+                    .await
+                    .context("build Google GenerateContent client")?,
+            );
+            let client: Arc<dyn ditto_core::llm_core::model::LanguageModel> = google;
+            (client, None, None)
+        }
+        ditto_core::config::ProviderApi::AnthropicMessages => {
+            anyhow::bail!(
+                "provider {provider} sets upstream_api=anthropic_messages, but Omne direct mode does not support Anthropic native client yet"
+            );
+        }
     };
 
     Ok(ProviderRuntime {

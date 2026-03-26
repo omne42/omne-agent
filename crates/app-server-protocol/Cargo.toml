@@ -7,9 +7,11 @@ version.workspace = true
 [dependencies]
 anyhow.workspace = true
 omne-protocol = { path = "../agent-protocol" }
+policy-meta.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+structured-text-protocol.workspace = true
 ts-rs.workspace = true
 
 [dev-dependencies]

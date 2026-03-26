@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use fs2::FileExt;
 use omne_protocol::{
-    ApprovalId, ApprovalPolicy, EventSeq, ProcessId, SandboxNetworkAccess, SandboxPolicy,
-    ThreadEvent, ThreadEventKind, ThreadId, TurnId, TurnStatus,
+    ApprovalId, ApprovalPolicy, EventSeq, ProcessId, SandboxNetworkAccess, ThreadEvent,
+    ThreadEventKind, ThreadId, TurnId, TurnStatus,
 };
 use time::OffsetDateTime;
 use tokio::io::AsyncWriteExt;
@@ -233,6 +233,8 @@ async fn sanitize_and_get_last_seq(
 pub struct ThreadState {
     pub thread_id: ThreadId,
     pub cwd: Option<String>,
+    pub system_prompt_sha256: Option<String>,
+    pub system_prompt_text: Option<String>,
     pub archived: bool,
     pub archived_at: Option<OffsetDateTime>,
     pub archived_reason: Option<String>,
@@ -240,7 +242,7 @@ pub struct ThreadState {
     pub paused_at: Option<OffsetDateTime>,
     pub paused_reason: Option<String>,
     pub approval_policy: ApprovalPolicy,
-    pub sandbox_policy: SandboxPolicy,
+    pub sandbox_policy: policy_meta::WriteScope,
     pub sandbox_writable_roots: Vec<String>,
     pub sandbox_network_access: SandboxNetworkAccess,
     pub mode: String,
@@ -273,6 +275,8 @@ impl ThreadState {
         Self {
             thread_id,
             cwd: None,
+            system_prompt_sha256: None,
+            system_prompt_text: None,
             archived: false,
             archived_at: None,
             archived_reason: None,
@@ -280,7 +284,7 @@ impl ThreadState {
             paused_at: None,
             paused_reason: None,
             approval_policy: ApprovalPolicy::AutoApprove,
-            sandbox_policy: SandboxPolicy::WorkspaceWrite,
+            sandbox_policy: policy_meta::WriteScope::WorkspaceWrite,
             sandbox_writable_roots: Vec::new(),
             sandbox_network_access: SandboxNetworkAccess::Deny,
             mode: "code".to_string(),
@@ -328,6 +332,28 @@ impl ThreadState {
         match &event.kind {
             ThreadEventKind::ThreadCreated { cwd } => {
                 self.cwd = Some(cwd.clone());
+            }
+            ThreadEventKind::ThreadSystemPromptSnapshot {
+                prompt_sha256,
+                prompt_text,
+                ..
+            } => {
+                if let Some(existing_hash) = self.system_prompt_sha256.as_deref()
+                    && existing_hash != prompt_sha256.as_str()
+                {
+                    anyhow::bail!(
+                        "thread system prompt hash changed: existing={} new={}",
+                        existing_hash,
+                        prompt_sha256
+                    );
+                }
+                if let Some(existing_text) = self.system_prompt_text.as_deref()
+                    && existing_text != prompt_text.as_str()
+                {
+                    anyhow::bail!("thread system prompt text changed");
+                }
+                self.system_prompt_sha256 = Some(prompt_sha256.clone());
+                self.system_prompt_text = Some(prompt_text.clone());
             }
             ThreadEventKind::ThreadArchived { reason } => {
                 self.archived = true;
@@ -955,6 +981,189 @@ mod tests {
         assert_eq!(state.output_tokens_used, 0);
         assert_eq!(state.cache_input_tokens_used, 5);
         assert_eq!(state.cache_creation_input_tokens_used, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn thread_system_prompt_snapshot_accepts_initial_and_identical_repeat() -> anyhow::Result<()> {
+        let thread_id = ThreadId::new();
+        let mut state = ThreadState::new(thread_id);
+        let mut seq = 1u64;
+
+        fn apply(
+            state: &mut ThreadState,
+            thread_id: ThreadId,
+            seq: &mut u64,
+            kind: ThreadEventKind,
+        ) -> anyhow::Result<()> {
+            let event = ThreadEvent {
+                seq: EventSeq(*seq),
+                timestamp: OffsetDateTime::now_utc(),
+                thread_id,
+                kind,
+            };
+            *seq += 1;
+            state.apply(&event)?;
+            Ok(())
+        }
+
+        apply(
+            &mut state,
+            thread_id,
+            &mut seq,
+            ThreadEventKind::ThreadCreated {
+                cwd: "/tmp".to_string(),
+            },
+        )?;
+
+        let snapshot_hash = "hash-a".to_string();
+        let snapshot_text = "# system prompt A".to_string();
+        apply(
+            &mut state,
+            thread_id,
+            &mut seq,
+            ThreadEventKind::ThreadSystemPromptSnapshot {
+                prompt_sha256: snapshot_hash.clone(),
+                prompt_text: snapshot_text.clone(),
+                source: Some("default".to_string()),
+            },
+        )?;
+        apply(
+            &mut state,
+            thread_id,
+            &mut seq,
+            ThreadEventKind::ThreadSystemPromptSnapshot {
+                prompt_sha256: snapshot_hash.clone(),
+                prompt_text: snapshot_text.clone(),
+                source: Some("fork".to_string()),
+            },
+        )?;
+
+        assert_eq!(state.system_prompt_sha256.as_deref(), Some("hash-a"));
+        assert_eq!(
+            state.system_prompt_text.as_deref(),
+            Some("# system prompt A")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn thread_system_prompt_snapshot_rejects_hash_change() -> anyhow::Result<()> {
+        let thread_id = ThreadId::new();
+        let mut state = ThreadState::new(thread_id);
+        let mut seq = 1u64;
+
+        fn apply(
+            state: &mut ThreadState,
+            thread_id: ThreadId,
+            seq: &mut u64,
+            kind: ThreadEventKind,
+        ) -> anyhow::Result<()> {
+            let event = ThreadEvent {
+                seq: EventSeq(*seq),
+                timestamp: OffsetDateTime::now_utc(),
+                thread_id,
+                kind,
+            };
+            *seq += 1;
+            state.apply(&event)?;
+            Ok(())
+        }
+
+        apply(
+            &mut state,
+            thread_id,
+            &mut seq,
+            ThreadEventKind::ThreadCreated {
+                cwd: "/tmp".to_string(),
+            },
+        )?;
+        apply(
+            &mut state,
+            thread_id,
+            &mut seq,
+            ThreadEventKind::ThreadSystemPromptSnapshot {
+                prompt_sha256: "hash-a".to_string(),
+                prompt_text: "# system prompt A".to_string(),
+                source: None,
+            },
+        )?;
+
+        let err = apply(
+            &mut state,
+            thread_id,
+            &mut seq,
+            ThreadEventKind::ThreadSystemPromptSnapshot {
+                prompt_sha256: "hash-b".to_string(),
+                prompt_text: "# system prompt B".to_string(),
+                source: None,
+            },
+        )
+        .expect_err("changing snapshot hash should be rejected");
+        assert!(
+            err.to_string()
+                .contains("thread system prompt hash changed")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn thread_system_prompt_snapshot_rejects_text_change_with_same_hash() -> anyhow::Result<()> {
+        let thread_id = ThreadId::new();
+        let mut state = ThreadState::new(thread_id);
+        let mut seq = 1u64;
+
+        fn apply(
+            state: &mut ThreadState,
+            thread_id: ThreadId,
+            seq: &mut u64,
+            kind: ThreadEventKind,
+        ) -> anyhow::Result<()> {
+            let event = ThreadEvent {
+                seq: EventSeq(*seq),
+                timestamp: OffsetDateTime::now_utc(),
+                thread_id,
+                kind,
+            };
+            *seq += 1;
+            state.apply(&event)?;
+            Ok(())
+        }
+
+        apply(
+            &mut state,
+            thread_id,
+            &mut seq,
+            ThreadEventKind::ThreadCreated {
+                cwd: "/tmp".to_string(),
+            },
+        )?;
+        apply(
+            &mut state,
+            thread_id,
+            &mut seq,
+            ThreadEventKind::ThreadSystemPromptSnapshot {
+                prompt_sha256: "stable-hash".to_string(),
+                prompt_text: "# system prompt A".to_string(),
+                source: None,
+            },
+        )?;
+
+        let err = apply(
+            &mut state,
+            thread_id,
+            &mut seq,
+            ThreadEventKind::ThreadSystemPromptSnapshot {
+                prompt_sha256: "stable-hash".to_string(),
+                prompt_text: "# system prompt B".to_string(),
+                source: None,
+            },
+        )
+        .expect_err("changing snapshot text should be rejected");
+        assert!(
+            err.to_string()
+                .contains("thread system prompt text changed")
+        );
         Ok(())
     }
 }

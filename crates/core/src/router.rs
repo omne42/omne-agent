@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, bail};
+use anyhow::bail;
+use config_kit::{ConfigDocument, ConfigFormatSet, ConfigLoadOptions, load_config_document};
 use omne_protocol::ModelRoutingRuleSource;
 use serde::Deserialize;
 
@@ -126,13 +127,10 @@ fn select_router_config_path(
     None
 }
 
-fn parse_router_file(contents: &str, path: &Path) -> anyhow::Result<RawRouterFileV1> {
-    match path.extension().and_then(|ext| ext.to_str()) {
-        Some("json") => serde_json::from_str(contents)
-            .with_context(|| format!("parse router json {}", path.display())),
-        _ => serde_yaml::from_str(contents)
-            .with_context(|| format!("parse router yaml {}", path.display())),
-    }
+fn parse_router_document(document: &ConfigDocument) -> anyhow::Result<RawRouterFileV1> {
+    document
+        .parse_as(ConfigFormatSet::JSON_YAML)
+        .map_err(anyhow::Error::new)
 }
 
 fn normalize_role(name: &str) -> anyhow::Result<String> {
@@ -229,10 +227,9 @@ async fn load_router_config_impl(
         bail!("router file not found: {}", path.display());
     }
 
-    let raw = tokio::fs::read_to_string(&path)
-        .await
-        .with_context(|| format!("read router config {}", path.display()))?;
-    let parsed = parse_router_file(&raw, &path)?;
+    let document =
+        load_config_document(&path, ConfigLoadOptions::new()).map_err(anyhow::Error::new)?;
+    let parsed = parse_router_document(&document)?;
     let config = router_from_raw(parsed)?;
 
     Ok(Some(LoadedRouterConfig {
@@ -395,6 +392,58 @@ keyword_rules:
         let result = load_router_config_impl(tmp.path(), Some("nope/router.yaml")).await;
 
         assert!(result.is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn loads_router_json_from_env_override() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let root = tmp.path();
+        let path = root.join("router.json");
+        tokio::fs::write(
+            &path,
+            r#"
+{
+  "version": 1,
+  "role_defaults": {
+    "coder": "gpt-4.1-mini"
+  }
+}
+"#,
+        )
+        .await?;
+
+        let loaded = load_router_config_impl(root, Some("router.json"))
+            .await?
+            .expect("router config loaded");
+        assert!(matches!(loaded.source, RouterConfigSource::Env));
+        assert_eq!(
+            loaded.config.role_defaults.get("coder").map(String::as_str),
+            Some("gpt-4.1-mini")
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn env_router_file_rejects_toml_even_though_config_kit_supports_it() -> anyhow::Result<()>
+    {
+        let tmp = tempfile::tempdir()?;
+        let root = tmp.path();
+        tokio::fs::write(
+            root.join("router.toml"),
+            r#"
+version = 1
+
+[role_defaults]
+coder = "gpt-4.1-mini"
+"#,
+        )
+        .await?;
+
+        let err = load_router_config_impl(root, Some("router.toml"))
+            .await
+            .expect_err("router toml must be rejected");
+        assert!(err.to_string().contains("expected json or yaml"));
         Ok(())
     }
 
