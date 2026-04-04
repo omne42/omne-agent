@@ -442,7 +442,7 @@ async fn handle_execve_gate_decide(
                 exec_policy: &ctx.exec_policy,
                 thread_execpolicy_rules: &thread_execpolicy_rules,
                 argv: &args.argv,
-                unmatched_command_policy: UnmatchedCommandPolicy::Allow,
+                unmatched_command_policy: UnmatchedCommandPolicy::Prompt,
             },
         },
         |mode| mode.permissions.command,
@@ -1359,6 +1359,104 @@ mod execve_gate_tests {
         assert_eq!(params["approval"]["source"], "execve-wrapper");
         assert_eq!(params["approval"]["requirement"], "prompt");
         assert_eq!(params["argv"], serde_json::json!(["echo", "ok"]));
+
+        shutdown_execve_gate(gate).await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn execve_gate_unmatched_execpolicy_matches_process_start_fallback() -> anyhow::Result<()>
+    {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(repo_dir.join(".omne_data/spec")).await?;
+        tokio::fs::write(
+            repo_dir.join(".omne_data/spec/modes.yaml"),
+            r#"
+version: 1
+modes:
+  mode-x:
+    description: "mode x"
+    permissions:
+      command:
+        decision: allow
+"#,
+        )
+        .await?;
+
+        let exec_policy = omne_execpolicy::Policy::empty();
+
+        let mut server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        server.exec_policy = exec_policy.clone();
+        let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        handle_thread_configure(
+            &server,
+            ThreadConfigureParams {
+                thread_id,
+                approval_policy: Some(omne_protocol::ApprovalPolicy::Manual),
+                sandbox_policy: None,
+                sandbox_writable_roots: None,
+                sandbox_network_access: None,
+                mode: Some("mode-x".to_string()),
+                role: None,
+                model: None,
+                thinking: None,
+                show_thinking: None,
+                openai_base_url: None,
+                allowed_tools: None,
+                execpolicy_rules: None,
+            },
+        )
+        .await?;
+
+        let thread_rt = server.get_or_load_thread(thread_id).await?;
+        let socket_path = tmp.path().join("execve.sock");
+        let token = "test-token".to_string();
+
+        let gate = match spawn_execve_gate(
+            ExecveGateContext {
+                thread_id,
+                turn_id: None,
+                token: token.clone(),
+                thread_root: repo_dir,
+                thread_store: server.thread_store.clone(),
+                exec_policy,
+                thread_rt,
+            },
+            socket_path.clone(),
+        )
+        .await
+        {
+            Ok(gate) => gate,
+            Err(err) if unix_socket_bind_not_permitted(&err) => {
+                eprintln!("skipping execve gate test: unix socket bind not permitted");
+                return Ok(());
+            }
+            Err(err) => return Err(err),
+        };
+
+        let stream = tokio::net::UnixStream::connect(&socket_path).await?;
+        let (read_half, mut write_half) = stream.into_split();
+        let mut lines = tokio::io::BufReader::new(read_half).lines();
+        mcp_initialize(&mut lines, &mut write_half).await?;
+
+        let resp = mcp_tools_call(
+            &mut lines,
+            &mut write_half,
+            2,
+            EXECVE_GATE_TOOL_DECIDE,
+            serde_json::json!({
+                "token": token,
+                "argv": ["echo", "ok"],
+            }),
+        )
+        .await?;
+        let payload = mcp_payload(&resp)?;
+        assert_eq!(payload["decision"], "escalate");
+        assert!(payload["approval_id"].as_str().is_some());
 
         shutdown_execve_gate(gate).await;
         Ok(())

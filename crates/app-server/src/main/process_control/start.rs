@@ -559,6 +559,72 @@ mod process_start_tests {
     }
 
     #[tokio::test]
+    async fn process_start_unmatched_execpolicy_requests_approval_when_mode_allows()
+    -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(repo_dir.join(".omne_data/spec")).await?;
+        tokio::fs::write(
+            repo_dir.join(".omne_data/spec/modes.yaml"),
+            r#"
+version: 1
+modes:
+  mode-x:
+    description: "mode x"
+    permissions:
+      command:
+        decision: allow
+"#,
+        )
+        .await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        handle_thread_configure(
+            &server,
+            ThreadConfigureParams {
+                thread_id,
+                approval_policy: Some(omne_protocol::ApprovalPolicy::Manual),
+                sandbox_policy: None,
+                sandbox_writable_roots: None,
+                sandbox_network_access: None,
+                mode: Some("mode-x".to_string()),
+                role: None,
+                model: None,
+                thinking: None,
+                show_thinking: None,
+                openai_base_url: None,
+                allowed_tools: None,
+                execpolicy_rules: None,
+            },
+        )
+        .await?;
+
+        let result = handle_process_start(
+            &server,
+            ProcessStartParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                argv: vec!["echo".to_string(), "ok".to_string()],
+                cwd: None,
+                timeout_ms: None,
+            },
+        )
+        .await?;
+
+        assert_eq!(result["needs_approval"].as_bool(), Some(true));
+        assert_eq!(result["thread_id"].as_str(), Some(&thread_id.to_string()));
+        assert!(result["approval_id"].as_str().is_some());
+        assert!(server.processes.lock().await.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn process_start_allows_network_commands_when_network_access_is_allowed()
     -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
