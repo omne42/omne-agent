@@ -247,26 +247,25 @@ async fn resolve_or_persist_thread_system_prompt_snapshot(
         )
     };
 
-    let built = build_system_prompt_from_sources(thread_cwd).await;
     match (existing_sha256, existing_text) {
-        (Some(saved_sha256), saved_text) => {
+        (Some(saved_sha256), Some(saved_text)) => {
+            if system_prompt_sha256(&saved_text) != saved_sha256 {
+                anyhow::bail!("thread system prompt snapshot is corrupted (hash mismatch)");
+            }
+            Ok(saved_text)
+        }
+        (Some(saved_sha256), None) => {
+            let built = build_system_prompt_from_sources(thread_cwd).await;
             if saved_sha256 != built.sha256 {
                 anyhow::bail!(
-                    "thread system prompt is immutable: expected sha256={} current sha256={}",
-                    saved_sha256,
-                    built.sha256
+                    "thread system prompt snapshot text is missing and current sources no longer match sha256={}",
+                    saved_sha256
                 );
             }
-            if let Some(saved_text) = saved_text {
-                if system_prompt_sha256(&saved_text) != saved_sha256 {
-                    anyhow::bail!("thread system prompt snapshot is corrupted (hash mismatch)");
-                }
-                Ok(saved_text)
-            } else {
-                Ok(built.text)
-            }
+            Ok(built.text)
         }
         (None, _) => {
+            let built = build_system_prompt_from_sources(thread_cwd).await;
             thread_rt
                 .append_event(ThreadEventKind::ThreadSystemPromptSnapshot {
                     prompt_sha256: built.sha256,

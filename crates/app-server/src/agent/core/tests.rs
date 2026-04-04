@@ -357,7 +357,7 @@ mod system_prompt_snapshot_tests {
     }
 
     #[tokio::test]
-    async fn rejects_prompt_change_after_snapshot_persisted() -> anyhow::Result<()> {
+    async fn reuses_persisted_snapshot_after_project_instructions_change() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
@@ -371,17 +371,13 @@ mod system_prompt_snapshot_tests {
         let thread_rt = server.get_or_load_thread(thread_id).await?;
         let thread_cwd = repo_dir.display().to_string();
 
-        resolve_or_persist_thread_system_prompt_snapshot(&thread_rt, Some(&thread_cwd)).await?;
+        let first =
+            resolve_or_persist_thread_system_prompt_snapshot(&thread_rt, Some(&thread_cwd)).await?;
         tokio::fs::write(&agents_path, "# project prompt B\n").await?;
 
-        let err = resolve_or_persist_thread_system_prompt_snapshot(&thread_rt, Some(&thread_cwd))
-            .await
-            .expect_err("snapshot mismatch should fail");
-        assert!(
-            err.to_string()
-                .contains("thread system prompt is immutable"),
-            "unexpected error: {err:#}"
-        );
+        let reused =
+            resolve_or_persist_thread_system_prompt_snapshot(&thread_rt, Some(&thread_cwd)).await?;
+        assert_eq!(reused, first);
         Ok(())
     }
 }
