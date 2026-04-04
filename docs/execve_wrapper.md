@@ -64,7 +64,7 @@
 - **execve-wrapper**：一个小二进制；接收 `cwd/argv/pid/...`，向决策服务请求裁决后决定放行/拒绝。
 - **execve gate（decision service）**：本地服务端（v0.2.x 实现为 MCP server，transport=unix socket）。
   - 负责运行 `sandbox_network_access` 与 `execpolicy + approvals` 链路并返回 `run/deny/escalate`。
-  - 为避免事件爆炸，execpolicy 的“无匹配”默认视为 `allow`（只有显式匹配的 `prompt/prompt_strict/forbidden` 才会触发审批/拒绝）。
+  - execpolicy 的“无匹配”默认按 `process/start` 同口径处理：进入 `prompt` fallback，而不是静默 `allow`，避免 `bash -lc` 这类二次解释入口绕过顶层审批语义。
 
 ### 2.2 线程/turn 绑定（避免“哪个 thread 在执行”丢失）
 

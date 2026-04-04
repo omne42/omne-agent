@@ -218,6 +218,11 @@
 
 ### Fixed
 - docs：`docs/v0.2.0_parity.md` 更新 Transformers 状态，标记 ditto-llm 接入已落地。
+- `omne-core`：thread `cwd` 现在会以规范化绝对路径持久化，避免相对路径 thread 在重启/恢复后重新解释到错误目录。
+- `omne-app-server`：managed subagent worktree 清理现在固定锚定 `omne_root/tmp/subagents`，不再从 `server.cwd/.omne_data` 反推路径边界。
+- `omne-app-server`：execve gate 对未命中 execpolicy 的命令现在与 `process/start` 保持同一 `prompt` fallback，避免 `bash -lc` 比顶层启动更宽松。
+- `omne-app-server`：unix daemon 连接只会收到与本连接已关联 thread 匹配的通知；已有 thread 的 system prompt snapshot 优先复用落盘文本，不再因为后续修改 `AGENTS.md`/用户指令文件而失效；`thread/state` / `thread/usage` 也不再持有主锁跨 `.await`。
+- `omne-app-server`：MCP 请求失败后会失效对应缓存连接并向关联后台进程发送 kill，避免坏连接长期复用把后续请求持续拖死。
 - docs(research)：修正 `docs/research/claude-code-router.md` 中对 CCR 文档的引用路径，指向 `example/claude-code-router/...` 快照目录。
 - `omne-agent`：修复与本地 path 依赖（`mcp-kit`/`ditto-llm`/`safe-fs-tools`）的 API 兼容问题（包名映射、MCP config accessor、OpenAI raw request 字段、`Notification.params` 可选值处理），恢复 `cargo check/clippy/test` 全绿。
 - `omne-app-server`：修复 OpenAI-compatible streaming 在部分 provider（如 LiteLLM+Gemini）返回空 delta 时 `omne ask` 无输出/不落盘 `assistant_message` 的问题；现自动 fallback 到 non-streaming `generate`，确保输出链路与 history 复用可用。
