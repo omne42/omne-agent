@@ -2,14 +2,7 @@ use std::path::Path;
 
 const DEFAULT_IGNORED_DIRS: &[&str] = &[".git", ".omne", "target", "node_modules", "example"];
 
-pub fn is_secret_rel_path(rel_path: &Path) -> bool {
-    rel_path.file_name() == Some(std::ffi::OsStr::new(".env"))
-}
-
-pub fn is_read_blocked_rel_path(rel_path: &Path) -> bool {
-    let Some(file_name) = rel_path.file_name().and_then(|name| name.to_str()) else {
-        return false;
-    };
+fn is_blocked_env_style_name(file_name: &str) -> bool {
     let file_name = file_name.to_ascii_lowercase();
     if !file_name.starts_with(".env") {
         return false;
@@ -25,6 +18,22 @@ pub fn is_read_blocked_rel_path(rel_path: &Path) -> bool {
     }
 
     !(file_name.contains("example") || file_name.contains("template"))
+}
+
+pub fn is_secret_rel_path(rel_path: &Path) -> bool {
+    rel_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(is_blocked_env_style_name)
+        .unwrap_or(false)
+}
+
+pub fn is_read_blocked_rel_path(rel_path: &Path) -> bool {
+    rel_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(is_blocked_env_style_name)
+        .unwrap_or(false)
 }
 
 pub fn should_walk_entry(entry: &walkdir::DirEntry) -> bool {
@@ -67,8 +76,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn secret_path_matches_env_file() {
+    fn secret_path_matches_env_style_sensitive_files() {
         assert!(is_secret_rel_path(Path::new(".env")));
+        assert!(is_secret_rel_path(Path::new(".env.local")));
+        assert!(is_secret_rel_path(Path::new(".env.production")));
+        assert!(!is_secret_rel_path(Path::new(".env.example")));
+        assert!(!is_secret_rel_path(Path::new(".env.template")));
         assert!(!is_secret_rel_path(Path::new("src/main.rs")));
     }
 

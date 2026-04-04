@@ -58,7 +58,14 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
         return Ok(result);
     }
 
-    let rel_path = omne_core::modes::relative_path_under_root(&thread_root, Path::new(&params.path));
+    let requested_target = preview_sandbox_write_target(
+        &thread_root,
+        sandbox_policy,
+        &sandbox_writable_roots,
+        Path::new(&params.path),
+    )
+    .await?;
+    let rel_path = Ok::<PathBuf, anyhow::Error>(requested_target.rel_path.clone());
     if let Ok(rel) = rel_path.as_ref()
         && rel_path_is_secret(rel)
     {
@@ -69,7 +76,7 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
             params.turn_id,
             "file/edit",
             &approval_params,
-            "refusing to edit secrets file (.env)".to_string(),
+            "refusing to edit .env-style secrets file".to_string(),
             result.clone(),
         )
         .await?;
@@ -133,15 +140,15 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
         )
         .await?;
 
-        let resolved_rel = canonical_rel_path_for_write(&thread_root, &path).await?;
-        if rel_path_is_secret(&resolved_rel) {
+        let target = resolve_sandbox_write_target(&thread_root, &sandbox_writable_roots, &path).await?;
+        if rel_path_is_secret(&target.rel_path) {
             let result = file_denied_response(tool_id, None)?;
             return Err(tool_denied(
-                "refusing to edit secrets file (.env)".to_string(),
+                "refusing to edit .env-style secrets file".to_string(),
                 result,
             ));
         }
-        let base_decision = mode.permissions.edit.decision_for_path(&resolved_rel);
+        let base_decision = mode.permissions.edit.decision_for_path(&target.rel_path);
         let mode_decision = resolve_mode_decision_audit(&mode, "file/edit", base_decision);
         if mode_decision.decision == omne_core::modes::Decision::Deny {
             let result = file_mode_denied_response(tool_id, &mode_name, mode_decision)?;
@@ -151,8 +158,8 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
             ));
         }
 
-        let root_for_runtime = thread_root.clone();
-        let path_for_runtime = resolved_rel;
+        let root_for_runtime = target.root.clone();
+        let path_for_runtime = target.rel_path;
         let edit_result = tokio::task::spawn_blocking(move || {
             omne_fs_runtime::edit_replace_workspace(
                 "workspace".to_string(),
@@ -272,7 +279,14 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
         return Ok(result);
     }
 
-    let rel_path = omne_core::modes::relative_path_under_root(&thread_root, Path::new(&params.path));
+    let requested_target = preview_sandbox_write_target(
+        &thread_root,
+        sandbox_policy,
+        &sandbox_writable_roots,
+        Path::new(&params.path),
+    )
+    .await?;
+    let rel_path = Ok::<PathBuf, anyhow::Error>(requested_target.rel_path.clone());
     if let Ok(rel) = rel_path.as_ref()
         && rel_path_is_secret(rel)
     {
@@ -283,7 +297,7 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
             params.turn_id,
             "file/delete",
             &approval_params,
-            "refusing to delete secrets file (.env)".to_string(),
+            "refusing to delete .env-style secrets file".to_string(),
             result.clone(),
         )
         .await?;
@@ -339,15 +353,15 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
             anyhow::bail!("refusing to delete thread root: {}", path.display());
         }
 
-        let resolved_rel = canonical_rel_path_for_write(&thread_root, &path).await?;
-        if rel_path_is_secret(&resolved_rel) {
+        let target = resolve_sandbox_write_target(&thread_root, &sandbox_writable_roots, &path).await?;
+        if rel_path_is_secret(&target.rel_path) {
             let result = file_denied_response(tool_id, None)?;
             return Err(tool_denied(
-                "refusing to delete secrets file (.env)".to_string(),
+                "refusing to delete .env-style secrets file".to_string(),
                 result,
             ));
         }
-        let base_decision = mode.permissions.edit.decision_for_path(&resolved_rel);
+        let base_decision = mode.permissions.edit.decision_for_path(&target.rel_path);
         let mode_decision = resolve_mode_decision_audit(&mode, "file/delete", base_decision);
         if mode_decision.decision == omne_core::modes::Decision::Deny {
             let result = file_mode_denied_response(tool_id, &mode_name, mode_decision)?;
@@ -357,8 +371,8 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
             ));
         }
 
-        let root_for_runtime = thread_root.clone();
-        let path_for_runtime = resolved_rel;
+        let root_for_runtime = target.root.clone();
+        let path_for_runtime = target.rel_path;
         let delete_result = tokio::task::spawn_blocking(move || {
             omne_fs_runtime::delete_path_workspace(
                 "workspace".to_string(),

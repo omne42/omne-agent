@@ -330,10 +330,27 @@ async fn handle_thread_start(
     server: &Server,
     params: ThreadStartParams,
 ) -> anyhow::Result<omne_app_server_protocol::ThreadStartResponse> {
-    let cwd = params
+    let requested_cwd = params
         .cwd
-        .map(PathBuf::from)
+        .as_deref()
+        .map(Path::new)
+        .map(|cwd| {
+            if cwd.is_absolute() {
+                cwd.to_path_buf()
+            } else {
+                server.cwd.join(cwd)
+            }
+        })
         .unwrap_or_else(|| server.cwd.clone());
+    let cwd = tokio::fs::canonicalize(&requested_cwd)
+        .await
+        .with_context(|| format!("canonicalize thread cwd {}", requested_cwd.display()))?;
+    let metadata = tokio::fs::metadata(&cwd)
+        .await
+        .with_context(|| format!("stat thread cwd {}", cwd.display()))?;
+    if !metadata.is_dir() {
+        anyhow::bail!("thread cwd is not a directory: {}", cwd.display());
+    }
     let handle = server.thread_store.create_thread(cwd).await?;
     let thread_id = handle.thread_id();
     let log_path = handle.log_path().display().to_string();
