@@ -48,7 +48,14 @@ async fn handle_file_write(server: &Server, params: FileWriteParams) -> anyhow::
         return Ok(result);
     }
 
-    let rel_path = omne_core::modes::relative_path_under_root(&thread_root, Path::new(&params.path));
+    let requested_target = preview_sandbox_write_target(
+        &thread_root,
+        sandbox_policy,
+        &sandbox_writable_roots,
+        Path::new(&params.path),
+    )
+    .await?;
+    let rel_path = Ok::<PathBuf, anyhow::Error>(requested_target.rel_path.clone());
     if let Ok(rel) = rel_path.as_ref()
         && rel_path_is_secret(rel)
     {
@@ -59,7 +66,7 @@ async fn handle_file_write(server: &Server, params: FileWriteParams) -> anyhow::
             params.turn_id,
             "file/write",
             &approval_params,
-            "refusing to write secrets file (.env)".to_string(),
+            "refusing to write .env-style secrets file".to_string(),
             result.clone(),
         )
         .await?;
@@ -111,15 +118,15 @@ async fn handle_file_write(server: &Server, params: FileWriteParams) -> anyhow::
         )
         .await?;
 
-        let resolved_rel = canonical_rel_path_for_write(&thread_root, &path).await?;
-        if rel_path_is_secret(&resolved_rel) {
+        let target = resolve_sandbox_write_target(&thread_root, &sandbox_writable_roots, &path).await?;
+        if rel_path_is_secret(&target.rel_path) {
             let result = file_denied_response(tool_id, None)?;
             return Err(tool_denied(
-                "refusing to write secrets file (.env)".to_string(),
+                "refusing to write .env-style secrets file".to_string(),
                 result,
             ));
         }
-        let base_decision = mode.permissions.edit.decision_for_path(&resolved_rel);
+        let base_decision = mode.permissions.edit.decision_for_path(&target.rel_path);
         let mode_decision = resolve_mode_decision_audit(&mode, "file/write", base_decision);
         if mode_decision.decision == omne_core::modes::Decision::Deny {
             let result = file_mode_denied_response(tool_id, &mode_name, mode_decision)?;
@@ -129,8 +136,8 @@ async fn handle_file_write(server: &Server, params: FileWriteParams) -> anyhow::
             ));
         }
 
-        let root_for_runtime = thread_root.clone();
-        let path_for_runtime = resolved_rel;
+        let root_for_runtime = target.root.clone();
+        let path_for_runtime = target.rel_path;
         let write_result = tokio::task::spawn_blocking(move || {
             omne_fs_runtime::write_text_workspace(
                 "workspace".to_string(),
@@ -247,7 +254,14 @@ async fn handle_file_patch(server: &Server, params: FilePatchParams) -> anyhow::
         return Ok(result);
     }
 
-    let rel_path = omne_core::modes::relative_path_under_root(&thread_root, Path::new(&params.path));
+    let requested_target = preview_sandbox_write_target(
+        &thread_root,
+        sandbox_policy,
+        &sandbox_writable_roots,
+        Path::new(&params.path),
+    )
+    .await?;
+    let rel_path = Ok::<PathBuf, anyhow::Error>(requested_target.rel_path.clone());
     if let Ok(rel) = rel_path.as_ref()
         && rel_path_is_secret(rel)
     {
@@ -258,7 +272,7 @@ async fn handle_file_patch(server: &Server, params: FilePatchParams) -> anyhow::
             params.turn_id,
             "file/patch",
             &approval_params,
-            "refusing to patch secrets file (.env)".to_string(),
+            "refusing to patch .env-style secrets file".to_string(),
             result.clone(),
         )
         .await?;
@@ -314,15 +328,15 @@ async fn handle_file_patch(server: &Server, params: FilePatchParams) -> anyhow::
         )
         .await?;
 
-        let resolved_rel = canonical_rel_path_for_write(&thread_root, &path).await?;
-        if rel_path_is_secret(&resolved_rel) {
+        let target = resolve_sandbox_write_target(&thread_root, &sandbox_writable_roots, &path).await?;
+        if rel_path_is_secret(&target.rel_path) {
             let result = file_denied_response(tool_id, None)?;
             return Err(tool_denied(
-                "refusing to patch secrets file (.env)".to_string(),
+                "refusing to patch .env-style secrets file".to_string(),
                 result,
             ));
         }
-        let base_decision = mode.permissions.edit.decision_for_path(&resolved_rel);
+        let base_decision = mode.permissions.edit.decision_for_path(&target.rel_path);
         let mode_decision = resolve_mode_decision_audit(&mode, "file/patch", base_decision);
         if mode_decision.decision == omne_core::modes::Decision::Deny {
             let result = file_mode_denied_response(tool_id, &mode_name, mode_decision)?;
@@ -332,8 +346,8 @@ async fn handle_file_patch(server: &Server, params: FilePatchParams) -> anyhow::
             ));
         }
 
-        let root_for_runtime = thread_root.clone();
-        let path_for_runtime = resolved_rel;
+        let root_for_runtime = target.root.clone();
+        let path_for_runtime = target.rel_path;
         let patch_result = tokio::task::spawn_blocking(move || {
             omne_fs_runtime::patch_text_workspace(
                 "workspace".to_string(),

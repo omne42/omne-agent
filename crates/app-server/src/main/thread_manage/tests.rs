@@ -958,6 +958,48 @@ modes:
     }
 
     #[tokio::test]
+    async fn thread_start_canonicalizes_noncanonical_cwd_before_persisting() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let noncanonical = repo_dir
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("missing repo parent"))?
+            .join(".")
+            .join("repo")
+            .join("..")
+            .join("repo");
+
+        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let response = handle_thread_request(
+            &server,
+            serde_json::json!(1),
+            "thread/start",
+            serde_json::json!({ "cwd": noncanonical.display().to_string() }),
+        )
+        .await;
+        assert!(response.error.is_none());
+        let result = response
+            .result
+            .ok_or_else(|| anyhow::anyhow!("missing thread/start result"))?;
+        let result = serde_json::from_value::<omne_app_server_protocol::ThreadStartResponse>(result)?;
+
+        let state = handle_thread_state(
+            &server,
+            ThreadStateParams {
+                thread_id: result.thread_id,
+            },
+        )
+        .await?;
+        assert_eq!(
+            state.cwd,
+            tokio::fs::canonicalize(&repo_dir).await?.display().to_string()
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn thread_fork_skips_active_turn_approval_request_and_decision() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");

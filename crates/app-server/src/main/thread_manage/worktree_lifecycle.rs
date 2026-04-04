@@ -6,10 +6,16 @@ fn managed_subagent_worktree_root(server: &Server) -> std::path::PathBuf {
         .join("subagents")
 }
 
-fn managed_subagent_worktree_path(server: &Server, cwd: Option<&str>) -> Option<std::path::PathBuf> {
+async fn managed_subagent_worktree_path(
+    server: &Server,
+    cwd: Option<&str>,
+) -> Option<std::path::PathBuf> {
     let cwd = cwd.map(str::trim).filter(|value| !value.is_empty())?;
-    let path = std::path::PathBuf::from(cwd);
-    if !path.starts_with(managed_subagent_worktree_root(server)) {
+    let path = tokio::fs::canonicalize(cwd).await.ok()?;
+    let root = tokio::fs::canonicalize(managed_subagent_worktree_root(server))
+        .await
+        .ok()?;
+    if !path.starts_with(root) {
         return None;
     }
     Some(path)
@@ -21,7 +27,7 @@ async fn cleanup_managed_subagent_worktree(
     cwd: Option<&str>,
     lifecycle: &'static str,
 ) {
-    let Some(path) = managed_subagent_worktree_path(server, cwd) else {
+    let Some(path) = managed_subagent_worktree_path(server, cwd).await else {
         return;
     };
     let worktree = path.display().to_string();

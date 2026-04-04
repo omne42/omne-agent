@@ -146,6 +146,42 @@ mod fs_file_mode_override_audit_tests {
         Ok((tmp, server, thread_id))
     }
 
+    async fn setup_thread_with_extra_writable_root(
+    ) -> anyhow::Result<(tempfile::TempDir, std::path::PathBuf, std::path::PathBuf, Server, ThreadId)>
+    {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        let extra_root = tmp.path().join("shared");
+        tokio::fs::create_dir_all(repo_dir.join("src")).await?;
+        tokio::fs::create_dir_all(&extra_root).await?;
+        tokio::fs::write(repo_dir.join("src/lib.rs"), "needle\n").await?;
+
+        let server = build_test_server_shared(repo_dir.join(".omne_data"));
+        let thread_id = create_test_thread_shared(&server, repo_dir.clone()).await?;
+
+        handle_thread_configure(
+            &server,
+            ThreadConfigureParams {
+                thread_id,
+                approval_policy: None,
+                sandbox_policy: None,
+                sandbox_writable_roots: Some(vec![extra_root.display().to_string()]),
+                sandbox_network_access: None,
+                mode: None,
+                role: None,
+                model: None,
+                thinking: None,
+                show_thinking: None,
+                openai_base_url: None,
+                allowed_tools: None,
+                execpolicy_rules: None,
+            },
+        )
+        .await?;
+
+        Ok((tmp, repo_dir, extra_root, server, thread_id))
+    }
+
     async fn setup_thread_with_tool_override(
         mode_name: &str,
         tool: &str,
@@ -549,6 +585,76 @@ modes:
         assert!(result["denied"].as_bool().unwrap_or(false));
         assert_eq!(result["sandbox_policy"].as_str(), Some("read_only"));
         assert_eq!(result["error_code"].as_str(), Some("sandbox_policy_denied"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn file_write_supports_absolute_extra_writable_root() -> anyhow::Result<()> {
+        let (_tmp, _repo_dir, extra_root, server, thread_id) =
+            setup_thread_with_extra_writable_root().await?;
+        let target = extra_root.join("notes.txt");
+
+        let result = handle_file_write(
+            &server,
+            FileWriteParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                path: target.display().to_string(),
+                text: "shared\n".to_string(),
+                create_parent_dirs: Some(true),
+            },
+        )
+        .await?;
+
+        assert_eq!(result["resolved_path"].as_str(), Some(target.display().to_string().as_str()));
+        assert_eq!(tokio::fs::read_to_string(&target).await?, "shared\n");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn fs_mkdir_supports_absolute_extra_writable_root() -> anyhow::Result<()> {
+        let (_tmp, _repo_dir, extra_root, server, thread_id) =
+            setup_thread_with_extra_writable_root().await?;
+        let target = extra_root.join("nested").join("dir");
+
+        let result = handle_fs_mkdir(
+            &server,
+            FsMkdirParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                path: target.display().to_string(),
+                recursive: true,
+            },
+        )
+        .await?;
+
+        assert_eq!(result["resolved_path"].as_str(), Some(target.display().to_string().as_str()));
+        assert!(tokio::fs::metadata(&target).await?.is_dir());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn file_write_denies_env_style_secret_path_before_runtime() -> anyhow::Result<()> {
+        let (_tmp, repo_dir, server, thread_id) = setup_thread_default_allow().await?;
+        let secret = repo_dir.join(".env.local");
+
+        let result = handle_file_write(
+            &server,
+            FileWriteParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                path: ".env.local".to_string(),
+                text: "SECRET=1\n".to_string(),
+                create_parent_dirs: Some(true),
+            },
+        )
+        .await?;
+
+        assert!(result["denied"].as_bool().unwrap_or(false));
+        assert!(!secret.exists());
         Ok(())
     }
 }

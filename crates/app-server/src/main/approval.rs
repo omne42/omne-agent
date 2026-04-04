@@ -1478,7 +1478,42 @@ fn tool_denied(error: impl Into<String>, result: Value) -> anyhow::Error {
     anyhow::Error::new(ToolDenied::new(error, result))
 }
 
-async fn canonical_rel_path_for_write(thread_root: &Path, path: &Path) -> anyhow::Result<PathBuf> {
+struct SandboxWriteTarget {
+    root: PathBuf,
+    resolved_path: PathBuf,
+    rel_path: PathBuf,
+}
+
+async fn select_sandbox_write_root(
+    thread_root: &Path,
+    sandbox_writable_roots: &[String],
+    path: &Path,
+) -> anyhow::Result<PathBuf> {
+    let mut allowed_roots = Vec::with_capacity(1 + sandbox_writable_roots.len());
+    allowed_roots.push(
+        tokio::fs::canonicalize(thread_root)
+            .await
+            .with_context(|| format!("canonicalize {}", thread_root.display()))?,
+    );
+    for root in sandbox_writable_roots {
+        let canon = tokio::fs::canonicalize(root)
+            .await
+            .with_context(|| format!("canonicalize {}", root))?;
+        allowed_roots.push(canon);
+    }
+
+    allowed_roots
+        .into_iter()
+        .filter(|root| path.starts_with(root))
+        .max_by_key(|root| root.components().count())
+        .ok_or_else(|| anyhow::anyhow!("path escapes roots: {}", path.display()))
+}
+
+async fn resolve_sandbox_write_target(
+    thread_root: &Path,
+    sandbox_writable_roots: &[String],
+    path: &Path,
+) -> anyhow::Result<SandboxWriteTarget> {
     let Some(parent) = path.parent() else {
         anyhow::bail!("path has no parent: {}", path.display());
     };
@@ -1488,5 +1523,42 @@ async fn canonical_rel_path_for_write(thread_root: &Path, path: &Path) -> anyhow
     let canon_parent = tokio::fs::canonicalize(parent)
         .await
         .with_context(|| format!("canonicalize {}", parent.display()))?;
-    omne_core::modes::relative_path_under_root(thread_root, &canon_parent.join(file_name))
+    let resolved_path = canon_parent.join(file_name);
+    let root = select_sandbox_write_root(thread_root, sandbox_writable_roots, &resolved_path).await?;
+    let rel_path = resolved_path
+        .strip_prefix(&root)
+        .with_context(|| {
+            format!(
+                "strip {} from {}",
+                root.display(),
+                resolved_path.display()
+            )
+        })?
+        .to_path_buf();
+
+    Ok(SandboxWriteTarget {
+        root,
+        resolved_path,
+        rel_path,
+    })
+}
+
+async fn preview_sandbox_write_target(
+    thread_root: &Path,
+    sandbox_policy: policy_meta::WriteScope,
+    sandbox_writable_roots: &[String],
+    input: &Path,
+) -> anyhow::Result<SandboxWriteTarget> {
+    let preview_path = omne_core::preview_file_for_sandbox_write(
+        thread_root,
+        sandbox_policy,
+        sandbox_writable_roots,
+        input,
+    )
+    .await?;
+    resolve_sandbox_write_target(thread_root, sandbox_writable_roots, &preview_path).await
+}
+
+async fn canonical_rel_path_for_write(thread_root: &Path, path: &Path) -> anyhow::Result<PathBuf> {
+    Ok(resolve_sandbox_write_target(thread_root, &[], path).await?.rel_path)
 }

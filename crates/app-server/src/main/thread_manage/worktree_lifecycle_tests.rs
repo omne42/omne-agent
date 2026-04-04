@@ -256,4 +256,31 @@ mod thread_manage_worktree_lifecycle_tests {
         assert!(err.to_string().contains("active turn"));
         Ok(())
     }
+
+    #[tokio::test]
+    async fn managed_subagent_worktree_path_rejects_noncanonical_escape() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let managed_root = managed_subagent_worktree_root(&server);
+        tokio::fs::create_dir_all(managed_root.join("parent")).await?;
+
+        let escape = tmp.path().join("escape").join("repo");
+        tokio::fs::create_dir_all(&escape).await?;
+
+        let spoofed = managed_root
+            .join("parent")
+            .join("..")
+            .join("..")
+            .join("..")
+            .join("escape")
+            .join("repo");
+
+        let resolved = managed_subagent_worktree_path(
+            &server,
+            Some(spoofed.to_string_lossy().as_ref()),
+        )
+        .await;
+        assert!(resolved.is_none(), "noncanonical escape must be rejected");
+        Ok(())
+    }
 }

@@ -279,16 +279,16 @@ async fn resolve_attachment_path_and_size(
     max_bytes: u64,
 ) -> anyhow::Result<(PathBuf, u64)> {
     let rel = Path::new(path);
-    if rel.file_name() == Some(std::ffi::OsStr::new(".env")) {
-        anyhow::bail!("refusing to attach secrets file (.env)");
+    if omne_fs_policy::is_read_blocked_rel_path(rel) {
+        anyhow::bail!("refusing to attach secrets file (.env*)");
     }
 
     let resolved = omne_core::resolve_file(thread_root, rel, omne_core::PathAccess::Read, false)
         .await
         .with_context(|| format!("resolve attachment path: {}", rel.display()))?;
 
-    if resolved.file_name() == Some(std::ffi::OsStr::new(".env")) {
-        anyhow::bail!("refusing to attach secrets file (.env)");
+    if omne_fs_policy::is_read_blocked_rel_path(&resolved) {
+        anyhow::bail!("refusing to attach secrets file (.env*)");
     }
 
     let metadata = tokio::fs::metadata(&resolved)
@@ -305,6 +305,23 @@ async fn resolve_attachment_path_and_size(
     }
 
     Ok((resolved, size_bytes))
+}
+
+#[cfg(test)]
+mod attachment_security_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn resolve_attachment_path_and_size_denies_env_variants() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        tokio::fs::write(tmp.path().join(".env.local"), "SECRET=1\n").await?;
+
+        let err = resolve_attachment_path_and_size(tmp.path(), ".env.local", 1024)
+            .await
+            .expect_err("expected .env.local attachment to be denied");
+        assert!(err.to_string().contains(".env*"), "err={err}");
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone)]

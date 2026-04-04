@@ -159,6 +159,69 @@ pub async fn resolve_file_with_writable_roots(
     resolve_file(selected_root, &candidate, access, create_parent_dirs).await
 }
 
+async fn preview_file(root: &Path, input: &Path) -> anyhow::Result<PathBuf> {
+    let root = tokio::fs::canonicalize(root)
+        .await
+        .with_context(|| format!("canonicalize root {}", root.display()))?;
+
+    reject_parent_components(input)?;
+
+    let candidate = if input.is_absolute() {
+        input.to_path_buf()
+    } else {
+        root.join(input)
+    };
+    let candidate = strip_cur_dir_components(&candidate);
+    let preview = canonicalize_nonexistent_file_path(&candidate).await?;
+    if !preview.starts_with(&root) {
+        anyhow::bail!(
+            "path escapes root: root={}, path={}",
+            root.display(),
+            preview.display()
+        );
+    }
+
+    Ok(preview)
+}
+
+async fn preview_file_with_writable_roots(
+    root: &Path,
+    writable_roots: &[PathBuf],
+    input: &Path,
+) -> anyhow::Result<PathBuf> {
+    let root = tokio::fs::canonicalize(root)
+        .await
+        .with_context(|| format!("canonicalize root {}", root.display()))?;
+
+    let mut allowed_roots = Vec::with_capacity(1 + writable_roots.len());
+    allowed_roots.push(root);
+    for writable_root in writable_roots {
+        let canon = tokio::fs::canonicalize(writable_root)
+            .await
+            .with_context(|| format!("canonicalize root {}", writable_root.display()))?;
+        let meta = tokio::fs::metadata(&canon)
+            .await
+            .with_context(|| format!("stat {}", canon.display()))?;
+        if !meta.is_dir() {
+            anyhow::bail!("not a directory: {}", canon.display());
+        }
+        allowed_roots.push(canon);
+    }
+
+    reject_parent_components(input)?;
+    let input = strip_cur_dir_components(input);
+    let candidate = canonicalize_nonexistent_file_path(&input).await?;
+
+    allowed_roots
+        .iter()
+        .filter(|root| candidate.starts_with(root))
+        .max_by_key(|root| root.components().count())
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("path escapes roots: {}", candidate.display()))?;
+
+    Ok(candidate)
+}
+
 pub async fn resolve_dir_for_sandbox(
     thread_root: &Path,
     sandbox_policy: policy_meta::WriteScope,
@@ -198,6 +261,39 @@ pub async fn resolve_file_for_sandbox(
                 .await
             } else {
                 resolve_file(thread_root, input, access, create_parent_dirs).await
+            }
+        }
+    }
+}
+
+pub async fn preview_file_for_sandbox_write(
+    thread_root: &Path,
+    sandbox_policy: policy_meta::WriteScope,
+    sandbox_writable_roots: &[String],
+    input: &Path,
+) -> anyhow::Result<PathBuf> {
+    match sandbox_policy {
+        policy_meta::WriteScope::FullAccess => {
+            let base = tokio::fs::canonicalize(thread_root)
+                .await
+                .with_context(|| format!("canonicalize base {}", thread_root.display()))?;
+            reject_parent_components(input)?;
+            let candidate = if input.is_absolute() {
+                input.to_path_buf()
+            } else {
+                base.join(input)
+            };
+            canonicalize_nonexistent_file_path(&strip_cur_dir_components(&candidate)).await
+        }
+        _ => {
+            if !sandbox_writable_roots.is_empty() && input.is_absolute() {
+                let writable_roots = sandbox_writable_roots
+                    .iter()
+                    .map(PathBuf::from)
+                    .collect::<Vec<_>>();
+                preview_file_with_writable_roots(thread_root, &writable_roots, input).await
+            } else {
+                preview_file(thread_root, input).await
             }
         }
     }
