@@ -128,6 +128,7 @@ impl ThreadStore {
     pub async fn create_thread(&self, cwd: PathBuf) -> anyhow::Result<ThreadHandle> {
         let thread_id = ThreadId::new();
         let log_path = self.events_log_path(thread_id);
+        let cwd = normalize_thread_cwd(&cwd).await?;
 
         let mut handle = ThreadHandle::open_new(thread_id, log_path).await?;
         handle
@@ -219,6 +220,12 @@ impl ThreadStore {
         }
         Ok(Some(state))
     }
+}
+
+async fn normalize_thread_cwd(cwd: &Path) -> anyhow::Result<PathBuf> {
+    tokio::fs::canonicalize(cwd)
+        .await
+        .with_context(|| format!("canonicalize thread cwd {}", cwd.display()))
 }
 
 pub struct ThreadHandle {
@@ -330,6 +337,12 @@ fn apply_runtime_event_tracking(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    fn cwd_test_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     #[tokio::test]
     async fn append_redacts_sensitive_tokens() -> anyhow::Result<()> {
@@ -475,6 +488,39 @@ mod tests {
                 .is_some()
         );
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn create_thread_persists_canonical_absolute_cwd_for_relative_input() -> anyhow::Result<()>
+    {
+        let _guard = cwd_test_lock().lock().expect("cwd test lock poisoned");
+        let original_cwd = std::env::current_dir()?;
+
+        let dir = tempfile::tempdir()?;
+        let repo_dir = dir.path().join("repo");
+        let nested_dir = repo_dir.join("nested");
+        tokio::fs::create_dir_all(&nested_dir).await?;
+        std::env::set_current_dir(&repo_dir)?;
+
+        let result = async {
+            let store = ThreadStore::new(PmPaths::new(dir.path().join(".omne_data")));
+            let thread = store.create_thread(PathBuf::from("./nested/..")).await?;
+            Ok::<_, anyhow::Error>((thread.thread_id(), store))
+        }
+        .await;
+
+        std::env::set_current_dir(&original_cwd)?;
+
+        let (thread_id, store) = result?;
+        let state = store
+            .read_state(thread_id)
+            .await?
+            .expect("thread state should exist");
+        assert_eq!(
+            state.cwd.as_deref(),
+            Some(repo_dir.to_str().expect("utf-8 repo path"))
+        );
         Ok(())
     }
 }
