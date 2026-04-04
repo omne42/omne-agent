@@ -34,6 +34,7 @@ mod mcp_tests {
         server: &Server,
         thread_id: ThreadId,
         server_name: &str,
+        config_fingerprint: String,
     ) -> anyhow::Result<(ProcessId, mpsc::Receiver<ProcessCommand>)> {
         let (client_stream, peer_stream) = tokio::io::duplex(1024);
         drop(peer_stream);
@@ -66,6 +67,7 @@ mod mcp_tests {
             (thread_id, server_name.to_string()),
             Arc::new(McpConnection {
                 process_id,
+                config_fingerprint,
                 client: tokio::sync::Mutex::new(client),
             }),
         );
@@ -263,6 +265,128 @@ modes:
 
         assert_eq!(parsed.servers.len(), 1);
         assert_eq!(parsed.servers[0].name, "local");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn mcp_list_servers_filters_unsupported_transports() -> anyhow::Result<()> {
+        let _lock = MCP_TEST_MUTEX.lock().await;
+        let _guard = McpEnabledOverrideGuard::new(Some(true));
+
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+        tokio::fs::write(
+            repo_dir.join("mcp.json"),
+            r#"{
+  "version": 1,
+  "servers": {
+    "local": { "transport": "stdio", "argv": ["printf", "ok"] },
+    "remote": { "transport": "http", "url": "https://example.test/mcp" }
+  }
+}"#,
+        )
+        .await?;
+
+        let server = build_test_server_shared(repo_dir.join(".omne_data"));
+        let thread_id = create_test_thread_shared(&server, repo_dir.clone()).await?;
+
+        let result = handle_mcp_list_servers(
+            &server,
+            McpListServersParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+            },
+        )
+        .await?;
+        let parsed: omne_app_server_protocol::McpListServersResponse =
+            serde_json::from_value(result)?;
+
+        assert_eq!(parsed.servers.len(), 1);
+        assert_eq!(parsed.servers[0].name, "local");
+        assert_eq!(parsed.servers[0].transport, "stdio");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn get_or_start_mcp_connection_invalidates_cached_connection_when_config_changes(
+    ) -> anyhow::Result<()> {
+        let _lock = MCP_TEST_MUTEX.lock().await;
+        let _guard = McpEnabledOverrideGuard::new(Some(true));
+
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+        write_test_mcp_config(&repo_dir).await?;
+
+        let server = build_test_server_shared(repo_dir.join(".omne_data"));
+        let thread_id = create_test_thread_shared(&server, repo_dir.clone()).await?;
+        let thread_rt = server.get_or_load_thread(thread_id).await?;
+
+        let initial_cfg = load_mcp_config(&repo_dir).await?;
+        let initial_server_cfg = initial_cfg
+            .servers()
+            .get("local")
+            .expect("initial local server");
+        let (_process_id, mut cmd_rx) = insert_running_mcp_connection(
+            &server,
+            thread_id,
+            "local",
+            mcp_server_config_fingerprint(initial_server_cfg),
+        )
+        .await?;
+
+        tokio::fs::write(
+            repo_dir.join("mcp.json"),
+            r#"{ "version": 1, "servers": { "local": { "transport": "stdio", "argv": ["printf", "changed"] } } }"#,
+        )
+        .await?;
+        let changed_cfg = load_mcp_config(&repo_dir).await?;
+        let changed_server_cfg = changed_cfg
+            .servers()
+            .get("local")
+            .expect("changed local server");
+
+        let err = get_or_start_mcp_connection(
+            &server,
+            &thread_rt,
+            &repo_dir,
+            thread_id,
+            None,
+            "local",
+            changed_server_cfg,
+        )
+        .await
+        .expect_err("changed config should invalidate cache before reconnect");
+        assert!(
+            err.to_string().contains("mcp initialize failed")
+                || err.to_string().contains("mcp initialized notification failed")
+                || err.to_string().contains("mcp request failed"),
+            "err={err:#}"
+        );
+
+        let cmd = cmd_rx.recv().await.expect("old connection should be killed");
+        match cmd {
+            ProcessCommand::Kill { reason } => {
+                assert_eq!(reason.as_deref(), Some("mcp config changed"));
+            }
+            other => panic!("expected Kill command, got {other:?}"),
+        }
+
+        let cached = {
+            let manager = server.mcp.lock().await;
+            manager.connections.get(&(thread_id, "local".to_string())).cloned()
+        };
+        match cached {
+            Some(conn) => {
+                assert_ne!(
+                    conn.config_fingerprint,
+                    mcp_server_config_fingerprint(initial_server_cfg)
+                );
+            }
+            None => {}
+        }
         Ok(())
     }
 
