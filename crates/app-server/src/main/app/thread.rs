@@ -408,58 +408,124 @@ async fn handle_thread_state(
     params: ThreadStateParams,
 ) -> anyhow::Result<omne_app_server_protocol::ThreadStateResponse> {
     let rt = server.get_or_load_thread(params.thread_id).await?;
-    let handle = rt.handle.lock().await;
-    let state = handle.state();
-    let archived_at = state.archived_at.and_then(|ts| ts.format(&Rfc3339).ok());
-    let paused_at = state.paused_at.and_then(|ts| ts.format(&Rfc3339).ok());
+    let (
+        thread_id,
+        last_seq,
+        cwd,
+        system_prompt_sha256,
+        archived,
+        archived_at,
+        archived_reason,
+        paused,
+        paused_at,
+        paused_reason,
+        approval_policy,
+        sandbox_policy,
+        sandbox_writable_roots,
+        sandbox_network_access,
+        mode,
+        role,
+        model,
+        openai_base_url,
+        allowed_tools,
+        active_turn_id,
+        active_turn_interrupt_requested,
+        last_turn_id,
+        last_turn_status,
+        last_turn_reason,
+        total_tokens_used,
+        input_tokens_used,
+        output_tokens_used,
+        cache_input_tokens_used,
+        cache_creation_input_tokens_used,
+        system_prompt_text,
+    ) = {
+        let handle = rt.handle.lock().await;
+        let state = handle.state();
+        (
+            handle.thread_id(),
+            handle.last_seq().0,
+            state.cwd.clone(),
+            state.system_prompt_sha256.clone(),
+            state.archived,
+            state.archived_at.and_then(|ts| ts.format(&Rfc3339).ok()),
+            state.archived_reason.clone(),
+            state.paused,
+            state.paused_at.and_then(|ts| ts.format(&Rfc3339).ok()),
+            state.paused_reason.clone(),
+            state.approval_policy,
+            state.sandbox_policy,
+            state.sandbox_writable_roots.clone(),
+            state.sandbox_network_access,
+            state.mode.clone(),
+            state.role.clone(),
+            state.model.clone(),
+            state.openai_base_url.clone(),
+            state.allowed_tools.clone(),
+            state.active_turn_id,
+            state.active_turn_interrupt_requested,
+            state.last_turn_id,
+            state.last_turn_status,
+            state.last_turn_reason.clone(),
+            state.total_tokens_used,
+            state.input_tokens_used,
+            state.output_tokens_used,
+            state.cache_input_tokens_used,
+            state.cache_creation_input_tokens_used,
+            state.system_prompt_text.clone(),
+        )
+    };
     let (
         token_budget_limit,
         token_budget_remaining,
         token_budget_utilization,
         token_budget_exceeded,
         token_budget_warning_active,
-    ) = thread_token_budget_snapshot(
-        state.total_tokens_used,
-        token_budget_warning_threshold_ratio(),
-    );
+    ) = thread_token_budget_snapshot(total_tokens_used, token_budget_warning_threshold_ratio());
+    let state_for_estimate = omne_eventlog::ThreadState {
+        cwd: cwd.clone(),
+        system_prompt_text,
+        mode: mode.clone(),
+        ..Default::default()
+    };
     let current_context_tokens_estimate =
-        estimate_thread_context_tokens_from_state(server, handle.thread_id(), state).await;
+        estimate_thread_context_tokens_from_state(server, thread_id, &state_for_estimate).await;
     Ok(omne_app_server_protocol::ThreadStateResponse {
-        thread_id: handle.thread_id(),
-        cwd: state.cwd.clone(),
-        system_prompt_sha256: state.system_prompt_sha256.clone(),
-        archived: state.archived,
+        thread_id,
+        cwd,
+        system_prompt_sha256,
+        archived,
         archived_at,
-        archived_reason: state.archived_reason.clone(),
-        paused: state.paused,
+        archived_reason,
+        paused,
         paused_at,
-        paused_reason: state.paused_reason.clone(),
-        approval_policy: state.approval_policy,
-        sandbox_policy: state.sandbox_policy,
-        sandbox_writable_roots: state.sandbox_writable_roots.clone(),
-        sandbox_network_access: state.sandbox_network_access,
-        mode: state.mode.clone(),
-        role: state.role.clone(),
-        model: state.model.clone(),
-        openai_base_url: state.openai_base_url.clone(),
-        allowed_tools: state.allowed_tools.clone(),
-        last_seq: handle.last_seq().0,
-        active_turn_id: state.active_turn_id,
-        active_turn_interrupt_requested: state.active_turn_interrupt_requested,
-        last_turn_id: state.last_turn_id,
-        last_turn_status: state.last_turn_status,
-        last_turn_reason: state.last_turn_reason.clone(),
+        paused_reason,
+        approval_policy,
+        sandbox_policy,
+        sandbox_writable_roots,
+        sandbox_network_access,
+        mode,
+        role,
+        model,
+        openai_base_url,
+        allowed_tools,
+        last_seq,
+        active_turn_id,
+        active_turn_interrupt_requested,
+        last_turn_id,
+        last_turn_status,
+        last_turn_reason,
         token_budget_limit,
         token_budget_remaining,
         token_budget_utilization,
         token_budget_exceeded,
         token_budget_warning_active,
         current_context_tokens_estimate,
-        total_tokens_used: state.total_tokens_used,
-        input_tokens_used: state.input_tokens_used,
-        output_tokens_used: state.output_tokens_used,
-        cache_input_tokens_used: state.cache_input_tokens_used,
-        cache_creation_input_tokens_used: state.cache_creation_input_tokens_used,
+        total_tokens_used,
+        input_tokens_used,
+        output_tokens_used,
+        cache_input_tokens_used,
+        cache_creation_input_tokens_used,
     })
 }
 
@@ -468,20 +534,51 @@ async fn handle_thread_usage(
     params: ThreadUsageParams,
 ) -> anyhow::Result<omne_app_server_protocol::ThreadUsageResponse> {
     let rt = server.get_or_load_thread(params.thread_id).await?;
-    let handle = rt.handle.lock().await;
-    let state = handle.state();
+    let (
+        thread_id,
+        last_seq,
+        mode,
+        cwd,
+        system_prompt_text,
+        total_tokens_used,
+        input_tokens_used,
+        output_tokens_used,
+        cache_input_tokens_used,
+        cache_creation_input_tokens_used,
+    ) = {
+        let handle = rt.handle.lock().await;
+        let state = handle.state();
+        (
+            handle.thread_id(),
+            handle.last_seq().0,
+            state.mode.clone(),
+            state.cwd.clone(),
+            state.system_prompt_text.clone(),
+            state.total_tokens_used,
+            state.input_tokens_used,
+            state.output_tokens_used,
+            state.cache_input_tokens_used,
+            state.cache_creation_input_tokens_used,
+        )
+    };
     let token_budget_limit = configured_total_token_budget_limit();
+    let state_for_estimate = omne_eventlog::ThreadState {
+        cwd,
+        system_prompt_text,
+        mode,
+        ..Default::default()
+    };
     let current_context_tokens_estimate =
-        estimate_thread_context_tokens_from_state(server, handle.thread_id(), state).await;
+        estimate_thread_context_tokens_from_state(server, thread_id, &state_for_estimate).await;
     Ok(build_thread_usage_response(
-        handle.thread_id(),
-        handle.last_seq().0,
+        thread_id,
+        last_seq,
         current_context_tokens_estimate,
-        state.total_tokens_used,
-        state.input_tokens_used,
-        state.output_tokens_used,
-        state.cache_input_tokens_used,
-        state.cache_creation_input_tokens_used,
+        total_tokens_used,
+        input_tokens_used,
+        output_tokens_used,
+        cache_input_tokens_used,
+        cache_creation_input_tokens_used,
         token_budget_limit,
         token_budget_warning_threshold_ratio(),
     ))

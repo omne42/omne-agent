@@ -130,8 +130,17 @@ async fn serve_stdio(server: Arc<Server>) -> anyhow::Result<()> {
     tokio::task::spawn_local(spawn_notification_forwarder(
         server.notify_tx.subscribe(),
         out_tx.clone(),
+        #[cfg(unix)]
+        None,
     ));
-    run_request_loop(server.clone(), tokio::io::stdin(), out_tx).await?;
+    run_request_loop(
+        server.clone(),
+        tokio::io::stdin(),
+        out_tx,
+        #[cfg(unix)]
+        None,
+    )
+    .await?;
     shutdown_running_processes(&server).await;
     Ok(())
 }
@@ -140,6 +149,7 @@ async fn run_request_loop<R>(
     server: Arc<Server>,
     reader: R,
     out_tx: mpsc::UnboundedSender<String>,
+    #[cfg(unix)] notify_filter: Option<ConnectionNotificationFilter>,
 ) -> anyhow::Result<()>
 where
     R: tokio::io::AsyncRead + Unpin,
@@ -160,6 +170,11 @@ where
                 continue;
             }
         };
+
+        #[cfg(unix)]
+        if let Some(filter) = &notify_filter {
+            filter.register_request(&request).await;
+        }
 
         let id = request.id.clone();
         let response = match request.method.as_str() {
@@ -219,10 +234,17 @@ async fn spawn_stdio_writer(mut out_rx: mpsc::UnboundedReceiver<String>) {
 async fn spawn_notification_forwarder(
     mut notify_rx: broadcast::Receiver<String>,
     out_tx: mpsc::UnboundedSender<String>,
+    #[cfg(unix)] filter: Option<ConnectionNotificationFilter>,
 ) {
     loop {
         match notify_rx.recv().await {
             Ok(line) => {
+                #[cfg(unix)]
+                if let Some(filter) = &filter
+                    && !filter.matches_notification(&line).await
+                {
+                    continue;
+                }
                 if out_tx.send(line).is_err() {
                     break;
                 }
@@ -231,6 +253,41 @@ async fn spawn_notification_forwarder(
             Err(broadcast::error::RecvError::Lagged(_)) => continue,
         }
     }
+}
+
+#[cfg(unix)]
+#[derive(Clone, Default)]
+struct ConnectionNotificationFilter {
+    thread_ids: Arc<tokio::sync::RwLock<std::collections::HashSet<String>>>,
+}
+
+#[cfg(unix)]
+impl ConnectionNotificationFilter {
+    async fn register_request(&self, request: &JsonRpcRequest) {
+        if let Some(thread_id) = extract_thread_id(&request.params) {
+            self.thread_ids.write().await.insert(thread_id.to_string());
+        }
+    }
+
+    async fn matches_notification(&self, line: &str) -> bool {
+        let Some(thread_id) = serde_json::from_str::<serde_json::Value>(line)
+            .ok()
+            .and_then(|value| value.get("params").cloned())
+            .and_then(|params| extract_thread_id(&params).map(str::to_string))
+        else {
+            return false;
+        };
+        self.thread_ids.read().await.contains(&thread_id)
+    }
+}
+
+#[cfg(unix)]
+fn extract_thread_id(params: &serde_json::Value) -> Option<&str> {
+    params
+        .as_object()
+        .and_then(|object| object.get("thread_id"))
+        .and_then(serde_json::Value::as_str)
+        .filter(|thread_id| !thread_id.is_empty())
 }
 
 #[cfg(unix)]
@@ -291,17 +348,19 @@ async fn serve_unix_connection(
 ) -> anyhow::Result<()> {
     let (read_half, write_half) = stream.into_split();
     let (out_tx, out_rx) = mpsc::unbounded_channel::<String>();
+    let notify_filter = ConnectionNotificationFilter::default();
 
     let notify_task = tokio::task::spawn_local(spawn_notification_forwarder(
         server.notify_tx.subscribe(),
         out_tx.clone(),
+        Some(notify_filter.clone()),
     ));
 
     let writer_task = tokio::task::spawn_local(async move {
         write_lines_to_socket(write_half, out_rx).await;
     });
 
-    let result = run_request_loop(server, read_half, out_tx).await;
+    let result = run_request_loop(server, read_half, out_tx, Some(notify_filter)).await;
 
     notify_task.abort();
     writer_task.abort();
@@ -323,5 +382,159 @@ async fn write_lines_to_socket(
         if writer.flush().await.is_err() {
             break;
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod unix_socket_tests {
+    use super::*;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn unix_connection_does_not_forward_global_notifications_by_default()
+    -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let server = Arc::new(build_test_server_shared(tmp.path().join(".omne_data")));
+        let (client_stream, server_stream) = tokio::net::UnixStream::pair()?;
+        let local = tokio::task::LocalSet::new();
+
+        local
+            .run_until(async move {
+                let serve_task =
+                    tokio::task::spawn_local(serve_unix_connection(server.clone(), server_stream));
+                let (read_half, mut write_half) = client_stream.into_split();
+                let mut lines = BufReader::new(read_half).lines();
+
+                let initialize = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {},
+                });
+                write_half
+                    .write_all(format!("{initialize}\n").as_bytes())
+                    .await?;
+                let response = tokio::time::timeout(Duration::from_secs(1), lines.next_line())
+                    .await
+                    .context("timed out waiting for initialize response")??
+                    .ok_or_else(|| anyhow::anyhow!("missing initialize response"))?;
+                let response: serde_json::Value =
+                    serde_json::from_str(&response).context("parse initialize response")?;
+                assert_eq!(response["id"], serde_json::json!(1));
+                assert!(response.get("result").is_some());
+
+                let _ = server.notify_tx.send(
+                    serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "method": "thread/updated",
+                        "params": { "thread_id": "ignored" },
+                    })
+                    .to_string(),
+                );
+
+                let next = tokio::time::timeout(Duration::from_millis(250), lines.next_line()).await;
+                assert!(next.is_err(), "unexpected unsolicited notification");
+
+                drop(write_half);
+                serve_task.await??;
+                Ok::<(), anyhow::Error>(())
+            })
+            .await?;
+
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn unix_connection_forwards_only_registered_thread_notifications()
+    -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let server = Arc::new(build_test_server_shared(tmp.path().join(".omne_data")));
+        let handle = server.thread_store.create_thread(tmp.path().to_path_buf()).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let (client_stream, server_stream) = tokio::net::UnixStream::pair()?;
+        let local = tokio::task::LocalSet::new();
+
+        local
+            .run_until(async move {
+                let serve_task =
+                    tokio::task::spawn_local(serve_unix_connection(server.clone(), server_stream));
+                let (read_half, mut write_half) = client_stream.into_split();
+                let mut lines = BufReader::new(read_half).lines();
+
+                let initialize = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {},
+                });
+                write_half
+                    .write_all(format!("{initialize}\n").as_bytes())
+                    .await?;
+                lines
+                    .next_line()
+                    .await?
+                    .ok_or_else(|| anyhow::anyhow!("missing initialize response"))?;
+
+                let state_request = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "thread/state",
+                    "params": { "thread_id": thread_id },
+                });
+                write_half
+                    .write_all(format!("{state_request}\n").as_bytes())
+                    .await?;
+                let response = tokio::time::timeout(Duration::from_secs(1), lines.next_line())
+                    .await
+                    .context("timed out waiting for thread/state response")??
+                    .ok_or_else(|| anyhow::anyhow!("missing thread/state response"))?;
+                let response: serde_json::Value =
+                    serde_json::from_str(&response).context("parse thread/state response")?;
+                assert_eq!(response["id"], serde_json::json!(2));
+                assert!(response.get("result").is_some());
+
+                let _ = server.notify_tx.send(
+                    serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "method": "thread/event",
+                        "params": {
+                            "thread_id": thread_id,
+                            "seq": 1,
+                        },
+                    })
+                    .to_string(),
+                );
+                let forwarded = tokio::time::timeout(Duration::from_secs(1), lines.next_line())
+                    .await
+                    .context("timed out waiting for matching notification")??
+                    .ok_or_else(|| anyhow::anyhow!("missing matching notification"))?;
+                let forwarded: serde_json::Value =
+                    serde_json::from_str(&forwarded).context("parse forwarded notification")?;
+                assert_eq!(forwarded["method"], serde_json::json!("thread/event"));
+                assert_eq!(forwarded["params"]["thread_id"], serde_json::json!(thread_id));
+
+                let _ = server.notify_tx.send(
+                    serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "method": "thread/event",
+                        "params": {
+                            "thread_id": "other-thread",
+                            "seq": 2,
+                        },
+                    })
+                    .to_string(),
+                );
+                let next = tokio::time::timeout(Duration::from_millis(250), lines.next_line()).await;
+                assert!(next.is_err(), "unexpected unrelated notification");
+
+                drop(write_half);
+                serve_task.await??;
+                Ok::<(), anyhow::Error>(())
+            })
+            .await?;
+
+        Ok(())
     }
 }
