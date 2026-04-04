@@ -1,4 +1,5 @@
 struct ProcessActorArgs {
+    server: Server,
     thread_rt: Arc<ThreadRuntime>,
     process_id: ProcessId,
     child: tokio::process::Child,
@@ -11,6 +12,7 @@ struct ProcessActorArgs {
 
 async fn run_process_actor(args: ProcessActorArgs) {
     let ProcessActorArgs {
+        server,
         thread_rt,
         process_id,
         mut child,
@@ -20,6 +22,23 @@ async fn run_process_actor(args: ProcessActorArgs) {
         mut execve_gate,
         info,
     } = args;
+    const PROCESS_ENTRY_CLEANUP_DELAY: Duration = Duration::from_secs(1);
+
+    async fn finalize_process(
+        server: &Server,
+        process_id: ProcessId,
+        execve_gate: &mut Option<ExecveGateHandle>,
+    ) {
+        cleanup_execve_gate(execve_gate).await;
+        let _ = remove_mcp_connections_for_process(server, process_id).await;
+        let server = server.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(PROCESS_ENTRY_CLEANUP_DELAY).await;
+            let mut entries = server.processes.lock().await;
+            entries.remove(&process_id);
+        });
+    }
+
     fn try_send_interrupt(child: &tokio::process::Child) -> anyhow::Result<()> {
         #[cfg(unix)]
         {
@@ -54,7 +73,7 @@ async fn run_process_actor(args: ProcessActorArgs) {
     loop {
         tokio::select! {
             cmd = cmd_rx.recv() => {
-                let Some(cmd) = cmd else { /* sender dropped */ cleanup_execve_gate(&mut execve_gate).await; return; };
+                let Some(cmd) = cmd else { /* sender dropped */ finalize_process(&server, process_id, &mut execve_gate).await; return; };
                 match cmd {
                     ProcessCommand::Interrupt { reason } => {
                         if interrupt_reason.is_none() {
@@ -178,12 +197,12 @@ async fn run_process_actor(args: ProcessActorArgs) {
                         tracing::warn!(process_id = %process_id, error = %err, "failed to append AttentionMarkerCleared(test_failed) event");
                     }
                 }
-                cleanup_execve_gate(&mut execve_gate).await;
+                finalize_process(&server, process_id, &mut execve_gate).await;
                 return;
             }
             Ok(None) => {}
             Err(_) => {
-                cleanup_execve_gate(&mut execve_gate).await;
+                finalize_process(&server, process_id, &mut execve_gate).await;
                 return;
             }
         }

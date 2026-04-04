@@ -211,4 +211,49 @@ mod thread_manage_worktree_lifecycle_tests {
         assert!(broken_worktree.exists());
         Ok(())
     }
+
+    #[tokio::test]
+    async fn thread_delete_refuses_active_turn_without_force() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let mut handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        let turn_id = TurnId::new();
+        handle
+            .append(omne_protocol::ThreadEventKind::TurnStarted {
+                turn_id,
+                input: "delete me".to_string(),
+                context_refs: None,
+                attachments: None,
+                directives: None,
+                priority: omne_protocol::TurnPriority::Foreground,
+            })
+            .await?;
+        let rt = Arc::new(ThreadRuntime::new(handle, server.notify_tx.clone()));
+        {
+            let mut active = rt.active_turn.lock().await;
+            *active = Some(ActiveTurn {
+                turn_id,
+                cancel: tokio_util::sync::CancellationToken::new(),
+                interrupt_reason: None,
+            });
+        }
+        server.threads.lock().await.insert(thread_id, rt);
+
+        let err = handle_thread_delete(
+            &server,
+            ThreadDeleteParams {
+                thread_id,
+                force: false,
+            },
+        )
+        .await
+        .expect_err("active turn should require force=true");
+
+        assert!(err.to_string().contains("active turn"));
+        Ok(())
+    }
 }

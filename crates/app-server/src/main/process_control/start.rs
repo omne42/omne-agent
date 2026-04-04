@@ -399,6 +399,7 @@ async fn handle_process_start_inner(
         .insert(process_id, entry.clone());
 
     tokio::spawn(run_process_actor(ProcessActorArgs {
+        server: server.clone(),
         thread_rt,
         process_id,
         child,
@@ -984,6 +985,49 @@ mod process_start_tests {
         .expect_err("timeout_ms=0 should be rejected");
 
         assert!(err.to_string().contains("timeout_ms must be >= 1"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn process_start_evictions_exited_entries_after_grace_period() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let thread_id = create_test_thread_shared(&server, repo_dir).await?;
+
+        let result = handle_process_start(
+            &server,
+            ProcessStartParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                argv: vec!["echo".to_string(), "hi".to_string()],
+                cwd: None,
+                timeout_ms: None,
+            },
+        )
+        .await?;
+
+        let process_id: ProcessId = result["process_id"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing process_id"))?
+            .parse()?;
+        let _ = wait_for_process_exit(&server, process_id, Duration::from_secs(2)).await?;
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            let present = server.processes.lock().await.contains_key(&process_id);
+            if !present {
+                break;
+            }
+            if tokio::time::Instant::now() > deadline {
+                anyhow::bail!("process entry was not evicted in time");
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+
         Ok(())
     }
 
