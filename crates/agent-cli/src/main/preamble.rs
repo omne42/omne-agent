@@ -966,10 +966,20 @@ struct ThreadConfigureArgs {
     role: Option<String>,
     #[arg(long)]
     model: Option<String>,
+    #[arg(long, default_value_t = false, conflicts_with = "model")]
+    clear_model: bool,
     #[arg(long)]
     openai_base_url: Option<String>,
+    #[arg(long, default_value_t = false, conflicts_with = "openai_base_url")]
+    clear_openai_base_url: bool,
     #[arg(long)]
     thinking: Option<String>,
+    #[arg(long, default_value_t = false, conflicts_with = "thinking")]
+    clear_thinking: bool,
+    #[arg(long, conflicts_with = "clear_show_thinking")]
+    show_thinking: Option<bool>,
+    #[arg(long, default_value_t = false, conflicts_with = "show_thinking")]
+    clear_show_thinking: bool,
     #[arg(
         long = "allowed-tools",
         value_delimiter = ',',

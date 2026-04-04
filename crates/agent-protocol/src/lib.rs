@@ -601,16 +601,26 @@ pub enum ThreadEventKind {
         role: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         model: Option<String>,
+        #[serde(default, skip_serializing_if = "is_false")]
+        clear_model: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         thinking: Option<String>,
+        #[serde(default, skip_serializing_if = "is_false")]
+        clear_thinking: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         show_thinking: Option<bool>,
+        #[serde(default, skip_serializing_if = "is_false")]
+        clear_show_thinking: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         openai_base_url: Option<String>,
+        #[serde(default, skip_serializing_if = "is_false")]
+        clear_openai_base_url: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         allowed_tools: Option<Option<Vec<String>>>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         execpolicy_rules: Option<Vec<String>>,
+        #[serde(default, skip_serializing_if = "is_false")]
+        clear_execpolicy_rules: bool,
     },
 
     ApprovalRequested {

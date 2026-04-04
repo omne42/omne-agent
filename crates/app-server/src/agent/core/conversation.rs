@@ -838,6 +838,7 @@ fn format_event_for_context(kind: &ThreadEventKind) -> Option<String> {
             openai_base_url,
             allowed_tools,
             execpolicy_rules,
+            ..
         } => Some(format!(
             "[thread/config] approval_policy={approval_policy:?} sandbox_policy={} sandbox_writable_roots={} sandbox_network_access={} mode={} role={} model={} thinking={} show_thinking={} openai_base_url={} allowed_tools={} execpolicy_rules={}",
             sandbox_policy

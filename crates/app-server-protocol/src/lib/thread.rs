@@ -1,5 +1,9 @@
 use super::*;
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
 pub struct ThreadStartParams {
     #[serde(default)]
@@ -1249,21 +1253,31 @@ pub struct ThreadConfigureParams {
     #[serde(default)]
     #[ts(optional)]
     pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub clear_model: bool,
     #[serde(default)]
     #[ts(optional)]
     pub thinking: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub clear_thinking: bool,
     #[serde(default)]
     #[ts(optional)]
     pub show_thinking: Option<bool>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub clear_show_thinking: bool,
     #[serde(default)]
     #[ts(optional)]
     pub openai_base_url: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub clear_openai_base_url: bool,
     #[serde(default)]
     #[ts(optional)]
     pub allowed_tools: Option<Option<Vec<String>>>,
     #[serde(default)]
     #[ts(optional)]
     pub execpolicy_rules: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub clear_execpolicy_rules: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]

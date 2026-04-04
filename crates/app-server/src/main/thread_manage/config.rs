@@ -215,6 +215,10 @@ fn parse_thread_configure_thinking(thinking: Option<String>) -> anyhow::Result<O
     Err(ThreadConfigureInputError::InvalidThinking { value }.into())
 }
 
+fn normalize_thread_configure_text_value(value: Option<String>) -> Option<String> {
+    value.map(|value| value.trim().to_string()).filter(|value| !value.is_empty())
+}
+
 fn validate_thread_configure_allowed_tools_for_mode_and_role(
     mode_name: &str,
     role_name: Option<&str>,
@@ -392,10 +396,10 @@ async fn handle_thread_configure(
             .expect("role catalog must be loaded when role is provided");
         validate_thread_configure_role(role_name, roles)?;
     }
-    let model = params.model.filter(|s| !s.trim().is_empty());
+    let model = normalize_thread_configure_text_value(params.model);
     let thinking = parse_thread_configure_thinking(params.thinking)?;
     let show_thinking = params.show_thinking;
-    let openai_base_url = params.openai_base_url.filter(|s| !s.trim().is_empty());
+    let openai_base_url = normalize_thread_configure_text_value(params.openai_base_url);
     let allowed_tools = match params.allowed_tools {
         None => None,
         Some(None) => Some(None),
@@ -434,9 +438,33 @@ async fn handle_thread_configure(
         Some(None) => current_allowed_tools.is_some(),
         Some(Some(tools)) => current_allowed_tools.as_ref() != Some(tools),
     };
-    let execpolicy_rules_changed = execpolicy_rules
-        .as_ref()
-        .is_some_and(|rules| rules != &current_execpolicy_rules);
+    let model_changed = if params.clear_model {
+        current_model.is_some()
+    } else {
+        model.as_ref() != current_model.as_ref()
+    };
+    let thinking_changed = if params.clear_thinking {
+        current_thinking.is_some()
+    } else {
+        thinking.as_ref() != current_thinking.as_ref()
+    };
+    let show_thinking_changed = if params.clear_show_thinking {
+        current_show_thinking.is_some()
+    } else {
+        show_thinking != current_show_thinking
+    };
+    let openai_base_url_changed = if params.clear_openai_base_url {
+        current_openai_base_url.is_some()
+    } else {
+        openai_base_url.as_ref() != current_openai_base_url.as_ref()
+    };
+    let execpolicy_rules_changed = if params.clear_execpolicy_rules {
+        !current_execpolicy_rules.is_empty()
+    } else {
+        execpolicy_rules
+            .as_ref()
+            .is_some_and(|rules| rules != &current_execpolicy_rules)
+    };
 
     let changed = approval_policy != current_approval_policy
         || params
@@ -448,10 +476,10 @@ async fn handle_thread_configure(
         || sandbox_network_access.is_some_and(|access| access != current_sandbox_network_access)
         || mode.as_ref().is_some_and(|m| m != &current_mode)
         || role.as_ref().is_some_and(|r| r != &current_role)
-        || model.as_ref() != current_model.as_ref()
-        || thinking.as_ref() != current_thinking.as_ref()
-        || show_thinking != current_show_thinking
-        || openai_base_url.as_ref() != current_openai_base_url.as_ref()
+        || model_changed
+        || thinking_changed
+        || show_thinking_changed
+        || openai_base_url_changed
         || allowed_tools_changed
         || execpolicy_rules_changed;
 
@@ -464,11 +492,17 @@ async fn handle_thread_configure(
             mode,
             role,
             model,
+            clear_model: params.clear_model,
             thinking,
+            clear_thinking: params.clear_thinking,
             show_thinking,
+            clear_show_thinking: params.clear_show_thinking,
             openai_base_url,
+            clear_openai_base_url: params.clear_openai_base_url,
             allowed_tools,
             execpolicy_rules,
+            clear_execpolicy_rules: params.clear_execpolicy_rules,
+        clear_execpolicy_rules: false,
         })
         .await?;
     }
@@ -641,6 +675,9 @@ async fn handle_thread_config_explain(
         }));
     }
 
+    let base_model = effective_model.clone();
+    let base_openai_base_url = effective_openai_base_url.clone();
+
     if let Some(meta) =
         latest_artifact_metadata_by_type(server, params.thread_id, "preset_applied").await?
     {
@@ -665,11 +702,16 @@ async fn handle_thread_config_explain(
             mode,
             role,
             model,
+            clear_model,
             thinking,
+            clear_thinking,
             show_thinking,
+            clear_show_thinking,
             openai_base_url,
+            clear_openai_base_url,
             allowed_tools,
             execpolicy_rules,
+            clear_execpolicy_rules,
         } = event.kind
         {
             let ts = event.timestamp.format(&Rfc3339)?;
@@ -693,27 +735,43 @@ async fn handle_thread_config_explain(
             if let Some(role) = role {
                 effective_role = role;
             }
-            if let Some(model) = model {
+            if clear_model {
+                effective_model = base_model.clone();
+                if thinking_override.is_none() {
+                    effective_thinking = project_thinking_for_model(&effective_model);
+                }
+            } else if let Some(model) = model {
                 effective_model = model;
                 if thinking_override.is_none() {
                     effective_thinking = project_thinking_for_model(&effective_model);
                 }
             }
-            if let Some(thinking) = thinking {
+            if clear_thinking {
+                thinking_override = None;
+                effective_thinking = project_thinking_for_model(&effective_model);
+            } else if let Some(thinking) = thinking {
                 effective_thinking = thinking.clone();
                 thinking_override = Some(thinking);
             }
-            if let Some(show_thinking) = show_thinking {
+            if clear_show_thinking {
+                show_thinking_override = None;
+                effective_show_thinking = mode_show_thinking_for_mode(&effective_mode)
+                    .unwrap_or(project_show_thinking_default);
+            } else if let Some(show_thinking) = show_thinking {
                 effective_show_thinking = show_thinking;
                 show_thinking_override = Some(show_thinking);
             }
-            if let Some(openai_base_url) = openai_base_url {
+            if clear_openai_base_url {
+                effective_openai_base_url = base_openai_base_url.clone();
+            } else if let Some(openai_base_url) = openai_base_url {
                 effective_openai_base_url = openai_base_url;
             }
             if let Some(allowed_tools) = allowed_tools {
                 effective_allowed_tools = allowed_tools;
             }
-            if let Some(execpolicy_rules) = execpolicy_rules {
+            if clear_execpolicy_rules {
+                effective_execpolicy_rules.clear();
+            } else if let Some(execpolicy_rules) = execpolicy_rules {
                 effective_execpolicy_rules = execpolicy_rules;
             }
             layers.push(serde_json::json!({
@@ -836,9 +894,13 @@ async fn handle_thread_config_explain(
             mode: effective_mode,
             role: effective_role,
             model: effective_model,
+            clear_model: false,
             thinking: effective_thinking,
+            clear_thinking: false,
             show_thinking: effective_show_thinking,
+            clear_show_thinking: false,
             openai_base_url: effective_openai_base_url,
+            clear_openai_base_url: false,
             allowed_tools: effective_allowed_tools,
             execpolicy_rules: effective_execpolicy_rules,
             permission_mode: effective_role_permission_mode,

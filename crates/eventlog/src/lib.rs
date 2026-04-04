@@ -412,11 +412,16 @@ impl ThreadState {
                 mode,
                 role,
                 model,
+                clear_model,
                 thinking,
+                clear_thinking,
                 show_thinking,
+                clear_show_thinking,
                 openai_base_url,
+                clear_openai_base_url,
                 allowed_tools,
                 execpolicy_rules,
+                clear_execpolicy_rules,
             } => {
                 self.approval_policy = *approval_policy;
                 if let Some(policy) = sandbox_policy {
@@ -434,22 +439,32 @@ impl ThreadState {
                 if let Some(role) = role {
                     self.role = role.clone();
                 }
-                if let Some(model) = model {
+                if *clear_model {
+                    self.model = None;
+                } else if let Some(model) = model {
                     self.model = Some(model.clone());
                 }
-                if let Some(thinking) = thinking {
+                if *clear_thinking {
+                    self.thinking = None;
+                } else if let Some(thinking) = thinking {
                     self.thinking = Some(thinking.clone());
                 }
-                if let Some(show_thinking) = show_thinking {
+                if *clear_show_thinking {
+                    self.show_thinking = None;
+                } else if let Some(show_thinking) = show_thinking {
                     self.show_thinking = Some(*show_thinking);
                 }
-                if let Some(openai_base_url) = openai_base_url {
+                if *clear_openai_base_url {
+                    self.openai_base_url = None;
+                } else if let Some(openai_base_url) = openai_base_url {
                     self.openai_base_url = Some(openai_base_url.clone());
                 }
                 if let Some(allowed_tools) = allowed_tools {
                     self.allowed_tools = allowed_tools.clone();
                 }
-                if let Some(execpolicy_rules) = execpolicy_rules {
+                if *clear_execpolicy_rules {
+                    self.execpolicy_rules.clear();
+                } else if let Some(execpolicy_rules) = execpolicy_rules {
                     self.execpolicy_rules = execpolicy_rules.clone();
                 }
             }
@@ -1010,6 +1025,104 @@ mod tests {
         assert_eq!(state.output_tokens_used, 0);
         assert_eq!(state.cache_input_tokens_used, 5);
         assert_eq!(state.cache_creation_input_tokens_used, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn thread_config_updated_clear_flags_remove_overrides() -> anyhow::Result<()> {
+        let thread_id = ThreadId::new();
+        let mut state = ThreadState::new(thread_id);
+        let mut seq = 1u64;
+
+        fn apply(
+            state: &mut ThreadState,
+            thread_id: ThreadId,
+            seq: &mut u64,
+            kind: ThreadEventKind,
+        ) -> anyhow::Result<()> {
+            let event = ThreadEvent {
+                seq: EventSeq(*seq),
+                timestamp: OffsetDateTime::now_utc(),
+                thread_id,
+                kind,
+            };
+            *seq += 1;
+            state.apply(&event)?;
+            Ok(())
+        }
+
+        apply(
+            &mut state,
+            thread_id,
+            &mut seq,
+            ThreadEventKind::ThreadCreated {
+                cwd: "/tmp".to_string(),
+            },
+        )?;
+        apply(
+            &mut state,
+            thread_id,
+            &mut seq,
+            ThreadEventKind::ThreadConfigUpdated {
+                approval_policy: ApprovalPolicy::Manual,
+                sandbox_policy: None,
+                sandbox_writable_roots: None,
+                sandbox_network_access: None,
+                mode: None,
+                role: None,
+                model: Some("gpt-5".to_string()),
+                clear_model: false,
+                thinking: Some("high".to_string()),
+                clear_thinking: false,
+                show_thinking: Some(true),
+                clear_show_thinking: false,
+                openai_base_url: Some("https://example.test/v1".to_string()),
+                clear_openai_base_url: false,
+                allowed_tools: None,
+                execpolicy_rules: Some(vec!["rules/a.rules".to_string()]),
+                clear_execpolicy_rules: false,
+            },
+        )?;
+
+        assert_eq!(state.model.as_deref(), Some("gpt-5"));
+        assert_eq!(state.thinking.as_deref(), Some("high"));
+        assert_eq!(state.show_thinking, Some(true));
+        assert_eq!(
+            state.openai_base_url.as_deref(),
+            Some("https://example.test/v1")
+        );
+        assert_eq!(state.execpolicy_rules, vec!["rules/a.rules".to_string()]);
+
+        apply(
+            &mut state,
+            thread_id,
+            &mut seq,
+            ThreadEventKind::ThreadConfigUpdated {
+                approval_policy: ApprovalPolicy::Manual,
+                sandbox_policy: None,
+                sandbox_writable_roots: None,
+                sandbox_network_access: None,
+                mode: None,
+                role: None,
+                model: None,
+                clear_model: true,
+                thinking: None,
+                clear_thinking: true,
+                show_thinking: None,
+                clear_show_thinking: true,
+                openai_base_url: None,
+                clear_openai_base_url: true,
+                allowed_tools: None,
+                execpolicy_rules: None,
+                clear_execpolicy_rules: true,
+            },
+        )?;
+
+        assert_eq!(state.model, None);
+        assert_eq!(state.thinking, None);
+        assert_eq!(state.show_thinking, None);
+        assert_eq!(state.openai_base_url, None);
+        assert!(state.execpolicy_rules.is_empty());
         Ok(())
     }
 

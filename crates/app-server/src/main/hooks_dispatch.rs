@@ -1475,11 +1475,16 @@ hooks:
                 mode: None,
                 role: None,
                 model: None,
+                clear_model: false,
                 thinking: None,
+                clear_thinking: false,
                 show_thinking: None,
+                clear_show_thinking: false,
                 openai_base_url: None,
+                clear_openai_base_url: false,
                 allowed_tools: None,
                 execpolicy_rules: None,
+            clear_execpolicy_rules: false,
             },
         )
         .await?;
@@ -1575,11 +1580,16 @@ hooks:
                 mode: None,
                 role: None,
                 model: None,
+                clear_model: false,
                 thinking: None,
+                clear_thinking: false,
                 show_thinking: None,
+                clear_show_thinking: false,
                 openai_base_url: None,
+                clear_openai_base_url: false,
                 allowed_tools: None,
                 execpolicy_rules: None,
+            clear_execpolicy_rules: false,
             },
         )
         .await?;

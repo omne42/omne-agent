@@ -33,8 +33,13 @@ async fn run_repl(app: &mut App) -> anyhow::Result<()> {
         mode: None,
         role: None,
         model: None,
+        clear_model: false,
         openai_base_url: None,
+        clear_openai_base_url: false,
         thinking: None,
+        clear_thinking: false,
+        show_thinking: None,
+        clear_show_thinking: false,
         allowed_tools: None,
         clear_allowed_tools: false,
         execpolicy_rules: None,
@@ -344,8 +349,13 @@ async fn repl_thread_start(
         mode: None,
         role: None,
         model: None,
+        clear_model: false,
         openai_base_url: None,
+        clear_openai_base_url: false,
         thinking: None,
+        clear_thinking: false,
+        show_thinking: None,
+        clear_show_thinking: false,
         allowed_tools: None,
         clear_allowed_tools: false,
         execpolicy_rules: None,
@@ -415,8 +425,13 @@ async fn repl_cmd_set(app: &mut App, state: &mut ReplState, args: &[&str]) -> an
         mode: None,
         role: None,
         model: None,
+        clear_model: false,
         openai_base_url: None,
+        clear_openai_base_url: false,
         thinking: None,
+        clear_thinking: false,
+        show_thinking: None,
+        clear_show_thinking: false,
         allowed_tools: None,
         clear_allowed_tools: false,
         execpolicy_rules: None,
@@ -437,13 +452,35 @@ async fn repl_cmd_set(app: &mut App, state: &mut ReplState, args: &[&str]) -> an
             cfg.mode = Some(value.to_string());
         }
         "model" => {
-            cfg.model = Some(value.to_string());
+            if value.eq_ignore_ascii_case("clear") {
+                cfg.clear_model = true;
+            } else {
+                cfg.model = Some(value.to_string());
+            }
         }
         "openai_base_url" => {
-            cfg.openai_base_url = Some(value.to_string());
+            if value.eq_ignore_ascii_case("clear") {
+                cfg.clear_openai_base_url = true;
+            } else {
+                cfg.openai_base_url = Some(value.to_string());
+            }
         }
         "thinking" => {
-            cfg.thinking = Some(value.to_string());
+            if value.eq_ignore_ascii_case("clear") {
+                cfg.clear_thinking = true;
+            } else {
+                cfg.thinking = Some(value.to_string());
+            }
+        }
+        "show_thinking" => {
+            if value.eq_ignore_ascii_case("clear") {
+                cfg.clear_show_thinking = true;
+            } else {
+                cfg.show_thinking = Some(matches!(
+                    value.trim().to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes" | "on"
+                ));
+            }
         }
         "allowed_tools" => match parse_repl_list_setting(value) {
             ReplListSetting::Set(tools) => {
@@ -463,7 +500,7 @@ async fn repl_cmd_set(app: &mut App, state: &mut ReplState, args: &[&str]) -> an
         },
         _ => {
             anyhow::bail!(
-                "unknown key: {key} (try: approval_policy|sandbox_policy|sandbox_network_access|mode|model|openai_base_url|thinking|allowed_tools|execpolicy_rules)"
+                "unknown key: {key} (try: approval_policy|sandbox_policy|sandbox_network_access|mode|model|openai_base_url|thinking|show_thinking|allowed_tools|execpolicy_rules)"
             );
         }
     }
