@@ -21,6 +21,28 @@ fn git_subcommand_uses_network(subcommand: Option<&String>) -> bool {
         .unwrap_or(false)
 }
 
+fn is_generic_command_launcher(name: &str) -> bool {
+    matches!(
+        name,
+        "python"
+            | "python3"
+            | "node"
+            | "bun"
+            | "deno"
+            | "ruby"
+            | "perl"
+            | "php"
+            | "java"
+            | "sh"
+            | "bash"
+            | "zsh"
+            | "fish"
+            | "pwsh"
+            | "powershell"
+            | "cmd"
+    )
+}
+
 pub fn command_uses_network(argv: &[String]) -> bool {
     let Some(program) = argv.first() else {
         return false;
@@ -32,6 +54,7 @@ pub fn command_uses_network(argv: &[String]) -> bool {
         "curl" | "wget" | "ssh" | "scp" | "sftp" | "ftp" | "telnet" | "nc" | "ncat" | "netcat"
         | "gh" => true,
         "git" => git_subcommand_uses_network(argv.get(1)),
+        name if is_generic_command_launcher(name) && argv.len() > 1 => true,
         _ => false,
     }
 }
@@ -64,7 +87,18 @@ mod tests {
     #[test]
     fn non_network_commands_are_not_flagged() {
         assert!(!command_uses_network(&argv(&["ls"])));
-        assert!(!command_uses_network(&argv(&["python", "script.py"])));
+        assert!(!command_uses_network(&argv(&["python"])));
         assert!(!command_uses_network(&[]));
+    }
+
+    #[test]
+    fn generic_launchers_are_treated_as_network_capable_when_they_run_code() {
+        assert!(command_uses_network(&argv(&[
+            "python",
+            "-m",
+            "http.server"
+        ])));
+        assert!(command_uses_network(&argv(&["node", "server.js"])));
+        assert!(command_uses_network(&argv(&["bash", "script.sh"])));
     }
 }

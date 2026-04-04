@@ -77,6 +77,7 @@ type McpCallParams = omne_app_server_protocol::McpCallParams;
 #[derive(Default)]
 struct McpManager {
     connections: HashMap<(ThreadId, String), Arc<McpConnection>>,
+    starting: HashMap<(ThreadId, String), Arc<tokio::sync::Notify>>,
 }
 
 struct McpConnection {
@@ -213,6 +214,7 @@ async fn spawn_mcp_connection(
         .insert(process_id, entry.clone());
 
     tokio::spawn(run_process_actor(ProcessActorArgs {
+        server: server.clone(),
         thread_rt: thread_rt.clone(),
         process_id,
         child,
@@ -256,6 +258,35 @@ async fn spawn_mcp_connection(
     })
 }
 
+async fn remove_mcp_connections_for_process(server: &Server, process_id: ProcessId) -> usize {
+    let mut manager = server.mcp.lock().await;
+    let before = manager.connections.len();
+    manager
+        .connections
+        .retain(|_, conn| conn.process_id != process_id);
+    before.saturating_sub(manager.connections.len())
+}
+
+async fn remove_mcp_connections_for_thread(server: &Server, thread_id: ThreadId) -> usize {
+    let mut manager = server.mcp.lock().await;
+    let before = manager.connections.len();
+    manager.connections.retain(|(id, _), _| *id != thread_id);
+    manager.starting.retain(|(id, _), _| *id != thread_id);
+    before.saturating_sub(manager.connections.len())
+}
+
+async fn process_is_running(server: &Server, process_id: ProcessId) -> bool {
+    let entry = {
+        let entries = server.processes.lock().await;
+        entries.get(&process_id).cloned()
+    };
+    let Some(entry) = entry else {
+        return false;
+    };
+    let info = entry.info.lock().await;
+    matches!(info.status, ProcessStatus::Running)
+}
+
 async fn get_or_start_mcp_connection(
     server: &Server,
     thread_rt: &Arc<ThreadRuntime>,
@@ -266,20 +297,48 @@ async fn get_or_start_mcp_connection(
     server_cfg: &McpServerConfig,
 ) -> anyhow::Result<Arc<McpConnection>> {
     let key = (thread_id, server_name.to_string());
-    {
-        let manager = server.mcp.lock().await;
-        if let Some(conn) = manager.connections.get(&key) {
-            return Ok(conn.clone());
+    loop {
+        if let Some(conn) = {
+            let manager = server.mcp.lock().await;
+            manager.connections.get(&key).cloned()
+        } {
+            if process_is_running(server, conn.process_id).await {
+                return Ok(conn);
+            }
+            let _ = remove_mcp_connections_for_process(server, conn.process_id).await;
+            continue;
         }
-    }
 
-    let mut manager = server.mcp.lock().await;
-    if let Some(conn) = manager.connections.get(&key) {
-        return Ok(conn.clone());
-    }
+        let waiter = {
+            let mut manager = server.mcp.lock().await;
+            if let Some(conn) = manager.connections.get(&key).cloned() {
+                Some(Err(conn))
+            } else if let Some(waiter) = manager.starting.get(&key).cloned() {
+                Some(Ok(waiter))
+            } else {
+                manager
+                    .starting
+                    .insert(key.clone(), Arc::new(tokio::sync::Notify::new()));
+                None
+            }
+        };
 
-    let conn = Arc::new(
-        spawn_mcp_connection(
+        match waiter {
+            Some(Err(conn)) => {
+                if process_is_running(server, conn.process_id).await {
+                    return Ok(conn);
+                }
+                let _ = remove_mcp_connections_for_process(server, conn.process_id).await;
+                continue;
+            }
+            Some(Ok(waiter)) => {
+                waiter.notified().await;
+                continue;
+            }
+            None => {}
+        }
+
+        let result = spawn_mcp_connection(
             server,
             thread_rt,
             thread_root,
@@ -288,10 +347,21 @@ async fn get_or_start_mcp_connection(
             server_name,
             server_cfg,
         )
-        .await?,
-    );
-    manager.connections.insert(key, conn.clone());
-    Ok(conn)
+        .await
+        .map(Arc::new);
+
+        let mut manager = server.mcp.lock().await;
+        let notify = manager.starting.remove(&key);
+        if let Ok(conn) = &result {
+            manager.connections.insert(key.clone(), conn.clone());
+        }
+        drop(manager);
+        if let Some(notify) = notify {
+            notify.notify_waiters();
+        }
+
+        return result;
+    }
 }
 
 fn json_value_size_bytes(value: &Value) -> usize {
