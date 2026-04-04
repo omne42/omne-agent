@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod mcp_tests {
     use super::*;
+    use tokio::sync::mpsc;
     use tokio::sync::Mutex;
 
     static MCP_TEST_MUTEX: Mutex<()> = Mutex::const_new(());
@@ -27,6 +28,49 @@ mod mcp_tests {
         )
         .await?;
         Ok(())
+    }
+
+    async fn insert_running_mcp_connection(
+        server: &Server,
+        thread_id: ThreadId,
+        server_name: &str,
+    ) -> anyhow::Result<(ProcessId, mpsc::Receiver<ProcessCommand>)> {
+        let (client_stream, peer_stream) = tokio::io::duplex(1024);
+        drop(peer_stream);
+        let (client_read, client_write) = tokio::io::split(client_stream);
+        let client = omne_jsonrpc::Client::connect_io(client_read, client_write).await?;
+        let process_id = ProcessId::new();
+        let started_at = time::OffsetDateTime::now_utc().format(&Rfc3339)?;
+        let (cmd_tx, cmd_rx) = mpsc::channel(1);
+
+        server.processes.lock().await.insert(
+            process_id,
+            ProcessEntry {
+                info: Arc::new(tokio::sync::Mutex::new(ProcessInfo {
+                    process_id,
+                    thread_id,
+                    turn_id: None,
+                    argv: vec!["mock-mcp".to_string()],
+                    cwd: ".".to_string(),
+                    started_at: started_at.clone(),
+                    status: ProcessStatus::Running,
+                    exit_code: None,
+                    stdout_path: String::new(),
+                    stderr_path: String::new(),
+                    last_update_at: started_at,
+                })),
+                cmd_tx,
+            },
+        );
+        server.mcp.lock().await.connections.insert(
+            (thread_id, server_name.to_string()),
+            Arc::new(McpConnection {
+                process_id,
+                client: tokio::sync::Mutex::new(client),
+            }),
+        );
+
+        Ok((process_id, cmd_rx))
     }
 
     #[tokio::test]
@@ -450,6 +494,83 @@ modes:
         assert!(result["denied"].as_bool().unwrap_or(false));
         assert_eq!(result["decision_source"].as_str(), Some("tool_override"));
         assert_eq!(result["tool_override_hit"].as_bool(), Some(true));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn failed_mcp_request_invalidates_cached_connection() -> anyhow::Result<()> {
+        let _lock = MCP_TEST_MUTEX.lock().await;
+        let _guard = McpEnabledOverrideGuard::new(Some(true));
+
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+        tokio::fs::write(
+            repo_dir.join("mcp.json"),
+            r#"{ "version": 1, "servers": { "local": { "transport": "stdio", "argv": ["cat"] } } }"#,
+        )
+        .await?;
+
+        let server = build_test_server_shared(repo_dir.join(".omne_data"));
+        let thread_id = create_test_thread_shared(&server, repo_dir.clone()).await?;
+        handle_thread_configure(
+            &server,
+            ThreadConfigureParams {
+                thread_id,
+                approval_policy: Some(omne_protocol::ApprovalPolicy::AutoApprove),
+                sandbox_policy: None,
+                sandbox_writable_roots: None,
+                sandbox_network_access: Some(omne_protocol::SandboxNetworkAccess::Allow),
+                mode: None,
+                role: None,
+                model: None,
+                thinking: None,
+                show_thinking: None,
+                openai_base_url: None,
+                allowed_tools: None,
+                execpolicy_rules: None,
+            },
+        )
+        .await?;
+
+        let (process_id, mut cmd_rx) =
+            insert_running_mcp_connection(&server, thread_id, "local").await?;
+
+        let err = handle_mcp_list_tools(
+            &server,
+            McpListToolsParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                server: "local".to_string(),
+            },
+        )
+        .await
+        .expect_err("closed cached connection should fail request");
+        assert!(
+            err.to_string().contains("mcp request failed"),
+            "unexpected error: {err:#}"
+        );
+
+        assert!(
+            !server
+                .mcp
+                .lock()
+                .await
+                .connections
+                .contains_key(&(thread_id, "local".to_string()))
+        );
+        match tokio::time::timeout(Duration::from_secs(1), cmd_rx.recv()).await? {
+            Some(ProcessCommand::Kill { reason }) => {
+                assert_eq!(reason.as_deref(), Some("mcp request failed"));
+            }
+            Some(ProcessCommand::Interrupt { .. }) => {
+                anyhow::bail!("expected kill command after invalidation, got interrupt command")
+            }
+            None => anyhow::bail!("expected kill command after invalidation, got channel close"),
+        }
+        assert!(server.processes.lock().await.contains_key(&process_id));
+
         Ok(())
     }
 }

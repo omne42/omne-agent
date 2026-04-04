@@ -275,6 +275,43 @@ async fn remove_mcp_connections_for_thread(server: &Server, thread_id: ThreadId)
     before.saturating_sub(manager.connections.len())
 }
 
+async fn invalidate_mcp_connection(
+    server: &Server,
+    thread_id: ThreadId,
+    server_name: &str,
+    process_id: ProcessId,
+    reason: &str,
+) -> bool {
+    let key = (thread_id, server_name.to_string());
+    let removed = {
+        let mut manager = server.mcp.lock().await;
+        match manager.connections.get(&key) {
+            Some(conn) if conn.process_id == process_id => {
+                manager.connections.remove(&key);
+                true
+            }
+            _ => false,
+        }
+    };
+    if !removed {
+        return false;
+    }
+
+    let entry = {
+        let entries = server.processes.lock().await;
+        entries.get(&process_id).cloned()
+    };
+    if let Some(entry) = entry {
+        let _ = entry
+            .cmd_tx
+            .send(ProcessCommand::Kill {
+                reason: Some(reason.to_string()),
+            })
+            .await;
+    }
+    true
+}
+
 async fn process_is_running(server: &Server, process_id: ProcessId) -> bool {
     let entry = {
         let entries = server.processes.lock().await;

@@ -634,6 +634,14 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
             Ok(response_value)
         }
         Err(err) => {
+            let _ = invalidate_mcp_connection(
+                server,
+                req.thread_id,
+                server_name,
+                process_id,
+                "mcp request failed",
+            )
+            .await;
             thread_rt
                 .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
