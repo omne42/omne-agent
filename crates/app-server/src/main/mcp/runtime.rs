@@ -82,6 +82,7 @@ struct McpManager {
 
 struct McpConnection {
     process_id: ProcessId,
+    config_fingerprint: String,
     client: tokio::sync::Mutex<omne_jsonrpc::Client>,
 }
 
@@ -110,6 +111,29 @@ async fn mcp_notify(
         .with_context(|| format!("mcp notification failed: {method}"))
 }
 
+fn mcp_server_config_fingerprint(server_cfg: &McpServerConfig) -> String {
+    use std::fmt::Write as _;
+
+    let mut out = String::new();
+    let _ = write!(out, "transport={:?};", server_cfg.transport());
+    let _ = write!(out, "argv={:?};", server_cfg.argv());
+    let _ = write!(out, "inherit_env={};", server_cfg.inherit_env());
+    let _ = write!(out, "env={:?};", server_cfg.env());
+    let _ = write!(out, "unix_path={:?};", server_cfg.unix_path());
+    let _ = write!(out, "url={:?};", server_cfg.url());
+    let _ = write!(out, "sse_url={:?};", server_cfg.sse_url());
+    let _ = write!(out, "http_url={:?};", server_cfg.http_url());
+    let _ = write!(
+        out,
+        "bearer_token_env_var={:?};",
+        server_cfg.bearer_token_env_var()
+    );
+    let _ = write!(out, "http_headers={:?};", server_cfg.http_headers());
+    let _ = write!(out, "env_http_headers={:?};", server_cfg.env_http_headers());
+    let _ = write!(out, "stdout_log={:?};", server_cfg.stdout_log());
+    out
+}
+
 async fn spawn_mcp_connection(
     server: &Server,
     thread_rt: &Arc<ThreadRuntime>,
@@ -119,6 +143,7 @@ async fn spawn_mcp_connection(
     server_name: &str,
     server_cfg: &McpServerConfig,
 ) -> anyhow::Result<McpConnection> {
+    let config_fingerprint = mcp_server_config_fingerprint(server_cfg);
     if !matches!(server_cfg.transport(), McpTransport::Stdio) {
         anyhow::bail!("unsupported mcp transport (expected stdio)");
     }
@@ -254,6 +279,7 @@ async fn spawn_mcp_connection(
 
     Ok(McpConnection {
         process_id,
+        config_fingerprint,
         client: tokio::sync::Mutex::new(client),
     })
 }
@@ -334,11 +360,23 @@ async fn get_or_start_mcp_connection(
     server_cfg: &McpServerConfig,
 ) -> anyhow::Result<Arc<McpConnection>> {
     let key = (thread_id, server_name.to_string());
+    let config_fingerprint = mcp_server_config_fingerprint(server_cfg);
     loop {
         if let Some(conn) = {
             let manager = server.mcp.lock().await;
             manager.connections.get(&key).cloned()
         } {
+            if conn.config_fingerprint != config_fingerprint {
+                let _ = invalidate_mcp_connection(
+                    server,
+                    thread_id,
+                    server_name,
+                    conn.process_id,
+                    "mcp config changed",
+                )
+                .await;
+                continue;
+            }
             if process_is_running(server, conn.process_id).await {
                 return Ok(conn);
             }
@@ -362,6 +400,17 @@ async fn get_or_start_mcp_connection(
 
         match waiter {
             Some(Err(conn)) => {
+                if conn.config_fingerprint != config_fingerprint {
+                    let _ = invalidate_mcp_connection(
+                        server,
+                        thread_id,
+                        server_name,
+                        conn.process_id,
+                        "mcp config changed",
+                    )
+                    .await;
+                    continue;
+                }
                 if process_is_running(server, conn.process_id).await {
                     return Ok(conn);
                 }

@@ -91,17 +91,12 @@ async fn handle_mcp_list_servers(server: &Server, params: McpListServersParams) 
     let servers = cfg
         .servers()
         .iter()
-        .map(|(name, cfg)| {
-            let transport = serde_json::to_value(cfg.transport())
-                .ok()
-                .and_then(|v| v.as_str().map(ToString::to_string))
-                .unwrap_or_else(|| format!("{:?}", cfg.transport()).to_ascii_lowercase());
-            omne_app_server_protocol::McpServerDescriptor {
-                name: name.to_string(),
-                transport,
-                argv: cfg.argv().to_vec(),
-                env_keys: cfg.env().keys().cloned().collect(),
-            }
+        .filter(|(_, cfg)| matches!(cfg.transport(), McpTransport::Stdio))
+        .map(|(name, cfg)| omne_app_server_protocol::McpServerDescriptor {
+            name: name.to_string(),
+            transport: "stdio".to_string(),
+            argv: cfg.argv().to_vec(),
+            env_keys: cfg.env().keys().cloned().collect(),
         })
         .collect::<Vec<_>>();
 
