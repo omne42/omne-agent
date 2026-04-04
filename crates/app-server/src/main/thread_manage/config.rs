@@ -502,7 +502,6 @@ async fn handle_thread_configure(
             allowed_tools,
             execpolicy_rules,
             clear_execpolicy_rules: params.clear_execpolicy_rules,
-        clear_execpolicy_rules: false,
         })
         .await?;
     }
