@@ -90,6 +90,10 @@ impl ThreadStore {
         Self { paths }
     }
 
+    pub fn root(&self) -> &Path {
+        self.paths.root()
+    }
+
     pub fn thread_dir(&self, thread_id: ThreadId) -> PathBuf {
         self.paths.thread_dir(thread_id)
     }

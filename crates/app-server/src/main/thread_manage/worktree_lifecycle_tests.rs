@@ -2,6 +2,21 @@
 mod thread_manage_worktree_lifecycle_tests {
     use super::*;
 
+    fn build_server_with_distinct_cwd(cwd: std::path::PathBuf, omne_root: std::path::PathBuf) -> Server {
+        let (notify_tx, _notify_rx) = broadcast::channel::<String>(16);
+        Server {
+            cwd,
+            notify_tx,
+            thread_store: ThreadStore::new(PmPaths::new(omne_root)),
+            threads: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            processes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            mcp: Arc::new(tokio::sync::Mutex::new(McpManager::default())),
+            disk_warning: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            provider_runtimes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            exec_policy: omne_execpolicy::Policy::empty(),
+        }
+    }
+
     async fn run_git(cwd: &std::path::Path, args: &[&str]) -> anyhow::Result<()> {
         let output = tokio::process::Command::new("git")
             .args(args)
@@ -144,6 +159,61 @@ mod thread_manage_worktree_lifecycle_tests {
         .await?;
         assert!(result.deleted);
         assert!(!worktree_dir.exists());
+
+        let output = tokio::process::Command::new("git")
+            .args(["worktree", "list"])
+            .current_dir(&source_repo)
+            .output()
+            .await?;
+        assert!(output.status.success());
+        let listed = String::from_utf8_lossy(&output.stdout);
+        assert!(!listed.contains(worktree_dir.display().to_string().as_str()));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn managed_worktree_root_uses_thread_store_root_not_server_cwd() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let source_repo = tmp.path().join("source");
+        let cwd_root = tmp.path().join("cwd-root");
+        let omne_root = tmp.path().join("real-omne-root");
+        tokio::fs::create_dir_all(&source_repo).await?;
+        tokio::fs::create_dir_all(&cwd_root).await?;
+        init_repo(&source_repo).await?;
+
+        let server = build_server_with_distinct_cwd(cwd_root.clone(), omne_root.clone());
+        let worktree_dir = managed_subagent_worktree_root(&server)
+            .join("parent-thread")
+            .join("distinct-root")
+            .join("repo");
+        if let Some(parent) = worktree_dir.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        omne_git_runtime::create_detached_worktree(
+            &source_repo.display().to_string(),
+            &worktree_dir.display().to_string(),
+            None,
+        )
+        .await?;
+
+        let handle = server
+            .thread_store
+            .create_thread(worktree_dir.clone())
+            .await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let result = handle_thread_delete(
+            &server,
+            ThreadDeleteParams {
+                thread_id,
+                force: false,
+            },
+        )
+        .await?;
+        assert!(result.deleted);
+        assert!(!worktree_dir.exists());
+        assert!(!cwd_root.join(".omne_data").exists());
 
         let output = tokio::process::Command::new("git")
             .args(["worktree", "list"])
