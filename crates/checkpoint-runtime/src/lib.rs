@@ -170,15 +170,9 @@ pub async fn compute_restore_plan(
             if rel.as_os_str().is_empty() {
                 continue;
             }
-            if rel_path_is_checkpoint_secret(rel) {
-                continue;
-            }
             let meta = entry
                 .metadata()
                 .with_context(|| format!("stat {}", entry.path().display()))?;
-            if meta.len() > max_file_bytes {
-                continue;
-            }
             current_sizes.insert(rel.to_string_lossy().to_string(), meta.len());
         }
 
@@ -196,7 +190,13 @@ pub async fn compute_restore_plan(
             let Some(cur_len) = current_sizes.get(path) else {
                 continue;
             };
-            if snap_len != cur_len {
+            if snap_len != cur_len
+                || !files_match(
+                    &snapshot_root.join(path),
+                    &thread_root.join(path),
+                    max_file_bytes,
+                )?
+            {
                 modify += 1;
             }
         }
@@ -214,7 +214,7 @@ pub async fn compute_restore_plan(
 pub async fn restore_workspace_from_snapshot(
     thread_root: &Path,
     snapshot_root: &Path,
-    max_file_bytes: u64,
+    _max_file_bytes: u64,
 ) -> anyhow::Result<()> {
     let thread_root = thread_root.to_path_buf();
     let snapshot_root = snapshot_root.to_path_buf();
@@ -253,15 +253,6 @@ pub async fn restore_workspace_from_snapshot(
             if rel.as_os_str().is_empty() {
                 continue;
             }
-            if rel_path_is_checkpoint_secret(rel) {
-                continue;
-            }
-            let meta = entry
-                .metadata()
-                .with_context(|| format!("stat {}", entry.path().display()))?;
-            if meta.len() > max_file_bytes {
-                continue;
-            }
             current_paths.push(rel.to_string_lossy().to_string());
         }
 
@@ -290,6 +281,22 @@ pub async fn restore_workspace_from_snapshot(
     .context("join checkpoint restore task")?
 }
 
+fn files_match(left: &Path, right: &Path, max_file_bytes: u64) -> anyhow::Result<bool> {
+    let left_meta = std::fs::metadata(left).with_context(|| format!("stat {}", left.display()))?;
+    let right_meta =
+        std::fs::metadata(right).with_context(|| format!("stat {}", right.display()))?;
+    if left_meta.len() != right_meta.len() {
+        return Ok(false);
+    }
+    if left_meta.len() > max_file_bytes {
+        return Ok(false);
+    }
+
+    let left_bytes = std::fs::read(left).with_context(|| format!("read {}", left.display()))?;
+    let right_bytes = std::fs::read(right).with_context(|| format!("read {}", right.display()))?;
+    Ok(left_bytes == right_bytes)
+}
+
 fn rel_path_is_checkpoint_secret(rel_path: &Path) -> bool {
     if rel_path.components().any(
         |c| matches!(c, std::path::Component::Normal(os) if os == ".ssh" || os == ".aws" || os == ".kube"),
@@ -306,4 +313,75 @@ fn rel_path_is_checkpoint_secret(rel_path: &Path) -> bool {
     }
 
     file_name.ends_with(".pem") || file_name.ends_with(".key")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct TestDir(std::path::PathBuf);
+
+    impl TestDir {
+        fn new() -> anyhow::Result<Self> {
+            let path = std::env::temp_dir().join(format!(
+                "omne-checkpoint-runtime-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)?
+                    .as_nanos()
+            ));
+            std::fs::create_dir_all(&path).with_context(|| format!("create {}", path.display()))?;
+            Ok(Self(path))
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[tokio::test]
+    async fn restore_plan_counts_same_length_content_changes_as_modify() -> anyhow::Result<()> {
+        let thread_root = TestDir::new()?;
+        let snapshot_root = TestDir::new()?;
+
+        std::fs::write(thread_root.path().join("same.txt"), "abcd")?;
+        std::fs::write(snapshot_root.path().join("same.txt"), "wxyz")?;
+
+        let plan = compute_restore_plan(thread_root.path(), snapshot_root.path(), 16).await?;
+        assert_eq!(plan.create, 0);
+        assert_eq!(plan.modify, 1);
+        assert_eq!(plan.delete, 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn restore_removes_excluded_dirty_files_not_present_in_snapshot() -> anyhow::Result<()> {
+        let thread_root = TestDir::new()?;
+        let snapshot_root = TestDir::new()?;
+
+        std::fs::write(thread_root.path().join("keep.txt"), "old")?;
+        std::fs::write(thread_root.path().join("remove.txt"), "remove-me")?;
+        std::fs::write(thread_root.path().join(".env.local"), "secret")?;
+        std::fs::write(thread_root.path().join("oversize.bin"), "12345")?;
+        std::fs::write(snapshot_root.path().join("keep.txt"), "new")?;
+
+        let plan = compute_restore_plan(thread_root.path(), snapshot_root.path(), 4).await?;
+        assert_eq!(plan.create, 0);
+        assert_eq!(plan.modify, 1);
+        assert_eq!(plan.delete, 3);
+
+        restore_workspace_from_snapshot(thread_root.path(), snapshot_root.path(), 4).await?;
+
+        assert_eq!(std::fs::read_to_string(thread_root.path().join("keep.txt"))?, "new");
+        assert!(!thread_root.path().join("remove.txt").exists());
+        assert!(!thread_root.path().join(".env.local").exists());
+        assert!(!thread_root.path().join("oversize.bin").exists());
+        Ok(())
+    }
 }
