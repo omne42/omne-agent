@@ -50,6 +50,56 @@ pub(super) fn invalid_params(id: serde_json::Value, err: serde_json::Error) -> J
     )
 }
 
+fn collect_unknown_json_fields(
+    original: &serde_json::Value,
+    normalized: &serde_json::Value,
+    path: &str,
+    out: &mut Vec<String>,
+) {
+    match (original, normalized) {
+        (serde_json::Value::Object(original), serde_json::Value::Object(normalized)) => {
+            for (key, value) in original {
+                let child_path = if path.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{path}.{key}")
+                };
+                if let Some(normalized_value) = normalized.get(key) {
+                    collect_unknown_json_fields(value, normalized_value, &child_path, out);
+                } else {
+                    out.push(child_path);
+                }
+            }
+        }
+        (serde_json::Value::Array(original), serde_json::Value::Array(normalized)) => {
+            for (index, (value, normalized_value)) in original.iter().zip(normalized).enumerate() {
+                let child_path = format!("{path}[{index}]");
+                collect_unknown_json_fields(value, normalized_value, &child_path, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn strict_from_value<T>(params: serde_json::Value) -> Result<T, serde_json::Error>
+where
+    T: serde::de::DeserializeOwned + serde::Serialize,
+{
+    let parsed = serde_json::from_value::<T>(params.clone())?;
+    let normalized = serde_json::to_value(&parsed)
+        .map_err(|err| serde_json::Error::io(std::io::Error::other(err)))?;
+    let mut unknown = Vec::new();
+    collect_unknown_json_fields(&params, &normalized, "", &mut unknown);
+    if unknown.is_empty() {
+        return Ok(parsed);
+    }
+
+    Err(serde_json::Error::io(std::io::Error::new(
+        std::io::ErrorKind::InvalidInput,
+        format!("unknown fields: {}", unknown.join(", ")),
+    )))
+}
+
 fn jsonrpc_internal_error_data(err: &anyhow::Error) -> Option<serde_json::Value> {
     thread_configure_error_code(err)
         .map(|error_code| serde_json::json!({ "error_code": error_code }))
@@ -88,11 +138,11 @@ pub(super) fn jsonrpc_ok_or_internal<T: serde::Serialize>(
     }
 }
 
-pub(super) fn parse_jsonrpc_params<T: serde::de::DeserializeOwned>(
+pub(super) fn parse_jsonrpc_params<T: serde::de::DeserializeOwned + serde::Serialize>(
     id: &serde_json::Value,
     params: serde_json::Value,
 ) -> Result<T, Box<JsonRpcResponse>> {
-    serde_json::from_value(params).map_err(|err| Box::new(invalid_params(id.clone(), err)))
+    strict_from_value(params).map_err(|err| Box::new(invalid_params(id.clone(), err)))
 }
 
 pub(super) async fn dispatch_jsonrpc_request<P, R, F, Fut>(
@@ -101,7 +151,7 @@ pub(super) async fn dispatch_jsonrpc_request<P, R, F, Fut>(
     handler: F,
 ) -> JsonRpcResponse
 where
-    P: serde::de::DeserializeOwned,
+    P: serde::de::DeserializeOwned + serde::Serialize,
     R: serde::Serialize,
     F: FnOnce(P) -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<R>>,
@@ -109,6 +159,29 @@ where
     match parse_jsonrpc_params::<P>(id, params) {
         Ok(params) => jsonrpc_ok_or_internal(id, handler(params).await),
         Err(response) => *response,
+    }
+}
+
+#[cfg(test)]
+mod dispatch_tests {
+    use super::*;
+
+    #[test]
+    fn parse_jsonrpc_params_rejects_unknown_fields() {
+        let id = serde_json::json!(1);
+        let response = parse_jsonrpc_params::<omne_app_server_protocol::RepoSearchParams>(
+            &id,
+            serde_json::json!({
+                "thread_id": omne_protocol::ThreadId::new(),
+                "query": "needle",
+                "unexpected": true
+            }),
+        )
+        .expect_err("unknown field should be rejected");
+
+        assert_eq!(response.error.code, JSONRPC_INVALID_PARAMS);
+        let message = response.error.data.unwrap_or_default().to_string();
+        assert!(message.contains("unexpected"));
     }
 }
 

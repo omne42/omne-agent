@@ -1073,9 +1073,11 @@ struct Server {
 
 impl Server {
     async fn get_or_load_thread(&self, thread_id: ThreadId) -> anyhow::Result<Arc<ThreadRuntime>> {
-        let mut threads = self.threads.lock().await;
-        if let Some(rt) = threads.get(&thread_id) {
-            return Ok(rt.clone());
+        {
+            let threads = self.threads.lock().await;
+            if let Some(rt) = threads.get(&thread_id) {
+                return Ok(rt.clone());
+            }
         }
 
         let handle = self
@@ -1085,6 +1087,10 @@ impl Server {
             .ok_or_else(|| anyhow::anyhow!("thread not found: {thread_id}"))?;
 
         let rt = Arc::new(ThreadRuntime::new(handle, self.notify_tx.clone()));
+        let mut threads = self.threads.lock().await;
+        if let Some(existing) = threads.get(&thread_id) {
+            return Ok(existing.clone());
+        }
         threads.insert(thread_id, rt.clone());
         Ok(rt)
     }

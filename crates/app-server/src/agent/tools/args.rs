@@ -1,4 +1,5 @@
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct FileReadArgs {
     #[serde(default)]
     root: Option<crate::FileRoot>,
@@ -8,6 +9,7 @@ struct FileReadArgs {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct FileGlobArgs {
     #[serde(default)]
     root: Option<crate::FileRoot>,
@@ -17,6 +19,7 @@ struct FileGlobArgs {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct FileGrepArgs {
     #[serde(default)]
     root: Option<crate::FileRoot>,
@@ -30,6 +33,7 @@ struct FileGrepArgs {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RepoSearchArgs {
     #[serde(default)]
     root: Option<crate::FileRoot>,
@@ -47,6 +51,7 @@ struct RepoSearchArgs {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RepoIndexArgs {
     #[serde(default)]
     root: Option<crate::FileRoot>,
@@ -57,6 +62,7 @@ struct RepoIndexArgs {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RepoSymbolsArgs {
     #[serde(default)]
     root: Option<crate::FileRoot>,
@@ -71,6 +77,7 @@ struct RepoSymbolsArgs {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RepoGotoDefinitionArgs {
     #[serde(default)]
     root: Option<crate::FileRoot>,
@@ -90,6 +97,7 @@ struct RepoGotoDefinitionArgs {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RepoFindReferencesArgs {
     #[serde(default)]
     root: Option<crate::FileRoot>,
@@ -107,16 +115,19 @@ struct RepoFindReferencesArgs {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct McpListToolsArgs {
     server: String,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct McpListResourcesArgs {
     server: String,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct McpCallArgs {
     server: String,
     tool: String,
@@ -125,6 +136,7 @@ struct McpCallArgs {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct FileWriteArgs {
     path: String,
     text: String,
@@ -133,6 +145,7 @@ struct FileWriteArgs {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct FilePatchArgs {
     path: String,
     patch: String,
@@ -141,6 +154,7 @@ struct FilePatchArgs {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct FileEditArgs {
     path: String,
     edits: Vec<FileEditOpArgs>,
@@ -149,6 +163,7 @@ struct FileEditArgs {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct FileEditOpArgs {
     old: String,
     new: String,
@@ -157,6 +172,7 @@ struct FileEditOpArgs {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct FileDeleteArgs {
     path: String,
     #[serde(default)]
@@ -164,6 +180,7 @@ struct FileDeleteArgs {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct FsMkdirArgs {
     path: String,
     #[serde(default)]
@@ -171,6 +188,7 @@ struct FsMkdirArgs {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ProcessStartArgs {
     argv: Vec<String>,
     #[serde(default)]
@@ -180,6 +198,7 @@ struct ProcessStartArgs {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ProcessInspectArgs {
     process_id: String,
     #[serde(default)]
@@ -187,6 +206,7 @@ struct ProcessInspectArgs {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ProcessTailArgs {
     process_id: String,
     stream: super::ProcessStream,
@@ -195,6 +215,7 @@ struct ProcessTailArgs {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ProcessFollowArgs {
     process_id: String,
     stream: super::ProcessStream,
@@ -205,6 +226,7 @@ struct ProcessFollowArgs {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ProcessKillArgs {
     process_id: String,
     #[serde(default)]
@@ -212,6 +234,7 @@ struct ProcessKillArgs {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ArtifactWriteArgs {
     artifact_type: String,
     summary: String,
@@ -219,6 +242,7 @@ struct ArtifactWriteArgs {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ArtifactReadArgs {
     artifact_id: String,
     #[serde(default)]
@@ -228,17 +252,20 @@ struct ArtifactReadArgs {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ArtifactDeleteArgs {
     artifact_id: String,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct UpdatePlanStepArgs {
     step: String,
     status: String,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct UpdatePlanArgs {
     #[serde(default)]
     explanation: Option<String>,
@@ -246,12 +273,14 @@ struct UpdatePlanArgs {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RequestUserInputOptionArgs {
     label: String,
     description: String,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RequestUserInputQuestionArgs {
     header: String,
     id: String,

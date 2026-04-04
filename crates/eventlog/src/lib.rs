@@ -20,6 +20,23 @@ pub struct EventLogWriter {
 
 impl EventLogWriter {
     pub async fn open(thread_id: ThreadId, log_path: PathBuf) -> anyhow::Result<Self> {
+        let (writer, _events) = Self::open_internal(thread_id, log_path, false).await?;
+        Ok(writer)
+    }
+
+    pub async fn open_with_events(
+        thread_id: ThreadId,
+        log_path: PathBuf,
+    ) -> anyhow::Result<(Self, Vec<ThreadEvent>)> {
+        let (writer, events) = Self::open_internal(thread_id, log_path, true).await?;
+        Ok((writer, events.unwrap_or_default()))
+    }
+
+    async fn open_internal(
+        thread_id: ThreadId,
+        log_path: PathBuf,
+        return_events: bool,
+    ) -> anyhow::Result<(Self, Option<Vec<ThreadEvent>>)> {
         if let Some(parent) = log_path.parent() {
             tokio::fs::create_dir_all(parent)
                 .await
@@ -28,18 +45,28 @@ impl EventLogWriter {
         }
 
         let lock_path = lock_path_for(&log_path);
-        let lock_file = std::fs::OpenOptions::new()
-            .create(true)
-            .read(true)
-            .write(true)
-            .truncate(false)
-            .open(&lock_path)
-            .with_context(|| format!("open lock file {}", lock_path.display()))?;
-        lock_file
-            .lock_exclusive()
-            .with_context(|| format!("lock {}", lock_path.display()))?;
+        let lock_path_for_blocking = lock_path.clone();
+        let lock_file = tokio::task::spawn_blocking(move || -> anyhow::Result<std::fs::File> {
+            let lock_file = std::fs::OpenOptions::new()
+                .create(true)
+                .read(true)
+                .write(true)
+                .truncate(false)
+                .open(&lock_path_for_blocking)
+                .with_context(|| format!("open lock file {}", lock_path_for_blocking.display()))?;
+            lock_file
+                .lock_exclusive()
+                .with_context(|| format!("lock {}", lock_path_for_blocking.display()))?;
+            Ok(lock_file)
+        })
+        .await
+        .context("join lock file task")??;
 
-        let last_seq = sanitize_and_get_last_seq(thread_id, &log_path).await?;
+        let events = sanitize_and_read_events(thread_id, &log_path).await?;
+        let last_seq = events
+            .last()
+            .map(|event| event.seq)
+            .unwrap_or(EventSeq::ZERO);
         let file = tokio::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -49,13 +76,15 @@ impl EventLogWriter {
         tighten_file_permissions_best_effort(&lock_path).await;
         tighten_file_permissions_best_effort(&log_path).await;
 
-        Ok(Self {
+        let writer = Self {
             thread_id,
             log_path,
             _lock_file: lock_file,
             file,
             next_seq: last_seq.0 + 1,
-        })
+        };
+
+        Ok((writer, return_events.then_some(events)))
     }
 
     pub fn log_path(&self) -> &Path {
@@ -166,17 +195,17 @@ async fn tighten_file_permissions_best_effort(path: &Path) {
 #[cfg(not(unix))]
 async fn tighten_file_permissions_best_effort(_path: &Path) {}
 
-async fn sanitize_and_get_last_seq(
+async fn sanitize_and_read_events(
     expected_thread_id: ThreadId,
     log_path: &Path,
-) -> anyhow::Result<EventSeq> {
+) -> anyhow::Result<Vec<ThreadEvent>> {
     let bytes = match tokio::fs::read(log_path).await {
         Ok(bytes) => bytes,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(EventSeq::ZERO),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(err) => return Err(err).with_context(|| format!("read {}", log_path.display())),
     };
 
-    let mut last_seq = EventSeq::ZERO;
+    let mut events = Vec::new();
     let mut expected_next = EventSeq(1);
     let mut last_good_len = bytes.len();
 
@@ -203,7 +232,7 @@ async fn sanitize_and_get_last_seq(
                     );
                 }
                 expected_next = EventSeq(event.seq.0 + 1);
-                last_seq = event.seq;
+                events.push(event);
             }
             Err(err) => {
                 if bytes.last() != Some(&b'\n') {
@@ -226,7 +255,7 @@ async fn sanitize_and_get_last_seq(
             .with_context(|| format!("truncate {}", log_path.display()))?;
     }
 
-    Ok(last_seq)
+    Ok(events)
 }
 
 #[derive(Debug, Clone)]

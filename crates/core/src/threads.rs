@@ -3,7 +3,9 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use omne_eventlog::{EventLogWriter, ThreadState, read_events_since as read_events_since_jsonl};
-use omne_protocol::{EventSeq, ProcessId, ThreadEvent, ThreadEventKind, ThreadId, TurnStatus};
+use omne_protocol::{
+    EventSeq, ProcessId, ThreadEvent, ThreadEventKind, ThreadId, ToolId, TurnStatus,
+};
 
 use crate::PmPaths;
 
@@ -163,27 +165,7 @@ impl ThreadStore {
                 .await?;
         }
 
-        let events = handle.events_since(EventSeq::ZERO).await?;
-        let mut active_processes = HashSet::<ProcessId>::new();
-        let mut active_tools = HashSet::<omne_protocol::ToolId>::new();
-        for event in events {
-            match event.kind {
-                ThreadEventKind::ProcessStarted { process_id, .. } => {
-                    active_processes.insert(process_id);
-                }
-                ThreadEventKind::ProcessExited { process_id, .. } => {
-                    active_processes.remove(&process_id);
-                }
-                ThreadEventKind::ToolStarted { tool_id, .. } => {
-                    active_tools.insert(tool_id);
-                }
-                ThreadEventKind::ToolCompleted { tool_id, .. } => {
-                    active_tools.remove(&tool_id);
-                }
-                _ => {}
-            }
-        }
-        for process_id in active_processes {
+        for process_id in handle.active_processes.clone() {
             handle
                 .append(ThreadEventKind::ProcessExited {
                     process_id,
@@ -192,7 +174,7 @@ impl ThreadStore {
                 })
                 .await?;
         }
-        for tool_id in active_tools {
+        for tool_id in handle.active_tools.clone() {
             handle
                 .append(ThreadEventKind::ToolCompleted {
                     tool_id,
@@ -243,6 +225,8 @@ pub struct ThreadHandle {
     thread_id: ThreadId,
     writer: EventLogWriter,
     state: ThreadState,
+    active_processes: HashSet<ProcessId>,
+    active_tools: HashSet<ToolId>,
 }
 
 impl ThreadHandle {
@@ -252,22 +236,28 @@ impl ThreadHandle {
             thread_id,
             writer,
             state: ThreadState::new(thread_id),
+            active_processes: HashSet::new(),
+            active_tools: HashSet::new(),
         })
     }
 
     async fn open_existing(thread_id: ThreadId, log_path: PathBuf) -> anyhow::Result<Self> {
-        let writer = EventLogWriter::open(thread_id, log_path).await?;
-        let events = read_events_since_jsonl(thread_id, writer.log_path(), EventSeq::ZERO).await?;
+        let (writer, events) = EventLogWriter::open_with_events(thread_id, log_path).await?;
 
         let mut state = ThreadState::new(thread_id);
+        let mut active_processes = HashSet::<ProcessId>::new();
+        let mut active_tools = HashSet::<ToolId>::new();
         for event in &events {
             state.apply(event)?;
+            apply_runtime_event_tracking(&mut active_processes, &mut active_tools, &event.kind);
         }
 
         Ok(Self {
             thread_id,
             writer,
             state,
+            active_processes,
+            active_tools,
         })
     }
 
@@ -293,6 +283,11 @@ impl ThreadHandle {
 
         let event = self.writer.append(kind).await?;
         self.state.apply(&event)?;
+        apply_runtime_event_tracking(
+            &mut self.active_processes,
+            &mut self.active_tools,
+            &event.kind,
+        );
 
         if let Err(err) = append_readable_history_event(self.writer.log_path(), &event).await {
             tracing::debug!(
@@ -307,6 +302,28 @@ impl ThreadHandle {
 
     pub async fn events_since(&self, since_seq: EventSeq) -> anyhow::Result<Vec<ThreadEvent>> {
         read_events_since_jsonl(self.thread_id, self.log_path(), since_seq).await
+    }
+}
+
+fn apply_runtime_event_tracking(
+    active_processes: &mut HashSet<ProcessId>,
+    active_tools: &mut HashSet<ToolId>,
+    kind: &ThreadEventKind,
+) {
+    match kind {
+        ThreadEventKind::ProcessStarted { process_id, .. } => {
+            active_processes.insert(*process_id);
+        }
+        ThreadEventKind::ProcessExited { process_id, .. } => {
+            active_processes.remove(process_id);
+        }
+        ThreadEventKind::ToolStarted { tool_id, .. } => {
+            active_tools.insert(*tool_id);
+        }
+        ThreadEventKind::ToolCompleted { tool_id, .. } => {
+            active_tools.remove(tool_id);
+        }
+        _ => {}
     }
 }
 

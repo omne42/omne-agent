@@ -1,6 +1,7 @@
 use super::*;
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
+#[serde(deny_unknown_fields)]
 pub struct RepoSearchParams {
     pub thread_id: omne_protocol::ThreadId,
     #[serde(default)]
@@ -30,6 +31,7 @@ pub struct RepoSearchParams {
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
+#[serde(deny_unknown_fields)]
 pub struct RepoIndexParams {
     pub thread_id: omne_protocol::ThreadId,
     #[serde(default)]
@@ -50,6 +52,7 @@ pub struct RepoIndexParams {
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
+#[serde(deny_unknown_fields)]
 pub struct RepoSymbolsParams {
     pub thread_id: omne_protocol::ThreadId,
     #[serde(default)]
@@ -76,6 +79,7 @@ pub struct RepoSymbolsParams {
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
+#[serde(deny_unknown_fields)]
 pub struct RepoGotoDefinitionParams {
     pub thread_id: omne_protocol::ThreadId,
     #[serde(default)]
@@ -109,6 +113,7 @@ pub struct RepoGotoDefinitionParams {
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
+#[serde(deny_unknown_fields)]
 pub struct RepoFindReferencesParams {
     pub thread_id: omne_protocol::ThreadId,
     #[serde(default)]
