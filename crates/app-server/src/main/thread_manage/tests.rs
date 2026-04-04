@@ -3899,7 +3899,6 @@ base_url = "https://project.example/v1"
                 clear_show_thinking: true,
                 clear_openai_base_url: true,
                 clear_execpolicy_rules: true,
-                clear_execpolicy_rules: false,
                 ..thread_configure_defaults(thread_id)
             },
         )
@@ -3944,7 +3943,7 @@ base_url = "https://project.example/v1"
             clear_openai_base_url: false,
             allowed_tools: None,
             execpolicy_rules: None,
-        clear_execpolicy_rules: false,
+            clear_execpolicy_rules: false,
         })
         .await?;
 
