@@ -676,16 +676,6 @@ impl App {
     }
 
     async fn thread_configure(&mut self, args: ThreadConfigureArgs) -> anyhow::Result<()> {
-        if args.clear_allowed_tools && args.allowed_tools.is_some() {
-            anyhow::bail!(
-                "conflicting options: --allowed-tools cannot be used with --clear-allowed-tools"
-            );
-        }
-        if args.clear_execpolicy_rules && args.execpolicy_rules.is_some() {
-            anyhow::bail!(
-                "conflicting options: --execpolicy-rules cannot be used with --clear-execpolicy-rules"
-            );
-        }
         let approval_policy: Option<ApprovalPolicy> = args.approval_policy.map(Into::into);
         let sandbox_policy: Option<policy_meta::WriteScope> = args.sandbox_policy.map(Into::into);
         let sandbox_network_access: Option<omne_protocol::SandboxNetworkAccess> =
@@ -695,11 +685,7 @@ impl App {
         } else {
             args.allowed_tools.map(normalize_string_list).map(Some)
         };
-        let execpolicy_rules = if args.clear_execpolicy_rules {
-            Some(Vec::<String>::new())
-        } else {
-            args.execpolicy_rules.map(normalize_string_list)
-        };
+        let execpolicy_rules = args.execpolicy_rules.map(normalize_string_list);
         self.thread_configure_rpc(omne_app_server_protocol::ThreadConfigureParams {
             thread_id: args.thread_id,
             approval_policy,
@@ -709,11 +695,16 @@ impl App {
             mode: args.mode,
             role: args.role,
             model: args.model,
+            clear_model: args.clear_model,
             thinking: args.thinking,
-            show_thinking: None,
+            clear_thinking: args.clear_thinking,
+            show_thinking: args.show_thinking,
+            clear_show_thinking: args.clear_show_thinking,
             openai_base_url: args.openai_base_url,
+            clear_openai_base_url: args.clear_openai_base_url,
             allowed_tools,
             execpolicy_rules,
+            clear_execpolicy_rules: args.clear_execpolicy_rules,
         })
         .await
     }

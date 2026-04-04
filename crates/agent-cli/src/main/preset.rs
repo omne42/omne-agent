@@ -31,6 +31,7 @@ mod preset {
         allowed_tools: Option<Option<Vec<String>>>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         execpolicy_rules: Vec<String>,
+    clear_execpolicy_rules: false,
     }
 
     #[derive(Debug, Clone, Serialize)]
@@ -403,11 +404,16 @@ mod preset {
             mode: Some(cfg.mode.clone()),
                 role: None,
             model: Some(cfg.model.clone()),
+            clear_model: false,
             thinking: None,
+            clear_thinking: false,
             show_thinking: None,
+            clear_show_thinking: false,
             openai_base_url: Some(cfg.openai_base_url.clone()),
+            clear_openai_base_url: false,
             allowed_tools: cfg.allowed_tools.clone(),
             execpolicy_rules: Some(cfg.execpolicy_rules.clone()),
+        clear_execpolicy_rules: false,
         })
         .await
     }
@@ -464,8 +470,10 @@ mod preset {
             mode: explain.effective.mode,
             model: explain.effective.model,
             openai_base_url: explain.effective.openai_base_url,
+            clear_openai_base_url: false,
             allowed_tools: Some(explain.effective.allowed_tools),
             execpolicy_rules: explain.effective.execpolicy_rules,
+        clear_execpolicy_rules: false,
         };
         let mut portability_warnings = Vec::<String>::new();
 

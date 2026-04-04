@@ -12,11 +12,16 @@ mod thread_manage_tests {
             mode: None,
             role: None,
             model: None,
+            clear_model: false,
             thinking: None,
+            clear_thinking: false,
             show_thinking: None,
+            clear_show_thinking: false,
             openai_base_url: None,
+            clear_openai_base_url: false,
             allowed_tools: None,
             execpolicy_rules: None,
+        clear_execpolicy_rules: false,
         }
     }
 
@@ -754,6 +759,7 @@ prefix_rule(
             &server,
             ThreadConfigureParams {
                 execpolicy_rules: Some(vec!["rules/thread.rules".to_string()]),
+                clear_execpolicy_rules: false,
                 ..thread_configure_defaults(thread_id)
             },
         )
@@ -817,6 +823,7 @@ hooks:
             &server,
             ThreadConfigureParams {
                 execpolicy_rules: Some(vec!["rules/missing.rules".to_string()]),
+                clear_execpolicy_rules: false,
                 ..thread_configure_defaults(thread_id)
             },
         )
@@ -3774,6 +3781,141 @@ modes:
     }
 
     #[tokio::test]
+    async fn thread_config_clear_model_reverts_to_project_base_model() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(repo_dir.join(".omne_data")).await?;
+        tokio::fs::write(
+            repo_dir.join(".omne_data/config.toml"),
+            r#"
+[project_config]
+enabled = true
+
+[openai]
+model = "gpt-project"
+"#,
+        )
+        .await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        handle_thread_configure(
+            &server,
+            ThreadConfigureParams {
+                model: Some("gpt-thread".to_string()),
+                ..thread_configure_defaults(thread_id)
+            },
+        )
+        .await?;
+        handle_thread_configure(
+            &server,
+            ThreadConfigureParams {
+                clear_model: true,
+                ..thread_configure_defaults(thread_id)
+            },
+        )
+        .await?;
+
+        let explain =
+            handle_thread_config_explain(&server, ThreadConfigExplainParams { thread_id }).await?;
+        assert_eq!(explain.effective.model, "gpt-project");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn thread_config_clear_openai_base_url_reverts_to_project_base() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(repo_dir.join(".omne_data")).await?;
+        tokio::fs::write(
+            repo_dir.join(".omne_data/config.toml"),
+            r#"
+[project_config]
+enabled = true
+
+[openai]
+base_url = "https://project.example/v1"
+"#,
+        )
+        .await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        handle_thread_configure(
+            &server,
+            ThreadConfigureParams {
+                openai_base_url: Some("https://thread.example/v1".to_string()),
+                ..thread_configure_defaults(thread_id)
+            },
+        )
+        .await?;
+        handle_thread_configure(
+            &server,
+            ThreadConfigureParams {
+                clear_openai_base_url: true,
+                ..thread_configure_defaults(thread_id)
+            },
+        )
+        .await?;
+
+        let explain =
+            handle_thread_config_explain(&server, ThreadConfigExplainParams { thread_id }).await?;
+        assert_eq!(
+            explain.effective.openai_base_url,
+            "https://project.example/v1"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn thread_config_clear_noop_does_not_append_event() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let before = server
+            .thread_store
+            .read_events_since(thread_id, EventSeq::ZERO)
+            .await?
+            .unwrap_or_default()
+            .len();
+
+        handle_thread_configure(
+            &server,
+            ThreadConfigureParams {
+                clear_model: true,
+                clear_thinking: true,
+                clear_show_thinking: true,
+                clear_openai_base_url: true,
+                clear_execpolicy_rules: true,
+                clear_execpolicy_rules: false,
+                ..thread_configure_defaults(thread_id)
+            },
+        )
+        .await?;
+
+        let after = server
+            .thread_store
+            .read_events_since(thread_id, EventSeq::ZERO)
+            .await?
+            .unwrap_or_default()
+            .len();
+        assert_eq!(after, before);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn thread_config_explain_role_unknown_falls_back_to_mode_only() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");
@@ -3793,11 +3935,16 @@ modes:
             mode: Some("chat".to_string()),
             role: Some("legacy-role".to_string()),
             model: None,
+            clear_model: false,
             thinking: None,
+            clear_thinking: false,
             show_thinking: None,
+            clear_show_thinking: false,
             openai_base_url: None,
+            clear_openai_base_url: false,
             allowed_tools: None,
             execpolicy_rules: None,
+        clear_execpolicy_rules: false,
         })
         .await?;
 

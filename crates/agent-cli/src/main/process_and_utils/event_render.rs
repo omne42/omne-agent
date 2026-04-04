@@ -98,6 +98,7 @@ fn render_event(event: &ThreadEvent) {
             openai_base_url,
             allowed_tools,
             execpolicy_rules,
+            ..
         } => {
             println!(
                 "[{ts}] config approval_policy={approval_policy:?} sandbox_policy={sandbox_policy:?} sandbox_writable_roots={sandbox_writable_roots:?} sandbox_network_access={sandbox_network_access:?} mode={} role={} model={} thinking={} show_thinking={} openai_base_url={} allowed_tools={allowed_tools:?} execpolicy_rules={execpolicy_rules:?}",
