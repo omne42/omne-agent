@@ -1,9 +1,5 @@
 fn managed_subagent_worktree_root(server: &Server) -> std::path::PathBuf {
-    server
-        .cwd
-        .join(".omne_data")
-        .join("tmp")
-        .join("subagents")
+    server.thread_store.root().join("tmp").join("subagents")
 }
 
 async fn managed_subagent_worktree_path(
