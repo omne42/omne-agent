@@ -105,7 +105,6 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
             approval_params: &approval_params,
         },
         move |mode| match rel_path_for_mode.as_ref() {
-            Some(rel) if mode.permissions.edit.is_denied(rel) => omne_core::modes::Decision::Deny,
             Some(_) => mode.permissions.read,
             None => omne_core::modes::Decision::Deny,
         },
@@ -157,11 +156,7 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
                 result,
             ));
         }
-        let base_decision = if mode.permissions.edit.is_denied(&resolved_rel) {
-            omne_core::modes::Decision::Deny
-        } else {
-            mode.permissions.read
-        };
+        let base_decision = mode.permissions.read;
         let mode_decision = resolve_mode_decision_audit(&mode, "file/read", base_decision);
         if mode_decision.decision == omne_core::modes::Decision::Deny {
             let result = file_mode_denied_response(tool_id, &mode_name, mode_decision)?;
