@@ -114,8 +114,10 @@ pub fn read_text_read_only(
     path: PathBuf,
     max_read_bytes: u64,
 ) -> anyhow::Result<ReadOutcome> {
-    let mut limits = Limits::default();
-    limits.max_read_bytes = max_read_bytes;
+    let limits = Limits {
+        max_read_bytes,
+        ..Default::default()
+    };
     let ctx = build_context(
         root_id.clone(),
         root,
@@ -151,11 +153,13 @@ pub fn glob_read_only_paths(
     pattern: String,
     max_results: usize,
 ) -> anyhow::Result<GlobOutcome> {
-    let mut limits = Limits::default();
-    limits.max_results = max_results;
-    // `max_results * max_line_bytes` has a hard validation cap; keep this stable
-    // for large `max_results` calls (up to 20k in app-server).
-    limits.max_line_bytes = 1024;
+    let limits = Limits {
+        max_results,
+        // `max_results * max_line_bytes` has a hard validation cap; keep this stable
+        // for large `max_results` calls (up to 20k in app-server).
+        max_line_bytes: 1024,
+        ..Default::default()
+    };
     let ctx = build_context(
         root_id.clone(),
         root,
@@ -190,11 +194,13 @@ pub fn grep_read_only_paths(
     max_read_bytes: u64,
     max_files: usize,
 ) -> anyhow::Result<GrepOutcome> {
-    let mut limits = Limits::default();
-    limits.max_results = max_results;
-    limits.max_read_bytes = max_read_bytes;
-    limits.max_walk_files = max_files;
-    limits.max_walk_entries = max_files.saturating_mul(8).max(max_files);
+    let limits = Limits {
+        max_results,
+        max_read_bytes,
+        max_walk_files: max_files,
+        max_walk_entries: max_files.saturating_mul(8).max(max_files),
+        ..Default::default()
+    };
     let ctx = build_context(
         root_id.clone(),
         root,
@@ -246,8 +252,10 @@ pub fn write_text_workspace(
         .unwrap_or(u64::MAX)
         .max(Limits::default().max_write_bytes)
         .min(MAX_WRITE_BYTES_HARD_CAP);
-    let mut limits = Limits::default();
-    limits.max_write_bytes = max_write_bytes;
+    let limits = Limits {
+        max_write_bytes,
+        ..Default::default()
+    };
     let ctx = build_context(
         root_id.clone(),
         root,
@@ -285,10 +293,12 @@ pub fn patch_text_workspace(
     patch: String,
     max_bytes: u64,
 ) -> anyhow::Result<PatchOutcome> {
-    let mut limits = Limits::default();
-    limits.max_read_bytes = max_bytes;
-    limits.max_patch_bytes = Some(max_bytes);
-    limits.max_write_bytes = max_bytes;
+    let limits = Limits {
+        max_read_bytes: max_bytes,
+        max_patch_bytes: Some(max_bytes),
+        max_write_bytes: max_bytes,
+        ..Default::default()
+    };
     let ctx = build_context(
         root_id.clone(),
         root,
@@ -402,9 +412,11 @@ pub fn edit_replace_workspace(
         anyhow::bail!("edit.old must not be empty");
     }
 
-    let mut limits = Limits::default();
-    limits.max_read_bytes = max_bytes;
-    limits.max_write_bytes = max_bytes;
+    let limits = Limits {
+        max_read_bytes: max_bytes,
+        max_write_bytes: max_bytes,
+        ..Default::default()
+    };
     let ctx = build_context(
         root_id.clone(),
         root,
