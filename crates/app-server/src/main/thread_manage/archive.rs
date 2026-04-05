@@ -52,7 +52,10 @@ async fn handle_thread_archive(
                 break;
             }
             if tokio::time::Instant::now() >= deadline {
-                break;
+                anyhow::bail!(
+                    "timed out waiting for active turn to stop before archive: turn_id={}",
+                    turn_id
+                );
             }
             tokio::time::sleep(Duration::from_millis(200)).await;
         }
@@ -96,6 +99,31 @@ async fn handle_thread_archive(
                 })
                 .await;
         }
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let has_running = {
+                let entries = server.processes.lock().await;
+                entries.values().any(|entry| {
+                    if let Ok(info) = entry.info.try_lock() {
+                        info.thread_id == params.thread_id
+                            && matches!(info.status, ProcessStatus::Running)
+                    } else {
+                        true
+                    }
+                })
+            };
+            if !has_running {
+                break;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                anyhow::bail!(
+                    "timed out waiting for thread processes to stop before archive: {:?}",
+                    running
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
     }
 
     thread_rt
@@ -103,7 +131,8 @@ async fn handle_thread_archive(
             reason: reason.clone(),
         })
         .await?;
-    let auto_hook = run_auto_workspace_hook(server, params.thread_id, WorkspaceHookName::Archive).await;
+    let auto_hook =
+        run_auto_workspace_hook(server, params.thread_id, WorkspaceHookName::Archive).await;
     cleanup_managed_subagent_worktree(
         server,
         params.thread_id,

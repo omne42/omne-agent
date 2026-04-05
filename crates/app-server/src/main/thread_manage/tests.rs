@@ -21,7 +21,7 @@ mod thread_manage_tests {
             clear_openai_base_url: false,
             allowed_tools: None,
             execpolicy_rules: None,
-        clear_execpolicy_rules: false,
+            clear_execpolicy_rules: false,
         }
     }
 
@@ -31,7 +31,9 @@ mod thread_manage_tests {
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let server = Arc::new(crate::build_test_server_shared(
+            tmp.path().join(".omne_data"),
+        ));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -178,7 +180,10 @@ mod thread_manage_tests {
             );
             assert_eq!(
                 usage.token_budget_warning_active,
-                Some(130 <= limit && (130.0 / limit as f64) >= token_budget_warning_threshold_ratio()),
+                Some(
+                    130 <= limit
+                        && (130.0 / limit as f64) >= token_budget_warning_threshold_ratio()
+                ),
                 "token_budget_warning_active should reflect threshold and exceeded state"
             );
         } else {
@@ -197,7 +202,9 @@ mod thread_manage_tests {
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let server = Arc::new(crate::build_test_server_shared(
+            tmp.path().join(".omne_data"),
+        ));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -290,8 +297,14 @@ mod thread_manage_tests {
             .ok_or_else(|| anyhow::anyhow!("thread/list_meta row not found"))?;
 
         assert_eq!(attention.token_budget_limit, usage.token_budget_limit);
-        assert_eq!(attention.token_budget_remaining, usage.token_budget_remaining);
-        assert_eq!(attention.token_budget_utilization, usage.token_budget_utilization);
+        assert_eq!(
+            attention.token_budget_remaining,
+            usage.token_budget_remaining
+        );
+        assert_eq!(
+            attention.token_budget_utilization,
+            usage.token_budget_utilization
+        );
         assert_eq!(attention.token_budget_exceeded, usage.token_budget_exceeded);
         assert_eq!(
             attention.token_budget_warning_active,
@@ -307,7 +320,10 @@ mod thread_manage_tests {
             list_meta_item.token_budget_utilization,
             usage.token_budget_utilization
         );
-        assert_eq!(list_meta_item.token_budget_exceeded, usage.token_budget_exceeded);
+        assert_eq!(
+            list_meta_item.token_budget_exceeded,
+            usage.token_budget_exceeded
+        );
         assert_eq!(
             list_meta_item.token_budget_warning_active,
             usage.token_budget_warning_active
@@ -465,7 +481,9 @@ hooks:
             omne_app_server_protocol::ThreadProcessDeniedDetail::AllowedToolsDenied(detail) => {
                 detail.denied
             }
-            omne_app_server_protocol::ThreadProcessDeniedDetail::ModeDenied(detail) => detail.denied,
+            omne_app_server_protocol::ThreadProcessDeniedDetail::ModeDenied(detail) => {
+                detail.denied
+            }
             omne_app_server_protocol::ThreadProcessDeniedDetail::UnknownModeDenied(detail) => {
                 detail.denied
             }
@@ -875,7 +893,9 @@ hooks:
         )
         .await?;
 
-        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let server = Arc::new(crate::build_test_server_shared(
+            tmp.path().join(".omne_data"),
+        ));
         let response = handle_thread_request(
             &server,
             serde_json::json!(1),
@@ -896,8 +916,8 @@ hooks:
     }
 
     #[tokio::test]
-    async fn thread_start_auto_setup_hook_mode_denied_returns_typed_auto_hook()
-    -> anyhow::Result<()> {
+    async fn thread_start_auto_setup_hook_mode_denied_returns_typed_auto_hook() -> anyhow::Result<()>
+    {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");
         let config_dir = repo_dir.join(".omne_data").join("spec");
@@ -924,7 +944,9 @@ modes:
         )
         .await?;
 
-        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let server = Arc::new(crate::build_test_server_shared(
+            tmp.path().join(".omne_data"),
+        ));
         let response = handle_thread_request(
             &server,
             serde_json::json!(1),
@@ -936,7 +958,8 @@ modes:
         let result = response
             .result
             .ok_or_else(|| anyhow::anyhow!("missing thread/start result"))?;
-        let result = serde_json::from_value::<omne_app_server_protocol::ThreadStartResponse>(result)?;
+        let result =
+            serde_json::from_value::<omne_app_server_protocol::ThreadStartResponse>(result)?;
 
         match result.auto_hook {
             omne_app_server_protocol::ThreadAutoHookResponse::Denied(denied) => {
@@ -978,7 +1001,9 @@ modes:
             .join("..")
             .join("repo");
 
-        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let server = Arc::new(crate::build_test_server_shared(
+            tmp.path().join(".omne_data"),
+        ));
         let response = handle_thread_request(
             &server,
             serde_json::json!(1),
@@ -990,7 +1015,8 @@ modes:
         let result = response
             .result
             .ok_or_else(|| anyhow::anyhow!("missing thread/start result"))?;
-        let result = serde_json::from_value::<omne_app_server_protocol::ThreadStartResponse>(result)?;
+        let result =
+            serde_json::from_value::<omne_app_server_protocol::ThreadStartResponse>(result)?;
 
         let state = handle_thread_state(
             &server,
@@ -1001,7 +1027,10 @@ modes:
         .await?;
         assert_eq!(
             state.cwd,
-            tokio::fs::canonicalize(&repo_dir).await?.display().to_string()
+            tokio::fs::canonicalize(&repo_dir)
+                .await?
+                .display()
+                .to_string()
         );
         Ok(())
     }
@@ -1258,7 +1287,9 @@ modes:
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let server = Arc::new(crate::build_test_server_shared(
+            tmp.path().join(".omne_data"),
+        ));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -1335,7 +1366,9 @@ modes:
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let server = Arc::new(crate::build_test_server_shared(
+            tmp.path().join(".omne_data"),
+        ));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -1456,7 +1489,9 @@ modes:
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let server = Arc::new(crate::build_test_server_shared(
+            tmp.path().join(".omne_data"),
+        ));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -1531,7 +1566,9 @@ modes:
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let server = Arc::new(crate::build_test_server_shared(
+            tmp.path().join(".omne_data"),
+        ));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -1604,7 +1641,9 @@ modes:
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let server = Arc::new(crate::build_test_server_shared(
+            tmp.path().join(".omne_data"),
+        ));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -1700,7 +1739,9 @@ modes:
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let server = Arc::new(crate::build_test_server_shared(
+            tmp.path().join(".omne_data"),
+        ));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -1807,8 +1848,14 @@ modes:
             .as_array()
             .ok_or_else(|| anyhow::anyhow!("missing resume events"))?;
         assert_eq!(resumed_events.len(), 2);
-        assert_eq!(resumed_events[0]["type"].as_str(), Some("attention_marker_set"));
-        assert_eq!(resumed_events[0]["marker"].as_str(), Some("token_budget_exceeded"));
+        assert_eq!(
+            resumed_events[0]["type"].as_str(),
+            Some("attention_marker_set")
+        );
+        assert_eq!(
+            resumed_events[0]["marker"].as_str(),
+            Some("token_budget_exceeded")
+        );
         assert_eq!(
             resumed_events[1]["type"].as_str(),
             Some("attention_marker_cleared")
@@ -1856,7 +1903,9 @@ modes:
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let server = Arc::new(crate::build_test_server_shared(
+            tmp.path().join(".omne_data"),
+        ));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -1968,9 +2017,9 @@ modes:
             .as_array()
             .ok_or_else(|| anyhow::anyhow!("missing resumed subscribe events"))?;
         assert!(
-            resumed_events
-                .iter()
-                .all(|event| event["seq"].as_u64().is_some_and(|seq| seq > warning_clear_seq)),
+            resumed_events.iter().all(|event| event["seq"]
+                .as_u64()
+                .is_some_and(|seq| seq > warning_clear_seq)),
             "resumed subscribe events should all be strictly newer than warning-clear seq"
         );
         assert!(
@@ -2029,7 +2078,9 @@ modes:
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let server = Arc::new(crate::build_test_server_shared(
+            tmp.path().join(".omne_data"),
+        ));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -2151,7 +2202,9 @@ modes:
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let server = Arc::new(crate::build_test_server_shared(
+            tmp.path().join(".omne_data"),
+        ));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -2223,13 +2276,14 @@ modes:
     }
 
     #[tokio::test]
-    async fn thread_subscribe_kind_filter_respects_max_events_and_has_more()
-    -> anyhow::Result<()> {
+    async fn thread_subscribe_kind_filter_respects_max_events_and_has_more() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let server = Arc::new(crate::build_test_server_shared(
+            tmp.path().join(".omne_data"),
+        ));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -2322,7 +2376,9 @@ modes:
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let server = Arc::new(crate::build_test_server_shared(
+            tmp.path().join(".omne_data"),
+        ));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -2414,7 +2470,9 @@ modes:
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let server = Arc::new(crate::build_test_server_shared(
+            tmp.path().join(".omne_data"),
+        ));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -2461,7 +2519,9 @@ modes:
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let server = Arc::new(crate::build_test_server_shared(
+            tmp.path().join(".omne_data"),
+        ));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -2507,7 +2567,9 @@ modes:
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let server = Arc::new(crate::build_test_server_shared(
+            tmp.path().join(".omne_data"),
+        ));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         let thread_id_string = thread_id.to_string();
@@ -2521,16 +2583,21 @@ modes:
             serde_json::Value::Null,
         )
         .await;
-        assert!(list_null.error.is_none(), "thread/list should accept null params");
+        assert!(
+            list_null.error.is_none(),
+            "thread/list should accept null params"
+        );
         let list_null_result = list_null
             .result
             .ok_or_else(|| anyhow::anyhow!("missing thread/list result for null params"))?;
         let list_null_threads = list_null_result["threads"]
             .as_array()
             .ok_or_else(|| anyhow::anyhow!("missing threads array for thread/list null params"))?;
-        assert!(list_null_threads
-            .iter()
-            .any(|id| id.as_str() == Some(thread_id_string.as_str())));
+        assert!(
+            list_null_threads
+                .iter()
+                .any(|id| id.as_str() == Some(thread_id_string.as_str()))
+        );
 
         let list_empty = handle_thread_request(
             &server,
@@ -2558,12 +2625,14 @@ modes:
         let loaded_null_result = loaded_null
             .result
             .ok_or_else(|| anyhow::anyhow!("missing thread/loaded result for null params"))?;
-        let loaded_null_threads = loaded_null_result["threads"]
-            .as_array()
-            .ok_or_else(|| anyhow::anyhow!("missing threads array for thread/loaded null params"))?;
-        assert!(loaded_null_threads
-            .iter()
-            .any(|id| id.as_str() == Some(thread_id_string.as_str())));
+        let loaded_null_threads = loaded_null_result["threads"].as_array().ok_or_else(|| {
+            anyhow::anyhow!("missing threads array for thread/loaded null params")
+        })?;
+        assert!(
+            loaded_null_threads
+                .iter()
+                .any(|id| id.as_str() == Some(thread_id_string.as_str()))
+        );
 
         let loaded_empty = handle_thread_request(
             &server,
@@ -2720,6 +2789,75 @@ modes:
             other => anyhow::bail!("expected ThreadAutoHookResponse::Denied, got {other:?}"),
         }
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn thread_archive_force_waits_for_process_exit_before_archiving() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let thread_id = create_test_thread_shared(&server, repo_dir).await?;
+
+        let started = handle_process_start(
+            &server,
+            ProcessStartParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                argv: vec![
+                    "sh".to_string(),
+                    "-lc".to_string(),
+                    "trap '' TERM; sleep 30".to_string(),
+                ],
+                cwd: None,
+                timeout_ms: None,
+            },
+        )
+        .await?;
+        let process_id: ProcessId =
+            serde_json::from_value(started["process_id"].clone()).map_err(|err| {
+                anyhow::anyhow!("missing process_id in process/start response: {err}")
+            })?;
+
+        let result = handle_thread_archive(
+            &server,
+            ThreadArchiveParams {
+                thread_id,
+                force: true,
+                reason: None,
+            },
+        )
+        .await?;
+        assert!(result.archived);
+
+        let events = server
+            .thread_store
+            .read_events_since(thread_id, EventSeq::ZERO)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("missing thread events"))?;
+        let exited_idx = events
+            .iter()
+            .position(|event| {
+                matches!(
+                    event.kind,
+                    omne_protocol::ThreadEventKind::ProcessExited { process_id: got, .. }
+                        if got == process_id
+                )
+            })
+            .ok_or_else(|| anyhow::anyhow!("missing ProcessExited event"))?;
+        let archived_idx = events
+            .iter()
+            .position(|event| {
+                matches!(
+                    event.kind,
+                    omne_protocol::ThreadEventKind::ThreadArchived { .. }
+                )
+            })
+            .ok_or_else(|| anyhow::anyhow!("missing ThreadArchived event"))?;
+        assert!(exited_idx < archived_idx);
         Ok(())
     }
 
@@ -3013,7 +3151,10 @@ modes:
             omne_app_server_protocol::ThreadCheckpointRestoreDeniedResponse,
         >(restore_result)?;
         assert!(restore_result.denied);
-        assert_eq!(restore_result.error_code.as_deref(), Some("approval_denied"));
+        assert_eq!(
+            restore_result.error_code.as_deref(),
+            Some("approval_denied")
+        );
 
         let events = server
             .thread_store
@@ -3347,7 +3488,9 @@ modes:
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let server = Arc::new(crate::build_test_server_shared(
+            tmp.path().join(".omne_data"),
+        ));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -3379,7 +3522,9 @@ modes:
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let server = Arc::new(crate::build_test_server_shared(
+            tmp.path().join(".omne_data"),
+        ));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -3426,7 +3571,9 @@ modes:
         )
         .await?;
 
-        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let server = Arc::new(crate::build_test_server_shared(
+            tmp.path().join(".omne_data"),
+        ));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -3455,13 +3602,15 @@ modes:
     }
 
     #[tokio::test]
-    async fn thread_configure_mode_update_does_not_implicitly_overwrite_role()
-    -> anyhow::Result<()> {
+    async fn thread_configure_mode_update_does_not_implicitly_overwrite_role() -> anyhow::Result<()>
+    {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let server = Arc::new(crate::build_test_server_shared(
+            tmp.path().join(".omne_data"),
+        ));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -3516,12 +3665,15 @@ modes:
     }
 
     #[tokio::test]
-    async fn thread_configure_unknown_allowed_tool_includes_error_code_data() -> anyhow::Result<()> {
+    async fn thread_configure_unknown_allowed_tool_includes_error_code_data() -> anyhow::Result<()>
+    {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let server = Arc::new(crate::build_test_server_shared(
+            tmp.path().join(".omne_data"),
+        ));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -3557,7 +3709,9 @@ modes:
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let server = Arc::new(crate::build_test_server_shared(
+            tmp.path().join(".omne_data"),
+        ));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -3581,7 +3735,10 @@ modes:
         let data = err
             .data
             .ok_or_else(|| anyhow::anyhow!("expected json-rpc error data"))?;
-        assert_eq!(data["error_code"].as_str(), Some("allowed_tools_mode_denied"));
+        assert_eq!(
+            data["error_code"].as_str(),
+            Some("allowed_tools_mode_denied")
+        );
         Ok(())
     }
 
@@ -3592,7 +3749,9 @@ modes:
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let server = Arc::new(crate::build_test_server_shared(
+            tmp.path().join(".omne_data"),
+        ));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -3616,7 +3775,10 @@ modes:
         let data = err
             .data
             .ok_or_else(|| anyhow::anyhow!("expected json-rpc error data"))?;
-        assert_eq!(data["error_code"].as_str(), Some("allowed_tools_mode_denied"));
+        assert_eq!(
+            data["error_code"].as_str(),
+            Some("allowed_tools_mode_denied")
+        );
         Ok(())
     }
 
@@ -3626,7 +3788,9 @@ modes:
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let server = Arc::new(crate::build_test_server_shared(
+            tmp.path().join(".omne_data"),
+        ));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -3653,13 +3817,15 @@ modes:
     }
 
     #[tokio::test]
-    async fn thread_configure_invalid_sandbox_root_includes_error_code_data()
-    -> anyhow::Result<()> {
+    async fn thread_configure_invalid_sandbox_root_includes_error_code_data() -> anyhow::Result<()>
+    {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let server = Arc::new(crate::build_test_server_shared(
+            tmp.path().join(".omne_data"),
+        ));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -3774,9 +3940,11 @@ modes:
             .get("available_roles")
             .and_then(|v| v.as_array())
             .ok_or_else(|| anyhow::anyhow!("missing available_roles"))?;
-        assert!(available_roles
-            .iter()
-            .any(|v| v.as_str() == Some("chatter")));
+        assert!(
+            available_roles
+                .iter()
+                .any(|v| v.as_str() == Some("chatter"))
+        );
         Ok(())
     }
 
@@ -4010,12 +4178,12 @@ base_url = "https://project.example/v1"
             .effective
             .effective_permissions
             .ok_or_else(|| anyhow::anyhow!("missing effective_permissions"))?;
-        assert!(effective_permissions
-            .iter()
-            .any(|tool| tool == "file/read"));
-        assert!(!effective_permissions
-            .iter()
-            .any(|tool| tool == "process/start"));
+        assert!(effective_permissions.iter().any(|tool| tool == "file/read"));
+        assert!(
+            !effective_permissions
+                .iter()
+                .any(|tool| tool == "process/start")
+        );
         Ok(())
     }
 

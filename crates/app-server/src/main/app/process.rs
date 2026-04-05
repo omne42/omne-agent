@@ -30,7 +30,15 @@ async fn handle_process_list_request(
         Err(response) => return *response,
     };
 
-    if let Some(thread_id) = params.thread_id {
+    let thread_ids = match params.thread_id {
+        Some(thread_id) => vec![thread_id],
+        None => match server.thread_store.list_threads().await {
+            Ok(thread_ids) => thread_ids,
+            Err(err) => return jsonrpc_internal_error(id, err),
+        },
+    };
+
+    for thread_id in thread_ids {
         let thread_rt = match server.get_or_load_thread(thread_id).await {
             Ok(thread_rt) => thread_rt,
             Err(err) => return jsonrpc_internal_error(id, err),

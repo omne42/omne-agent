@@ -293,6 +293,7 @@ async fn handle_process_start_inner(
     cmd.stdin(Stdio::null());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
+    cmd.kill_on_drop(true);
     let combined_env_opt = (!combined_env.is_empty()).then_some(&combined_env);
     if let Some(env) = combined_env_opt {
         cmd.envs(env.iter());
@@ -461,11 +462,9 @@ async fn load_mode_exec_policy(
     rules: &[String],
 ) -> anyhow::Result<omne_execpolicy::Policy> {
     let rule_paths = resolve_execpolicy_rule_paths(thread_root, rules).await?;
-    let policy = tokio::task::spawn_blocking(move || {
-        omne_execpolicy::load_policies(&rule_paths)
-    })
-    .await
-    .context("join mode execpolicy load task")??;
+    let policy = tokio::task::spawn_blocking(move || omne_execpolicy::load_policies(&rule_paths))
+        .await
+        .context("join mode execpolicy load task")??;
     Ok(policy)
 }
 
@@ -603,7 +602,7 @@ modes:
                 clear_openai_base_url: false,
                 allowed_tools: None,
                 execpolicy_rules: None,
-            clear_execpolicy_rules: false,
+                clear_execpolicy_rules: false,
             },
         )
         .await?;
@@ -662,7 +661,7 @@ modes:
                 clear_openai_base_url: false,
                 allowed_tools: None,
                 execpolicy_rules: None,
-            clear_execpolicy_rules: false,
+                clear_execpolicy_rules: false,
             },
         )
         .await?;
@@ -744,7 +743,7 @@ modes:
                 clear_openai_base_url: false,
                 allowed_tools: None,
                 execpolicy_rules: None,
-            clear_execpolicy_rules: false,
+                clear_execpolicy_rules: false,
             },
         )
         .await?;
@@ -834,7 +833,7 @@ modes:
                 clear_openai_base_url: false,
                 allowed_tools: Some(Some(vec!["file/read".to_string()])),
                 execpolicy_rules: None,
-            clear_execpolicy_rules: false,
+                clear_execpolicy_rules: false,
             },
         )
         .await?;
@@ -1251,7 +1250,7 @@ modes:
                 clear_openai_base_url: false,
                 allowed_tools: None,
                 execpolicy_rules: None,
-            clear_execpolicy_rules: false,
+                clear_execpolicy_rules: false,
             },
         )
         .await?;
@@ -1307,7 +1306,7 @@ modes:
                 clear_openai_base_url: false,
                 allowed_tools: Some(Some(vec!["repo/search".to_string()])),
                 execpolicy_rules: None,
-            clear_execpolicy_rules: false,
+                clear_execpolicy_rules: false,
             },
         )
         .await?;
@@ -1392,7 +1391,7 @@ prefix_rule(
                 clear_openai_base_url: false,
                 allowed_tools: None,
                 execpolicy_rules: None,
-            clear_execpolicy_rules: false,
+                clear_execpolicy_rules: false,
             },
         )
         .await?;
@@ -1462,7 +1461,7 @@ modes:
                 clear_openai_base_url: false,
                 allowed_tools: None,
                 execpolicy_rules: None,
-            clear_execpolicy_rules: false,
+                clear_execpolicy_rules: false,
             },
         )
         .await?;
@@ -1538,7 +1537,7 @@ prefix_rule(
                 clear_openai_base_url: false,
                 allowed_tools: None,
                 execpolicy_rules: Some(vec!["rules/thread.rules".to_string()]),
-            clear_execpolicy_rules: false,
+                clear_execpolicy_rules: false,
             },
         )
         .await?;
@@ -1594,7 +1593,7 @@ prefix_rule(
                 clear_openai_base_url: false,
                 allowed_tools: None,
                 execpolicy_rules: Some(vec!["rules/missing.rules".to_string()]),
-            clear_execpolicy_rules: false,
+                clear_execpolicy_rules: false,
             },
         )
         .await?;
