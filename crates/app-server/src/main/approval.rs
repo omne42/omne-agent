@@ -1447,8 +1447,16 @@ async fn load_thread_root(
             .clone()
             .ok_or_else(|| anyhow::anyhow!("thread cwd is missing: {}", thread_id))?
     };
-    let thread_root = omne_core::resolve_dir(Path::new(&thread_cwd), Path::new(".")).await?;
+    let thread_root = resolve_thread_root_from_cwd(server, &thread_cwd).await?;
     Ok((thread_rt, thread_root))
+}
+
+async fn resolve_thread_root_from_cwd(server: &Server, cwd: &str) -> anyhow::Result<PathBuf> {
+    let cwd = Path::new(cwd);
+    if cwd.is_absolute() {
+        return omne_core::resolve_dir(cwd, Path::new(".")).await;
+    }
+    omne_core::resolve_dir(&server.cwd, cwd).await
 }
 
 #[derive(Debug)]
@@ -1473,6 +1481,51 @@ impl std::fmt::Display for ToolDenied {
 }
 
 impl std::error::Error for ToolDenied {}
+
+#[cfg(test)]
+mod load_thread_root_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn load_thread_root_resolves_legacy_relative_cwd_against_server_cwd() -> anyhow::Result<()>
+    {
+        let tmp = tempfile::tempdir()?;
+        let workspace_dir = tmp.path().join("workspace");
+        let repo_dir = workspace_dir.join("repo");
+        let omne_root = workspace_dir.join(".omne_data");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let (notify_tx, _notify_rx) = broadcast::channel::<String>(16);
+        let server = Server {
+            cwd: workspace_dir.clone(),
+            notify_tx,
+            thread_store: ThreadStore::new(PmPaths::new(omne_root)),
+            threads: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            processes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            mcp: Arc::new(tokio::sync::Mutex::new(McpManager::default())),
+            disk_warning: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            provider_runtimes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            exec_policy: omne_execpolicy::Policy::empty(),
+        };
+
+        let thread_id = ThreadId::new();
+        let mut writer = omne_eventlog::EventLogWriter::open(
+            thread_id,
+            server.thread_store.events_log_path(thread_id),
+        )
+        .await?;
+        writer
+            .append(omne_protocol::ThreadEventKind::ThreadCreated {
+                cwd: "repo".to_string(),
+            })
+            .await?;
+        drop(writer);
+
+        let (_thread_rt, thread_root) = load_thread_root(&server, thread_id).await?;
+        assert_eq!(thread_root, tokio::fs::canonicalize(&repo_dir).await?);
+        Ok(())
+    }
+}
 
 fn tool_denied(error: impl Into<String>, result: Value) -> anyhow::Error {
     anyhow::Error::new(ToolDenied::new(error, result))
