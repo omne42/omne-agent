@@ -2624,11 +2624,16 @@ async fn start_agent_spawn_schedule(
                 mode: Some(plan.mode.clone()),
                 role: Some(plan.mode.clone()),
                 model: plan.model.clone(),
+                clear_model: false,
                 thinking: None,
+                clear_thinking: false,
                 show_thinking: None,
+                clear_show_thinking: false,
                 openai_base_url: plan.openai_base_url.clone(),
+                clear_openai_base_url: false,
                 allowed_tools: None,
                 execpolicy_rules: None,
+                clear_execpolicy_rules: false,
             },
         )
         .await?;

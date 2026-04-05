@@ -403,7 +403,7 @@ async fn handle_thread_list(
         .map(|threads| omne_app_server_protocol::ThreadListResponse { threads })
 }
 
-async fn handle_thread_state(
+pub(crate) async fn handle_thread_state(
     server: &Server,
     params: ThreadStateParams,
 ) -> anyhow::Result<omne_app_server_protocol::ThreadStateResponse> {
@@ -482,12 +482,10 @@ async fn handle_thread_state(
         token_budget_exceeded,
         token_budget_warning_active,
     ) = thread_token_budget_snapshot(total_tokens_used, token_budget_warning_threshold_ratio());
-    let state_for_estimate = omne_eventlog::ThreadState {
-        cwd: cwd.clone(),
-        system_prompt_text,
-        mode: mode.clone(),
-        ..Default::default()
-    };
+    let mut state_for_estimate = omne_eventlog::ThreadState::new(thread_id);
+    state_for_estimate.cwd = cwd.clone();
+    state_for_estimate.system_prompt_text = system_prompt_text;
+    state_for_estimate.mode = mode.clone();
     let current_context_tokens_estimate =
         estimate_thread_context_tokens_from_state(server, thread_id, &state_for_estimate).await;
     Ok(omne_app_server_protocol::ThreadStateResponse {
@@ -562,12 +560,10 @@ async fn handle_thread_usage(
         )
     };
     let token_budget_limit = configured_total_token_budget_limit();
-    let state_for_estimate = omne_eventlog::ThreadState {
-        cwd,
-        system_prompt_text,
-        mode,
-        ..Default::default()
-    };
+    let mut state_for_estimate = omne_eventlog::ThreadState::new(thread_id);
+    state_for_estimate.cwd = cwd;
+    state_for_estimate.system_prompt_text = system_prompt_text;
+    state_for_estimate.mode = mode;
     let current_context_tokens_estimate =
         estimate_thread_context_tokens_from_state(server, thread_id, &state_for_estimate).await;
     Ok(build_thread_usage_response(
