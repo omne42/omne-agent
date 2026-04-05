@@ -87,62 +87,42 @@ async fn handle_mcp_list_servers(server: &Server, params: McpListServersParams) 
         })
         .await?;
 
-    let result: anyhow::Result<(Value, usize)> = async {
-        let cfg = load_mcp_config(&thread_root).await?;
-        let servers = cfg
-            .servers()
-            .iter()
-            .filter(|(_, cfg)| matches!(cfg.transport(), McpTransport::Stdio))
-            .map(|(name, cfg)| omne_app_server_protocol::McpServerDescriptor {
-                name: name.to_string(),
-                transport: "stdio".to_string(),
-                argv: omne_core::redact_command_argv(cfg.argv()),
-                env_keys: cfg.env().keys().cloned().collect(),
-            })
-            .collect::<Vec<_>>();
+    let cfg = load_mcp_config(&thread_root).await?;
+    let servers = cfg
+        .servers()
+        .iter()
+        .filter(|(_, cfg)| matches!(cfg.transport(), McpTransport::Stdio))
+        .map(|(name, cfg)| omne_app_server_protocol::McpServerDescriptor {
+            name: name.to_string(),
+            transport: "stdio".to_string(),
+            argv: cfg.argv().unwrap_or(&[]).to_vec(),
+            env_keys: cfg
+                .env()
+                .map(|env| env.keys().cloned().collect())
+                .unwrap_or_default(),
+        })
+        .collect::<Vec<_>>();
 
-        let server_count = servers.len();
-        let response = omne_app_server_protocol::McpListServersResponse {
-            config_path: cfg.path().as_ref().map(|p| p.display().to_string()),
-            servers,
-        };
-        let response_value =
-            serde_json::to_value(response).context("serialize mcp/list_servers response")?;
-        Ok((response_value, server_count))
-    }
-    .await;
+    let server_count = servers.len();
+    let response = omne_app_server_protocol::McpListServersResponse {
+        config_path: cfg.path().as_ref().map(|p| p.display().to_string()),
+        servers,
+    };
+    let result = serde_json::to_value(response).context("serialize mcp/list_servers response")?;
 
-    match result {
-        Ok((response, server_count)) => {
-            thread_rt
-                .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                    tool_id,
-                    status: omne_protocol::ToolStatus::Completed,
-                    structured_error: None,
-                    error: None,
-                    result: Some(serde_json::json!({
-                        "servers": server_count,
-                    })),
-                })
-                .await?;
-            Ok(response)
-        }
-        Err(err) => {
-            let error = err.to_string();
-            thread_rt
-                .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                    tool_id,
-                    status: omne_protocol::ToolStatus::Failed,
-                    structured_error: None,
-                    error: Some(error.clone()),
-                    result: Some(serde_json::json!({
-                        "servers": 0,
-                    })),
-                })
-                .await?;
-            Err(err)
-        }
-    }
+    thread_rt
+        .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
+            tool_id,
+            status: omne_protocol::ToolStatus::Completed,
+            structured_error: None,
+            error: None,
+            result: Some(serde_json::json!({
+                "servers": server_count,
+            })),
+        })
+        .await?;
+
+    Ok(result)
 }
 
 async fn handle_mcp_list_tools(server: &Server, params: McpListToolsParams) -> anyhow::Result<Value> {
@@ -410,9 +390,12 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
             .await?;
         return Ok(result);
     };
+    let argv = server_cfg
+        .argv()
+        .ok_or_else(|| anyhow::anyhow!("mcp server {server_name} is not stdio-configured"))?;
 
     if sandbox_network_access == omne_protocol::SandboxNetworkAccess::Deny
-        && omne_process_runtime::command_uses_network(server_cfg.argv())
+        && omne_process_runtime::command_uses_network(argv)
     {
         let result = mcp_sandbox_network_denied_response(tool_id, sandbox_network_access)?;
         emit_mcp_tool_denied(
@@ -421,8 +404,7 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
             req.turn_id,
             req.action,
             &approval_params,
-            "sandbox_network_access=deny blocked this command via best-effort argv network classification"
-                .to_string(),
+            "sandbox_network_access=deny forbids this command".to_string(),
             result.clone(),
         )
         .await?;
@@ -501,7 +483,7 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
         };
         effective_exec_policy = merge_exec_policies(&effective_exec_policy, &thread_exec_policy);
     }
-    let exec_matches = effective_exec_policy.matches_for_command(server_cfg.argv(), None);
+    let exec_matches = effective_exec_policy.matches_for_command(argv, None);
     let exec_decision = exec_matches.iter().map(ExecRuleMatch::decision).max();
     let effective_exec_decision = match exec_decision {
         Some(ExecDecision::Forbidden) => ExecDecision::Forbidden,

@@ -99,9 +99,9 @@ mod mcp_tests {
         let server = cfg.servers().get("rg").unwrap();
         assert_eq!(
             server.argv(),
-            vec!["mcp-rg".to_string(), "--stdio".to_string()].as_slice()
+            Some(vec!["mcp-rg".to_string(), "--stdio".to_string()].as_slice())
         );
-        assert!(server.env().contains_key("NO_COLOR"));
+        assert!(server.env().is_some_and(|env| env.contains_key("NO_COLOR")));
     }
 
     #[tokio::test]
@@ -182,7 +182,7 @@ mod mcp_tests {
                 clear_openai_base_url: false,
                 allowed_tools: None,
                 execpolicy_rules: None,
-            clear_execpolicy_rules: false,
+                clear_execpolicy_rules: false,
             },
         )
         .await?;
@@ -845,7 +845,13 @@ modes:
         .await?;
 
         let (process_id, mut cmd_rx) =
-            insert_running_mcp_connection(&server, thread_id, "local").await?;
+            insert_running_mcp_connection(
+                &server,
+                thread_id,
+                "local",
+                "stale-config".to_string(),
+            )
+            .await?;
 
         let err = handle_mcp_list_tools(
             &server,
