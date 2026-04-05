@@ -1,5 +1,11 @@
 use super::*;
 
+fn thread_allows_process_list(allowed_tools: &Option<Vec<String>>) -> bool {
+    allowed_tools
+        .as_ref()
+        .is_none_or(|tools| tools.iter().any(|tool| tool == "process/list"))
+}
+
 pub(super) async fn handle_process_request(
     server: &Arc<Server>,
     id: serde_json::Value,
@@ -30,7 +36,7 @@ async fn handle_process_list_request(
         Err(response) => return *response,
     };
 
-    if let Some(thread_id) = params.thread_id {
+    let visible_thread_ids = if let Some(thread_id) = params.thread_id {
         let thread_rt = match server.get_or_load_thread(thread_id).await {
             Ok(thread_rt) => thread_rt,
             Err(err) => return jsonrpc_internal_error(id, err),
@@ -59,14 +65,39 @@ async fn handle_process_list_request(
                     process_allowed_tools_denied_response(tool_id, "process/list", &allowed_tools),
                 );
             }
-            Ok(None) => {}
+            Ok(None) => Some(std::iter::once(thread_id).collect::<std::collections::HashSet<_>>()),
             Err(err) => return jsonrpc_internal_error(id, err),
         }
-    }
+    } else {
+        let thread_ids = match server.thread_store.list_threads().await {
+            Ok(thread_ids) => thread_ids,
+            Err(err) => return jsonrpc_internal_error(id, err),
+        };
+        let mut visible = std::collections::HashSet::new();
+        for thread_id in thread_ids {
+            let thread_rt = match server.get_or_load_thread(thread_id).await {
+                Ok(thread_rt) => thread_rt,
+                Err(err) => return jsonrpc_internal_error(id, err),
+            };
+            let allowed_tools = {
+                let handle = thread_rt.handle.lock().await;
+                handle.state().allowed_tools.clone()
+            };
+            if thread_allows_process_list(&allowed_tools) {
+                visible.insert(thread_id);
+            }
+        }
+        Some(visible)
+    };
 
     let result = handle_process_list(server, params).await.map(|processes| {
         let processes = processes
             .into_iter()
+            .filter(|process| {
+                visible_thread_ids
+                    .as_ref()
+                    .is_none_or(|visible| visible.contains(&process.thread_id))
+            })
             .map(into_protocol_process_info)
             .collect::<Vec<_>>();
         omne_app_server_protocol::ProcessListResponse { processes }

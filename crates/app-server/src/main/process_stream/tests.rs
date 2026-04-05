@@ -236,4 +236,96 @@ mod tests {
         assert_eq!(parsed.allowed_tools, vec!["repo/search".to_string()]);
         Ok(())
     }
+
+    #[tokio::test]
+    async fn process_list_without_thread_id_hides_restricted_threads() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_a = tmp.path().join("repo-a");
+        let repo_b = tmp.path().join("repo-b");
+        tokio::fs::create_dir_all(&repo_a).await?;
+        tokio::fs::create_dir_all(&repo_b).await?;
+
+        let server = Arc::new(build_test_server_shared(tmp.path().join(".omne_data")));
+        let visible_thread = create_test_thread_shared(&server, repo_a).await?;
+        let hidden_thread = create_test_thread_shared(&server, repo_b).await?;
+
+        let visible_process = handle_process_start(
+            &server,
+            ProcessStartParams {
+                thread_id: visible_thread,
+                turn_id: None,
+                approval_id: None,
+                argv: vec!["sh".to_string(), "-lc".to_string(), "sleep 1".to_string()],
+                cwd: None,
+                timeout_ms: Some(500),
+            },
+        )
+        .await?;
+        let visible_process_id: ProcessId =
+            serde_json::from_value(visible_process["process_id"].clone())
+                .map_err(|err| anyhow::anyhow!("missing visible process_id: {err}"))?;
+
+        let hidden_process = handle_process_start(
+            &server,
+            ProcessStartParams {
+                thread_id: hidden_thread,
+                turn_id: None,
+                approval_id: None,
+                argv: vec!["sh".to_string(), "-lc".to_string(), "sleep 1".to_string()],
+                cwd: None,
+                timeout_ms: Some(500),
+            },
+        )
+        .await?;
+        let hidden_process_id: ProcessId =
+            serde_json::from_value(hidden_process["process_id"].clone())
+                .map_err(|err| anyhow::anyhow!("missing hidden process_id: {err}"))?;
+
+        handle_thread_configure(
+            &server,
+            ThreadConfigureParams {
+                thread_id: hidden_thread,
+                approval_policy: None,
+                sandbox_policy: None,
+                sandbox_writable_roots: None,
+                sandbox_network_access: None,
+                mode: None,
+                role: None,
+                model: None,
+                clear_model: false,
+                thinking: None,
+                clear_thinking: false,
+                show_thinking: None,
+                clear_show_thinking: false,
+                openai_base_url: None,
+                clear_openai_base_url: false,
+                allowed_tools: Some(Some(vec!["repo/search".to_string()])),
+                execpolicy_rules: None,
+                clear_execpolicy_rules: false,
+            },
+        )
+        .await?;
+
+        let response = handle_process_request(
+            &server,
+            serde_json::json!(1),
+            "process/list",
+            serde_json::json!({}),
+        )
+        .await;
+        assert!(response.error.is_none(), "unexpected error: {:?}", response.error);
+        let result = response
+            .result
+            .ok_or_else(|| anyhow::anyhow!("missing process/list result"))?;
+        let parsed = serde_json::from_value::<omne_app_server_protocol::ProcessListResponse>(result)?;
+        let process_ids = parsed
+            .processes
+            .into_iter()
+            .map(|process| process.process_id)
+            .collect::<Vec<_>>();
+
+        assert!(process_ids.contains(&visible_process_id));
+        assert!(!process_ids.contains(&hidden_process_id));
+        Ok(())
+    }
 }

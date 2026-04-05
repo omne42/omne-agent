@@ -2,6 +2,34 @@
 mod thread_manage_tests {
     use super::*;
 
+    fn running_process_entry(
+        thread_id: ThreadId,
+    ) -> (ProcessId, Arc<tokio::sync::Mutex<ProcessInfo>>, ProcessEntry) {
+        let process_id = ProcessId::new();
+        let info = Arc::new(tokio::sync::Mutex::new(ProcessInfo {
+            process_id,
+            thread_id,
+            turn_id: None,
+            argv: vec!["sleep".to_string(), "1".to_string()],
+            cwd: ".".to_string(),
+            started_at: "2026-04-06T00:00:00Z".to_string(),
+            status: ProcessStatus::Running,
+            exit_code: None,
+            stdout_path: "stdout.log".to_string(),
+            stderr_path: "stderr.log".to_string(),
+            last_update_at: "2026-04-06T00:00:00Z".to_string(),
+        }));
+        let (cmd_tx, _cmd_rx) = mpsc::channel(1);
+        (
+            process_id,
+            info.clone(),
+            ProcessEntry {
+                info,
+                cmd_tx,
+            },
+        )
+    }
+
     fn thread_configure_defaults(thread_id: ThreadId) -> ThreadConfigureParams {
         ThreadConfigureParams {
             thread_id,
@@ -4074,6 +4102,88 @@ base_url = "https://project.example/v1"
                 .unwrap_or("")
                 .contains("preset applied")
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn thread_archive_force_waits_for_running_processes_to_stop() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let (process_id, info, entry) = running_process_entry(thread_id);
+        server.processes.lock().await.insert(process_id, entry);
+
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            let mut info = info.lock().await;
+            info.status = ProcessStatus::Exited;
+            info.exit_code = Some(0);
+        });
+
+        let started = tokio::time::Instant::now();
+        let result = handle_thread_archive(
+            &server,
+            ThreadArchiveParams {
+                thread_id,
+                force: true,
+                reason: None,
+            },
+        )
+        .await?;
+
+        assert!(started.elapsed() >= Duration::from_millis(200));
+        assert!(result.archived);
+        assert_eq!(result.killed_processes, Some(vec![process_id]));
+
+        let thread_rt = server.get_or_load_thread(thread_id).await?;
+        let handle = thread_rt.handle.lock().await;
+        assert!(handle.state().archived);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn thread_delete_force_waits_for_running_processes_to_stop() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let (process_id, info, entry) = running_process_entry(thread_id);
+        server.processes.lock().await.insert(process_id, entry);
+
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            let mut info = info.lock().await;
+            info.status = ProcessStatus::Exited;
+            info.exit_code = Some(0);
+        });
+
+        let thread_dir = server.thread_store.thread_dir(thread_id);
+        let started = tokio::time::Instant::now();
+        let result = handle_thread_delete(
+            &server,
+            ThreadDeleteParams {
+                thread_id,
+                force: true,
+            },
+        )
+        .await?;
+
+        assert!(started.elapsed() >= Duration::from_millis(200));
+        assert!(result.deleted);
+        assert_eq!(result.thread_id, thread_id);
+        assert!(!thread_dir.exists());
+        assert!(!server.processes.lock().await.contains_key(&process_id));
         Ok(())
     }
 }
