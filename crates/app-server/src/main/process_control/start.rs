@@ -293,6 +293,7 @@ async fn handle_process_start_inner(
     cmd.stdin(Stdio::null());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
+    cmd.kill_on_drop(true);
     let combined_env_opt = (!combined_env.is_empty()).then_some(&combined_env);
     if let Some(env) = combined_env_opt {
         cmd.envs(env.iter());
