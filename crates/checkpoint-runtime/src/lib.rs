@@ -37,6 +37,8 @@ pub fn checkpoint_ignored_globs() -> Vec<String> {
         ".omne_data/reference/**".to_string(),
         "**/.env".to_string(),
         "**/.env.*".to_string(),
+        "**/.env_*".to_string(),
+        "**/.env-*".to_string(),
         "**/.envrc".to_string(),
         "**/*.pem".to_string(),
         "**/*.key".to_string(),
@@ -261,12 +263,14 @@ pub async fn restore_workspace_from_snapshot(
                 continue;
             }
             let path = thread_root.join(&rel);
+            ensure_restore_path_is_symlink_free(&thread_root, &path)?;
             std::fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
         }
 
         for rel in &snapshot_paths {
             let src = snapshot_root.join(rel);
             let dst = thread_root.join(rel);
+            ensure_restore_path_is_symlink_free(&thread_root, &dst)?;
             if let Some(parent) = dst.parent() {
                 std::fs::create_dir_all(parent)
                     .with_context(|| format!("create {}", parent.display()))?;
@@ -279,6 +283,28 @@ pub async fn restore_workspace_from_snapshot(
     })
     .await
     .context("join checkpoint restore task")?
+}
+
+fn ensure_restore_path_is_symlink_free(root: &Path, path: &Path) -> anyhow::Result<()> {
+    let rel = path
+        .strip_prefix(root)
+        .with_context(|| format!("restore path escapes root: {}", path.display()))?;
+    let mut current = root.to_path_buf();
+    for component in rel.components() {
+        current.push(component.as_os_str());
+        match std::fs::symlink_metadata(&current) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                anyhow::bail!(
+                    "refusing checkpoint restore through symlink: {}",
+                    current.display()
+                );
+            }
+            Ok(_) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => break,
+            Err(err) => return Err(err).with_context(|| format!("stat {}", current.display())),
+        }
+    }
+    Ok(())
 }
 
 fn files_match(left: &Path, right: &Path, max_file_bytes: u64) -> anyhow::Result<bool> {
@@ -304,11 +330,15 @@ fn rel_path_is_checkpoint_secret(rel_path: &Path) -> bool {
         return true;
     }
 
+    if omne_fs_policy::is_secret_rel_path(rel_path) {
+        return true;
+    }
+
     let Some(file_name) = rel_path.file_name().and_then(|s| s.to_str()) else {
         return false;
     };
 
-    if file_name == ".env" || file_name == ".envrc" || file_name.starts_with(".env.") {
+    if file_name == ".envrc" {
         return true;
     }
 
@@ -378,10 +408,42 @@ mod tests {
 
         restore_workspace_from_snapshot(thread_root.path(), snapshot_root.path(), 4).await?;
 
-        assert_eq!(std::fs::read_to_string(thread_root.path().join("keep.txt"))?, "new");
+        assert_eq!(
+            std::fs::read_to_string(thread_root.path().join("keep.txt"))?,
+            "new"
+        );
         assert!(!thread_root.path().join("remove.txt").exists());
         assert!(!thread_root.path().join(".env.local").exists());
         assert!(!thread_root.path().join("oversize.bin").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn checkpoint_secret_detection_matches_env_variant_policy() {
+        assert!(rel_path_is_checkpoint_secret(Path::new(".env.local")));
+        assert!(rel_path_is_checkpoint_secret(Path::new(".env_prod")));
+        assert!(rel_path_is_checkpoint_secret(Path::new(".env-staging")));
+        assert!(!rel_path_is_checkpoint_secret(Path::new(".env.example")));
+        assert!(!rel_path_is_checkpoint_secret(Path::new(".env.template")));
+        assert!(!rel_path_is_checkpoint_secret(Path::new("config.env")));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn restore_rejects_preexisting_symlinked_parent_directory() -> anyhow::Result<()> {
+        let thread_root = TestDir::new()?;
+        let snapshot_root = TestDir::new()?;
+        let outside = TestDir::new()?;
+
+        std::fs::create_dir_all(snapshot_root.path().join("nested"))?;
+        std::fs::write(snapshot_root.path().join("nested/file.txt"), "snapshot")?;
+        std::os::unix::fs::symlink(outside.path(), thread_root.path().join("nested"))?;
+
+        let err = restore_workspace_from_snapshot(thread_root.path(), snapshot_root.path(), 1024)
+            .await
+            .expect_err("expected symlinked parent restore to fail");
+        assert!(err.to_string().contains("symlink"));
+        assert!(!outside.path().join("file.txt").exists());
         Ok(())
     }
 }
