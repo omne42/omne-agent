@@ -1,3 +1,23 @@
+async fn send_process_signal(
+    entry: &ProcessEntry,
+    process_id: ProcessId,
+    command: ProcessCommand,
+) -> anyhow::Result<()> {
+    let is_running = {
+        let info = entry.info.lock().await;
+        matches!(info.status, ProcessStatus::Running)
+    };
+    if !is_running {
+        anyhow::bail!("process is no longer running: {}", process_id);
+    }
+
+    entry
+        .cmd_tx
+        .send(command)
+        .await
+        .map_err(|_| anyhow::anyhow!("process is no longer running: {}", process_id))
+}
+
 async fn handle_process_kill(server: &Server, params: ProcessKillParams) -> anyhow::Result<Value> {
     let entry = {
         let entries = server.processes.lock().await;
@@ -67,25 +87,45 @@ async fn handle_process_kill(server: &Server, params: ProcessKillParams) -> anyh
         })
         .await?;
 
-    let _ = entry
-        .cmd_tx
-        .send(ProcessCommand::Kill {
+    match send_process_signal(
+        &entry,
+        params.process_id,
+        ProcessCommand::Kill {
             reason: params.reason,
-        })
-        .await;
+        },
+    )
+    .await
+    {
+        Ok(()) => {
+            thread_rt
+                .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: omne_protocol::ToolStatus::Completed,
+                    structured_error: None,
+                    error: None,
+                    result: Some(serde_json::json!({ "ok": true })),
+                })
+                .await?;
 
-    thread_rt
-        .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-            tool_id,
-            status: omne_protocol::ToolStatus::Completed,
-            structured_error: None,
-            error: None,
-            result: Some(serde_json::json!({ "ok": true })),
-        })
-        .await?;
-
-    let response = omne_app_server_protocol::ProcessSignalResponse { ok: true };
-    serde_json::to_value(response).context("serialize process/kill response")
+            let response = omne_app_server_protocol::ProcessSignalResponse { ok: true };
+            serde_json::to_value(response).context("serialize process/kill response")
+        }
+        Err(err) => {
+            thread_rt
+                .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: omne_protocol::ToolStatus::Failed,
+                    structured_error: None,
+                    error: Some(err.to_string()),
+                    result: Some(serde_json::json!({
+                        "ok": false,
+                        "process_id": params.process_id,
+                    })),
+                })
+                .await?;
+            Err(err)
+        }
+    }
 }
 
 async fn handle_process_interrupt(
@@ -160,25 +200,45 @@ async fn handle_process_interrupt(
         })
         .await?;
 
-    let _ = entry
-        .cmd_tx
-        .send(ProcessCommand::Interrupt {
+    match send_process_signal(
+        &entry,
+        params.process_id,
+        ProcessCommand::Interrupt {
             reason: params.reason,
-        })
-        .await;
+        },
+    )
+    .await
+    {
+        Ok(()) => {
+            thread_rt
+                .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: omne_protocol::ToolStatus::Completed,
+                    structured_error: None,
+                    error: None,
+                    result: Some(serde_json::json!({ "ok": true })),
+                })
+                .await?;
 
-    thread_rt
-        .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-            tool_id,
-            status: omne_protocol::ToolStatus::Completed,
-            structured_error: None,
-            error: None,
-            result: Some(serde_json::json!({ "ok": true })),
-        })
-        .await?;
-
-    let response = omne_app_server_protocol::ProcessSignalResponse { ok: true };
-    serde_json::to_value(response).context("serialize process/interrupt response")
+            let response = omne_app_server_protocol::ProcessSignalResponse { ok: true };
+            serde_json::to_value(response).context("serialize process/interrupt response")
+        }
+        Err(err) => {
+            thread_rt
+                .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: omne_protocol::ToolStatus::Failed,
+                    structured_error: None,
+                    error: Some(err.to_string()),
+                    result: Some(serde_json::json!({
+                        "ok": false,
+                        "process_id": params.process_id,
+                    })),
+                })
+                .await?;
+            Err(err)
+        }
+    }
 }
 
 async fn kill_processes_for_turn(
@@ -325,6 +385,41 @@ mod process_signal_tests {
         process_id
     }
 
+    async fn insert_process_with_status(
+        server: &Server,
+        thread_id: ThreadId,
+        status: ProcessStatus,
+        drop_receiver: bool,
+    ) -> ProcessId {
+        let process_id = ProcessId::new();
+        let (cmd_tx, cmd_rx) = mpsc::channel(1);
+        if !drop_receiver {
+            tokio::spawn(async move {
+                let mut cmd_rx = cmd_rx;
+                while cmd_rx.recv().await.is_some() {}
+            });
+        }
+        let now = "2026-01-01T00:00:00Z".to_string();
+        let entry = ProcessEntry {
+            info: Arc::new(tokio::sync::Mutex::new(ProcessInfo {
+                process_id,
+                thread_id,
+                turn_id: None,
+                argv: vec!["sleep".to_string(), "999".to_string()],
+                cwd: "/tmp".to_string(),
+                started_at: now.clone(),
+                status,
+                exit_code: None,
+                stdout_path: "/tmp/omne-test.stdout.log".to_string(),
+                stderr_path: "/tmp/omne-test.stderr.log".to_string(),
+                last_update_at: now,
+            })),
+            cmd_tx,
+        };
+        server.processes.lock().await.insert(process_id, entry);
+        process_id
+    }
+
     #[tokio::test]
     async fn process_kill_denied_by_tool_override_reports_decision_source() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
@@ -429,6 +524,68 @@ modes:
             .ok_or_else(|| anyhow::anyhow!("missing allowed_tools"))?;
         assert_eq!(allowed_tools.len(), 1);
         assert_eq!(allowed_tools[0].as_str(), Some("repo/search"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn process_kill_fails_for_exited_process() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        configure_thread_mode(&server, thread_id, "code").await?;
+        let process_id =
+            insert_process_with_status(&server, thread_id, ProcessStatus::Exited, false).await;
+
+        let err = handle_process_kill(
+            &server,
+            ProcessKillParams {
+                process_id,
+                turn_id: None,
+                approval_id: None,
+                reason: None,
+            },
+        )
+        .await
+        .expect_err("exited process should fail");
+
+        assert!(err.to_string().contains("process is no longer running"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn process_interrupt_fails_when_command_channel_is_closed() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        configure_thread_mode(&server, thread_id, "code").await?;
+        let process_id =
+            insert_process_with_status(&server, thread_id, ProcessStatus::Running, true).await;
+
+        let err = handle_process_interrupt(
+            &server,
+            ProcessInterruptParams {
+                process_id,
+                turn_id: None,
+                approval_id: None,
+                reason: None,
+            },
+        )
+        .await
+        .expect_err("closed command channel should fail");
+
+        assert!(err.to_string().contains("process is no longer running"));
         Ok(())
     }
 
