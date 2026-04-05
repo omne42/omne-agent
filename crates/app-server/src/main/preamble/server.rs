@@ -1016,9 +1016,12 @@ mod attention_marker_notification_tests {
         let notification = &emitted[0];
         assert_eq!(notification.kind, "attention_state");
         assert_eq!(notification.severity, notify_kit::Severity::Warning);
-        assert_eq!(notification.tags.get("state"), Some(&"fan_out_linkage_issue".to_string()));
         assert_eq!(
-            notification.tags.get("thread_id"),
+            notification.tags().get("state"),
+            Some(&"fan_out_linkage_issue".to_string())
+        );
+        assert_eq!(
+            notification.tags().get("thread_id"),
             Some(&event.thread_id.to_string())
         );
     }
@@ -1047,7 +1050,7 @@ mod attention_marker_notification_tests {
         });
         let notification_event =
             external_attention_event(&event).expect("failed turn should emit attention event");
-        assert!(notification_event.body.is_none());
+        assert!(notification_event.body().is_none());
     }
 }
 
@@ -1130,6 +1133,7 @@ struct ProcessEntry {
     cmd_tx: mpsc::Sender<ProcessCommand>,
 }
 
+#[derive(Debug)]
 enum ProcessCommand {
     Interrupt { reason: Option<String> },
     Kill { reason: Option<String> },

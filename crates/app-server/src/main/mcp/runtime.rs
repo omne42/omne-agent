@@ -66,7 +66,9 @@ async fn load_mcp_config_inner(
     thread_root: &Path,
     override_path: Option<PathBuf>,
 ) -> anyhow::Result<McpConfig> {
-    omne_mcp_kit::Config::load(thread_root, override_path).await
+    omne_mcp_kit::Config::load(thread_root, override_path)
+        .await
+        .map_err(anyhow::Error::from)
 }
 
 type McpListServersParams = omne_app_server_protocol::McpListServersParams;
@@ -80,6 +82,7 @@ struct McpManager {
     starting: HashMap<(ThreadId, String), Arc<tokio::sync::Notify>>,
 }
 
+#[derive(Debug)]
 struct McpConnection {
     process_id: ProcessId,
     config_fingerprint: String,
@@ -117,7 +120,7 @@ fn mcp_server_config_fingerprint(server_cfg: &McpServerConfig) -> String {
     let mut out = String::new();
     let _ = write!(out, "transport={:?};", server_cfg.transport());
     let _ = write!(out, "argv={:?};", server_cfg.argv());
-    let _ = write!(out, "inherit_env={};", server_cfg.inherit_env());
+    let _ = write!(out, "inherit_env={:?};", server_cfg.inherit_env());
     let _ = write!(out, "env={:?};", server_cfg.env());
     let _ = write!(out, "unix_path={:?};", server_cfg.unix_path());
     let _ = write!(out, "url={:?};", server_cfg.url());
@@ -125,11 +128,11 @@ fn mcp_server_config_fingerprint(server_cfg: &McpServerConfig) -> String {
     let _ = write!(out, "http_url={:?};", server_cfg.http_url());
     let _ = write!(
         out,
-        "bearer_token_env_var={:?};",
-        server_cfg.bearer_token_env_var()
+        "bearer_token_secret={:?};",
+        server_cfg.bearer_token_secret()
     );
     let _ = write!(out, "http_headers={:?};", server_cfg.http_headers());
-    let _ = write!(out, "env_http_headers={:?};", server_cfg.env_http_headers());
+    let _ = write!(out, "secret_http_headers={:?};", server_cfg.secret_http_headers());
     let _ = write!(out, "stdout_log={:?};", server_cfg.stdout_log());
     out
 }
@@ -154,9 +157,14 @@ async fn spawn_mcp_connection(
     if !matches!(server_cfg.transport(), McpTransport::Stdio) {
         anyhow::bail!("unsupported mcp transport (expected stdio)");
     }
-    if server_cfg.argv().is_empty() {
+    let argv = server_cfg
+        .argv()
+        .ok_or_else(|| anyhow::anyhow!("mcp stdio transport missing argv"))?;
+    if argv.is_empty() {
         anyhow::bail!("mcp server argv must not be empty");
     }
+    let empty_env = BTreeMap::new();
+    let env = server_cfg.env().unwrap_or(&empty_env);
 
     let process_id = ProcessId::new();
     let thread_dir = server.thread_store.thread_dir(thread_id);
@@ -168,12 +176,13 @@ async fn spawn_mcp_connection(
     let stdout_path = process_dir.join("stdout.log");
     let stderr_path = process_dir.join("stderr.log");
 
-    let mut cmd = Command::new(&server_cfg.argv()[0]);
-    cmd.args(server_cfg.argv().iter().skip(1));
+    let mut cmd = Command::new(&argv[0]);
+    cmd.args(argv.iter().skip(1));
     cmd.current_dir(thread_root);
     cmd.stderr(std::process::Stdio::piped());
-    cmd.envs(server_cfg.env().iter());
-    let _effective_env_summary = apply_child_process_hardening(&mut cmd, Some(server_cfg.env()))
+    cmd.envs(env.iter());
+    let combined_env_opt = (!env.is_empty()).then_some(env);
+    let _effective_env_summary = apply_child_process_hardening(&mut cmd, combined_env_opt)
         .context("apply child process hardening for mcp server")?;
     let max_bytes_per_part = process_log_max_bytes_per_part();
     cmd.kill_on_drop(true);
@@ -192,7 +201,7 @@ async fn spawn_mcp_connection(
         },
     )
     .await
-    .with_context(|| format!("spawn mcp server {:?} ({server_name})", server_cfg.argv()))?;
+    .with_context(|| format!("spawn mcp server {argv:?} ({server_name})"))?;
     drop(client.take_notifications());
     let mut child = client
         .take_child()
@@ -209,7 +218,7 @@ async fn spawn_mcp_connection(
         .append_event(omne_protocol::ThreadEventKind::ProcessStarted {
             process_id,
             turn_id,
-            argv: server_cfg.argv().to_vec(),
+            argv: argv.to_vec(),
             cwd: thread_root.display().to_string(),
             stdout_path: stdout_path.display().to_string(),
             stderr_path: stderr_path.display().to_string(),
@@ -221,7 +230,7 @@ async fn spawn_mcp_connection(
         process_id,
         thread_id,
         turn_id,
-        argv: server_cfg.argv().to_vec(),
+        argv: argv.to_vec(),
         cwd: thread_root.display().to_string(),
         started_at: started_at.clone(),
         status: ProcessStatus::Running,

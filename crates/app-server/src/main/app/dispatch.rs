@@ -179,8 +179,9 @@ mod dispatch_tests {
         )
         .expect_err("unknown field should be rejected");
 
-        assert_eq!(response.error.code, JSONRPC_INVALID_PARAMS);
-        let message = response.error.data.unwrap_or_default().to_string();
+        let error = response.error.expect("invalid params response should include error");
+        assert_eq!(error.code, JSONRPC_INVALID_PARAMS);
+        let message = error.data.unwrap_or_default().to_string();
         assert!(message.contains("unexpected"));
     }
 }

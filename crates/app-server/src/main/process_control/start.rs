@@ -716,7 +716,8 @@ modes:
         .await?;
 
         assert_eq!(result["needs_approval"].as_bool(), Some(true));
-        assert_eq!(result["thread_id"].as_str(), Some(&thread_id.to_string()));
+        let expected_thread_id = thread_id.to_string();
+        assert_eq!(result["thread_id"].as_str(), Some(expected_thread_id.as_str()));
         assert!(result["approval_id"].as_str().is_some());
         assert!(server.processes.lock().await.is_empty());
 
