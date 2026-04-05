@@ -341,7 +341,8 @@ fn apply_runtime_event_tracking(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::OnceLock;
+    use tokio::sync::Mutex;
 
     fn cwd_test_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -498,7 +499,7 @@ mod tests {
     #[tokio::test]
     async fn create_thread_persists_canonical_absolute_cwd_for_relative_input() -> anyhow::Result<()>
     {
-        let _guard = cwd_test_lock().lock().expect("cwd test lock poisoned");
+        let _guard = cwd_test_lock().lock().await;
         let original_cwd = std::env::current_dir()?;
 
         let dir = tempfile::tempdir()?;
