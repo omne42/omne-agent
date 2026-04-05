@@ -55,6 +55,7 @@ use thread::{
 use turn::handle_turn_request;
 
 const NOTIFY_CHANNEL_CAPACITY: usize = 1024;
+const OUTBOUND_LINE_CHANNEL_CAPACITY: usize = 1024;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -125,7 +126,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn serve_stdio(server: Arc<Server>) -> anyhow::Result<()> {
-    let (out_tx, out_rx) = mpsc::unbounded_channel::<String>();
+    let (out_tx, out_rx) = mpsc::channel::<String>(OUTBOUND_LINE_CHANNEL_CAPACITY);
     tokio::task::spawn_local(spawn_stdio_writer(out_rx));
     tokio::task::spawn_local(spawn_notification_forwarder(
         server.notify_tx.subscribe(),
@@ -148,7 +149,7 @@ async fn serve_stdio(server: Arc<Server>) -> anyhow::Result<()> {
 async fn run_request_loop<R>(
     server: Arc<Server>,
     reader: R,
-    out_tx: mpsc::UnboundedSender<String>,
+    out_tx: mpsc::Sender<String>,
     #[cfg(unix)] notify_filter: Option<ConnectionNotificationFilter>,
 ) -> anyhow::Result<()>
 where
@@ -208,7 +209,7 @@ where
         };
 
         let line = serde_json::to_string(&response)?;
-        if out_tx.send(line).is_err() {
+        if out_tx.send(line).await.is_err() {
             break;
         }
     }
@@ -216,7 +217,7 @@ where
     Ok(())
 }
 
-async fn spawn_stdio_writer(mut out_rx: mpsc::UnboundedReceiver<String>) {
+async fn spawn_stdio_writer(mut out_rx: mpsc::Receiver<String>) {
     let mut stdout = tokio::io::stdout();
     while let Some(line) = out_rx.recv().await {
         if stdout.write_all(line.as_bytes()).await.is_err() {
@@ -233,7 +234,7 @@ async fn spawn_stdio_writer(mut out_rx: mpsc::UnboundedReceiver<String>) {
 
 async fn spawn_notification_forwarder(
     mut notify_rx: broadcast::Receiver<String>,
-    out_tx: mpsc::UnboundedSender<String>,
+    out_tx: mpsc::Sender<String>,
     #[cfg(unix)] filter: Option<ConnectionNotificationFilter>,
 ) {
     loop {
@@ -245,7 +246,7 @@ async fn spawn_notification_forwarder(
                 {
                     continue;
                 }
-                if out_tx.send(line).is_err() {
+                if out_tx.send(line).await.is_err() {
                     break;
                 }
             }
@@ -347,7 +348,7 @@ async fn serve_unix_connection(
     stream: tokio::net::UnixStream,
 ) -> anyhow::Result<()> {
     let (read_half, write_half) = stream.into_split();
-    let (out_tx, out_rx) = mpsc::unbounded_channel::<String>();
+    let (out_tx, out_rx) = mpsc::channel::<String>(OUTBOUND_LINE_CHANNEL_CAPACITY);
     let notify_filter = ConnectionNotificationFilter::default();
 
     let notify_task = tokio::task::spawn_local(spawn_notification_forwarder(
@@ -370,7 +371,7 @@ async fn serve_unix_connection(
 #[cfg(unix)]
 async fn write_lines_to_socket(
     mut writer: tokio::net::unix::OwnedWriteHalf,
-    mut out_rx: mpsc::UnboundedReceiver<String>,
+    mut out_rx: mpsc::Receiver<String>,
 ) {
     while let Some(line) = out_rx.recv().await {
         if writer.write_all(line.as_bytes()).await.is_err() {
@@ -382,6 +383,67 @@ async fn write_lines_to_socket(
         if writer.flush().await.is_err() {
             break;
         }
+    }
+}
+
+#[cfg(test)]
+mod response_queue_tests {
+    use super::*;
+    use tokio::io::AsyncWriteExt;
+
+    #[tokio::test]
+    async fn run_request_loop_applies_backpressure_to_outbound_responses() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let server = Arc::new(build_test_server_shared(tmp.path().join(".omne_data")));
+        let (mut input_writer, input_reader) = tokio::io::duplex(1024);
+        let (out_tx, mut out_rx) = mpsc::channel::<String>(1);
+
+        let writer_task = tokio::spawn(async move {
+            let initialize = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {},
+            });
+            let initialized = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "initialized",
+                "params": {},
+            });
+            input_writer
+                .write_all(format!("{initialize}\n{initialized}\n").as_bytes())
+                .await?;
+            input_writer.shutdown().await?;
+            anyhow::Ok(())
+        });
+
+        #[cfg(unix)]
+        let run_task = tokio::spawn(run_request_loop(server, input_reader, out_tx, None));
+        #[cfg(not(unix))]
+        let run_task = tokio::spawn(run_request_loop(server, input_reader, out_tx));
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(
+            !run_task.is_finished(),
+            "bounded response queue should apply backpressure until a receiver drains it"
+        );
+
+        let first = tokio::time::timeout(Duration::from_secs(1), out_rx.recv())
+            .await
+            .context("timed out waiting for first response")?
+            .ok_or_else(|| anyhow::anyhow!("missing first response"))?;
+        assert!(first.contains("\"id\":1"));
+
+        run_task.await??;
+        writer_task.await??;
+
+        let second = tokio::time::timeout(Duration::from_secs(1), out_rx.recv())
+            .await
+            .context("timed out waiting for second response")?
+            .ok_or_else(|| anyhow::anyhow!("missing second response"))?;
+        assert!(second.contains("\"id\":2"));
+        Ok(())
     }
 }
 
