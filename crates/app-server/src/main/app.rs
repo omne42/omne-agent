@@ -55,6 +55,7 @@ use thread::{
 use turn::handle_turn_request;
 
 const NOTIFY_CHANNEL_CAPACITY: usize = 1024;
+const OUTBOUND_CHANNEL_CAPACITY: usize = 256;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -125,7 +126,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn serve_stdio(server: Arc<Server>) -> anyhow::Result<()> {
-    let (out_tx, out_rx) = mpsc::unbounded_channel::<String>();
+    let (out_tx, out_rx) = mpsc::channel::<String>(OUTBOUND_CHANNEL_CAPACITY);
     tokio::task::spawn_local(spawn_stdio_writer(out_rx));
     tokio::task::spawn_local(spawn_notification_forwarder(
         server.notify_tx.subscribe(),
@@ -148,7 +149,7 @@ async fn serve_stdio(server: Arc<Server>) -> anyhow::Result<()> {
 async fn run_request_loop<R>(
     server: Arc<Server>,
     reader: R,
-    out_tx: mpsc::UnboundedSender<String>,
+    out_tx: mpsc::Sender<String>,
     #[cfg(unix)] notify_filter: Option<ConnectionNotificationFilter>,
 ) -> anyhow::Result<()>
 where
@@ -208,7 +209,7 @@ where
         };
 
         let line = serde_json::to_string(&response)?;
-        if out_tx.send(line).is_err() {
+        if out_tx.send(line).await.is_err() {
             break;
         }
     }
@@ -216,7 +217,7 @@ where
     Ok(())
 }
 
-async fn spawn_stdio_writer(mut out_rx: mpsc::UnboundedReceiver<String>) {
+async fn spawn_stdio_writer(mut out_rx: mpsc::Receiver<String>) {
     let mut stdout = tokio::io::stdout();
     while let Some(line) = out_rx.recv().await {
         if stdout.write_all(line.as_bytes()).await.is_err() {
@@ -233,7 +234,7 @@ async fn spawn_stdio_writer(mut out_rx: mpsc::UnboundedReceiver<String>) {
 
 async fn spawn_notification_forwarder(
     mut notify_rx: broadcast::Receiver<String>,
-    out_tx: mpsc::UnboundedSender<String>,
+    out_tx: mpsc::Sender<String>,
     #[cfg(unix)] filter: Option<ConnectionNotificationFilter>,
 ) {
     loop {
@@ -245,7 +246,7 @@ async fn spawn_notification_forwarder(
                 {
                     continue;
                 }
-                if out_tx.send(line).is_err() {
+                if out_tx.send(line).await.is_err() {
                     break;
                 }
             }
@@ -347,7 +348,7 @@ async fn serve_unix_connection(
     stream: tokio::net::UnixStream,
 ) -> anyhow::Result<()> {
     let (read_half, write_half) = stream.into_split();
-    let (out_tx, out_rx) = mpsc::unbounded_channel::<String>();
+    let (out_tx, out_rx) = mpsc::channel::<String>(OUTBOUND_CHANNEL_CAPACITY);
     let notify_filter = ConnectionNotificationFilter::default();
 
     let notify_task = tokio::task::spawn_local(spawn_notification_forwarder(
@@ -370,7 +371,7 @@ async fn serve_unix_connection(
 #[cfg(unix)]
 async fn write_lines_to_socket(
     mut writer: tokio::net::unix::OwnedWriteHalf,
-    mut out_rx: mpsc::UnboundedReceiver<String>,
+    mut out_rx: mpsc::Receiver<String>,
 ) {
     while let Some(line) = out_rx.recv().await {
         if writer.write_all(line.as_bytes()).await.is_err() {
@@ -391,8 +392,8 @@ mod unix_socket_tests {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
     #[tokio::test(flavor = "current_thread")]
-    async fn unix_connection_does_not_forward_global_notifications_by_default()
-    -> anyhow::Result<()> {
+    async fn unix_connection_does_not_forward_global_notifications_by_default() -> anyhow::Result<()>
+    {
         let tmp = tempfile::tempdir()?;
         let server = Arc::new(build_test_server_shared(tmp.path().join(".omne_data")));
         let (client_stream, server_stream) = tokio::net::UnixStream::pair()?;
@@ -432,7 +433,8 @@ mod unix_socket_tests {
                     .to_string(),
                 );
 
-                let next = tokio::time::timeout(Duration::from_millis(250), lines.next_line()).await;
+                let next =
+                    tokio::time::timeout(Duration::from_millis(250), lines.next_line()).await;
                 assert!(next.is_err(), "unexpected unsolicited notification");
 
                 drop(write_half);
@@ -445,11 +447,13 @@ mod unix_socket_tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn unix_connection_forwards_only_registered_thread_notifications()
-    -> anyhow::Result<()> {
+    async fn unix_connection_forwards_only_registered_thread_notifications() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let server = Arc::new(build_test_server_shared(tmp.path().join(".omne_data")));
-        let handle = server.thread_store.create_thread(tmp.path().to_path_buf()).await?;
+        let handle = server
+            .thread_store
+            .create_thread(tmp.path().to_path_buf())
+            .await?;
         let thread_id = handle.thread_id();
         drop(handle);
 
@@ -513,7 +517,10 @@ mod unix_socket_tests {
                 let forwarded: serde_json::Value =
                     serde_json::from_str(&forwarded).context("parse forwarded notification")?;
                 assert_eq!(forwarded["method"], serde_json::json!("thread/event"));
-                assert_eq!(forwarded["params"]["thread_id"], serde_json::json!(thread_id));
+                assert_eq!(
+                    forwarded["params"]["thread_id"],
+                    serde_json::json!(thread_id)
+                );
 
                 let _ = server.notify_tx.send(
                     serde_json::json!({
@@ -526,7 +533,8 @@ mod unix_socket_tests {
                     })
                     .to_string(),
                 );
-                let next = tokio::time::timeout(Duration::from_millis(250), lines.next_line()).await;
+                let next =
+                    tokio::time::timeout(Duration::from_millis(250), lines.next_line()).await;
                 assert!(next.is_err(), "unexpected unrelated notification");
 
                 drop(write_half);

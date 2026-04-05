@@ -62,8 +62,10 @@ mod tests {
             },
         )
         .await?;
-        let process_id: ProcessId = serde_json::from_value(started["process_id"].clone())
-            .map_err(|err| anyhow::anyhow!("missing process_id in process/start response: {err}"))?;
+        let process_id: ProcessId =
+            serde_json::from_value(started["process_id"].clone()).map_err(|err| {
+                anyhow::anyhow!("missing process_id in process/start response: {err}")
+            })?;
 
         tokio::time::sleep(Duration::from_millis(50)).await;
 
@@ -78,7 +80,8 @@ mod tests {
             },
         )
         .await?;
-        let parsed = serde_json::from_value::<omne_app_server_protocol::ProcessTailResponse>(result)?;
+        let parsed =
+            serde_json::from_value::<omne_app_server_protocol::ProcessTailResponse>(result)?;
         assert!(!parsed.tool_id.to_string().is_empty());
         assert!(parsed.text.contains("hello"));
 
@@ -114,7 +117,7 @@ mod tests {
                 clear_openai_base_url: false,
                 allowed_tools: None,
                 execpolicy_rules: None,
-            clear_execpolicy_rules: false,
+                clear_execpolicy_rules: false,
             },
         )
         .await?;
@@ -131,8 +134,10 @@ mod tests {
             },
         )
         .await?;
-        let process_id: ProcessId = serde_json::from_value(started["process_id"].clone())
-            .map_err(|err| anyhow::anyhow!("missing process_id in process/start response: {err}"))?;
+        let process_id: ProcessId =
+            serde_json::from_value(started["process_id"].clone()).map_err(|err| {
+                anyhow::anyhow!("missing process_id in process/start response: {err}")
+            })?;
 
         handle_thread_configure(
             &server,
@@ -154,7 +159,7 @@ mod tests {
                 clear_openai_base_url: false,
                 allowed_tools: Some(Some(vec!["repo/search".to_string()])),
                 execpolicy_rules: None,
-            clear_execpolicy_rules: false,
+                clear_execpolicy_rules: false,
             },
         )
         .await?;
@@ -211,7 +216,7 @@ mod tests {
                 clear_openai_base_url: false,
                 allowed_tools: Some(Some(vec!["repo/search".to_string()])),
                 execpolicy_rules: None,
-            clear_execpolicy_rules: false,
+                clear_execpolicy_rules: false,
             },
         )
         .await?;
@@ -225,11 +230,80 @@ mod tests {
             }),
         )
         .await;
-        assert!(response.error.is_none(), "unexpected error: {:?}", response.error);
+        assert!(
+            response.error.is_none(),
+            "unexpected error: {:?}",
+            response.error
+        );
         let result = response
             .result
             .ok_or_else(|| anyhow::anyhow!("missing process/list result"))?;
-        let parsed = serde_json::from_value::<omne_app_server_protocol::ProcessAllowedToolsDeniedResponse>(result)?;
+        let parsed = serde_json::from_value::<
+            omne_app_server_protocol::ProcessAllowedToolsDeniedResponse,
+        >(result)?;
+        assert!(parsed.denied);
+        assert_eq!(parsed.tool, "process/list");
+        assert_eq!(parsed.error_code.as_deref(), Some("allowed_tools_denied"));
+        assert_eq!(parsed.allowed_tools, vec!["repo/search".to_string()]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn process_list_without_thread_id_fails_closed_when_any_thread_denies_tool()
+    -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_a = tmp.path().join("repo-a");
+        let repo_b = tmp.path().join("repo-b");
+        tokio::fs::create_dir_all(&repo_a).await?;
+        tokio::fs::create_dir_all(&repo_b).await?;
+
+        let server = Arc::new(build_test_server_shared(tmp.path().join(".omne_data")));
+        let thread_a = create_test_thread_shared(&server, repo_a).await?;
+        let _thread_b = create_test_thread_shared(&server, repo_b).await?;
+
+        handle_thread_configure(
+            &server,
+            ThreadConfigureParams {
+                thread_id: thread_a,
+                approval_policy: None,
+                sandbox_policy: None,
+                sandbox_writable_roots: None,
+                sandbox_network_access: None,
+                mode: None,
+                role: None,
+                model: None,
+                clear_model: false,
+                thinking: None,
+                clear_thinking: false,
+                show_thinking: None,
+                clear_show_thinking: false,
+                openai_base_url: None,
+                clear_openai_base_url: false,
+                allowed_tools: Some(Some(vec!["repo/search".to_string()])),
+                execpolicy_rules: None,
+                clear_execpolicy_rules: false,
+            },
+        )
+        .await?;
+
+        let response = handle_process_request(
+            &server,
+            serde_json::json!(1),
+            "process/list",
+            serde_json::json!({}),
+        )
+        .await;
+        assert!(
+            response.error.is_none(),
+            "unexpected error: {:?}",
+            response.error
+        );
+        let result = response
+            .result
+            .ok_or_else(|| anyhow::anyhow!("missing process/list result"))?;
+        let parsed = serde_json::from_value::<
+            omne_app_server_protocol::ProcessAllowedToolsDeniedResponse,
+        >(result)?;
         assert!(parsed.denied);
         assert_eq!(parsed.tool, "process/list");
         assert_eq!(parsed.error_code.as_deref(), Some("allowed_tools_denied"));
