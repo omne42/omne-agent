@@ -1533,7 +1533,6 @@ fn tool_denied(error: impl Into<String>, result: Value) -> anyhow::Error {
 
 struct SandboxWriteTarget {
     root: PathBuf,
-    resolved_path: PathBuf,
     rel_path: PathBuf,
 }
 
@@ -1591,7 +1590,6 @@ async fn resolve_sandbox_write_target(
 
     Ok(SandboxWriteTarget {
         root,
-        resolved_path,
         rel_path,
     })
 }
@@ -1612,6 +1610,7 @@ async fn preview_sandbox_write_target(
     resolve_sandbox_write_target(thread_root, sandbox_writable_roots, &preview_path).await
 }
 
+#[cfg(test)]
 async fn canonical_rel_path_for_write(thread_root: &Path, path: &Path) -> anyhow::Result<PathBuf> {
     Ok(resolve_sandbox_write_target(thread_root, &[], path).await?.rel_path)
 }
