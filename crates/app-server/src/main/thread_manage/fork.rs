@@ -15,13 +15,10 @@ async fn handle_thread_fork(
         )
     };
 
-    let cwd = params
-        .cwd
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string)
-        .unwrap_or(current_cwd);
+    let cwd = match params.cwd.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+        Some(cwd) => resolve_thread_root_from_cwd(server, cwd).await?,
+        None => resolve_thread_root_from_cwd(server, &current_cwd).await?,
+    };
 
     let events = server
         .thread_store
@@ -29,7 +26,7 @@ async fn handle_thread_fork(
         .await?
         .ok_or_else(|| anyhow::anyhow!("thread not found: {}", params.thread_id))?;
 
-    let mut forked = server.thread_store.create_thread(PathBuf::from(&cwd)).await?;
+    let mut forked = server.thread_store.create_thread(cwd).await?;
     let forked_id = forked.thread_id();
     let mut skipped_active_turn_approvals =
         std::collections::HashSet::<omne_protocol::ApprovalId>::new();

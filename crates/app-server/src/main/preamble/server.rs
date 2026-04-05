@@ -1094,6 +1094,10 @@ impl Server {
         threads.insert(thread_id, rt.clone());
         Ok(rt)
     }
+
+    async fn evict_cached_thread(&self, thread_id: ThreadId) -> bool {
+        self.threads.lock().await.remove(&thread_id).is_some()
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1562,15 +1566,28 @@ impl ThreadRuntime {
 
         let mut handle = self.handle.lock().await;
         let thread_id = handle.thread_id();
-        let turn_completed_event = handle
+        let turn_completed = handle
             .append(omne_protocol::ThreadEventKind::TurnCompleted {
                 turn_id,
                 status,
                 reason,
             })
-            .await
-            .ok();
+            .await;
         drop(handle);
+        let turn_completed_event = match turn_completed {
+            Ok(event) => Some(event),
+            Err(err) => {
+                let evicted = server.evict_cached_thread(thread_id).await;
+                tracing::warn!(
+                    thread_id = %thread_id,
+                    turn_id = %turn_id,
+                    error = %err,
+                    evicted,
+                    "failed to append TurnCompleted; evicted cached thread runtime"
+                );
+                None
+            }
+        };
         if let Some(event) = turn_completed_event {
             self.emit_event_notifications(&event).await;
         }
@@ -1628,4 +1645,27 @@ struct ActiveTurn {
     turn_id: TurnId,
     cancel: CancellationToken,
     interrupt_reason: Option<String>,
+}
+
+#[cfg(test)]
+mod server_cache_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn evict_cached_thread_removes_loaded_runtime() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(repo_dir.join(".omne_data")).await?;
+
+        let server = crate::build_test_server_shared(repo_dir.join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        let thread_rt = Arc::new(ThreadRuntime::new(handle, server.notify_tx.clone()));
+        server.threads.lock().await.insert(thread_id, thread_rt);
+
+        assert!(server.evict_cached_thread(thread_id).await);
+        assert!(server.threads.lock().await.get(&thread_id).is_none());
+        assert!(!server.evict_cached_thread(thread_id).await);
+        Ok(())
+    }
 }
