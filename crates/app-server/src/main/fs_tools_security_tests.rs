@@ -236,6 +236,41 @@ modes:
         Ok((tmp, server, thread_id))
     }
 
+    async fn setup_thread_with_edit_deny_but_read_allow(
+    ) -> anyhow::Result<(tempfile::TempDir, std::path::PathBuf, Server, ThreadId)> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        write_modes_yaml_shared(
+            &repo_dir,
+            r#"
+version: 1
+modes:
+  review-read-edit-deny:
+    description: "read allowed, edit denied for src"
+    permissions:
+      read:
+        decision: allow
+      edit:
+        decision: allow
+        deny_globs:
+          - "src/**"
+      command:
+        decision: allow
+      artifact:
+        decision: allow
+"#,
+        )
+        .await?;
+        tokio::fs::create_dir_all(repo_dir.join("src")).await?;
+        tokio::fs::write(repo_dir.join("src/lib.rs"), "needle\n").await?;
+
+        let server = build_test_server_shared(repo_dir.join(".omne_data"));
+        let thread_id = create_test_thread_shared(&server, repo_dir.clone()).await?;
+        configure_test_thread_mode_shared(&server, thread_id, "review-read-edit-deny").await?;
+
+        Ok((tmp, repo_dir, server, thread_id))
+    }
+
     #[tokio::test]
     async fn fs_mkdir_creates_directory_and_returns_created_true() -> anyhow::Result<()> {
         let (_tmp, repo_dir, server, thread_id) = setup_thread_default_allow().await?;
@@ -339,6 +374,32 @@ modes:
         assert!(result["denied"].as_bool().unwrap_or(false));
         assert_eq!(result["decision_source"].as_str(), Some("tool_override"));
         assert_eq!(result["tool_override_hit"].as_bool(), Some(true));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn file_read_ignores_edit_deny_globs_when_read_is_allowed() -> anyhow::Result<()> {
+        let (_tmp, repo_dir, server, thread_id) = setup_thread_with_edit_deny_but_read_allow().await?;
+
+        let result = handle_file_read(
+            &server,
+            FileReadParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                path: "src/lib.rs".to_string(),
+                root: None,
+                max_bytes: None,
+            },
+        )
+        .await?;
+
+        assert_eq!(
+            result["resolved_path"].as_str(),
+            Some(repo_dir.join("src/lib.rs").display().to_string().as_str())
+        );
+        assert_eq!(result["text"].as_str(), Some("needle\n"));
+        assert_eq!(result["truncated"].as_bool(), Some(false));
         Ok(())
     }
 
