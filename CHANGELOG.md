@@ -9,6 +9,7 @@
 
 ### Fixed
 - `omne-app-server`：`thread/checkpoint/restore` 现在会在进入 `prompt_strict` 审批前先拒绝 `sandbox_writable_roots` 不支持的配置，避免先申请一个注定失败的审批，并补齐“不产生 ApprovalRequested”的回归测试。
+- `omne-app-server`：`ProcessStarted` 现在会持久化 `os_pid`，`process/list` 在 server 重启后检测到目标 pid 仍存活时会继续显示 `running`，`process/kill`/`process/interrupt` 也会在无内存 actor 时回退到 OS pid 发信号，不再把仍可治理的历史进程一律降级成 `abandoned`。
 - `omne-app-server`：MCP 重连路径现在会在缓存进程已退出时同步清理 stale `ProcessEntry`，避免 thread 运行态残留死掉的 MCP 进程记录，并补齐对应回归测试。
 - `omne-app-server`：补充 `thread/delete(force=true)` 回归测试，确保删除带 active turn 的 thread 时会先中断并完成该 turn，再继续执行删除。
 - `omne-core`：补充 structured error redaction 回归测试，确保 `CatalogArgValueData::Unsupported` 不会再次打断脱敏路径，同时敏感 catalog 参数仍会被替换为 `<REDACTED>`。

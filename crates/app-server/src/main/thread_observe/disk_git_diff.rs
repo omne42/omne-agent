@@ -716,6 +716,7 @@ mod stale_process_tests {
             process_id: ProcessId::new(),
             thread_id: ThreadId::new(),
             turn_id: None,
+            os_pid: None,
             argv: vec!["sleep".to_string(), "999".to_string()],
             cwd: tmp.path().display().to_string(),
             started_at: started_at.clone(),
@@ -748,6 +749,7 @@ mod stale_process_tests {
             process_id: ProcessId::new(),
             thread_id: ThreadId::new(),
             turn_id: None,
+            os_pid: None,
             argv: vec!["echo".to_string(), "hi".to_string()],
             cwd: tmp.path().display().to_string(),
             started_at,
@@ -817,6 +819,7 @@ mod stuck_report_tests {
             .append_event(omne_protocol::ThreadEventKind::ProcessStarted {
                 process_id,
                 turn_id: Some(turn_id),
+                os_pid: None,
                 argv: vec!["sleep".to_string(), "999".to_string()],
                 cwd: repo_dir.display().to_string(),
                 stdout_path: tmp.path().join("stdout.log").display().to_string(),

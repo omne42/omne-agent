@@ -52,6 +52,7 @@ mod mcp_tests {
                     process_id,
                     thread_id,
                     turn_id: None,
+                    os_pid: None,
                     argv: vec!["mock-mcp".to_string()],
                     cwd: ".".to_string(),
                     started_at: started_at.clone(),

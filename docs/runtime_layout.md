@@ -106,7 +106,7 @@ thread 下的 runtime 根目录：
 
 要点：
 
-- `process/start` 会在事件里落盘 `ProcessStarted{stdout_path,stderr_path}`，并在返回值里直接带路径。
+- `process/start` 会在事件里落盘 `ProcessStarted{os_pid?,stdout_path,stderr_path}`，并在返回值里直接带路径；重启后 `process/list`/`process/kill`/`process/interrupt` 会优先基于该 `os_pid` 继续识别和治理仍存活的进程。
 - rotate 阈值默认 `8MiB`，可用 `OMNE_PROCESS_LOG_MAX_BYTES_PER_PART` 覆盖。
 
 ### 3.2 LLM stream debug（可选）

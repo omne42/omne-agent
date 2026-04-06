@@ -1123,6 +1123,7 @@ struct ProcessInfo {
     process_id: ProcessId,
     thread_id: ThreadId,
     turn_id: Option<TurnId>,
+    os_pid: Option<u32>,
     argv: Vec<String>,
     cwd: String,
     started_at: String,

@@ -219,10 +219,12 @@ async fn spawn_mcp_connection(
     let stderr_task =
         tokio::spawn(async move { capture_rotating_log(stderr, stderr_path_for_task, max_bytes_per_part).await });
 
+    let os_pid = child.id();
     let started = thread_rt
         .append_event(omne_protocol::ThreadEventKind::ProcessStarted {
             process_id,
             turn_id,
+            os_pid,
             argv: argv.to_vec(),
             cwd: thread_root.display().to_string(),
             stdout_path: stdout_path.display().to_string(),
@@ -235,6 +237,7 @@ async fn spawn_mcp_connection(
         process_id,
         thread_id,
         turn_id,
+        os_pid,
         argv: argv.to_vec(),
         cwd: thread_root.display().to_string(),
         started_at: started_at.clone(),
