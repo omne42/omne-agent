@@ -328,6 +328,71 @@ mod thread_manage_worktree_lifecycle_tests {
     }
 
     #[tokio::test]
+    async fn thread_delete_force_interrupts_active_turn_and_completes() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let mut handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        let turn_id = TurnId::new();
+        handle
+            .append(omne_protocol::ThreadEventKind::TurnStarted {
+                turn_id,
+                input: "delete me".to_string(),
+                context_refs: None,
+                attachments: None,
+                directives: None,
+                priority: omne_protocol::TurnPriority::Foreground,
+            })
+            .await?;
+        let rt = Arc::new(ThreadRuntime::new(handle, server.notify_tx.clone()));
+        let cancel = tokio_util::sync::CancellationToken::new();
+        {
+            let mut active = rt.active_turn.lock().await;
+            *active = Some(ActiveTurn {
+                turn_id,
+                cancel: cancel.clone(),
+                interrupt_reason: None,
+            });
+        }
+        server.threads.lock().await.insert(thread_id, rt.clone());
+
+        let server_for_turn = server.clone();
+        let rt_for_turn = rt.clone();
+        let cancel_for_completion = cancel.clone();
+        let completion = tokio::spawn(async move {
+            cancel_for_completion.cancelled().await;
+            rt_for_turn
+                .force_complete_turn(
+                    server_for_turn,
+                    turn_id,
+                    omne_protocol::TurnStatus::Interrupted,
+                    Some("thread deleted".to_string()),
+                )
+                .await;
+        });
+
+        let thread_dir = server.thread_store.thread_dir(thread_id);
+        let result = handle_thread_delete(
+            &server,
+            ThreadDeleteParams {
+                thread_id,
+                force: true,
+            },
+        )
+        .await?;
+
+        completion.await?;
+        assert!(cancel.is_cancelled(), "force delete should interrupt the active turn");
+        assert!(result.deleted);
+        assert_eq!(result.thread_id, thread_id);
+        assert!(!thread_dir.exists());
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn managed_subagent_worktree_path_rejects_noncanonical_escape() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
