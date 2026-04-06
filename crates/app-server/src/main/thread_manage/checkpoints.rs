@@ -516,6 +516,13 @@ async fn handle_thread_checkpoint_restore(
         );
     }
 
+    let plan = omne_checkpoint_runtime::compute_restore_plan(
+        &thread_root,
+        &snapshot_root,
+        CHECKPOINT_MAX_FILE_BYTES,
+    )
+    .await?;
+
     if !sandbox_writable_roots.is_empty() {
         let reason =
             "checkpoint restore is not supported when sandbox_writable_roots is set".to_string();
@@ -525,7 +532,7 @@ async fn handle_thread_checkpoint_restore(
             params.turn_id,
             params.checkpoint_id,
             &reason,
-            None,
+            Some(&plan),
         )
         .await;
         thread_rt
@@ -553,13 +560,6 @@ async fn handle_thread_checkpoint_restore(
             },
         );
     }
-
-    let plan = omne_checkpoint_runtime::compute_restore_plan(
-        &thread_root,
-        &snapshot_root,
-        CHECKPOINT_MAX_FILE_BYTES,
-    )
-    .await?;
     let approval_params = serde_json::json!({
         "checkpoint_id": params.checkpoint_id,
         "label": manifest.label,
