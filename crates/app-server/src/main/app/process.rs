@@ -6,6 +6,29 @@ fn thread_allows_process_list(allowed_tools: &Option<Vec<String>>) -> bool {
         .is_none_or(|tools| tools.iter().any(|tool| tool == "process/list"))
 }
 
+async fn thread_mode_allows_process_list(
+    thread_root: &Path,
+    mode_name: &str,
+    approval_policy: omne_protocol::ApprovalPolicy,
+) -> bool {
+    let catalog = omne_core::modes::ModeCatalog::load(thread_root).await;
+    let Some(mode) = catalog.mode(mode_name) else {
+        return false;
+    };
+    let mode_decision = resolve_mode_decision_audit(
+        mode,
+        "process/list",
+        mode.permissions.process.inspect,
+    );
+    match mode_decision.decision {
+        omne_core::modes::Decision::Allow => true,
+        omne_core::modes::Decision::Prompt => {
+            matches!(approval_policy, omne_protocol::ApprovalPolicy::AutoApprove)
+        }
+        omne_core::modes::Decision::Deny => false,
+    }
+}
+
 pub(super) async fn handle_process_request(
     server: &Arc<Server>,
     id: serde_json::Value,
@@ -37,13 +60,18 @@ async fn handle_process_list_request(
     };
 
     let visible_thread_ids = if let Some(thread_id) = params.thread_id {
-        let thread_rt = match server.get_or_load_thread(thread_id).await {
-            Ok(thread_rt) => thread_rt,
+        let (thread_rt, thread_root) = match load_thread_root(server, thread_id).await {
+            Ok(values) => values,
             Err(err) => return jsonrpc_internal_error(id, err),
         };
-        let allowed_tools = {
+        let (approval_policy, mode_name, allowed_tools) = {
             let handle = thread_rt.handle.lock().await;
-            handle.state().allowed_tools.clone()
+            let state = handle.state();
+            (
+                state.approval_policy,
+                state.mode.clone(),
+                state.allowed_tools.clone(),
+            )
         };
         let tool_id = omne_protocol::ToolId::new();
         let approval_params = serde_json::json!({
@@ -54,7 +82,7 @@ async fn handle_process_list_request(
             tool_id,
             None,
             "process/list",
-            Some(approval_params),
+            Some(approval_params.clone()),
             &allowed_tools,
         )
         .await
@@ -65,6 +93,28 @@ async fn handle_process_list_request(
                     process_allowed_tools_denied_response(tool_id, "process/list", &allowed_tools),
                 );
             }
+            Ok(None) => {}
+            Err(err) => return jsonrpc_internal_error(id, err),
+        }
+        match enforce_process_mode_and_approval(
+            server,
+            ProcessModeApprovalContext {
+                thread_rt: &thread_rt,
+                thread_root: &thread_root,
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                approval_policy,
+                mode_name: &mode_name,
+                action: "process/list",
+                tool_id,
+                approval_params: &approval_params,
+            },
+            |mode| mode.permissions.process.inspect,
+        )
+        .await
+        {
+            Ok(Some(result)) => return jsonrpc_ok_or_internal(id, Ok(result)),
             Ok(None) => Some(std::iter::once(thread_id).collect::<std::collections::HashSet<_>>()),
             Err(err) => return jsonrpc_internal_error(id, err),
         }
@@ -75,15 +125,22 @@ async fn handle_process_list_request(
         };
         let mut visible = std::collections::HashSet::new();
         for thread_id in thread_ids {
-            let thread_rt = match server.get_or_load_thread(thread_id).await {
-                Ok(thread_rt) => thread_rt,
+            let (thread_rt, thread_root) = match load_thread_root(server, thread_id).await {
+                Ok(values) => values,
                 Err(err) => return jsonrpc_internal_error(id, err),
             };
-            let allowed_tools = {
+            let (approval_policy, mode_name, allowed_tools) = {
                 let handle = thread_rt.handle.lock().await;
-                handle.state().allowed_tools.clone()
+                let state = handle.state();
+                (
+                    state.approval_policy,
+                    state.mode.clone(),
+                    state.allowed_tools.clone(),
+                )
             };
-            if thread_allows_process_list(&allowed_tools) {
+            if thread_allows_process_list(&allowed_tools)
+                && thread_mode_allows_process_list(&thread_root, &mode_name, approval_policy).await
+            {
                 visible.insert(thread_id);
             }
         }
