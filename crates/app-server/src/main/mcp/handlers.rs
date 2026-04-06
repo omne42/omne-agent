@@ -87,39 +87,62 @@ async fn handle_mcp_list_servers(server: &Server, params: McpListServersParams) 
         })
         .await?;
 
-    let cfg = load_mcp_config(&thread_root).await?;
-    let servers = cfg
-        .servers()
-        .iter()
-        .filter(|(_, cfg)| matches!(cfg.transport(), McpTransport::Stdio))
-        .map(|(name, cfg)| omne_app_server_protocol::McpServerDescriptor {
-            name: name.to_string(),
-            transport: "stdio".to_string(),
-            argv: cfg.argv().to_vec(),
-            env_keys: cfg.env().keys().cloned().collect(),
-        })
-        .collect::<Vec<_>>();
+    let result: anyhow::Result<(Value, usize)> = async {
+        let cfg = load_mcp_config(&thread_root).await?;
+        let servers = cfg
+            .servers()
+            .iter()
+            .filter(|(_, cfg)| matches!(cfg.transport(), McpTransport::Stdio))
+            .map(|(name, cfg)| omne_app_server_protocol::McpServerDescriptor {
+                name: name.to_string(),
+                transport: "stdio".to_string(),
+                argv: omne_core::redact_command_argv(cfg.argv()),
+                env_keys: cfg.env().keys().cloned().collect(),
+            })
+            .collect::<Vec<_>>();
 
-    let server_count = servers.len();
-    let response = omne_app_server_protocol::McpListServersResponse {
-        config_path: cfg.path().as_ref().map(|p| p.display().to_string()),
-        servers,
-    };
-    let result = serde_json::to_value(response).context("serialize mcp/list_servers response")?;
+        let server_count = servers.len();
+        let response = omne_app_server_protocol::McpListServersResponse {
+            config_path: cfg.path().as_ref().map(|p| p.display().to_string()),
+            servers,
+        };
+        let response_value =
+            serde_json::to_value(response).context("serialize mcp/list_servers response")?;
+        Ok((response_value, server_count))
+    }
+    .await;
 
-    thread_rt
-        .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-            tool_id,
-            status: omne_protocol::ToolStatus::Completed,
-            structured_error: None,
-            error: None,
-            result: Some(serde_json::json!({
-                "servers": server_count,
-            })),
-        })
-        .await?;
-
-    Ok(result)
+    match result {
+        Ok((response, server_count)) => {
+            thread_rt
+                .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: omne_protocol::ToolStatus::Completed,
+                    structured_error: None,
+                    error: None,
+                    result: Some(serde_json::json!({
+                        "servers": server_count,
+                    })),
+                })
+                .await?;
+            Ok(response)
+        }
+        Err(err) => {
+            let error = err.to_string();
+            thread_rt
+                .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: omne_protocol::ToolStatus::Failed,
+                    structured_error: None,
+                    error: Some(error.clone()),
+                    result: Some(serde_json::json!({
+                        "servers": 0,
+                    })),
+                })
+                .await?;
+            Err(err)
+        }
+    }
 }
 
 async fn handle_mcp_list_tools(server: &Server, params: McpListToolsParams) -> anyhow::Result<Value> {

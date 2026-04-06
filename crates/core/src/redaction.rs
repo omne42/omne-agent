@@ -209,6 +209,12 @@ fn redact_argv(argv: &mut [String]) {
     }
 }
 
+pub fn redact_command_argv(argv: &[String]) -> Vec<String> {
+    let mut redacted = argv.to_vec();
+    redact_argv(&mut redacted);
+    redacted
+}
+
 pub(crate) fn redact_thread_event_kind(kind: &mut ThreadEventKind) {
     match kind {
         ThreadEventKind::ThreadCreated { cwd } => {
@@ -472,6 +478,25 @@ mod tests {
         assert!(is_sensitive_key("session_cookie"));
         assert!(!is_sensitive_key("summary"));
         assert!(!is_sensitive_key("artifact_type"));
+    }
+
+    #[test]
+    fn command_argv_redaction_covers_flag_value_and_inline_forms() {
+        let argv = vec![
+            "mcp-server".to_string(),
+            "--api-key".to_string(),
+            "super-secret".to_string(),
+            "authorization=bearer secret".to_string(),
+            "--verbose".to_string(),
+        ];
+
+        let redacted = redact_command_argv(&argv);
+
+        assert_eq!(redacted[0], "mcp-server");
+        assert_eq!(redacted[1], "--api-key");
+        assert_eq!(redacted[2], "<REDACTED>");
+        assert_eq!(redacted[3], "authorization=<REDACTED>");
+        assert_eq!(redacted[4], "--verbose");
     }
 
     #[test]
