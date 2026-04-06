@@ -11,7 +11,7 @@
 | `mode` | 内置/项目自定义 mode 名 | 是 | 选择“场景能力边界”（代码/评审/文档等）。 |
 | `sandbox_policy` | `read_only` / `workspace_write` / `full_access` | 否 | 控制文件系统写入范围。`full_access` = 最大权限。 |
 | `approval_policy` | `auto_approve` / `manual` / `unless_trusted` / `auto_deny` | 否 | 控制高风险动作是否自动执行或必须审批。 |
-| `sandbox_network_access` | `deny` / `allow` | 否 | 控制命令执行链路里的“潜在联网命令”检测与阻断。当前实现会 best-effort 拦截已知网络客户端和 `git` 的明确网络子命令；`mcp` stdio server 启动额外对 generic launcher 和路径执行做更保守的 fail-closed 处理。它不是内核级网络沙箱。 |
+| `sandbox_network_access` | `deny` / `allow` | 否 | 控制命令执行链路里的“潜在联网命令”检测与阻断。当前实现会 best-effort 拦截已知网络客户端和 `git` 的明确网络子命令；`mcp` stdio server 启动会额外对 generic launcher 和路径执行做更保守的 fail-closed 处理，并与 `process/start` 共用 execution gateway 的命令边界准备。它不是内核级网络沙箱。 |
 | `role` | role catalog 名称 | 否 | 身份语义，只做降权，不会放大 `mode` 权限。 |
 
 最外层不建议直接暴露的高级选项：
@@ -92,7 +92,7 @@ sandbox_network_access = "allow"
 | `approval_policy` | `auto_approve` / `manual` / `unless_trusted` / `auto_deny` | `auto_approve` | 控制 `prompt`/`prompt_strict` 场景下是否自动放行、阻塞等待、或自动拒绝。所有决策都会落盘 approval 事件。 |
 | `sandbox_policy` | `read_only` / `workspace_write` / `full_access` | `workspace_write` | 控制路径边界与写入能力。`full_access` 放宽文件系统边界，但不绕过命令执行治理。 |
 | `sandbox_writable_roots` | 路径数组 | `[]` | 在非 `full_access` 时，为“绝对路径写入”增加允许根目录。相对路径写入仍按 workspace 解析。 |
-| `sandbox_network_access` | `deny` / `allow` | `deny` | 控制命令类网络访问闸门（`process/start`、`execve gate`、`mcp/call`）。当前实现会 best-effort 拒绝已知网络客户端和 `git` 的明确网络子命令；`mcp` stdio server 启动额外对 generic launcher 和路径执行做更保守的 fail-closed 处理。它不是内核级网络命名空间隔离，也不直接限制 `web/*` 工具。 |
+| `sandbox_network_access` | `deny` / `allow` | `deny` | 控制命令类网络访问闸门（`process/start`、`execve gate`、`mcp/call`）。当前实现会 best-effort 拒绝已知网络客户端和 `git` 的明确网络子命令；`mcp` stdio server 启动额外对 generic launcher 和路径执行做更保守的 fail-closed 处理，并与 `process/start` 共用 execution gateway 的命令边界准备。它不是内核级网络命名空间隔离，也不直接限制 `web/*` 工具。 |
 | `mode` | mode 名称（builtin + `.omne_data/spec/modes.yaml`） | `code` | 主权限边界：`read/edit/command/process/artifact/browser/subagent` + `tool_overrides`。`deny` 是硬拒绝。运行时始终有 mode。 |
 | `role` | role 名称（仅 role catalog） | `coder` | 可选降权层。只会收紧 mode（不放大）。不再把自定义 mode 名当作 role。 |
 | `allowed_tools` | `null`（清空）/ `[]` / 工具列表 | `null`（不额外收口） | 线程级工具白名单。设置后，不在列表里的工具直接拒绝。`[]` 等价 deny-all。 |
@@ -139,7 +139,8 @@ sandbox_network_access = "allow"
 
 - `process/start` 仍受 `allowed_tools`、`sandbox_network_access`、mode、execpolicy、approval 约束。
 - `process/execve gate` 仍按同一套治理链路裁决 `run/deny/escalate`。
-- 其他工具（如 `file/*`、`artifact/*`、`repo/*`、`mcp/*`）也继续走各自原有门禁。
+- `mcp/*` 仍受各自原有门禁；如果 lazy 启动 stdio server，启动命令本身也要经过 execution gateway 边界准备。
+- 其他工具（如 `file/*`、`artifact/*`、`repo/*`）也继续走各自原有门禁。
 
 ## 5) 推荐排障方式
 
