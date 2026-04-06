@@ -1343,6 +1343,137 @@ modes:
     }
 
     #[tokio::test]
+    async fn thread_fork_does_not_copy_attention_markers() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let rt = server.get_or_load_thread(thread_id).await?;
+        let turn_id = TurnId::new();
+        let process_id = ProcessId::new();
+        rt.append_event(omne_protocol::ThreadEventKind::TurnStarted {
+            turn_id,
+            input: "marker source".to_string(),
+            context_refs: None,
+            attachments: None,
+            directives: None,
+            priority: omne_protocol::TurnPriority::Foreground,
+        })
+        .await?;
+        rt.append_event(omne_protocol::ThreadEventKind::AssistantMessage {
+            turn_id: Some(turn_id),
+            text: "copied response".to_string(),
+            model: Some("gpt-5".to_string()),
+            response_id: Some("resp_1".to_string()),
+            token_usage: None,
+        })
+        .await?;
+        rt.append_event(omne_protocol::ThreadEventKind::AttentionMarkerSet {
+            marker: omne_protocol::AttentionMarkerKind::PlanReady,
+            turn_id: Some(turn_id),
+            artifact_id: Some(omne_protocol::ArtifactId::new()),
+            artifact_type: Some("plan".to_string()),
+            process_id: None,
+            exit_code: None,
+            command: None,
+        })
+        .await?;
+        rt.append_event(omne_protocol::ThreadEventKind::AttentionMarkerSet {
+            marker: omne_protocol::AttentionMarkerKind::DiffReady,
+            turn_id: Some(turn_id),
+            artifact_id: Some(omne_protocol::ArtifactId::new()),
+            artifact_type: Some("diff".to_string()),
+            process_id: None,
+            exit_code: None,
+            command: None,
+        })
+        .await?;
+        rt.append_event(omne_protocol::ThreadEventKind::AttentionMarkerSet {
+            marker: omne_protocol::AttentionMarkerKind::FanOutLinkageIssue,
+            turn_id: Some(turn_id),
+            artifact_id: Some(omne_protocol::ArtifactId::new()),
+            artifact_type: Some("fan_out_linkage_issue".to_string()),
+            process_id: None,
+            exit_code: None,
+            command: None,
+        })
+        .await?;
+        rt.append_event(omne_protocol::ThreadEventKind::AttentionMarkerSet {
+            marker: omne_protocol::AttentionMarkerKind::FanOutAutoApplyError,
+            turn_id: Some(turn_id),
+            artifact_id: Some(omne_protocol::ArtifactId::new()),
+            artifact_type: Some("fan_out_result".to_string()),
+            process_id: None,
+            exit_code: None,
+            command: None,
+        })
+        .await?;
+        rt.append_event(omne_protocol::ThreadEventKind::AttentionMarkerSet {
+            marker: omne_protocol::AttentionMarkerKind::TestFailed,
+            turn_id: Some(turn_id),
+            artifact_id: None,
+            artifact_type: None,
+            process_id: Some(process_id),
+            exit_code: Some(1),
+            command: Some("cargo test".to_string()),
+        })
+        .await?;
+        rt.append_event(omne_protocol::ThreadEventKind::AttentionMarkerSet {
+            marker: omne_protocol::AttentionMarkerKind::TokenBudgetWarning,
+            turn_id: Some(turn_id),
+            artifact_id: None,
+            artifact_type: None,
+            process_id: None,
+            exit_code: None,
+            command: None,
+        })
+        .await?;
+        rt.append_event(omne_protocol::ThreadEventKind::AttentionMarkerCleared {
+            marker: omne_protocol::AttentionMarkerKind::TokenBudgetExceeded,
+            turn_id: Some(turn_id),
+            reason: Some("cleared".to_string()),
+        })
+        .await?;
+
+        let forked = handle_thread_fork(
+            &server,
+            ThreadForkParams {
+                thread_id,
+                cwd: None,
+            },
+        )
+        .await?;
+        let forked_thread_id = forked.thread_id;
+
+        let forked_events = server
+            .thread_store
+            .read_events_since(forked_thread_id, EventSeq::ZERO)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("forked thread not found: {forked_thread_id}"))?;
+
+        assert!(forked_events.iter().any(|event| matches!(
+            event.kind,
+            omne_protocol::ThreadEventKind::TurnStarted { .. }
+        )));
+        assert!(forked_events.iter().any(|event| matches!(
+            event.kind,
+            omne_protocol::ThreadEventKind::AssistantMessage { .. }
+        )));
+        assert!(!forked_events.iter().any(|event| matches!(
+            event.kind,
+            omne_protocol::ThreadEventKind::AttentionMarkerSet { .. }
+                | omne_protocol::ThreadEventKind::AttentionMarkerCleared { .. }
+        )));
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn thread_events_supports_kind_filtering() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");
