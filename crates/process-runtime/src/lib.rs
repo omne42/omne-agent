@@ -85,6 +85,8 @@ fn is_path_invocation(program: &str) -> bool {
 // It intentionally fails closed for obviously network-capable launch shapes, but it
 // is not an OS-level network isolation primitive and should not be treated as one.
 pub fn command_uses_network(argv: &[String]) -> bool {
+    // Best-effort argv detection for obviously or potentially network-capable commands.
+    // This is not a kernel-level network sandbox boundary.
     let Some(program) = argv.first() else {
         return false;
     };

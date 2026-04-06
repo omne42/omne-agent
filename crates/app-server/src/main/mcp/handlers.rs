@@ -404,7 +404,7 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
             req.turn_id,
             req.action,
             &approval_params,
-            "sandbox_network_access=deny forbids this command".to_string(),
+            "sandbox_network_access=deny blocked a potentially network-capable command (best-effort argv detection)".to_string(),
             result.clone(),
         )
         .await?;
