@@ -47,6 +47,7 @@ fn repo_rpc_outcome_classifies_denied() -> anyhow::Result<()> {
         tool_id: omne_protocol::ToolId::new(),
         denied: true,
         remembered: None,
+        structured_error: None,
         error_code: None,
     })?;
 
@@ -66,6 +67,7 @@ fn repo_rpc_denied_returns_error_includes_error_code() {
         tool_id: omne_protocol::ToolId::new(),
         denied: true,
         remembered: None,
+        structured_error: None,
         error_code: Some("mode_denied".to_string()),
     })
     .expect("serialize RepoDeniedResponse");

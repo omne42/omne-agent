@@ -31,7 +31,9 @@ async fn run_mcp_serve(app: &mut App, args: McpServeArgs) -> anyhow::Result<()> 
             let audit_cwd = args
                 .audit_cwd
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-            let started = app.thread_start(Some(audit_cwd.display().to_string())).await?;
+            let started = app
+                .thread_start(Some(audit_cwd.display().to_string()))
+                .await?;
             ensure_thread_start_auto_hook_ready("mcp/serve", &started)?;
             (Some(started.thread_id), true)
         }
@@ -48,11 +50,16 @@ async fn run_mcp_serve(app: &mut App, args: McpServeArgs) -> anyhow::Result<()> 
                 mode: Some("reviewer".to_string()),
                 role: None,
                 model: None,
+                clear_model: false,
                 thinking: None,
+                clear_thinking: false,
                 show_thinking: None,
+                clear_show_thinking: false,
                 openai_base_url: None,
+                clear_openai_base_url: false,
                 allowed_tools: None,
                 execpolicy_rules: None,
+                clear_execpolicy_rules: false,
             })
             .await?;
         }
@@ -234,12 +241,16 @@ async fn handle_mcp_initialize(state: &mut McpServeState, id: Value) -> Value {
             version: env!("CARGO_PKG_VERSION"),
         },
         capabilities: InitializeCapabilities {
-            tools: InitializeToolsCapability { list_changed: false },
+            tools: InitializeToolsCapability {
+                list_changed: false,
+            },
             resources: InitializeResourcesCapability {
                 subscribe: false,
                 list_changed: false,
             },
-            prompts: InitializePromptsCapability { list_changed: false },
+            prompts: InitializePromptsCapability {
+                list_changed: false,
+            },
         },
     })
     .unwrap_or_else(|_| Value::Object(serde_json::Map::new()));
@@ -859,7 +870,10 @@ fn mcp_tools() -> Vec<Value> {
             "omne.artifact.versions",
             "List available versions for an artifact (latest + retained history versions).",
             object_schema(
-                &[("thread_id", schema_string()), ("artifact_id", schema_string())],
+                &[
+                    ("thread_id", schema_string()),
+                    ("artifact_id", schema_string()),
+                ],
                 &["thread_id", "artifact_id"],
             ),
         ),
@@ -1085,10 +1099,15 @@ mod mcp_server_tests {
             .and_then(|v| v.get("enum"))
             .and_then(|v| v.as_array())
             .expect("expected kinds.items.enum");
-        assert!(enum_values
-            .iter()
-            .any(|v| v.as_str() == Some("attention_marker_set")));
-        assert_eq!(enum_values.len(), omne_protocol::THREAD_EVENT_KIND_TAGS.len());
+        assert!(
+            enum_values
+                .iter()
+                .any(|v| v.as_str() == Some("attention_marker_set"))
+        );
+        assert_eq!(
+            enum_values.len(),
+            omne_protocol::THREAD_EVENT_KIND_TAGS.len()
+        );
     }
 
     #[test]

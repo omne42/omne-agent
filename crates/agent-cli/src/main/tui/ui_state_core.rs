@@ -384,14 +384,15 @@ impl UiState {
                 if let Some(role) = role.as_deref().filter(|s| !s.trim().is_empty()) {
                     self.header.role = Some(role.to_string());
                 }
-                if clear_model {
+                if *clear_model {
                     self.header.model = None;
                 } else if let Some(model) = model.as_deref().filter(|s| !s.trim().is_empty()) {
                     self.header.model = Some(model.to_string());
                 }
-                if clear_thinking {
+                if *clear_thinking {
                     self.header.thinking = None;
-                } else if let Some(thinking) = thinking.as_deref().filter(|s| !s.trim().is_empty()) {
+                } else if let Some(thinking) = thinking.as_deref().filter(|s| !s.trim().is_empty())
+                {
                     self.header.thinking = Some(thinking.to_string());
                 }
                 self.header_needs_refresh = true;

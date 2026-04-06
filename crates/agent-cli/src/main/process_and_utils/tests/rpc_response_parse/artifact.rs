@@ -56,6 +56,7 @@ fn artifact_rpc_denied_returns_error() {
     let value = serde_json::to_value(omne_app_server_protocol::ArtifactDeniedResponse {
         tool_id: omne_protocol::ToolId::new(),
         denied: true,
+        structured_error: None,
         error_code: Some("allowed_tools_denied".to_string()),
         remembered: None,
     })
@@ -77,6 +78,7 @@ fn artifact_rpc_outcome_classifies_denied() -> anyhow::Result<()> {
     let value = serde_json::to_value(omne_app_server_protocol::ArtifactDeniedResponse {
         tool_id: omne_protocol::ToolId::new(),
         denied: true,
+        structured_error: None,
         error_code: None,
         remembered: None,
     })?;
@@ -168,6 +170,7 @@ fn artifact_rpc_outcome_denied_false_is_not_misclassified() -> anyhow::Result<()
     let value = serde_json::to_value(omne_app_server_protocol::ArtifactDeniedResponse {
         tool_id: omne_protocol::ToolId::new(),
         denied: false,
+        structured_error: None,
         error_code: None,
         remembered: None,
     })?;
