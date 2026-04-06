@@ -78,7 +78,7 @@ fn git_subcommand_uses_network(argv: &[String]) -> bool {
         .unwrap_or(false)
 }
 
-fn first_non_option_arg<'a>(argv: &'a [String], start_index: usize) -> Option<&'a str> {
+fn first_non_option_arg(argv: &[String], start_index: usize) -> Option<&str> {
     argv.iter()
         .skip(start_index)
         .find(|arg| !arg.starts_with('-') || arg.as_str() == "-")
@@ -138,14 +138,25 @@ fn pnpm_subcommand_uses_network(argv: &[String]) -> bool {
 }
 
 fn yarn_subcommand_uses_network(argv: &[String]) -> bool {
-    match first_non_option_arg(argv, 1) {
-        None => true,
-        Some(
-            "install" | "add" | "up" | "upgrade" | "dlx" | "create" | "npm" | "search" | "info"
-            | "audit" | "outdated" | "login" | "logout" | "publish",
-        ) => true,
-        _ => false,
-    }
+    matches!(
+        first_non_option_arg(argv, 1),
+        None | Some(
+            "install"
+                | "add"
+                | "up"
+                | "upgrade"
+                | "dlx"
+                | "create"
+                | "npm"
+                | "search"
+                | "info"
+                | "audit"
+                | "outdated"
+                | "login"
+                | "logout"
+                | "publish"
+        )
+    )
 }
 
 fn pip_subcommand_uses_network_from(argv: &[String], start_index: usize) -> bool {
