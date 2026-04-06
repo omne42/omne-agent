@@ -47,7 +47,7 @@ const AGENT_TOOL_SPECS: &[AgentToolSpec] = &[
         action: "repo/find_references",
         plan_read_only: true,
     },
-    AgentToolSpec { name: "mcp_list_servers", action: "mcp/list_servers", plan_read_only: true },
+    AgentToolSpec { name: "mcp_list_servers", action: "mcp/list_servers", plan_read_only: false },
     AgentToolSpec { name: "mcp_list_tools", action: "mcp/list_tools", plan_read_only: true },
     AgentToolSpec { name: "mcp_list_resources", action: "mcp/list_resources", plan_read_only: true },
     AgentToolSpec { name: "mcp_call", action: "mcp/call", plan_read_only: false },

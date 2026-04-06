@@ -330,11 +330,12 @@ modes:
 
         assert_eq!(parsed.servers.len(), 1);
         assert_eq!(parsed.servers[0].name, "local");
+        assert_eq!(parsed.servers[0].transport, "stdio");
         Ok(())
     }
 
     #[tokio::test]
-    async fn mcp_list_servers_redacts_sensitive_argv_tokens() -> anyhow::Result<()> {
+    async fn mcp_list_servers_omits_startup_args_and_env_keys() -> anyhow::Result<()> {
         let _lock = MCP_TEST_MUTEX.lock().await;
         let _guard = McpEnabledOverrideGuard::new(Some(true));
 
@@ -350,7 +351,7 @@ modes:
       "transport": "stdio",
       "argv": ["mcp-server", "--api-key", "super-secret", "authorization=Bearer abcdefghijklmnopqrstuvwxyz"]
     }
-  }
+    }
 }"#,
         )
         .await?;
@@ -368,17 +369,12 @@ modes:
         )
         .await?;
         let parsed: omne_app_server_protocol::McpListServersResponse =
-            serde_json::from_value(result)?;
+            serde_json::from_value(result.clone())?;
 
-        assert_eq!(
-            parsed.servers[0].argv,
-            vec![
-                "mcp-server".to_string(),
-                "--api-key".to_string(),
-                "<REDACTED>".to_string(),
-                "authorization=<REDACTED>".to_string(),
-            ]
-        );
+        assert_eq!(parsed.servers[0].name, "local");
+        assert_eq!(parsed.servers[0].transport, "stdio");
+        assert!(result["servers"][0].get("argv").is_none());
+        assert!(result["servers"][0].get("env_keys").is_none());
         Ok(())
     }
 
