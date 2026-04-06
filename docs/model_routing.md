@@ -49,6 +49,12 @@
 
 > 注意：实现中 default 在多个位置硬编码；未来如果改默认值，必须同步，避免 explain 与实际漂移。
 
+Provider runtime 连接缓存的当前口径：
+
+- cache 仍是 server 级复用，用来保持 HTTP 连接粘性。
+- 但 cache key 必须同时编码 provider config 与 thread 级 `.omne_data/.env` 输入；不同 thread 的认证/headers/dotenv 不能复用同一个 runtime。
+- 因此当 thread 的 provider 凭证或相关 dotenv 变化时，会命中新 key，而不是继续复用旧 client。
+
 ### 1.2 落盘（可回放）
 
 - 每次 assistant 输出会落盘 `AssistantMessage { model: Option<String>, response_id, token_usage? }`。

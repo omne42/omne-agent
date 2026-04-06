@@ -1,11 +1,13 @@
-async fn handle_process_start(
+use super::*;
+
+pub(super) async fn handle_process_start(
     server: &Server,
     params: ProcessStartParams,
 ) -> anyhow::Result<Value> {
     handle_process_start_inner(server, params, None).await
 }
 
-async fn handle_process_start_with_env(
+pub(super) async fn handle_process_start_with_env(
     server: &Server,
     params: ProcessStartParams,
     extra_env: &std::collections::BTreeMap<String, String>,
@@ -533,7 +535,7 @@ async fn resolve_execpolicy_rule_paths(
     Ok(out)
 }
 
-async fn load_mode_exec_policy(
+pub(super) async fn load_mode_exec_policy(
     thread_root: &Path,
     rules: &[String],
 ) -> anyhow::Result<omne_execpolicy::Policy> {
@@ -546,7 +548,7 @@ async fn load_mode_exec_policy(
     Ok(policy)
 }
 
-fn merge_exec_policies(
+pub(super) fn merge_exec_policies(
     global: &omne_execpolicy::Policy,
     mode: &omne_execpolicy::Policy,
 ) -> omne_execpolicy::Policy {

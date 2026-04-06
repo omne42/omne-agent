@@ -6,15 +6,16 @@ use time::OffsetDateTime;
 use tokio::task::JoinSet;
 use tracing::{info, warn};
 
-use crate::domain::{
-    CheckSummary, HookSpec, MergeResult, PullRequest, PullRequestStatus, Repository, RunRequest,
-    RunResult, Session, SessionId, StepSummary, TaskId, TaskSpec,
-};
+use crate::domain::{Repository, Session, SessionId, TaskId, TaskSpec};
 use crate::events::{
     EventBus, MergeSummary, PullRequestSummary, RunEvent, SessionSummary, TaskSummary,
 };
 use crate::hooks::HookRunner;
 use crate::paths::{PmPaths, SessionPaths};
+use crate::run::{
+    CheckSummary, HookSpec, MergeResult, PullRequest, PullRequestStatus, RunRequest, RunResult,
+    StepSummary,
+};
 use crate::storage::Storage;
 
 #[async_trait]

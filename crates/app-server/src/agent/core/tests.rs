@@ -593,6 +593,34 @@ mod loop_detection_tests {
 mod provider_protocol_tests {
     use super::*;
 
+    fn sample_provider_route_target() -> ProviderRouteTarget {
+        ProviderRouteTarget {
+            id: "google.providers.yunwu:test".to_string(),
+            provider: "google.providers.yunwu".to_string(),
+            model: "gemini-3.1-pro-preview".to_string(),
+            model_fallbacks: Vec::new(),
+            provider_config: ditto_core::config::ProviderConfig {
+                provider: None,
+                enabled_capabilities: Vec::new(),
+                base_url: Some("https://yunwu.ai/v1beta".to_string()),
+                default_model: Some("gemini-3.1-pro-preview".to_string()),
+                model_whitelist: Vec::new(),
+                http_headers: Default::default(),
+                http_query_params: Default::default(),
+                auth: Some(ditto_core::config::ProviderAuth::HttpHeaderEnv {
+                    header: "Authorization".to_string(),
+                    keys: vec!["YUNWU_API_KEY".to_string()],
+                    prefix: Some("Bearer ".to_string()),
+                }),
+                capabilities: None,
+                upstream_api: Some(ditto_core::config::ProviderApi::GeminiGenerateContent),
+                normalize_to: Some(ditto_core::config::ProviderApi::OpenaiChatCompletions),
+                normalize_endpoint: Some("/v1/chat/completions".to_string()),
+                openai_compatible: None,
+            },
+        }
+    }
+
     #[test]
     fn gemini_upstream_defaults_to_non_reasoning_capabilities() {
         let config = ditto_core::config::ProviderConfig {
@@ -619,31 +647,7 @@ mod provider_protocol_tests {
 
     #[tokio::test]
     async fn build_provider_runtime_uses_google_client_for_gemini_upstream_api() {
-        let target = ProviderRouteTarget {
-            id: "google.providers.yunwu:test".to_string(),
-            provider: "google.providers.yunwu".to_string(),
-            model: "gemini-3.1-pro-preview".to_string(),
-            model_fallbacks: Vec::new(),
-            provider_config: ditto_core::config::ProviderConfig {
-                provider: None,
-                enabled_capabilities: Vec::new(),
-                base_url: Some("https://yunwu.ai/v1beta".to_string()),
-                default_model: Some("gemini-3.1-pro-preview".to_string()),
-                model_whitelist: Vec::new(),
-                http_headers: Default::default(),
-                http_query_params: Default::default(),
-                auth: Some(ditto_core::config::ProviderAuth::HttpHeaderEnv {
-                    header: "Authorization".to_string(),
-                    keys: vec!["YUNWU_API_KEY".to_string()],
-                    prefix: Some("Bearer ".to_string()),
-                }),
-                capabilities: None,
-                upstream_api: Some(ditto_core::config::ProviderApi::GeminiGenerateContent),
-                normalize_to: Some(ditto_core::config::ProviderApi::OpenaiChatCompletions),
-                normalize_endpoint: Some("/v1/chat/completions".to_string()),
-                openai_compatible: None,
-            },
-        };
+        let target = sample_provider_route_target();
         let env = ditto_core::config::Env {
             dotenv: std::collections::BTreeMap::from([(
                 "YUNWU_API_KEY".to_string(),
@@ -664,6 +668,55 @@ mod provider_protocol_tests {
         );
         assert!(!runtime.supports_openai_responses_codex_parity());
         assert!(runtime.file_uploader.is_none());
+    }
+
+    #[test]
+    fn provider_runtime_cache_key_changes_when_dotenv_changes() {
+        let target = sample_provider_route_target();
+        let env_a = ditto_core::config::Env {
+            dotenv: std::collections::BTreeMap::from([(
+                "YUNWU_API_KEY".to_string(),
+                "key-a".to_string(),
+            )]),
+        };
+        let env_b = ditto_core::config::Env {
+            dotenv: std::collections::BTreeMap::from([(
+                "YUNWU_API_KEY".to_string(),
+                "key-b".to_string(),
+            )]),
+        };
+
+        assert_ne!(
+            provider_runtime_cache_key(&target, &env_a),
+            provider_runtime_cache_key(&target, &env_b)
+        );
+    }
+
+    #[test]
+    fn provider_runtime_cache_key_changes_when_auth_contract_changes() {
+        let mut target_a = sample_provider_route_target();
+        let mut target_b = sample_provider_route_target();
+        target_b.provider_config.auth = Some(ditto_core::config::ProviderAuth::HttpHeaderEnv {
+            header: "X-API-Key".to_string(),
+            keys: vec!["YUNWU_API_KEY".to_string()],
+            prefix: None,
+        });
+        let env = ditto_core::config::Env {
+            dotenv: std::collections::BTreeMap::from([(
+                "YUNWU_API_KEY".to_string(),
+                "shared-key".to_string(),
+            )]),
+        };
+
+        assert_ne!(
+            provider_runtime_cache_key(&target_a, &env),
+            provider_runtime_cache_key(&target_b, &env)
+        );
+        target_a.provider_config.auth = target_b.provider_config.auth.clone();
+        assert_eq!(
+            provider_runtime_cache_key(&target_a, &env),
+            provider_runtime_cache_key(&target_b, &env)
+        );
     }
 }
 

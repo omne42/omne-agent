@@ -1,4 +1,6 @@
-async fn handle_process_list(
+use super::*;
+
+pub(super) async fn handle_process_list(
     server: &Server,
     params: ProcessListParams,
 ) -> anyhow::Result<Vec<ProcessInfo>> {
@@ -116,7 +118,7 @@ fn into_protocol_process_status(status: ProcessStatus) -> omne_app_server_protoc
     }
 }
 
-fn into_protocol_process_info(info: ProcessInfo) -> omne_app_server_protocol::ProcessInfo {
+pub(super) fn into_protocol_process_info(info: ProcessInfo) -> omne_app_server_protocol::ProcessInfo {
     omne_app_server_protocol::ProcessInfo {
         process_id: info.process_id,
         thread_id: info.thread_id,

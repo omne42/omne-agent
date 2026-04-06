@@ -2,8 +2,8 @@ use async_trait::async_trait;
 use std::process::Stdio;
 use tokio::io::AsyncWriteExt;
 
-use crate::domain::{HookSpec, RunResult};
 use crate::paths::{PmPaths, SessionPaths};
+use crate::run::{HookSpec, RunResult};
 
 #[async_trait]
 pub trait HookRunner: Send + Sync {
@@ -124,10 +124,8 @@ mod tests {
     use time::OffsetDateTime;
 
     use super::*;
-    use crate::domain::{
-        CheckSummary, MergeResult, PrName, PullRequest, RepositoryName, RunResult, Session,
-        SessionId,
-    };
+    use crate::domain::{PrName, RepositoryName, Session, SessionId};
+    use crate::run::{CheckSummary, MergeResult, PullRequest, RunResult};
 
     struct TestContext {
         _tmp: tempfile::TempDir,
