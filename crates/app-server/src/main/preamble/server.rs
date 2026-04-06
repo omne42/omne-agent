@@ -1609,6 +1609,25 @@ impl ThreadRuntime {
         self.complete_turn(server, turn_id, status, reason).await;
     }
 
+    fn resolve_turn_completion(
+        state: &omne_eventlog::ThreadState,
+        status: TurnStatus,
+        reason: Option<String>,
+    ) -> (TurnStatus, Option<String>) {
+        if !state.active_turn_interrupt_requested {
+            return (status, reason);
+        }
+
+        (
+            TurnStatus::Interrupted,
+            state
+                .active_turn_interrupt_reason
+                .clone()
+                .or(reason)
+                .or_else(|| Some("turn interrupted".to_string())),
+        )
+    }
+
     async fn complete_turn(
         &self,
         server: Arc<Server>,
@@ -1616,7 +1635,6 @@ impl ThreadRuntime {
         status: TurnStatus,
         reason: Option<String>,
     ) {
-        let reason_for_report = reason.clone();
         let mut handle = self.handle.lock().await;
         let thread_id = handle.thread_id();
         if handle.state().active_turn_id != Some(turn_id) {
@@ -1627,11 +1645,14 @@ impl ThreadRuntime {
             }
             return;
         }
+        let (final_status, final_reason) =
+            Self::resolve_turn_completion(handle.state(), status, reason);
+        let reason_for_report = final_reason.clone();
         let turn_completed = handle
             .append(omne_protocol::ThreadEventKind::TurnCompleted {
                 turn_id,
-                status,
-                reason,
+                status: final_status,
+                reason: final_reason,
             })
             .await;
         drop(handle);
@@ -1653,7 +1674,7 @@ impl ThreadRuntime {
             self.emit_event_notifications(&event).await;
         }
 
-        if matches!(status, TurnStatus::Stuck) {
+        if matches!(final_status, TurnStatus::Stuck) {
             if let Err(err) = maybe_write_stuck_report(
                 server.as_ref(),
                 thread_id,
@@ -1675,7 +1696,7 @@ impl ThreadRuntime {
             server.as_ref(),
             thread_id,
             turn_id,
-            status,
+            final_status,
             reason_for_report.as_deref(),
         )
         .await;
@@ -1738,5 +1759,23 @@ mod server_cache_tests {
         assert!(server.threads.lock().await.get(&thread_id).is_none());
         assert!(!server.evict_cached_thread(thread_id).await);
         Ok(())
+    }
+
+    #[test]
+    fn resolve_turn_completion_prefers_accepted_interrupts() {
+        let turn_id = TurnId::new();
+        let mut state = omne_eventlog::ThreadState::new(ThreadId::new());
+        state.active_turn_id = Some(turn_id);
+        state.active_turn_interrupt_requested = true;
+        state.active_turn_interrupt_reason = Some("user interrupted".to_string());
+
+        let (status, reason) = ThreadRuntime::resolve_turn_completion(
+            &state,
+            TurnStatus::Completed,
+            Some("agent finished naturally".to_string()),
+        );
+
+        assert_eq!(status, TurnStatus::Interrupted);
+        assert_eq!(reason.as_deref(), Some("user interrupted"));
     }
 }

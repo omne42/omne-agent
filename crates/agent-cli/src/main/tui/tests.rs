@@ -1960,7 +1960,12 @@ assistant: Streaming...
 
         #[test]
         fn parse_process_tui_outcome_ok_is_not_misclassified_as_denied() -> anyhow::Result<()> {
-            let response = omne_app_server_protocol::ProcessSignalResponse { ok: true };
+            let response = omne_app_server_protocol::ProcessSignalResponse {
+                ok: true,
+                accepted: true,
+                process_id: ProcessId::new(),
+                delivery: omne_app_server_protocol::ProcessSignalDelivery::Queued,
+            };
             let value = serde_json::to_value(response)?;
             let parsed: RpcActionOutcome<omne_app_server_protocol::ProcessSignalResponse> =
                 parse_process_tui_outcome("process/kill", value)?;

@@ -285,6 +285,7 @@ pub struct ThreadState {
     pub last_seq: EventSeq,
     pub active_turn_id: Option<TurnId>,
     pub active_turn_interrupt_requested: bool,
+    pub active_turn_interrupt_reason: Option<String>,
     pub last_turn_id: Option<TurnId>,
     pub last_turn_status: Option<TurnStatus>,
     pub last_turn_reason: Option<String>,
@@ -327,6 +328,7 @@ impl ThreadState {
             last_seq: EventSeq::ZERO,
             active_turn_id: None,
             active_turn_interrupt_requested: false,
+            active_turn_interrupt_reason: None,
             last_turn_id: None,
             last_turn_status: None,
             last_turn_reason: None,
@@ -474,13 +476,15 @@ impl ThreadState {
                 }
                 self.active_turn_id = Some(*turn_id);
                 self.active_turn_interrupt_requested = false;
+                self.active_turn_interrupt_reason = None;
                 self.failed_processes.clear();
             }
-            ThreadEventKind::TurnInterruptRequested { turn_id, .. } => {
+            ThreadEventKind::TurnInterruptRequested { turn_id, reason } => {
                 if self.active_turn_id != Some(*turn_id) {
                     anyhow::bail!("interrupt requested for non-active turn");
                 }
                 self.active_turn_interrupt_requested = true;
+                self.active_turn_interrupt_reason = reason.clone();
             }
             ThreadEventKind::TurnCompleted {
                 turn_id,
@@ -492,6 +496,7 @@ impl ThreadState {
                 }
                 self.active_turn_id = None;
                 self.active_turn_interrupt_requested = false;
+                self.active_turn_interrupt_reason = None;
                 self.last_turn_id = Some(*turn_id);
                 self.last_turn_status = Some(*status);
                 self.last_turn_reason = reason.clone();
