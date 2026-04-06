@@ -311,13 +311,26 @@ impl ThreadHandle {
         let mut kind = kind;
         crate::redaction::redact_thread_event_kind(&mut kind);
 
-        let event = self.writer.append(kind).await?;
-        self.state.apply(&event)?;
+        let event = ThreadEvent {
+            seq: self.writer.next_seq(),
+            timestamp: time::OffsetDateTime::now_utc(),
+            thread_id: self.thread_id,
+            kind: kind.clone(),
+        };
+        let mut next_state = self.state.clone();
+        next_state.apply(&event)?;
+        let mut next_active_processes = self.active_processes.clone();
+        let mut next_active_tools = self.active_tools.clone();
         apply_runtime_event_tracking(
-            &mut self.active_processes,
-            &mut self.active_tools,
+            &mut next_active_processes,
+            &mut next_active_tools,
             &event.kind,
         );
+
+        let event = self.writer.append(kind).await?;
+        self.state = next_state;
+        self.active_processes = next_active_processes;
+        self.active_tools = next_active_tools;
 
         if let Err(err) = append_readable_history_event(self.writer.log_path(), &event).await {
             tracing::debug!(
@@ -574,6 +587,50 @@ mod tests {
                 process_id: got, ..
             } if got == process_id
         )));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn append_rejects_invalid_event_without_persisting_it() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let store = ThreadStore::new(PmPaths::new(dir.path().join(".omne_data")));
+
+        let mut thread = store.create_thread(PathBuf::from("/tmp")).await?;
+        let thread_id = thread.thread_id();
+
+        let err = thread
+            .append(ThreadEventKind::TurnCompleted {
+                turn_id: omne_protocol::TurnId::new(),
+                status: TurnStatus::Completed,
+                reason: None,
+            })
+            .await
+            .expect_err("invalid event should be rejected before writing");
+        assert!(
+            err.to_string()
+                .contains("turn completed for non-active turn"),
+            "unexpected error: {err}"
+        );
+
+        let events = thread.events_since(EventSeq::ZERO).await?;
+        assert_eq!(events.len(), 1, "invalid event must not reach the log");
+        assert!(matches!(
+            events[0].kind,
+            ThreadEventKind::ThreadCreated { .. }
+        ));
+        assert_eq!(thread.last_seq(), EventSeq(1));
+
+        drop(thread);
+        let resumed = store
+            .resume_thread(thread_id)
+            .await?
+            .expect("thread exists");
+        let resumed_events = resumed.events_since(EventSeq::ZERO).await?;
+        assert_eq!(
+            resumed_events.len(),
+            1,
+            "resume should not see a stray event"
+        );
         Ok(())
     }
 
