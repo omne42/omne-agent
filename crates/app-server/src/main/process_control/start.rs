@@ -1,3 +1,16 @@
+#[cfg(unix)]
+fn execve_wrapper_enabled_shell(argv0: &str) -> bool {
+    let mut name = Path::new(argv0)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(argv0)
+        .to_ascii_lowercase();
+    if let Some(stripped) = name.strip_suffix(".exe") {
+        name = stripped.to_string();
+    }
+    matches!(name.as_str(), "bash" | "sh")
+}
+
 async fn handle_process_start(
     server: &Server,
     params: ProcessStartParams,
@@ -216,19 +229,7 @@ async fn handle_process_start_inner(
     let mut execve_gate: Option<ExecveGateHandle> = None;
     #[cfg(unix)]
     {
-        fn is_bash(argv0: &str) -> bool {
-            let mut name = Path::new(argv0)
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or(argv0)
-                .to_ascii_lowercase();
-            if let Some(stripped) = name.strip_suffix(".exe") {
-                name = stripped.to_string();
-            }
-            name == "bash"
-        }
-
-        if is_bash(&params.argv[0])
+        if execve_wrapper_enabled_shell(&params.argv[0])
             && let Ok(wrapper_path) = std::env::var("OMNE_EXECVE_WRAPPER")
         {
             let wrapper_path = wrapper_path.trim().to_string();
@@ -468,6 +469,30 @@ fn merge_exec_policies(
 #[cfg(test)]
 mod process_start_tests {
     use super::*;
+    use std::ffi::OsString;
+
+    struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var_os(key);
+            unsafe { std::env::set_var(key, value) };
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            if let Some(value) = self.previous.as_ref() {
+                unsafe { std::env::set_var(self.key, value) };
+            } else {
+                unsafe { std::env::remove_var(self.key) };
+            }
+        }
+    }
 
     async fn write_executable_sh(path: &Path, script: &str) -> anyhow::Result<()> {
         tokio::fs::write(path, script).await?;
@@ -1677,6 +1702,50 @@ prefix_rule(
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
 
+        Ok(())
+    }
+
+    #[test]
+    fn execve_wrapper_shell_detection_covers_bash_and_sh_entrypoints() {
+        assert!(execve_wrapper_enabled_shell("bash"));
+        assert!(execve_wrapper_enabled_shell("/bin/bash"));
+        assert!(execve_wrapper_enabled_shell("sh"));
+        assert!(execve_wrapper_enabled_shell("/bin/sh"));
+        assert!(execve_wrapper_enabled_shell("BASH.EXE"));
+        assert!(execve_wrapper_enabled_shell("SH.EXE"));
+        assert!(!execve_wrapper_enabled_shell("zsh"));
+        assert!(!execve_wrapper_enabled_shell("dash"));
+    }
+
+    #[tokio::test]
+    async fn process_start_validates_execve_wrapper_for_sh_entrypoint() -> anyhow::Result<()> {
+        let _guard = EnvVarGuard::set("OMNE_EXECVE_WRAPPER", "bad wrapper");
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let err = handle_process_start(
+            &server,
+            ProcessStartParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                argv: vec!["/bin/sh".to_string(), "-lc".to_string(), "exit 0".to_string()],
+                cwd: None,
+                timeout_ms: None,
+            },
+        )
+        .await
+        .expect_err("invalid execve wrapper path should fail before spawn");
+
+        assert!(err
+            .to_string()
+            .contains("OMNE_EXECVE_WRAPPER must not contain whitespace"));
         Ok(())
     }
 }
