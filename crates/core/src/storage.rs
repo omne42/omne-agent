@@ -204,31 +204,9 @@ impl Storage for FsStorage {
             .with_context(|| format!("write json to {}", tmp_path.display()))?;
 
         if let Err(err) = tokio::fs::rename(&tmp_path, &path).await {
-            if matches!(
-                err.kind(),
-                std::io::ErrorKind::AlreadyExists | std::io::ErrorKind::PermissionDenied
-            ) {
-                match tokio::fs::remove_file(&path).await {
-                    Ok(()) => {}
-                    Err(remove_err) if remove_err.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(remove_err) => {
-                        Self::cleanup_tmp_file(&tmp_path).await;
-                        return Err(remove_err)
-                            .with_context(|| format!("remove old json {}", path.display()));
-                    }
-                }
-                if let Err(rename_err) = tokio::fs::rename(&tmp_path, &path).await {
-                    Self::cleanup_tmp_file(&tmp_path).await;
-                    return Err(rename_err).with_context(|| {
-                        format!("rename {} -> {}", tmp_path.display(), path.display())
-                    });
-                }
-            } else {
-                Self::cleanup_tmp_file(&tmp_path).await;
-                return Err(err).with_context(|| {
-                    format!("rename {} -> {}", tmp_path.display(), path.display())
-                });
-            }
+            Self::cleanup_tmp_file(&tmp_path).await;
+            return Err(err)
+                .with_context(|| format!("rename {} -> {}", tmp_path.display(), path.display()));
         }
         Ok(())
     }
@@ -346,6 +324,28 @@ mod tests {
             .await?;
 
         assert_eq!(storage.list_session_ids().await?, vec![id1, id2]);
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    #[tokio::test]
+    async fn put_json_replaces_existing_file() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let storage = FsStorage::new(dir.path().to_path_buf());
+        let key = "sessions/demo/result";
+
+        storage
+            .put_json(key, &serde_json::json!({ "value": "old" }))
+            .await?;
+        storage
+            .put_json(key, &serde_json::json!({ "value": "new" }))
+            .await?;
+
+        let written = storage
+            .get_json(key)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("missing stored json"))?;
+        assert_eq!(written["value"], "new");
         Ok(())
     }
 
