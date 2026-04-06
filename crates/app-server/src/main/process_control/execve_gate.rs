@@ -1011,6 +1011,10 @@ mod execve_gate_tests {
             serde_json::json!(["env", "FOO=bar", "curl", "https://example.com"]),
             serde_json::json!(["python", "-c", "import requests; requests.get('https://example.com')"]),
             serde_json::json!(["bash", "-lc", "echo ok && curl https://example.com"]),
+            serde_json::json!(["npm", "install"]),
+            serde_json::json!(["python", "-m", "pip", "install", "requests"]),
+            serde_json::json!(["cargo", "install", "ripgrep"]),
+            serde_json::json!(["go", "get", "example.com/x"]),
         ] {
             let resp = mcp_tools_call(
                 &mut lines,

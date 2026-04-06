@@ -677,6 +677,27 @@ mod process_start_tests {
                 "-lc".to_string(),
                 "echo ok && curl https://example.com".to_string(),
             ],
+            vec![
+                "npm".to_string(),
+                "install".to_string(),
+            ],
+            vec![
+                "python".to_string(),
+                "-m".to_string(),
+                "pip".to_string(),
+                "install".to_string(),
+                "requests".to_string(),
+            ],
+            vec![
+                "cargo".to_string(),
+                "install".to_string(),
+                "ripgrep".to_string(),
+            ],
+            vec![
+                "go".to_string(),
+                "get".to_string(),
+                "example.com/x".to_string(),
+            ],
         ] {
             let result = handle_process_start(
                 &server,
