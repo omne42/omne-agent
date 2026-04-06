@@ -3,9 +3,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use omne_eventlog::{EventLogWriter, ThreadState, read_events_since as read_events_since_jsonl};
-use omne_protocol::{
-    EventSeq, ProcessId, ThreadEvent, ThreadEventKind, ThreadId, ToolId, TurnStatus,
-};
+use omne_protocol::{EventSeq, ProcessId, ThreadEvent, ThreadEventKind, ThreadId, ToolId};
 
 use crate::PmPaths;
 
@@ -144,73 +142,7 @@ impl ThreadStore {
     }
 
     pub async fn resume_thread(&self, thread_id: ThreadId) -> anyhow::Result<Option<ThreadHandle>> {
-        let dir = self.thread_dir(thread_id);
-        match tokio::fs::metadata(&dir).await {
-            Ok(meta) if meta.is_dir() => {}
-            Ok(_) => anyhow::bail!("thread dir is not a directory: {}", dir.display()),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(err) => return Err(err).with_context(|| format!("stat {}", dir.display())),
-        }
-
-        let log_path = self.events_log_path(thread_id);
-        let mut handle = ThreadHandle::open_existing(thread_id, log_path).await?;
-
-        let mut recovered_pending_approvals = handle
-            .state
-            .pending_approvals
-            .iter()
-            .copied()
-            .collect::<Vec<_>>();
-        recovered_pending_approvals.sort_by_key(|approval_id| approval_id.to_string());
-
-        if let Some(turn_id) = handle.state.active_turn_id {
-            let status = if handle.state.active_turn_interrupt_requested {
-                TurnStatus::Interrupted
-            } else {
-                TurnStatus::Failed
-            };
-            handle
-                .append(ThreadEventKind::TurnCompleted {
-                    turn_id,
-                    status,
-                    reason: Some("recovered incomplete turn on resume".to_string()),
-                })
-                .await?;
-        }
-
-        for approval_id in recovered_pending_approvals {
-            handle
-                .append(ThreadEventKind::ApprovalDecided {
-                    approval_id,
-                    decision: omne_protocol::ApprovalDecision::Denied,
-                    remember: false,
-                    reason: Some("recovered incomplete approval on resume".to_string()),
-                })
-                .await?;
-        }
-
-        for tool_id in handle.active_tools.clone() {
-            handle
-                .append(ThreadEventKind::ToolCompleted {
-                    tool_id,
-                    status: omne_protocol::ToolStatus::Cancelled,
-                    structured_error: None,
-                    error: Some("recovered incomplete tool on resume".to_string()),
-                    result: None,
-                })
-                .await?;
-        }
-        let recovered_processes = handle.recover_incomplete_processes();
-        if !recovered_processes.is_empty() {
-            tracing::warn!(
-                thread_id = %thread_id,
-                process_count = recovered_processes.len(),
-                process_ids = ?recovered_processes,
-                "recovered incomplete processes on resume without synthesizing ProcessExited"
-            );
-        }
-
-        Ok(Some(handle))
+        self.open_thread_without_recovery(thread_id).await
     }
 
     pub async fn open_thread_without_recovery(
@@ -364,7 +296,11 @@ impl ThreadHandle {
         read_events_since_jsonl(self.thread_id, self.log_path(), since_seq).await
     }
 
-    fn recover_incomplete_processes(&mut self) -> Vec<ProcessId> {
+    pub fn active_tool_ids(&self) -> Vec<ToolId> {
+        self.active_tools.iter().copied().collect()
+    }
+
+    pub fn take_active_process_ids(&mut self) -> Vec<ProcessId> {
         let recovered = self.active_processes.drain().collect::<Vec<_>>();
         for process_id in &recovered {
             self.state.running_processes.remove(process_id);
@@ -398,6 +334,7 @@ fn apply_runtime_event_tracking(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use omne_protocol::TurnStatus;
     use std::sync::OnceLock;
 
     fn cwd_test_lock() -> &'static tokio::sync::Mutex<()> {
@@ -443,7 +380,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resume_repairs_incomplete_turn() -> anyhow::Result<()> {
+    async fn resume_preserves_incomplete_turn_for_app_layer_recovery() -> anyhow::Result<()> {
         let dir = tempfile::tempdir()?;
         let store = ThreadStore::new(PmPaths::new(dir.path().join(".omne_data")));
 
@@ -466,23 +403,19 @@ mod tests {
             .resume_thread(thread_id)
             .await?
             .expect("thread exists");
-        assert!(resumed.state().active_turn_id.is_none());
+        assert_eq!(resumed.state().active_turn_id, Some(turn_id));
 
         let events = resumed.events_since(EventSeq::ZERO).await?;
-        let last = events.last().expect("events");
+        assert_eq!(events.len(), 2);
         assert!(matches!(
-            &last.kind,
-            ThreadEventKind::TurnCompleted {
-                turn_id: got,
-                status: TurnStatus::Failed,
-                reason: Some(_),
-            } if *got == turn_id
+            &events[1].kind,
+            ThreadEventKind::TurnStarted { turn_id: got, .. } if *got == turn_id
         ));
         Ok(())
     }
 
     #[tokio::test]
-    async fn resume_closes_pending_approvals_from_abandoned_runtime() -> anyhow::Result<()> {
+    async fn resume_preserves_pending_approvals_for_app_layer_recovery() -> anyhow::Result<()> {
         let dir = tempfile::tempdir()?;
         let store = ThreadStore::new(PmPaths::new(dir.path().join(".omne_data")));
 
@@ -523,48 +456,26 @@ mod tests {
             .resume_thread(thread_id)
             .await?
             .expect("thread exists");
-        assert!(resumed.state().pending_approvals.is_empty());
-
-        let events = resumed.events_since(EventSeq::ZERO).await?;
-        let recovered = events
-            .iter()
-            .filter_map(|event| match &event.kind {
-                ThreadEventKind::ApprovalDecided {
-                    approval_id,
-                    decision,
-                    remember,
-                    reason,
-                } => Some((*approval_id, *decision, *remember, reason.clone())),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-
         assert!(
-            recovered
-                .iter()
-                .any(|(approval_id, decision, remember, reason)| {
-                    *approval_id == turn_bound_approval
-                        && *decision == omne_protocol::ApprovalDecision::Denied
-                        && !remember
-                        && reason.as_deref() == Some("recovered incomplete approval on resume")
-                })
+            resumed
+                .state()
+                .pending_approvals
+                .contains(&turn_bound_approval),
+            "turn-bound approval should remain pending until app recovery runs"
         );
         assert!(
-            recovered
-                .iter()
-                .any(|(approval_id, decision, remember, reason)| {
-                    *approval_id == turnless_approval
-                        && *decision == omne_protocol::ApprovalDecision::Denied
-                        && !remember
-                        && reason.as_deref() == Some("recovered incomplete approval on resume")
-                })
+            resumed
+                .state()
+                .pending_approvals
+                .contains(&turnless_approval),
+            "turnless approval should remain pending until app recovery runs"
         );
         Ok(())
     }
 
     #[tokio::test]
-    async fn resume_drops_stale_runtime_process_tracking_without_fabricating_exit()
-    -> anyhow::Result<()> {
+    async fn resume_preserves_runtime_process_tracking_for_app_layer_recovery() -> anyhow::Result<()>
+    {
         let dir = tempfile::tempdir()?;
         let store = ThreadStore::new(PmPaths::new(dir.path().join(".omne_data")));
 
@@ -588,8 +499,7 @@ mod tests {
             .resume_thread(thread_id)
             .await?
             .expect("thread exists");
-        assert!(resumed.active_processes.is_empty());
-        assert!(resumed.state().running_processes.is_empty());
+        assert_eq!(resumed.state().running_processes.len(), 1);
 
         let events = resumed.events_since(EventSeq::ZERO).await?;
         assert!(events.iter().any(|event| matches!(
