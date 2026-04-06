@@ -320,15 +320,22 @@ pub(super) async fn interrupt_processes_for_turn(
 pub(super) async fn shutdown_running_processes(server: &Server) {
     let entries = {
         let entries = server.processes.lock().await;
-        entries.values().cloned().collect::<Vec<_>>()
+        entries
+            .iter()
+            .map(|(process_id, entry)| (*process_id, entry.clone()))
+            .collect::<Vec<_>>()
     };
 
-    for entry in entries {
+    let mut running_process_ids = Vec::new();
+    let mut running_entries = Vec::new();
+    for (process_id, entry) in entries {
         let should_kill = {
             let info = entry.info.lock().await;
             matches!(info.status, ProcessStatus::Running)
         };
         if should_kill {
+            running_process_ids.push(process_id);
+            running_entries.push(entry.clone());
             let _ = entry
                 .cmd_tx
                 .send(ProcessCommand::Kill {
@@ -338,7 +345,19 @@ pub(super) async fn shutdown_running_processes(server: &Server) {
         }
     }
 
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    if running_entries.is_empty() {
+        return;
+    }
+    if let Err(err) = wait_for_process_entries_to_complete(
+        &running_entries,
+        &running_process_ids,
+        "app-server shutdown",
+        Duration::from_secs(10),
+    )
+    .await
+    {
+        tracing::warn!(error = %err, "timed out waiting for processes during app-server shutdown");
+    }
 }
 
 #[cfg(test)]
@@ -399,6 +418,7 @@ mod process_signal_tests {
                 last_update_at: now,
             })),
             cmd_tx,
+            completion: ProcessCompletion::new(),
         };
         server.processes.lock().await.insert(process_id, entry);
         process_id
@@ -435,6 +455,7 @@ mod process_signal_tests {
                 last_update_at: now,
             })),
             cmd_tx,
+            completion: ProcessCompletion::new(),
         };
         server.processes.lock().await.insert(process_id, entry);
         process_id
@@ -699,6 +720,60 @@ modes:
         assert_eq!(result["decision"].as_str(), Some("deny"));
         assert_eq!(result["decision_source"].as_str(), Some("tool_override"));
         assert_eq!(result["tool_override_hit"].as_bool(), Some(true));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn shutdown_running_processes_waits_for_actor_completion() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let process_id = ProcessId::new();
+        let (cmd_tx, mut cmd_rx) = mpsc::channel(1);
+        let completion = ProcessCompletion::new();
+        let now = "2026-01-01T00:00:00Z".to_string();
+        server.processes.lock().await.insert(
+            process_id,
+            ProcessEntry {
+                thread_id,
+                info: Arc::new(tokio::sync::Mutex::new(ProcessInfo {
+                    process_id,
+                    thread_id,
+                    turn_id: None,
+                    argv: vec!["sleep".to_string(), "999".to_string()],
+                    cwd: "/tmp".to_string(),
+                    started_at: now.clone(),
+                    status: ProcessStatus::Running,
+                    exit_code: None,
+                    stdout_path: "/tmp/omne-test.stdout.log".to_string(),
+                    stderr_path: "/tmp/omne-test.stderr.log".to_string(),
+                    last_update_at: now,
+                })),
+                cmd_tx,
+                completion: completion.clone(),
+            },
+        );
+
+        let server_for_actor = server.clone();
+        tokio::spawn(async move {
+            let command = cmd_rx.recv().await;
+            assert!(matches!(command, Some(ProcessCommand::Kill { .. })));
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            server_for_actor.processes.lock().await.remove(&process_id);
+            completion.mark_complete();
+        });
+
+        let started = tokio::time::Instant::now();
+        shutdown_running_processes(&server).await;
+
+        assert!(started.elapsed() >= Duration::from_millis(200));
+        assert!(!server.processes.lock().await.contains_key(&process_id));
         Ok(())
     }
 }

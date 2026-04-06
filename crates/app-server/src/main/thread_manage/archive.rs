@@ -26,6 +26,47 @@ async fn running_thread_process_entries(
     (running, to_kill)
 }
 
+async fn running_turn_process_entries(
+    server: &Server,
+    thread_id: ThreadId,
+    turn_id: TurnId,
+) -> Vec<(ProcessId, ProcessEntry)> {
+    let mut running = Vec::new();
+    for (process_id, entry) in collect_thread_process_entries(server, thread_id).await {
+        let info = entry.info.lock().await;
+        if info.turn_id == Some(turn_id) && matches!(info.status, ProcessStatus::Running) {
+            running.push((process_id, entry.clone()));
+        }
+    }
+    running
+}
+
+async fn wait_for_process_entries_to_complete(
+    entries: &[ProcessEntry],
+    process_ids: &[ProcessId],
+    lifecycle: &'static str,
+    timeout: Duration,
+) -> anyhow::Result<()> {
+    let wait_all = async {
+        for entry in entries {
+            entry.completion.wait().await;
+        }
+    };
+    if tokio::time::timeout(timeout, wait_all).await.is_ok() {
+        return Ok(());
+    }
+
+    let remaining = entries
+        .iter()
+        .zip(process_ids.iter())
+        .filter_map(|(entry, process_id)| (!entry.completion.is_complete()).then_some(*process_id))
+        .collect::<Vec<_>>();
+    anyhow::bail!(
+        "timed out waiting for thread processes to stop before {lifecycle}: {:?}",
+        remaining
+    );
+}
+
 async fn wait_for_thread_process_entries_to_drain(
     server: &Server,
     thread_id: ThreadId,
@@ -34,26 +75,97 @@ async fn wait_for_thread_process_entries_to_drain(
 ) -> anyhow::Result<()> {
     let deadline = tokio::time::Instant::now() + timeout;
     loop {
-        let remaining = {
-            let entries = server.processes.lock().await;
-            entries
-                .iter()
-                .filter_map(|(process_id, entry)| {
-                    (entry.thread_id == thread_id).then_some(*process_id)
-                })
-                .collect::<Vec<_>>()
-        };
+        let remaining = collect_thread_process_entries(server, thread_id).await;
         if remaining.is_empty() {
             return Ok(());
         }
-        if tokio::time::Instant::now() >= deadline {
+        let timeout_left = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if timeout_left.is_zero() {
+            let process_ids = remaining
+                .iter()
+                .map(|(process_id, _)| *process_id)
+                .collect::<Vec<_>>();
             anyhow::bail!(
                 "timed out waiting for thread processes to stop before {lifecycle}: {:?}",
-                remaining
+                process_ids
             );
         }
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        let process_ids = remaining
+            .iter()
+            .map(|(process_id, _)| *process_id)
+            .collect::<Vec<_>>();
+        let entries = remaining
+            .into_iter()
+            .map(|(_, entry)| entry)
+            .collect::<Vec<_>>();
+        wait_for_process_entries_to_complete(&entries, &process_ids, lifecycle, timeout_left).await?;
     }
+}
+
+async fn stop_turn_processes(
+    server: &Server,
+    thread_id: ThreadId,
+    turn_id: TurnId,
+    reason: Option<String>,
+    lifecycle: &'static str,
+) -> anyhow::Result<()> {
+    let running = running_turn_process_entries(server, thread_id, turn_id).await;
+    if running.is_empty() {
+        return Ok(());
+    }
+
+    for (_, entry) in &running {
+        let _ = entry
+            .cmd_tx
+            .send(ProcessCommand::Interrupt {
+                reason: reason.clone(),
+            })
+            .await;
+    }
+
+    let entries = running
+        .iter()
+        .map(|(_, entry)| entry.clone())
+        .collect::<Vec<_>>();
+    let interrupt_grace = Duration::from_secs(2);
+    if tokio::time::timeout(interrupt_grace, async {
+        for entry in &entries {
+            entry.completion.wait().await;
+        }
+    })
+    .await
+    .is_ok()
+    {
+        return Ok(());
+    }
+
+    let survivors = running
+        .into_iter()
+        .filter(|(_, entry)| !entry.completion.is_complete())
+        .collect::<Vec<_>>();
+    for (_, entry) in &survivors {
+        let _ = entry
+            .cmd_tx
+            .send(ProcessCommand::Kill {
+                reason: reason.clone(),
+            })
+            .await;
+    }
+    let survivor_ids = survivors
+        .iter()
+        .map(|(process_id, _)| *process_id)
+        .collect::<Vec<_>>();
+    let survivor_entries = survivors
+        .into_iter()
+        .map(|(_, entry)| entry)
+        .collect::<Vec<_>>();
+    wait_for_process_entries_to_complete(
+        &survivor_entries,
+        &survivor_ids,
+        lifecycle,
+        Duration::from_secs(10),
+    )
+    .await
 }
 
 async fn handle_thread_archive(
@@ -96,9 +208,14 @@ async fn handle_thread_archive(
             .interrupt_turn(turn_id, reason.clone())
             .await
             .context("interrupt active turn");
-        interrupt_processes_for_turn(server, params.thread_id, turn_id, reason.clone()).await;
-        tokio::time::sleep(Duration::from_secs(2)).await;
-        kill_processes_for_turn(server, params.thread_id, turn_id, reason.clone()).await;
+        stop_turn_processes(
+            server,
+            params.thread_id,
+            turn_id,
+            reason.clone(),
+            "archive active turn",
+        )
+        .await?;
 
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
         loop {

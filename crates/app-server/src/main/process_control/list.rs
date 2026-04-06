@@ -171,6 +171,7 @@ mod process_list_tests {
                 thread_id,
                 info: info.clone(),
                 cmd_tx,
+                completion: ProcessCompletion::new(),
             },
         );
 

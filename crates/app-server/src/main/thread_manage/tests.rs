@@ -27,6 +27,7 @@ mod thread_manage_tests {
                 thread_id,
                 info,
                 cmd_tx,
+                completion: ProcessCompletion::new(),
             },
         )
     }
@@ -60,6 +61,7 @@ mod thread_manage_tests {
                     last_update_at: "2026-04-06T00:00:00Z".to_string(),
                 })),
                 cmd_tx,
+                completion: ProcessCompletion::new(),
             },
         );
 
@@ -4484,12 +4486,14 @@ base_url = "https://project.example/v1"
         drop(handle);
 
         let (process_id, _info, entry) = running_process_entry(thread_id);
+        let completion = entry.completion.clone();
         server.processes.lock().await.insert(process_id, entry);
 
         let server_for_cleanup = server.clone();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(250)).await;
             server_for_cleanup.processes.lock().await.remove(&process_id);
+            completion.mark_complete();
         });
 
         let started = tokio::time::Instant::now();
@@ -4559,12 +4563,14 @@ base_url = "https://project.example/v1"
         drop(handle);
 
         let (process_id, _info, entry) = running_process_entry(thread_id);
+        let completion = entry.completion.clone();
         server.processes.lock().await.insert(process_id, entry);
 
         let server_for_cleanup = server.clone();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(250)).await;
             server_for_cleanup.processes.lock().await.remove(&process_id);
+            completion.mark_complete();
         });
 
         let thread_dir = server.thread_store.thread_dir(thread_id);
