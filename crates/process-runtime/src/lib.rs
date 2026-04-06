@@ -44,6 +44,8 @@ fn is_generic_command_launcher(name: &str) -> bool {
 }
 
 pub fn command_uses_network(argv: &[String]) -> bool {
+    // Best-effort argv detection for obviously or potentially network-capable commands.
+    // This is not a kernel-level network sandbox boundary.
     let Some(program) = argv.first() else {
         return false;
     };
