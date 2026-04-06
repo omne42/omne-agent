@@ -10,11 +10,45 @@ fn normalized_program_name(program: &str) -> String {
     name
 }
 
-fn git_subcommand_uses_network(subcommand: Option<&String>) -> bool {
-    subcommand
+fn git_global_option_takes_value(arg: &str) -> bool {
+    matches!(
+        arg,
+        "-C" | "-c"
+            | "--exec-path"
+            | "--git-dir"
+            | "--namespace"
+            | "--super-prefix"
+            | "--work-tree"
+            | "--config-env"
+    )
+}
+
+fn git_option_has_inline_value(arg: &str) -> bool {
+    (arg.starts_with("-C") || arg.starts_with("-c")) && arg.len() > 2 || arg.contains('=')
+}
+
+fn git_subcommand(argv: &[String]) -> Option<&str> {
+    let mut index = 1usize;
+    while let Some(arg) = argv.get(index) {
+        if arg == "--" {
+            return argv.get(index + 1).map(String::as_str);
+        }
+        if !arg.starts_with('-') || arg == "-" {
+            return Some(arg.as_str());
+        }
+        if git_global_option_takes_value(arg) && !git_option_has_inline_value(arg) {
+            index += 1;
+        }
+        index += 1;
+    }
+    None
+}
+
+fn git_subcommand_uses_network(argv: &[String]) -> bool {
+    git_subcommand(argv)
         .map(|subcommand| {
             matches!(
-                subcommand.as_str(),
+                subcommand,
                 "clone" | "fetch" | "pull" | "push" | "ls-remote" | "submodule"
             )
         })
@@ -60,7 +94,7 @@ pub fn command_uses_network(argv: &[String]) -> bool {
     match name.as_str() {
         "curl" | "wget" | "ssh" | "scp" | "sftp" | "ftp" | "telnet" | "nc" | "ncat" | "netcat"
         | "gh" => true,
-        "git" => git_subcommand_uses_network(argv.get(1)),
+        "git" => git_subcommand_uses_network(argv),
         name if is_generic_command_launcher(name) && argv.len() > 1 => true,
         _ if is_path_invocation(program) => true,
         _ => false,
@@ -88,7 +122,21 @@ mod tests {
     fn detects_git_network_subcommands_only() {
         assert!(command_uses_network(&argv(&["git", "clone"])));
         assert!(command_uses_network(&argv(&["git", "fetch"])));
+        assert!(command_uses_network(&argv(&["git", "-C", "repo", "fetch"])));
+        assert!(command_uses_network(&argv(&[
+            "git",
+            "--git-dir=.git",
+            "pull"
+        ])));
+        assert!(command_uses_network(&argv(&[
+            "git",
+            "-chttp.extraHeader=x",
+            "push"
+        ])));
         assert!(!command_uses_network(&argv(&["git", "status"])));
+        assert!(!command_uses_network(&argv(&[
+            "git", "-C", "repo", "status"
+        ])));
         assert!(!command_uses_network(&argv(&["git"])));
     }
 
