@@ -37,9 +37,15 @@ fn process_exec_gateway() -> &'static omne_execution_gateway::ExecGateway {
 }
 
 fn process_exec_gateway_required_isolation() -> policy_meta::ExecutionIsolation {
-    match hardening_mode() {
-        HardeningMode::Off => policy_meta::ExecutionIsolation::None,
-        HardeningMode::BestEffort => policy_meta::ExecutionIsolation::BestEffort,
+    match (
+        hardening_mode(),
+        process_exec_gateway().capability_report().supported_isolation,
+    ) {
+        (HardeningMode::Off, _) => policy_meta::ExecutionIsolation::None,
+        (HardeningMode::BestEffort, policy_meta::ExecutionIsolation::None) => {
+            policy_meta::ExecutionIsolation::None
+        }
+        (HardeningMode::BestEffort, _) => policy_meta::ExecutionIsolation::BestEffort,
     }
 }
 
@@ -54,8 +60,16 @@ fn process_exec_gateway_request(
     } else {
         thread_root.join(cwd)
     };
+    let program = {
+        let program_path = Path::new(program);
+        if program_path.is_relative() && program_path.components().count() > 1 {
+            cwd.join(program_path).into_os_string()
+        } else {
+            std::ffi::OsString::from(program)
+        }
+    };
     Some(omne_execution_gateway::ExecRequest::new(
-        program.clone(),
+        program,
         args.iter().cloned(),
         cwd,
         process_exec_gateway_required_isolation(),
@@ -79,6 +93,9 @@ fn prepare_process_exec_gateway_command(
     let request = process_exec_gateway_request(argv, cwd, thread_root).ok_or_else(|| {
         omne_execution_gateway::ExecError::PolicyDenied("argv must not be empty".into())
     })?;
+    let request = request.with_env(command.get_envs().filter_map(|(key, value)| {
+        value.map(|value| (key.to_os_string(), value.to_os_string()))
+    }));
     let mut gateway_command = std::process::Command::new(command.get_program());
     gateway_command.args(command.get_args());
     if let Some(current_dir) = command.get_current_dir() {
@@ -129,6 +146,16 @@ fn process_exec_boundary_denial(
                     omne_execution_gateway::ExecError::CwdOutsideWorkspace { .. }
                 )
             {
+                return None;
+            }
+            if matches!(
+                &error,
+                omne_execution_gateway::ExecError::RelativeProgramPath { .. }
+                    | omne_execution_gateway::ExecError::ProgramPathInvalid { .. }
+                    | omne_execution_gateway::ExecError::ProgramLookupFailed { .. }
+                    | omne_execution_gateway::ExecError::PathIdentityUnavailable { .. }
+                    | omne_execution_gateway::ExecError::RequestPathChanged { .. }
+            ) {
                 return None;
             }
             Some(ProcessExecBoundaryDeny::GatewayDenied(

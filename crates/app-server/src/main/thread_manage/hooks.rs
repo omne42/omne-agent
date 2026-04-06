@@ -63,6 +63,9 @@ async fn run_workspace_hook_inner(
     server: &Server,
     params: ThreadHookRunParams,
 ) -> anyhow::Result<omne_app_server_protocol::ThreadHookRunRpcResponse> {
+    #[cfg(test)]
+    let _env_lock = crate::app_server_process_env_lock().lock().await;
+
     let (_thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
     let config_dir = thread_root.join(".omne_data").join("spec");
     let yaml_path = config_dir.join("workspace.yaml");

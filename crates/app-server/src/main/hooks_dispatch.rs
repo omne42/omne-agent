@@ -338,30 +338,31 @@ async fn wait_for_process_exit(
 ) -> anyhow::Result<Option<i32>> {
     let deadline = tokio::time::Instant::now() + timeout;
     loop {
-        let entry = {
-            let processes = server.processes.lock().await;
-            processes.get(&process_id).cloned()
-        };
-        let Some(entry) = entry else {
-            return Ok(None);
+        let info = match resolve_process_info(server, process_id).await {
+            Ok(info) => info,
+            Err(err) if err.to_string().contains("process not found") => {
+                if tokio::time::Instant::now() >= deadline {
+                    return Err(err);
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                continue;
+            }
+            Err(err) => return Err(err),
         };
 
-        let (status, exit_code) = {
-            let info = entry.info.lock().await;
-            (info.status.clone(), info.exit_code)
-        };
-
-        if matches!(status, ProcessStatus::Exited | ProcessStatus::Abandoned) {
-            return Ok(exit_code);
+        if matches!(info.status, ProcessStatus::Exited | ProcessStatus::Abandoned) {
+            return Ok(info.exit_code);
         }
 
         if tokio::time::Instant::now() >= deadline {
-            let _ = entry
-                .cmd_tx
-                .send(ProcessCommand::Kill {
-                    reason: Some("hook timeout".to_string()),
-                })
-                .await;
+            if let Some(entry) = server.processes.lock().await.get(&process_id).cloned() {
+                let _ = entry
+                    .cmd_tx
+                    .send(ProcessCommand::Kill {
+                        reason: Some("hook timeout".to_string()),
+                    })
+                    .await;
+            }
             anyhow::bail!("hook process timed out: {}", process_id);
         }
 
@@ -376,6 +377,9 @@ async fn run_hook_commands(
     hook_point: HookPoint,
     ctx: HookDispatchContext<'_>,
 ) -> Vec<HookAdditionalContext> {
+    #[cfg(test)]
+    let _env_lock = crate::app_server_process_env_lock().lock().await;
+
     let (_thread_rt, thread_root) = match load_thread_root(server, thread_id).await {
         Ok(v) => v,
         Err(_) => return Vec::new(),

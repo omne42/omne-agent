@@ -30,6 +30,7 @@ async fn handle_thread_fork(
     let forked_id = forked.thread_id();
     let mut skipped_active_turn_approvals =
         std::collections::HashSet::<omne_protocol::ApprovalId>::new();
+    let mut copied_active_turn_started = false;
 
     for event in events {
         let kind = event.kind;
@@ -45,8 +46,17 @@ async fn handle_thread_fork(
             kind @ omne_protocol::ThreadEventKind::ThreadConfigUpdated { .. } => {
                 forked.append(kind).await?;
             }
-            omne_protocol::ThreadEventKind::TurnStarted { turn_id, .. } if active_turn_id == Some(turn_id) => {}
-            omne_protocol::ThreadEventKind::ModelRouted { turn_id, .. } if active_turn_id == Some(turn_id) => {}
+            kind @ omne_protocol::ThreadEventKind::TurnStarted { turn_id, .. }
+                if active_turn_id == Some(turn_id) =>
+            {
+                copied_active_turn_started = true;
+                forked.append(kind).await?;
+            }
+            kind @ omne_protocol::ThreadEventKind::ModelRouted { turn_id, .. }
+                if active_turn_id == Some(turn_id) =>
+            {
+                forked.append(kind).await?;
+            }
             omne_protocol::ThreadEventKind::TurnInterruptRequested { turn_id, .. }
                 if active_turn_id == Some(turn_id) => {}
             omne_protocol::ThreadEventKind::TurnCompleted { turn_id, .. } if active_turn_id == Some(turn_id) => {}
@@ -61,8 +71,12 @@ async fn handle_thread_fork(
             }
             omne_protocol::ThreadEventKind::ApprovalDecided { approval_id, .. }
                 if skipped_active_turn_approvals.contains(&approval_id) => {}
-            omne_protocol::ThreadEventKind::AssistantMessage { turn_id: Some(turn_id), .. }
-                if active_turn_id == Some(turn_id) => {}
+            kind @ omne_protocol::ThreadEventKind::AssistantMessage {
+                turn_id: Some(turn_id),
+                ..
+            } if active_turn_id == Some(turn_id) => {
+                forked.append(kind).await?;
+            }
             kind @ omne_protocol::ThreadEventKind::TurnStarted { .. }
             | kind @ omne_protocol::ThreadEventKind::ModelRouted { .. }
             | kind @ omne_protocol::ThreadEventKind::TurnInterruptRequested { .. }
@@ -84,6 +98,16 @@ async fn handle_thread_fork(
             | omne_protocol::ThreadEventKind::CheckpointCreated { .. }
             | omne_protocol::ThreadEventKind::CheckpointRestored { .. } => {}
         }
+    }
+
+    if let Some(turn_id) = active_turn_id.filter(|_| copied_active_turn_started) {
+        forked
+            .append(omne_protocol::ThreadEventKind::TurnCompleted {
+                turn_id,
+                status: omne_protocol::TurnStatus::Interrupted,
+                reason: Some("thread fork snapshots the active turn and closes it".to_string()),
+            })
+            .await?;
     }
 
     let log_path = forked.log_path().display().to_string();

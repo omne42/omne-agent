@@ -478,19 +478,26 @@ hooks:
 
         let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
         loop {
-            let status = {
-                let entry = {
-                    let processes = server.processes.lock().await;
-                    processes
-                        .get(&process_id)
-                        .cloned()
-                        .ok_or_else(|| anyhow::anyhow!("missing process entry"))?
-                };
-                let info = entry.info.lock().await;
-                info.status.clone()
+            let exited = match resolve_process_info(&server, process_id).await {
+                Ok(info) => matches!(info.status, ProcessStatus::Exited),
+                Err(_) => server
+                    .thread_store
+                    .read_events_since(thread_id, EventSeq::ZERO)
+                    .await?
+                    .ok_or_else(|| anyhow::anyhow!("thread not found"))?
+                    .iter()
+                    .any(|event| {
+                        matches!(
+                            event.kind,
+                            omne_protocol::ThreadEventKind::ProcessExited {
+                                process_id: got,
+                                ..
+                            } if got == process_id
+                        )
+                    }),
             };
 
-            if matches!(status, ProcessStatus::Exited) {
+            if exited {
                 break;
             }
             if tokio::time::Instant::now() > deadline {
@@ -1443,6 +1450,12 @@ modes:
             marker: omne_protocol::AttentionMarkerKind::TokenBudgetExceeded,
             turn_id: Some(turn_id),
             reason: Some("cleared".to_string()),
+        })
+        .await?;
+        rt.append_event(omne_protocol::ThreadEventKind::TurnCompleted {
+            turn_id,
+            status: TurnStatus::Completed,
+            reason: None,
         })
         .await?;
 

@@ -1567,10 +1567,27 @@ impl ThreadRuntime {
                 }
             },
         };
-        let reason_for_report = reason.clone();
+        self.complete_turn(server, turn_id, status, reason).await;
+    }
 
+    async fn complete_turn(
+        &self,
+        server: Arc<Server>,
+        turn_id: TurnId,
+        status: TurnStatus,
+        reason: Option<String>,
+    ) {
+        let reason_for_report = reason.clone();
         let mut handle = self.handle.lock().await;
         let thread_id = handle.thread_id();
+        if handle.state().active_turn_id != Some(turn_id) {
+            drop(handle);
+            let mut active = self.active_turn.lock().await;
+            if active.as_ref().is_some_and(|active| active.turn_id == turn_id) {
+                *active = None;
+            }
+            return;
+        }
         let turn_completed = handle
             .append(omne_protocol::ThreadEventKind::TurnCompleted {
                 turn_id,
@@ -1628,6 +1645,16 @@ impl ThreadRuntime {
         if active.as_ref().is_some_and(|a| a.turn_id == turn_id) {
             *active = None;
         }
+    }
+
+    pub(crate) async fn force_complete_turn(
+        &self,
+        server: Arc<Server>,
+        turn_id: TurnId,
+        status: TurnStatus,
+        reason: Option<String>,
+    ) {
+        self.complete_turn(server, turn_id, status, reason).await;
     }
 }
 

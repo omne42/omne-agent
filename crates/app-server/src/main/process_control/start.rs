@@ -286,6 +286,10 @@ async fn handle_process_start_inner(
     if let Some(extra_env) = extra_env {
         combined_env.extend(extra_env.clone());
     }
+    combined_env.insert(
+        "AGENT_EXEC_GATEWAY_WORKSPACE_ROOT".to_string(),
+        thread_root.display().to_string(),
+    );
 
     let mut execve_gate: Option<ExecveGateHandle> = None;
     #[cfg(unix)]
@@ -348,9 +352,22 @@ async fn handle_process_start_inner(
         }
     }
 
-    let mut cmd = Command::new(&params.argv[0]);
+    let resolved_request = process_exec_gateway_request(&params.argv, &cwd_path, &thread_root)
+        .map(|request| process_exec_gateway().resolve_request(&request));
+    let mut cmd = Command::new(
+        resolved_request
+            .as_ref()
+            .filter(|_| !Path::new(&params.argv[0]).is_absolute())
+            .map(|request| request.program.as_os_str())
+            .unwrap_or_else(|| std::ffi::OsStr::new(&params.argv[0])),
+    );
     cmd.args(params.argv.iter().skip(1));
-    cmd.current_dir(&cwd_path);
+    cmd.current_dir(
+        resolved_request
+            .as_ref()
+            .map(|request| request.cwd.as_path())
+            .unwrap_or(cwd_path.as_path()),
+    );
     cmd.stdin(Stdio::null());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
@@ -620,7 +637,7 @@ mod process_start_tests {
     }
 
     #[tokio::test]
-    async fn process_start_denies_path_invocations_when_network_access_is_denied()
+    async fn process_start_allows_local_path_invocations_when_network_access_is_denied()
     -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");
@@ -645,9 +662,11 @@ mod process_start_tests {
         )
         .await?;
 
-        assert!(result["denied"].as_bool().unwrap_or(false));
-        assert_eq!(result["sandbox_network_access"].as_str(), Some("deny"));
-        assert!(server.processes.lock().await.is_empty());
+        let process_id: ProcessId = result["process_id"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing process_id"))?
+            .parse()?;
+        let _ = wait_for_process_exit(&server, process_id, Duration::from_secs(2)).await?;
 
         Ok(())
     }

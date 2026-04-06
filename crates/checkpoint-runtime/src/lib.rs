@@ -172,6 +172,9 @@ pub async fn compute_restore_plan(
             if rel.as_os_str().is_empty() {
                 continue;
             }
+            if rel_path_is_checkpoint_secret(rel) {
+                continue;
+            }
             let meta = entry
                 .metadata()
                 .with_context(|| format!("stat {}", entry.path().display()))?;
@@ -253,6 +256,9 @@ pub async fn restore_workspace_from_snapshot(
                 .strip_prefix(&thread_root)
                 .unwrap_or(entry.path());
             if rel.as_os_str().is_empty() {
+                continue;
+            }
+            if rel_path_is_checkpoint_secret(rel) {
                 continue;
             }
             current_paths.push(rel.to_string_lossy().to_string());
@@ -404,7 +410,7 @@ mod tests {
         let plan = compute_restore_plan(thread_root.path(), snapshot_root.path(), 4).await?;
         assert_eq!(plan.create, 0);
         assert_eq!(plan.modify, 1);
-        assert_eq!(plan.delete, 3);
+        assert_eq!(plan.delete, 2);
 
         restore_workspace_from_snapshot(thread_root.path(), snapshot_root.path(), 4).await?;
 
@@ -413,7 +419,10 @@ mod tests {
             "new"
         );
         assert!(!thread_root.path().join("remove.txt").exists());
-        assert!(!thread_root.path().join(".env.local").exists());
+        assert_eq!(
+            std::fs::read_to_string(thread_root.path().join(".env.local"))?,
+            "secret"
+        );
         assert!(!thread_root.path().join("oversize.bin").exists());
         Ok(())
     }

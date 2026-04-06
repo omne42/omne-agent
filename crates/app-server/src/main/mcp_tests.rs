@@ -141,7 +141,10 @@ mod mcp_tests {
             .unwrap_err();
         let msg = err.to_string();
         assert!(
-            msg.contains("missing.json") && (msg.contains("stat") || msg.contains("read")),
+            msg.contains("missing.json")
+                && (msg.contains("stat")
+                    || msg.contains("read")
+                    || msg.contains("config not found")),
             "err={msg}"
         );
     }
@@ -393,7 +396,7 @@ modes:
   "version": 1,
   "servers": {
     "local": { "transport": "stdio", "argv": ["printf", "ok"] },
-    "remote": { "transport": "http", "url": "https://example.test/mcp" }
+    "remote": { "transport": "streamable_http", "url": "https://example.test/mcp" }
   }
 }"#,
         )
@@ -844,14 +847,18 @@ modes:
         )
         .await?;
 
-        let (process_id, mut cmd_rx) =
-            insert_running_mcp_connection(
-                &server,
-                thread_id,
-                "local",
-                "stale-config".to_string(),
-            )
-            .await?;
+        let cfg = load_mcp_config(&repo_dir).await?;
+        let server_cfg = cfg
+            .servers()
+            .get("local")
+            .expect("local server should exist");
+        let (process_id, mut cmd_rx) = insert_running_mcp_connection(
+            &server,
+            thread_id,
+            "local",
+            mcp_server_config_fingerprint(server_cfg),
+        )
+        .await?;
 
         let err = handle_mcp_list_tools(
             &server,
