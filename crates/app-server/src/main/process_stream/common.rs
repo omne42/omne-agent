@@ -43,21 +43,6 @@ fn process_exec_gateway_required_isolation() -> policy_meta::ExecutionIsolation 
     }
 }
 
-fn process_exec_gateway_denied_reason(
-    argv: &[String],
-    cwd: &Path,
-    thread_root: &Path,
-) -> Option<String> {
-    let request = process_exec_gateway_request(argv, cwd, thread_root)?;
-    match process_exec_gateway().preflight(&request) {
-        Ok(_) => None,
-        Err(err) => {
-            let (_, error) = err.into_parts();
-            Some(process_exec_gateway_error_reason(&error))
-        }
-    }
-}
-
 fn process_exec_gateway_request(
     argv: &[String],
     cwd: &Path,
@@ -136,17 +121,16 @@ fn process_exec_boundary_denial(
     let request = process_exec_gateway_request(argv, cwd, thread_root)?;
     match process_exec_gateway().preflight(&request) {
         Ok(_) => None,
-        Err(err)
-            if sandbox_policy == policy_meta::WriteScope::FullAccess
-                && matches!(
-                    err.as_ref(),
-                    omne_execution_gateway::ExecError::CwdOutsideWorkspace { .. }
-                ) =>
-        {
-            None
-        }
         Err(err) => {
             let (_, error) = err.into_parts();
+            if sandbox_policy == policy_meta::WriteScope::FullAccess
+                && matches!(
+                    &error,
+                    omne_execution_gateway::ExecError::CwdOutsideWorkspace { .. }
+                )
+            {
+                return None;
+            }
             Some(ProcessExecBoundaryDeny::GatewayDenied(
                 process_exec_gateway_error_reason(&error),
             ))
@@ -202,6 +186,7 @@ fn process_exec_gateway_error_reason(err: &omne_execution_gateway::ExecError) ->
         omne_execution_gateway::ExecError::Spawn(err) => {
             format!("execution boundary denied command: spawn_error ({err})")
         }
+        _ => format!("execution boundary denied command: {err}"),
     }
 }
 
@@ -417,18 +402,12 @@ type ProcessExecFallback = fn(&[String]) -> ExecDecision;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum UnmatchedCommandPolicy {
     Prompt,
-    Allow,
-}
-
-fn unmatched_command_allow_fallback(_: &[String]) -> ExecDecision {
-    ExecDecision::Allow
 }
 
 impl UnmatchedCommandPolicy {
     fn fallback(self) -> Option<ProcessExecFallback> {
         match self {
             Self::Prompt => None,
-            Self::Allow => Some(unmatched_command_allow_fallback),
         }
     }
 }

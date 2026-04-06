@@ -451,7 +451,7 @@ dependencies = [
 name = "config-kit"
 version = "0.1.0"
 dependencies = [
- "omne-fs-primitives",
+ "omne-fs-primitives 0.1.0 (git+https://github.com/omne42/omne-runtime.git?rev=9c69b43d8b51a4fbc3e87450fb74fb67c0e62532)",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -711,6 +711,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ditto-gateway-contract-types"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "ditto-server"
 version = "1.0.0"
 dependencies = [
@@ -718,6 +726,7 @@ dependencies = [
  "bytes",
  "config-kit",
  "ditto-core",
+ "ditto-gateway-contract-types",
  "futures-util",
  "i18n-kit",
  "omne-integrity-primitives",
@@ -779,26 +788,6 @@ name = "endian-type"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c34f04666d835ff5d62e058c3995147c06f42fe86ff053337632bca83e42702d"
-
-[[package]]
-name = "enumflags2"
-version = "0.7.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1027f7680c853e056ebcec683615fb6fbbc07dbaa13b4d5d9442b146ded4ecef"
-dependencies = [
- "enumflags2_derive",
-]
-
-[[package]]
-name = "enumflags2_derive"
-version = "0.7.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67c78a4d8fdf9953a5c9d458f9efe940fd97a0cab0941c075a813ac594733827"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
-]
 
 [[package]]
 name = "equivalent"
@@ -1531,17 +1520,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "landlock"
-version = "0.4.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "49fefd6652c57d68aaa32544a4c0e642929725bdc1fd929367cdeb673ab81088"
-dependencies = [
- "enumflags2",
- "libc",
- "thiserror 2.0.18",
-]
-
-[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1713,6 +1691,7 @@ dependencies = [
  "libc",
  "mcp-jsonrpc",
  "reqwest",
+ "secret-kit",
  "serde",
  "serde_json",
  "structured-text-kit",
@@ -1811,9 +1790,11 @@ dependencies = [
  "futures-util",
  "hmac",
  "http-kit",
+ "libc",
  "log-kit",
  "pulldown-cmark",
  "reqwest",
+ "secret-kit",
  "serde_json",
  "sha2",
  "structured-text-kit",
@@ -2002,6 +1983,7 @@ dependencies = [
  "tempfile",
  "time",
  "tokio",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2049,6 +2031,7 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2083,11 +2066,16 @@ dependencies = [
 name = "omne-execution-gateway"
 version = "0.1.0"
 dependencies = [
- "landlock",
+ "fs2",
+ "libc",
+ "omne-fs-primitives 0.1.0",
  "policy-meta",
+ "same-file",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror 1.0.69",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2100,13 +2088,13 @@ dependencies = [
 
 [[package]]
 name = "omne-fs"
-version = "1.0.0"
+version = "0.1.0"
 dependencies = [
  "diffy",
  "globset",
  "libc",
  "memchr",
- "omne-fs-primitives",
+ "omne-fs-primitives 0.1.0",
  "policy-meta",
  "regex",
  "same-file",
@@ -2127,6 +2115,20 @@ dependencies = [
 [[package]]
 name = "omne-fs-primitives"
 version = "0.1.0"
+dependencies = [
+ "cap-fs-ext",
+ "cap-std",
+ "fs2",
+ "libc",
+ "rustix 1.1.4",
+ "tempfile",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "omne-fs-primitives"
+version = "0.1.0"
+source = "git+https://github.com/omne42/omne-runtime.git?rev=9c69b43d8b51a4fbc3e87450fb74fb67c0e62532#9c69b43d8b51a4fbc3e87450fb74fb67c0e62532"
 dependencies = [
  "cap-fs-ext",
  "cap-std",
@@ -2172,9 +2174,13 @@ dependencies = [
 [[package]]
 name = "omne-process-primitives"
 version = "0.1.0"
+source = "git+https://github.com/omne42/omne-runtime.git?rev=9c69b43d8b51a4fbc3e87450fb74fb67c0e62532#9c69b43d8b51a4fbc3e87450fb74fb67c0e62532"
 dependencies = [
+ "omne-system-package-primitives",
  "rustix 1.1.4",
+ "same-file",
  "sysinfo",
+ "tempfile",
  "tokio",
  "win32job",
 ]
@@ -2221,6 +2227,11 @@ dependencies = [
  "tree-sitter-rust",
  "walkdir",
 ]
+
+[[package]]
+name = "omne-system-package-primitives"
+version = "0.1.0"
+source = "git+https://github.com/omne42/omne-runtime.git?rev=9c69b43d8b51a4fbc3e87450fb74fb67c0e62532#9c69b43d8b51a4fbc3e87450fb74fb67c0e62532"
 
 [[package]]
 name = "omne-workflow-spec"
@@ -2322,6 +2333,8 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "serde_yaml",
+ "thiserror 1.0.69",
  "ts-rs",
 ]
 
@@ -2872,7 +2885,7 @@ name = "secret-kit"
 version = "0.1.0"
 dependencies = [
  "error-kit",
- "omne-fs-primitives",
+ "omne-fs-primitives 0.1.0 (git+https://github.com/omne42/omne-runtime.git?rev=9c69b43d8b51a4fbc3e87450fb74fb67c0e62532)",
  "omne-process-primitives",
  "serde_json",
  "structured-text-kit",
@@ -3342,7 +3355,8 @@ dependencies = [
 name = "text-assets-kit"
 version = "0.1.0"
 dependencies = [
- "omne-fs-primitives",
+ "omne-fs-primitives 0.1.0 (git+https://github.com/omne42/omne-runtime.git?rev=9c69b43d8b51a4fbc3e87450fb74fb67c0e62532)",
+ "rustix 1.1.4",
 ]
 
 [[package]]

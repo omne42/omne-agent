@@ -82,11 +82,19 @@ struct McpManager {
     starting: HashMap<(ThreadId, String), Arc<tokio::sync::Notify>>,
 }
 
-#[derive(Debug)]
 struct McpConnection {
     process_id: ProcessId,
     config_fingerprint: String,
     client: tokio::sync::Mutex<omne_jsonrpc::Client>,
+}
+
+impl std::fmt::Debug for McpConnection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("McpConnection")
+            .field("process_id", &self.process_id)
+            .field("config_fingerprint", &self.config_fingerprint)
+            .finish_non_exhaustive()
+    }
 }
 
 const MCP_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
