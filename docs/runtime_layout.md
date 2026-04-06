@@ -136,4 +136,4 @@ thread 下的 runtime 根目录：
 ## 5) 清理行为（危险但必要）
 
 - `thread/clear_artifacts` 会删除 `<thread_dir>/artifacts`（不影响 running processes）。
-- `thread/delete` 会删除整个 `<thread_dir>`（包括 events 与 artifacts）。
+- `thread/delete` 会删除整个 `<thread_dir>`（包括 events、artifacts 与 runtime）。
