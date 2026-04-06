@@ -213,6 +213,23 @@ impl ThreadStore {
         Ok(Some(handle))
     }
 
+    pub async fn open_thread_without_recovery(
+        &self,
+        thread_id: ThreadId,
+    ) -> anyhow::Result<Option<ThreadHandle>> {
+        let dir = self.thread_dir(thread_id);
+        match tokio::fs::metadata(&dir).await {
+            Ok(meta) if meta.is_dir() => {}
+            Ok(_) => anyhow::bail!("thread dir is not a directory: {}", dir.display()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(err) => return Err(err).with_context(|| format!("stat {}", dir.display())),
+        }
+
+        let log_path = self.events_log_path(thread_id);
+        let handle = ThreadHandle::open_existing(thread_id, log_path).await?;
+        Ok(Some(handle))
+    }
+
     pub async fn read_events_since(
         &self,
         thread_id: ThreadId,

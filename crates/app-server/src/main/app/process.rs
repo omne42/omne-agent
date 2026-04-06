@@ -86,7 +86,7 @@ async fn handle_process_list_request(
     };
 
     let visible_thread_ids = if let Some(thread_id) = params.thread_id {
-        let (thread_rt, thread_root) = match load_thread_root(server, thread_id).await {
+        let (thread_rt, thread_root) = match load_thread_root_without_recovery(server, thread_id).await {
             Ok(values) => values,
             Err(err) => return jsonrpc_internal_error(id, err),
         };
@@ -176,7 +176,7 @@ async fn handle_process_list_request(
         };
         let mut visible = std::collections::HashSet::new();
         for thread_id in thread_ids {
-            let (thread_rt, thread_root) = match load_thread_root(server, thread_id).await {
+            let (thread_rt, thread_root) = match load_thread_root_without_recovery(server, thread_id).await {
                 Ok(values) => values,
                 Err(err) => return jsonrpc_internal_error(id, err),
             };

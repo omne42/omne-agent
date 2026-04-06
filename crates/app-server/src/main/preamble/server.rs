@@ -1107,6 +1107,26 @@ impl Server {
         Ok(rt)
     }
 
+    async fn load_thread_without_recovery(
+        &self,
+        thread_id: ThreadId,
+    ) -> anyhow::Result<Arc<ThreadRuntime>> {
+        {
+            let threads = self.threads.lock().await;
+            if let Some(rt) = threads.get(&thread_id) {
+                return Ok(rt.clone());
+            }
+        }
+
+        let handle = self
+            .thread_store
+            .open_thread_without_recovery(thread_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("thread not found: {thread_id}"))?;
+
+        Ok(Arc::new(ThreadRuntime::new(handle, self.notify_tx.clone())))
+    }
+
     async fn evict_cached_thread(&self, thread_id: ThreadId) -> bool {
         self.threads.lock().await.remove(&thread_id).is_some()
     }

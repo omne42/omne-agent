@@ -663,4 +663,122 @@ modes:
         assert!(!process_ids.contains(&hidden_process_id));
         Ok(())
     }
+
+    #[tokio::test]
+    async fn process_list_with_thread_id_does_not_resume_cold_thread() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let seed_server = Arc::new(build_test_server_shared(tmp.path().join(".omne_data")));
+        let mut handle = seed_server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        let turn_id = TurnId::new();
+        handle
+            .append(omne_protocol::ThreadEventKind::TurnStarted {
+                turn_id,
+                input: "still running".to_string(),
+                context_refs: None,
+                attachments: None,
+                directives: None,
+                priority: omne_protocol::TurnPriority::Foreground,
+            })
+            .await?;
+        drop(handle);
+
+        let before_events = seed_server
+            .thread_store
+            .read_events_since(thread_id, EventSeq::ZERO)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("thread should exist"))?;
+        assert_eq!(before_events.len(), 2);
+
+        let cold_server = Arc::new(build_test_server_shared(tmp.path().join(".omne_data")));
+        let response = handle_process_request(
+            &cold_server,
+            serde_json::json!(1),
+            "process/list",
+            serde_json::json!({
+                "thread_id": thread_id,
+            }),
+        )
+        .await;
+        assert!(response.error.is_none(), "unexpected error: {:?}", response.error);
+
+        let result = response
+            .result
+            .ok_or_else(|| anyhow::anyhow!("missing process/list result"))?;
+        let parsed = serde_json::from_value::<omne_app_server_protocol::ProcessListResponse>(result)?;
+        assert!(parsed.processes.is_empty());
+
+        let after_events = cold_server
+            .thread_store
+            .read_events_since(thread_id, EventSeq::ZERO)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("thread should exist"))?;
+        assert_eq!(after_events.len(), before_events.len());
+        assert!(matches!(
+            after_events.last().map(|event| &event.kind),
+            Some(omne_protocol::ThreadEventKind::TurnStarted { .. })
+        ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn process_list_without_thread_id_does_not_resume_cold_thread() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let seed_server = Arc::new(build_test_server_shared(tmp.path().join(".omne_data")));
+        let mut handle = seed_server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        let turn_id = TurnId::new();
+        handle
+            .append(omne_protocol::ThreadEventKind::TurnStarted {
+                turn_id,
+                input: "still running".to_string(),
+                context_refs: None,
+                attachments: None,
+                directives: None,
+                priority: omne_protocol::TurnPriority::Foreground,
+            })
+            .await?;
+        drop(handle);
+
+        let before_events = seed_server
+            .thread_store
+            .read_events_since(thread_id, EventSeq::ZERO)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("thread should exist"))?;
+        assert_eq!(before_events.len(), 2);
+
+        let cold_server = Arc::new(build_test_server_shared(tmp.path().join(".omne_data")));
+        let response = handle_process_request(
+            &cold_server,
+            serde_json::json!(1),
+            "process/list",
+            serde_json::json!({}),
+        )
+        .await;
+        assert!(response.error.is_none(), "unexpected error: {:?}", response.error);
+
+        let result = response
+            .result
+            .ok_or_else(|| anyhow::anyhow!("missing process/list result"))?;
+        let parsed = serde_json::from_value::<omne_app_server_protocol::ProcessListResponse>(result)?;
+        assert!(parsed.processes.is_empty());
+
+        let after_events = cold_server
+            .thread_store
+            .read_events_since(thread_id, EventSeq::ZERO)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("thread should exist"))?;
+        assert_eq!(after_events.len(), before_events.len());
+        assert!(matches!(
+            after_events.last().map(|event| &event.kind),
+            Some(omne_protocol::ThreadEventKind::TurnStarted { .. })
+        ));
+        Ok(())
+    }
 }
