@@ -813,4 +813,76 @@ modes:
         assert!(!secret.exists());
         Ok(())
     }
+
+    #[tokio::test]
+    async fn file_patch_denies_env_style_secret_path_before_runtime() -> anyhow::Result<()> {
+        let (_tmp, repo_dir, server, thread_id) = setup_thread_default_allow().await?;
+        let secret = repo_dir.join(".env.local");
+
+        let result = handle_file_patch(
+            &server,
+            FilePatchParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                path: ".env.local".to_string(),
+                patch: "@@ -1 +1 @@\n-SECRET=1\n+SECRET=2\n".to_string(),
+                max_bytes: None,
+            },
+        )
+        .await?;
+
+        assert!(result["denied"].as_bool().unwrap_or(false));
+        assert!(!secret.exists());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn file_edit_denies_env_style_secret_path_before_runtime() -> anyhow::Result<()> {
+        let (_tmp, repo_dir, server, thread_id) = setup_thread_default_allow().await?;
+        let secret = repo_dir.join(".env.production");
+
+        let result = handle_file_edit(
+            &server,
+            FileEditParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                path: ".env.production".to_string(),
+                edits: vec![FileEditOp {
+                    old: "SECRET=1".to_string(),
+                    new: "SECRET=2".to_string(),
+                    expected_replacements: None,
+                }],
+                max_bytes: None,
+            },
+        )
+        .await?;
+
+        assert!(result["denied"].as_bool().unwrap_or(false));
+        assert!(!secret.exists());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn file_delete_denies_env_style_secret_path_before_runtime() -> anyhow::Result<()> {
+        let (_tmp, repo_dir, server, thread_id) = setup_thread_default_allow().await?;
+        let secret = repo_dir.join(".env.production");
+
+        let result = handle_file_delete(
+            &server,
+            FileDeleteParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                path: ".env.production".to_string(),
+                recursive: false,
+            },
+        )
+        .await?;
+
+        assert!(result["denied"].as_bool().unwrap_or(false));
+        assert!(!secret.exists());
+        Ok(())
+    }
 }

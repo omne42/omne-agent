@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Fixed
+- `omne-app-server`：补齐 `.env.local` / `.env.production` 在 `file/patch`、`file/edit`、`file/delete` 上的拒绝回归测试，防止 env-style secret 路径只在 `file/write` 有保护而其它写路径再次退化。
 - `omne-core`：`allowed_tools` 现在补齐 `repo/goto_definition` 与 `repo/find_references`，并沿用现有 `repo/*` 工具的 `read + artifact` 权限判定，避免 thread 白名单开启后这两个已公开接口无法合法授权。
 - `omne-app-server`：MCP 工具在 `mcp.json` 加载失败或目标 server 配置非法时，也会补齐 `ToolStarted -> ToolCompleted(Failed)` 事件链，避免审批/allowed_tools 已通过后直接报错却留下半截工具历史。
 - `omne-app-server` / `omne`：外部通知路径改用 `notify_kit::Hub::notify_best_effort` 的显式 API，去掉已弃用兼容别名后，`cargo clippy --workspace --all-targets --all-features -- -D warnings` 不再被基线弃用警告卡住。
