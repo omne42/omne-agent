@@ -9,24 +9,50 @@ fn thread_allows_process_list(allowed_tools: &Option<Vec<String>>) -> bool {
 async fn thread_mode_allows_process_list(
     thread_root: &Path,
     mode_name: &str,
-    approval_policy: omne_protocol::ApprovalPolicy,
-) -> bool {
+    role_name: &str,
+) -> Option<ModeDecisionAudit> {
     let catalog = omne_core::modes::ModeCatalog::load(thread_root).await;
-    let Some(mode) = catalog.mode(mode_name) else {
-        return false;
-    };
+    let mode = catalog.mode(mode_name)?;
     let mode_decision = resolve_mode_decision_audit(
         mode,
         "process/list",
         mode.permissions.process.inspect,
     );
-    match mode_decision.decision {
-        omne_core::modes::Decision::Allow => true,
-        omne_core::modes::Decision::Prompt => {
-            matches!(approval_policy, omne_protocol::ApprovalPolicy::AutoApprove)
-        }
-        omne_core::modes::Decision::Deny => false,
-    }
+
+    let role_catalog = omne_core::roles::RoleCatalog::builtin();
+    let permission_mode_name = role_catalog
+        .permission_mode_name(role_name)
+        .unwrap_or(mode_name);
+    let role_permission_mode = catalog.mode(permission_mode_name).unwrap_or(mode);
+    let role_decision = omne_core::allowed_tools::effective_mode_decision_for_tool(
+        role_permission_mode,
+        "process/list",
+    )?;
+    let role_override_hit = role_permission_mode.tool_overrides.contains_key("process/list");
+    let combined = mode_decision.decision.combine(role_decision);
+    let role_tightened = combined != mode_decision.decision;
+
+    Some(ModeDecisionAudit {
+        decision: combined,
+        decision_source: if role_tightened {
+            "role_permission_mode"
+        } else {
+            mode_decision.decision_source
+        },
+        tool_override_hit: mode_decision.tool_override_hit || role_override_hit,
+    })
+}
+
+async fn thread_access_allows_global_process_list(
+    thread_root: &Path,
+    mode_name: &str,
+    role_name: &str,
+) -> bool {
+    let Some(mode_decision) = thread_mode_allows_process_list(thread_root, mode_name, role_name).await
+    else {
+        return false;
+    };
+    mode_decision.decision == omne_core::modes::Decision::Allow
 }
 
 pub(super) async fn handle_process_request(
@@ -64,12 +90,13 @@ async fn handle_process_list_request(
             Ok(values) => values,
             Err(err) => return jsonrpc_internal_error(id, err),
         };
-        let (approval_policy, mode_name, allowed_tools) = {
+        let (approval_policy, mode_name, role_name, allowed_tools) = {
             let handle = thread_rt.handle.lock().await;
             let state = handle.state();
             (
                 state.approval_policy,
                 state.mode.clone(),
+                state.role.clone(),
                 state.allowed_tools.clone(),
             )
         };
@@ -96,28 +123,52 @@ async fn handle_process_list_request(
             Ok(None) => {}
             Err(err) => return jsonrpc_internal_error(id, err),
         }
-        match enforce_process_mode_and_approval(
-            server,
-            ProcessModeApprovalContext {
-                thread_rt: &thread_rt,
-                thread_root: &thread_root,
-                thread_id,
-                turn_id: None,
-                approval_id: None,
-                approval_policy,
-                mode_name: &mode_name,
-                action: "process/list",
-                tool_id,
-                approval_params: &approval_params,
-            },
-            |mode| mode.permissions.process.inspect,
-        )
-        .await
-        {
-            Ok(Some(result)) => return jsonrpc_ok_or_internal(id, Ok(result)),
-            Ok(None) => Some(std::iter::once(thread_id).collect::<std::collections::HashSet<_>>()),
-            Err(err) => return jsonrpc_internal_error(id, err),
+        let Some(mode_decision) =
+            thread_mode_allows_process_list(&thread_root, &mode_name, &role_name).await
+        else {
+            return jsonrpc_ok_or_internal(
+                id,
+                process_unknown_mode_denied_response(tool_id, thread_id, &mode_name, String::new(), None),
+            );
+        };
+        if mode_decision.decision == omne_core::modes::Decision::Deny {
+            return jsonrpc_ok_or_internal(
+                id,
+                process_mode_denied_response(tool_id, thread_id, &mode_name, mode_decision),
+            );
         }
+        if mode_decision.decision == omne_core::modes::Decision::Prompt {
+            match gate_approval(
+                server,
+                &thread_rt,
+                thread_id,
+                None,
+                approval_policy,
+                ApprovalRequest {
+                    approval_id: None,
+                    action: "process/list",
+                    params: &approval_params,
+                },
+            )
+            .await
+            {
+                Ok(ApprovalGate::Approved) => {}
+                Ok(ApprovalGate::Denied { remembered }) => {
+                    return jsonrpc_ok_or_internal(
+                        id,
+                        process_denied_response(tool_id, thread_id, Some(remembered)),
+                    );
+                }
+                Ok(ApprovalGate::NeedsApproval { approval_id }) => {
+                    return jsonrpc_ok_or_internal(
+                        id,
+                        process_needs_approval_response(thread_id, approval_id),
+                    );
+                }
+                Err(err) => return jsonrpc_internal_error(id, err),
+            }
+        }
+        Some(std::iter::once(thread_id).collect::<std::collections::HashSet<_>>())
     } else {
         let thread_ids = match server.thread_store.list_threads().await {
             Ok(thread_ids) => thread_ids,
@@ -129,17 +180,17 @@ async fn handle_process_list_request(
                 Ok(values) => values,
                 Err(err) => return jsonrpc_internal_error(id, err),
             };
-            let (approval_policy, mode_name, allowed_tools) = {
+            let (mode_name, role_name, allowed_tools) = {
                 let handle = thread_rt.handle.lock().await;
                 let state = handle.state();
                 (
-                    state.approval_policy,
                     state.mode.clone(),
+                    state.role.clone(),
                     state.allowed_tools.clone(),
                 )
             };
             if thread_allows_process_list(&allowed_tools)
-                && thread_mode_allows_process_list(&thread_root, &mode_name, approval_policy).await
+                && thread_access_allows_global_process_list(&thread_root, &mode_name, &role_name).await
             {
                 visible.insert(thread_id);
             }
