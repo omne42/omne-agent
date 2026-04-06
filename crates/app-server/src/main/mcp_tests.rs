@@ -487,6 +487,76 @@ modes:
     }
 
     #[tokio::test]
+    async fn mcp_list_tools_connection_failure_still_appends_tool_completed() -> anyhow::Result<()> {
+        let _lock = MCP_TEST_MUTEX.lock().await;
+        let _guard = McpEnabledOverrideGuard::new(Some(true));
+
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+        write_test_mcp_config(&repo_dir).await?;
+
+        let server = build_test_server_shared(repo_dir.join(".omne_data"));
+        let thread_id = create_test_thread_shared(&server, repo_dir.clone()).await?;
+
+        let err = handle_mcp_list_tools(
+            &server,
+            McpListToolsParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                server: "local".to_string(),
+            },
+        )
+        .await
+        .expect_err("printf-backed mcp server should fail initialize");
+        assert!(
+            err.to_string().contains("mcp initialize failed")
+                || err.to_string().contains("mcp request failed"),
+            "err={err:#}"
+        );
+
+        let events = server
+            .thread_store
+            .read_events_since(thread_id, EventSeq::ZERO)
+            .await?
+            .expect("thread events should exist");
+        let started_tool_id = events
+            .iter()
+            .find_map(|event| match &event.kind {
+                omne_protocol::ThreadEventKind::ToolStarted { tool_id, tool, .. }
+                    if tool == "mcp/list_tools" =>
+                {
+                    Some(tool_id.clone())
+                }
+                _ => None,
+            })
+            .expect("mcp/list_tools should append ToolStarted");
+        let completed = events
+            .iter()
+            .find_map(|event| match &event.kind {
+                omne_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status,
+                    error,
+                    result,
+                    ..
+                } if tool_id == &started_tool_id => {
+                    Some((status.clone(), error.clone(), result.clone()))
+                }
+                _ => None,
+            })
+            .expect("mcp/list_tools should append ToolCompleted on connection failure");
+
+        assert_eq!(completed.0, omne_protocol::ToolStatus::Failed);
+        assert!(completed.1.is_some());
+        let result = completed.2.expect("failure payload");
+        assert_eq!(result.get("server").and_then(Value::as_str), Some("local"));
+        assert!(result.get("process_id").is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn get_or_start_mcp_connection_invalidates_cached_connection_when_config_changes(
     ) -> anyhow::Result<()> {
         let _lock = MCP_TEST_MUTEX.lock().await;

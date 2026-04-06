@@ -295,6 +295,24 @@ async fn emit_mcp_tool_denied(
     .await
 }
 
+async fn append_mcp_tool_failed(
+    thread_rt: &Arc<ThreadRuntime>,
+    tool_id: omne_protocol::ToolId,
+    error: String,
+    result: Value,
+) -> anyhow::Result<()> {
+    thread_rt
+        .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
+            tool_id,
+            status: omne_protocol::ToolStatus::Failed,
+            structured_error: structured_error_from_result_value(&result),
+            error: Some(error),
+            result: Some(result),
+        })
+        .await?;
+    Ok(())
+}
+
 async fn enforce_mcp_mode_gate<F>(
     ctx: &McpModeGateContext<'_>,
     base_decision_for_mode: F,
@@ -640,7 +658,7 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
         })
         .await?;
 
-    let conn = get_or_start_mcp_connection(
+    let conn = match get_or_start_mcp_connection(
         server,
         &thread_rt,
         &thread_root,
@@ -649,7 +667,24 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
         server_name,
         server_cfg,
     )
-    .await?;
+    .await
+    {
+        Ok(conn) => conn,
+        Err(err) => {
+            append_mcp_tool_failed(
+                &thread_rt,
+                tool_id,
+                err.to_string(),
+                serde_json::json!({
+                    "server": server_name,
+                    "decision": effective_exec_decision,
+                    "matched_rules": exec_matches_json,
+                }),
+            )
+            .await?;
+            return Err(err);
+        }
+    };
     let process_id = conn.process_id;
 
     let result: anyhow::Result<Value> = async {
@@ -712,20 +747,18 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
                 "mcp request failed",
             )
             .await;
-            thread_rt
-                .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                    tool_id,
-                    status: omne_protocol::ToolStatus::Failed,
-                    structured_error: None,
-                    error: Some(err.to_string()),
-                    result: Some(serde_json::json!({
-                        "process_id": process_id,
-                        "server": server_name,
-                        "decision": effective_exec_decision,
-                        "matched_rules": exec_matches_json,
-                    })),
-                })
-                .await?;
+            append_mcp_tool_failed(
+                &thread_rt,
+                tool_id,
+                err.to_string(),
+                serde_json::json!({
+                    "process_id": process_id,
+                    "server": server_name,
+                    "decision": effective_exec_decision,
+                    "matched_rules": exec_matches_json,
+                }),
+            )
+            .await?;
             Err(err)
         }
     }
