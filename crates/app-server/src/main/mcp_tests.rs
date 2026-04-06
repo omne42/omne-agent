@@ -153,6 +153,70 @@ mod mcp_tests {
     }
 
     #[tokio::test]
+    async fn mcp_list_tools_load_config_failure_still_emits_tool_lifecycle() -> anyhow::Result<()> {
+        let _lock = MCP_TEST_MUTEX.lock().await;
+        let _guard = McpEnabledOverrideGuard::new(Some(true));
+
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+        tokio::fs::write(repo_dir.join("mcp.json"), r#"{ "version": 1, "servers": {}, "extra": 1 }"#).await?;
+
+        let server = build_test_server_shared(repo_dir.join(".omne_data"));
+        let thread_id = create_test_thread_shared(&server, repo_dir.clone()).await?;
+
+        let err = handle_mcp_list_tools(
+            &server,
+            McpListToolsParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                server: "local".to_string(),
+            },
+        )
+        .await
+        .expect_err("invalid config should fail");
+        assert!(err.to_string().contains("parse"), "err={err}");
+
+        let events = server
+            .thread_store
+            .read_events_since(thread_id, omne_protocol::EventSeq::ZERO)
+            .await?
+            .expect("thread exists");
+        let started_tool_id = events
+            .iter()
+            .find_map(|event| match &event.kind {
+                omne_protocol::ThreadEventKind::ToolStarted { tool_id, tool, .. }
+                    if tool == "mcp/list_tools" =>
+                {
+                    Some(*tool_id)
+                }
+                _ => None,
+            })
+            .expect("mcp/list_tools should emit ToolStarted");
+        let completed = events
+            .iter()
+            .find(|event| matches!(
+                event.kind,
+                omne_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: omne_protocol::ToolStatus::Failed,
+                    ..
+                } if tool_id == started_tool_id
+            ))
+            .expect("mcp/list_tools should emit failed ToolCompleted");
+        assert!(matches!(
+            completed.kind,
+            omne_protocol::ThreadEventKind::ToolCompleted {
+                error: Some(_),
+                ..
+            }
+        ));
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn mcp_denies_generic_launchers_when_network_access_is_denied() -> anyhow::Result<()> {
         let _lock = MCP_TEST_MUTEX.lock().await;
         let _guard = McpEnabledOverrideGuard::new(Some(true));
