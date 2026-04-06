@@ -1127,6 +1127,98 @@ mod tests {
     }
 
     #[test]
+    fn thread_config_updated_without_optional_values_keeps_existing_overrides() -> anyhow::Result<()>
+    {
+        let thread_id = ThreadId::new();
+        let mut state = ThreadState::new(thread_id);
+        let mut seq = 1u64;
+
+        fn apply(
+            state: &mut ThreadState,
+            thread_id: ThreadId,
+            seq: &mut u64,
+            kind: ThreadEventKind,
+        ) -> anyhow::Result<()> {
+            let event = ThreadEvent {
+                seq: EventSeq(*seq),
+                timestamp: OffsetDateTime::now_utc(),
+                thread_id,
+                kind,
+            };
+            *seq += 1;
+            state.apply(&event)?;
+            Ok(())
+        }
+
+        apply(
+            &mut state,
+            thread_id,
+            &mut seq,
+            ThreadEventKind::ThreadCreated {
+                cwd: "/tmp".to_string(),
+            },
+        )?;
+        apply(
+            &mut state,
+            thread_id,
+            &mut seq,
+            ThreadEventKind::ThreadConfigUpdated {
+                approval_policy: ApprovalPolicy::Manual,
+                sandbox_policy: None,
+                sandbox_writable_roots: None,
+                sandbox_network_access: None,
+                mode: None,
+                role: None,
+                model: Some("gpt-5".to_string()),
+                clear_model: false,
+                thinking: Some("high".to_string()),
+                clear_thinking: false,
+                show_thinking: Some(true),
+                clear_show_thinking: false,
+                openai_base_url: Some("https://example.test/v1".to_string()),
+                clear_openai_base_url: false,
+                allowed_tools: None,
+                execpolicy_rules: Some(vec!["rules/a.rules".to_string()]),
+                clear_execpolicy_rules: false,
+            },
+        )?;
+        apply(
+            &mut state,
+            thread_id,
+            &mut seq,
+            ThreadEventKind::ThreadConfigUpdated {
+                approval_policy: ApprovalPolicy::Manual,
+                sandbox_policy: None,
+                sandbox_writable_roots: None,
+                sandbox_network_access: None,
+                mode: None,
+                role: None,
+                model: None,
+                clear_model: false,
+                thinking: None,
+                clear_thinking: false,
+                show_thinking: None,
+                clear_show_thinking: false,
+                openai_base_url: None,
+                clear_openai_base_url: false,
+                allowed_tools: None,
+                execpolicy_rules: None,
+                clear_execpolicy_rules: false,
+            },
+        )?;
+
+        assert_eq!(state.model.as_deref(), Some("gpt-5"));
+        assert_eq!(state.thinking.as_deref(), Some("high"));
+        assert_eq!(state.show_thinking, Some(true));
+        assert_eq!(
+            state.openai_base_url.as_deref(),
+            Some("https://example.test/v1")
+        );
+        assert_eq!(state.execpolicy_rules, vec!["rules/a.rules".to_string()]);
+        Ok(())
+    }
+
+    #[test]
     fn thread_system_prompt_snapshot_accepts_initial_and_identical_repeat() -> anyhow::Result<()> {
         let thread_id = ThreadId::new();
         let mut state = ThreadState::new(thread_id);

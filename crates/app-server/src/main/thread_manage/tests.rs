@@ -3982,6 +3982,63 @@ base_url = "https://project.example/v1"
     }
 
     #[tokio::test]
+    async fn thread_config_omitted_optional_fields_do_not_append_pseudo_update() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        handle_thread_configure(
+            &server,
+            ThreadConfigureParams {
+                model: Some("gpt-5".to_string()),
+                thinking: Some("high".to_string()),
+                show_thinking: Some(true),
+                openai_base_url: Some("https://thread.example/v1".to_string()),
+                execpolicy_rules: Some(vec!["rules/thread.rules".to_string()]),
+                ..thread_configure_defaults(thread_id)
+            },
+        )
+        .await?;
+
+        let before = server
+            .thread_store
+            .read_events_since(thread_id, EventSeq::ZERO)
+            .await?
+            .unwrap_or_default()
+            .len();
+
+        handle_thread_configure(&server, thread_configure_defaults(thread_id)).await?;
+
+        let after = server
+            .thread_store
+            .read_events_since(thread_id, EventSeq::ZERO)
+            .await?
+            .unwrap_or_default()
+            .len();
+        assert_eq!(after, before);
+
+        let explain =
+            handle_thread_config_explain(&server, ThreadConfigExplainParams { thread_id }).await?;
+        assert_eq!(explain.effective.model, "gpt-5");
+        assert_eq!(explain.effective.thinking, "high");
+        assert!(explain.effective.show_thinking);
+        assert_eq!(
+            explain.effective.openai_base_url,
+            "https://thread.example/v1"
+        );
+        assert_eq!(
+            explain.effective.execpolicy_rules,
+            vec!["rules/thread.rules".to_string()]
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn thread_config_explain_role_unknown_falls_back_to_mode_only() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");
