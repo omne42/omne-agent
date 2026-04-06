@@ -473,7 +473,7 @@ modes:
         let completed = tool_events
             .iter()
             .find_map(|(kind, status, payload)| {
-                (kind == "completed").then_some((status.clone(), payload.clone()))
+                (kind == "completed").then_some((*status, payload.clone()))
             })
             .expect("mcp/list_servers should append ToolCompleted on failure");
         assert_eq!(completed.0, Some(omne_protocol::ToolStatus::Failed));
@@ -558,14 +558,11 @@ modes:
             let manager = server.mcp.lock().await;
             manager.connections.get(&(thread_id, "local".to_string())).cloned()
         };
-        match cached {
-            Some(conn) => {
-                assert_ne!(
-                    conn.config_fingerprint,
-                    mcp_server_config_fingerprint(initial_server_cfg)
-                );
-            }
-            None => {}
+        if let Some(conn) = cached {
+            assert_ne!(
+                conn.config_fingerprint,
+                mcp_server_config_fingerprint(initial_server_cfg)
+            );
         }
         Ok(())
     }

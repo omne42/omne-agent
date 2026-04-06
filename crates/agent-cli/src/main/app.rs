@@ -785,7 +785,7 @@ fn take_preconnect_command(cli: &mut Cli) -> Option<PreConnectCommand> {
             }
         },
         Command::Provider { command } => match command {
-            ProviderCommand::Add(args) => Some(PreConnectCommand::ProviderAdd(args)),
+            ProviderCommand::Add(args) => Some(PreConnectCommand::ProviderAdd(*args)),
             ProviderCommand::List(args) => Some(PreConnectCommand::ProviderList(args)),
             ProviderCommand::Show(args) => Some(PreConnectCommand::ProviderShow(args)),
             ProviderCommand::Delete(args) => Some(PreConnectCommand::ProviderDelete(args)),

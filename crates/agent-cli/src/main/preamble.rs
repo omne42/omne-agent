@@ -169,7 +169,7 @@ struct CommandRunArgs {
 enum ProviderCommand {
     /// Add or update a provider profile (merge update, no full-file overwrite).
     #[command(alias = "set")]
-    Add(ProviderAddArgs),
+    Add(Box<ProviderAddArgs>),
     /// List configured providers.
     #[command(alias = "ls")]
     List(ProviderListArgs),
