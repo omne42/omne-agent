@@ -413,7 +413,6 @@ async fn handle_execve_gate_decide(
             state.execpolicy_rules.clone(),
         )
     };
-    let access_mode = process_exec_access_mode(sandbox_policy);
     let gateway_cwd = args
         .cwd
         .as_deref()
@@ -425,7 +424,6 @@ async fn handle_execve_gate_decide(
         .unwrap_or_else(|| ctx.thread_root.display().to_string());
     let exec_governance = evaluate_process_exec_governance(
         &ProcessExecGovernanceContext {
-            access_mode,
             cwd: gateway_cwd,
             sandbox_policy,
             sandbox_network_access,
@@ -461,7 +459,7 @@ async fn handle_execve_gate_decide(
     .await?;
 
     match exec_governance {
-        ProcessExecGovernance::Bypassed | ProcessExecGovernance::Allowed => {
+        ProcessExecGovernance::Allowed => {
             Ok(serde_json::json!({ "decision": "run" }))
         }
         ProcessExecGovernance::NeedsApproval { approval_id } => Ok(serde_json::json!({
@@ -1100,7 +1098,7 @@ mod execve_gate_tests {
     }
 
     #[tokio::test]
-    async fn execve_gate_full_access_skips_all_policy_gates() -> anyhow::Result<()> {
+    async fn execve_gate_full_access_still_enforces_network_policy() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
@@ -1182,7 +1180,12 @@ mod execve_gate_tests {
         )
         .await?;
         let payload = mcp_payload(&resp)?;
-        assert_eq!(payload["decision"], "run");
+        assert_eq!(payload["decision"], "deny");
+        assert!(
+            payload["reason"]
+                .as_str()
+                .is_some_and(|reason| reason.contains("sandbox_network_access=deny"))
+        );
 
         shutdown_execve_gate(gate).await;
         Ok(())

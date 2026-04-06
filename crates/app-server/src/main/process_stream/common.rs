@@ -82,8 +82,15 @@ fn prepare_process_exec_gateway_command(
     argv: &[String],
     cwd: &Path,
     thread_root: &Path,
+    sandbox_policy: policy_meta::WriteScope,
     command: &mut std::process::Command,
 ) -> omne_execution_gateway::ExecResult<()> {
+    if sandbox_policy == policy_meta::WriteScope::FullAccess
+        && cwd.is_absolute()
+        && !cwd.starts_with(thread_root)
+    {
+        return Ok(());
+    }
     let request = process_exec_gateway_request(argv, cwd, thread_root).ok_or_else(|| {
         omne_execution_gateway::ExecError::PolicyDenied("argv must not be empty".into())
     })?;
@@ -114,8 +121,25 @@ fn process_exec_boundary_denial(
         return Some(ProcessExecBoundaryDeny::SandboxNetworkDenied);
     }
 
-    process_exec_gateway_denied_reason(argv, cwd, thread_root)
-        .map(ProcessExecBoundaryDeny::GatewayDenied)
+    let request = process_exec_gateway_request(argv, cwd, thread_root)?;
+    match process_exec_gateway().preflight(&request) {
+        Ok(_) => None,
+        Err(err)
+            if sandbox_policy == policy_meta::WriteScope::FullAccess
+                && matches!(
+                    err.as_ref(),
+                    omne_execution_gateway::ExecError::CwdOutsideWorkspace { .. }
+                ) =>
+        {
+            None
+        }
+        Err(err) => {
+            let (_, error) = err.into_parts();
+            Some(ProcessExecBoundaryDeny::GatewayDenied(
+                process_exec_gateway_error_reason(&error),
+            ))
+        }
+    }
 }
 
 fn process_exec_gateway_error_reason(err: &omne_execution_gateway::ExecError) -> String {
@@ -187,26 +211,6 @@ enum ProcessExecApprovalRequirement {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ProcessExecAccessMode {
-    Governed,
-    FullAccessBypass,
-}
-
-impl ProcessExecAccessMode {
-    fn bypasses_governance(self) -> bool {
-        matches!(self, Self::FullAccessBypass)
-    }
-}
-
-fn process_exec_access_mode(sandbox_policy: policy_meta::WriteScope) -> ProcessExecAccessMode {
-    if sandbox_policy == policy_meta::WriteScope::FullAccess {
-        ProcessExecAccessMode::FullAccessBypass
-    } else {
-        ProcessExecAccessMode::Governed
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ProcessExecApprovalSource {
     ExecPolicy,
     ExecveWrapper,
@@ -253,7 +257,6 @@ fn build_process_exec_approval_params(
 }
 
 enum ProcessExecGovernance {
-    Bypassed,
     Allowed,
     NeedsApproval {
         approval_id: omne_protocol::ApprovalId,
@@ -359,7 +362,6 @@ fn process_exec_governance_denied_reason(
 }
 
 struct ProcessExecGovernanceContext<'a> {
-    access_mode: ProcessExecAccessMode,
     cwd: &'a Path,
     sandbox_policy: policy_meta::WriteScope,
     sandbox_network_access: omne_protocol::SandboxNetworkAccess,
@@ -614,10 +616,6 @@ where
     F: Fn(&omne_core::modes::ModeDef) -> omne_core::modes::Decision,
     G: Fn(ProcessExecApprovalRequirement) -> Value,
 {
-    if ctx.access_mode.bypasses_governance() {
-        return Ok(ProcessExecGovernance::Bypassed);
-    }
-
     if let Some(denial) = process_exec_boundary_denial(
         ctx.authorization.argv,
         ctx.cwd,
