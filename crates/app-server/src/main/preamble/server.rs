@@ -1135,6 +1135,7 @@ struct ProcessInfo {
 
 #[derive(Clone)]
 struct ProcessEntry {
+    thread_id: ThreadId,
     info: Arc<tokio::sync::Mutex<ProcessInfo>>,
     cmd_tx: mpsc::Sender<ProcessCommand>,
 }

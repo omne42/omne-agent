@@ -247,6 +247,7 @@ async fn spawn_mcp_connection(
 
     let (cmd_tx, cmd_rx) = mpsc::channel(8);
     let entry = ProcessEntry {
+        thread_id,
         info: std::sync::Arc::new(tokio::sync::Mutex::new(info)),
         cmd_tx,
     };
@@ -312,11 +313,54 @@ async fn remove_mcp_connections_for_process(server: &Server, process_id: Process
 }
 
 async fn remove_mcp_connections_for_thread(server: &Server, thread_id: ThreadId) -> usize {
-    let mut manager = server.mcp.lock().await;
-    let before = manager.connections.len();
-    manager.connections.retain(|(id, _), _| *id != thread_id);
-    manager.starting.retain(|(id, _), _| *id != thread_id);
-    before.saturating_sub(manager.connections.len())
+    let (removed, removed_process_ids) = {
+        let mut manager = server.mcp.lock().await;
+        let before = manager.connections.len();
+        let mut removed_process_ids = Vec::new();
+        manager.connections.retain(|(id, _), conn| {
+            if *id == thread_id {
+                removed_process_ids.push(conn.process_id);
+                false
+            } else {
+                true
+            }
+        });
+        manager.starting.retain(|(id, _), _| *id != thread_id);
+        let removed = before.saturating_sub(manager.connections.len());
+        (removed, removed_process_ids)
+    };
+
+    if removed == 0 {
+        return 0;
+    }
+
+    if !removed_process_ids.is_empty() {
+        let removed_process_ids = removed_process_ids.into_iter().collect::<HashSet<_>>();
+        let matching_entries = {
+            let entries = server.processes.lock().await;
+            entries
+                .iter()
+                .filter(|(process_id, entry)| {
+                    entry.thread_id == thread_id && removed_process_ids.contains(process_id)
+                })
+                .map(|(process_id, entry)| (*process_id, entry.clone()))
+                .collect::<Vec<_>>()
+        };
+        let mut removable = HashSet::new();
+        for (process_id, entry) in matching_entries {
+            let info = entry.info.lock().await;
+            if !matches!(info.status, ProcessStatus::Running) {
+                removable.insert(process_id);
+            }
+        }
+        if !removable.is_empty() {
+            server.processes.lock().await.retain(|process_id, entry| {
+                !(entry.thread_id == thread_id && removable.contains(process_id))
+            });
+        }
+    }
+
+    removed
 }
 
 async fn invalidate_mcp_connection(

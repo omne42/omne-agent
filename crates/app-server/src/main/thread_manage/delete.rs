@@ -58,27 +58,7 @@ async fn handle_thread_delete(
         }
     }
 
-    let mut running = Vec::<ProcessId>::new();
-    let mut to_kill = Vec::<ProcessEntry>::new();
-    {
-        let entries = {
-            let entries = server.processes.lock().await;
-            entries
-                .iter()
-                .map(|(process_id, entry)| (*process_id, entry.clone()))
-                .collect::<Vec<_>>()
-        };
-        for (process_id, entry) in entries {
-            let info = entry.info.lock().await;
-            if info.thread_id != params.thread_id {
-                continue;
-            }
-            if matches!(info.status, ProcessStatus::Running) {
-                running.push(process_id);
-                to_kill.push(entry.clone());
-            }
-        }
-    }
+    let (running, to_kill) = running_thread_process_entries(server, params.thread_id).await;
 
     if !running.is_empty() && !params.force {
         anyhow::bail!(
@@ -96,34 +76,17 @@ async fn handle_thread_delete(
                 })
                 .await;
         }
-
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-        loop {
-            let has_running = {
-                let entries = server.processes.lock().await;
-                entries.values().any(|entry| {
-                    if let Ok(info) = entry.info.try_lock() {
-                        info.thread_id == params.thread_id
-                            && matches!(info.status, ProcessStatus::Running)
-                    } else {
-                        true
-                    }
-                })
-            };
-            if !has_running {
-                break;
-            }
-            if tokio::time::Instant::now() >= deadline {
-                anyhow::bail!(
-                    "timed out waiting for thread processes to stop before delete: {:?}",
-                    running
-                );
-            }
-            tokio::time::sleep(Duration::from_millis(200)).await;
-        }
     }
 
     let _ = remove_mcp_connections_for_thread(server, params.thread_id).await;
+
+    wait_for_thread_process_entries_to_drain(
+        server,
+        params.thread_id,
+        "delete",
+        Duration::from_secs(10),
+    )
+    .await?;
     cleanup_managed_subagent_worktree(
         server,
         params.thread_id,
@@ -138,30 +101,12 @@ async fn handle_thread_delete(
         Err(err) => return Err(err).with_context(|| format!("remove {}", thread_dir.display())),
     };
 
-    server.threads.lock().await.remove(&params.thread_id);
-    let to_remove = {
-        let entries = {
-            let entries = server.processes.lock().await;
-            entries
-                .iter()
-                .map(|(process_id, entry)| (*process_id, entry.clone()))
-                .collect::<Vec<_>>()
-        };
-        let mut to_remove = Vec::new();
-        for (process_id, entry) in entries {
-            let info = entry.info.lock().await;
-            if info.thread_id == params.thread_id {
-                to_remove.push(process_id);
-            }
-        }
-        to_remove
-    };
-    {
-        let mut entries = server.processes.lock().await;
-        for process_id in to_remove {
-            entries.remove(&process_id);
-        }
-    }
+    server.evict_cached_thread(params.thread_id).await;
+    server
+        .processes
+        .lock()
+        .await
+        .retain(|_, entry| entry.thread_id != params.thread_id);
 
     Ok(omne_app_server_protocol::ThreadDeleteResponse {
         thread_id: params.thread_id,

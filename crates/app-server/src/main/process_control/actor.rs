@@ -58,6 +58,7 @@ pub(super) async fn run_process_actor(args: ProcessActorArgs) {
     let mut interrupt_logged = false;
     let mut kill_reason: Option<String> = None;
     let mut kill_logged = false;
+    let mut command_channel_closed = false;
 
     async fn cleanup_execve_gate(execve_gate: &mut Option<ExecveGateHandle>) {
         if let Some(gate) = execve_gate.take() {
@@ -67,8 +68,17 @@ pub(super) async fn run_process_actor(args: ProcessActorArgs) {
 
     loop {
         tokio::select! {
-            cmd = cmd_rx.recv() => {
-                let Some(cmd) = cmd else { /* sender dropped */ finalize_process(&server, process_id, &mut execve_gate).await; return; };
+            cmd = cmd_rx.recv(), if !command_channel_closed => {
+                let Some(cmd) = cmd else {
+                    command_channel_closed = true;
+                    if kill_reason.is_none() {
+                        kill_reason = Some("process control dropped".to_string());
+                    }
+                    if let Err(err) = child.start_kill() {
+                        tracing::warn!(process_id = %process_id, error = %err, "failed to kill process after process control dropped");
+                    }
+                    continue;
+                };
                 match cmd {
                     ProcessCommand::Interrupt { reason } => {
                         if interrupt_reason.is_none() {
@@ -201,5 +211,92 @@ pub(super) async fn run_process_actor(args: ProcessActorArgs) {
                 return;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod process_actor_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn process_actor_kills_child_and_records_exit_when_control_channel_drops(
+    ) -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let thread_id = create_test_thread_shared(&server, repo_dir.clone()).await?;
+        let thread_rt = server.get_or_load_thread(thread_id).await?;
+
+        let mut cmd = Command::new("sleep");
+        cmd.arg("30");
+        cmd.stdin(Stdio::null());
+        cmd.stdout(Stdio::null());
+        cmd.stderr(Stdio::null());
+        cmd.kill_on_drop(true);
+        let child = cmd.spawn().context("spawn test child")?;
+
+        let process_id = ProcessId::new();
+        let started_at = time::OffsetDateTime::now_utc().format(&Rfc3339)?;
+        let info = Arc::new(tokio::sync::Mutex::new(ProcessInfo {
+            process_id,
+            thread_id,
+            turn_id: None,
+            argv: vec!["sleep".to_string(), "30".to_string()],
+            cwd: repo_dir.display().to_string(),
+            started_at: started_at.clone(),
+            status: ProcessStatus::Running,
+            exit_code: None,
+            stdout_path: String::new(),
+            stderr_path: String::new(),
+            last_update_at: started_at,
+        }));
+        let (cmd_tx, cmd_rx) = mpsc::channel(1);
+        server.processes.lock().await.insert(
+            process_id,
+            ProcessEntry {
+                thread_id,
+                info: info.clone(),
+                cmd_tx: cmd_tx.clone(),
+            },
+        );
+
+        let actor = tokio::spawn(run_process_actor(ProcessActorArgs {
+            server: server.clone(),
+            thread_rt: thread_rt.clone(),
+            process_id,
+            child,
+            cmd_rx,
+            stdout_task: None,
+            stderr_task: None,
+            execve_gate: None,
+            info: info.clone(),
+        }));
+
+        drop(server.processes.lock().await.remove(&process_id).expect("entry exists").cmd_tx);
+        drop(cmd_tx);
+
+        tokio::time::timeout(Duration::from_secs(5), actor)
+        .await
+        .context("wait for actor to exit after process control dropped")??;
+
+        let events = server
+            .thread_store
+            .read_events_since(thread_id, EventSeq::ZERO)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("thread not found"))?;
+        assert!(events.iter().any(|event| {
+            matches!(
+                &event.kind,
+                omne_protocol::ThreadEventKind::ProcessExited {
+                    process_id: exited_process_id,
+                    reason: Some(reason),
+                    ..
+                } if *exited_process_id == process_id && reason == "process control dropped"
+            )
+        }));
+
+        Ok(())
     }
 }

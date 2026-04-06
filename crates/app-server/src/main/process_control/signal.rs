@@ -380,6 +380,7 @@ mod process_signal_tests {
         let (cmd_tx, _cmd_rx) = mpsc::channel(1);
         let now = "2026-01-01T00:00:00Z".to_string();
         let entry = ProcessEntry {
+            thread_id,
             info: Arc::new(tokio::sync::Mutex::new(ProcessInfo {
                 process_id,
                 thread_id,
@@ -415,6 +416,7 @@ mod process_signal_tests {
         }
         let now = "2026-01-01T00:00:00Z".to_string();
         let entry = ProcessEntry {
+            thread_id,
             info: Arc::new(tokio::sync::Mutex::new(ProcessInfo {
                 process_id,
                 thread_id,
