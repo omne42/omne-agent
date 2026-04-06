@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
@@ -8,7 +9,7 @@ use omne_protocol::{
     ThreadEventKind, ThreadId, TurnId, TurnStatus,
 };
 use time::OffsetDateTime;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 pub struct EventLogWriter {
     thread_id: ThreadId,
@@ -63,6 +64,7 @@ impl EventLogWriter {
         .context("join lock file task")??;
 
         let events = sanitize_and_read_events(thread_id, &log_path).await?;
+        ensure_jsonl_record_boundary(&log_path).await?;
         let last_seq = events
             .last()
             .map(|event| event.seq)
@@ -111,6 +113,7 @@ impl EventLogWriter {
             .context("write event line")?;
         self.file.write_all(b"\n").await.context("write newline")?;
         self.file.flush().await.context("flush event log")?;
+        self.file.sync_data().await.context("sync event log data")?;
 
         self.next_seq += 1;
         Ok(event)
@@ -256,6 +259,52 @@ async fn sanitize_and_read_events(
     }
 
     Ok(events)
+}
+
+async fn ensure_jsonl_record_boundary(log_path: &Path) -> anyhow::Result<()> {
+    let mut file = match tokio::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(log_path)
+        .await
+    {
+        Ok(file) => file,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(err).with_context(|| format!("open {}", log_path.display())),
+    };
+    let len = file
+        .metadata()
+        .await
+        .with_context(|| format!("stat {}", log_path.display()))?
+        .len();
+    if len == 0 {
+        return Ok(());
+    }
+
+    file.seek(SeekFrom::End(-1))
+        .await
+        .with_context(|| format!("seek {}", log_path.display()))?;
+    let mut last = [0u8; 1];
+    file.read_exact(&mut last)
+        .await
+        .with_context(|| format!("read {}", log_path.display()))?;
+    if last[0] == b'\n' {
+        return Ok(());
+    }
+
+    file.seek(SeekFrom::End(0))
+        .await
+        .with_context(|| format!("seek {}", log_path.display()))?;
+    file.write_all(b"\n")
+        .await
+        .with_context(|| format!("append newline to {}", log_path.display()))?;
+    file.flush()
+        .await
+        .with_context(|| format!("flush {}", log_path.display()))?;
+    file.sync_data()
+        .await
+        .with_context(|| format!("sync {}", log_path.display()))?;
+    Ok(())
 }
 
 #[derive(Debug, Clone)]
@@ -714,6 +763,62 @@ mod tests {
             })
             .await?;
         assert_eq!(e.seq.0, 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn writer_normalizes_complete_trailing_line_without_newline() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let log_path = dir.path().join("events.jsonl");
+        let thread_id = ThreadId::new();
+
+        let first = ThreadEvent {
+            seq: EventSeq(1),
+            timestamp: OffsetDateTime::now_utc(),
+            thread_id,
+            kind: ThreadEventKind::ThreadCreated {
+                cwd: "/tmp".to_string(),
+            },
+        };
+        let first_json = serde_json::to_string(&first)?;
+        tokio::fs::write(&log_path, first_json).await?;
+
+        let mut writer = EventLogWriter::open(thread_id, log_path.clone()).await?;
+        let second = writer
+            .append(ThreadEventKind::ThreadCreated {
+                cwd: "/ok".to_string(),
+            })
+            .await?;
+
+        assert_eq!(second.seq.0, 2);
+        let bytes = tokio::fs::read(&log_path).await?;
+        assert!(bytes.ends_with(b"\n"));
+
+        let events = read_events_since(thread_id, &log_path, EventSeq::ZERO).await?;
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].seq.0, 1);
+        assert_eq!(events[1].seq.0, 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn writer_append_persists_bytes_before_returning() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let log_path = dir.path().join("events.jsonl");
+        let thread_id = ThreadId::new();
+
+        let mut writer = EventLogWriter::open(thread_id, log_path.clone()).await?;
+        let event = writer
+            .append(ThreadEventKind::ThreadCreated {
+                cwd: "/tmp".to_string(),
+            })
+            .await?;
+
+        let events = read_events_since(thread_id, &log_path, EventSeq::ZERO).await?;
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].seq, event.seq);
+        let bytes = tokio::fs::read(&log_path).await?;
+        assert!(bytes.ends_with(b"\n"));
         Ok(())
     }
 
