@@ -68,6 +68,32 @@ mod thread_manage_worktree_lifecycle_tests {
     }
 
     #[tokio::test]
+    async fn managed_worktree_path_rejects_dot_dot_escape() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let managed_root = managed_subagent_worktree_root(&server);
+        tokio::fs::create_dir_all(&managed_root).await?;
+
+        let managed_repo = managed_root.join("parent-thread").join("repo");
+        tokio::fs::create_dir_all(&managed_repo).await?;
+        let resolved = managed_subagent_worktree_path(&server, managed_repo.to_str()).await;
+        assert_eq!(resolved.as_deref(), Some(managed_repo.as_path()));
+
+        let escaped_repo = tmp.path().join("outside-repo");
+        tokio::fs::create_dir_all(&escaped_repo).await?;
+        let deceptive = managed_root
+            .join("parent-thread")
+            .join("..")
+            .join("..")
+            .join("..")
+            .join("..")
+            .join("outside-repo");
+        let escaped = managed_subagent_worktree_path(&server, deceptive.to_str()).await;
+        assert!(escaped.is_none(), "expected .. escape to be rejected");
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn thread_archive_cleans_managed_detached_worktree() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let source_repo = tmp.path().join("source");
