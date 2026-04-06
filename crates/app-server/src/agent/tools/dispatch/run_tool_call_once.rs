@@ -1200,6 +1200,7 @@ const VIEW_IMAGE_DEFAULT_MAX_BYTES: u64 = 2_000_000;
 const VIEW_IMAGE_MAX_BYTES_LIMIT: u64 = 8_000_000;
 const WEB_HTTP_TIMEOUT_SECONDS: u64 = 20;
 const WEB_TEXT_MAX_CHARS: usize = 40_000;
+const WEB_HTTP_MAX_REDIRECTS: usize = 5;
 
 #[derive(Debug, Clone, Copy)]
 struct ImageProbe {
@@ -1222,15 +1223,100 @@ fn clamp_max_results(value: Option<usize>) -> usize {
 fn validate_http_url(url: &str) -> anyhow::Result<reqwest::Url> {
     let parsed = reqwest::Url::parse(url.trim()).context("parse url")?;
     match parsed.scheme() {
-        "http" | "https" => Ok(parsed),
+        "http" | "https" => {}
         other => anyhow::bail!("unsupported url scheme: {other}"),
+    }
+    if parsed.host().is_none() {
+        anyhow::bail!("url must include a host");
+    }
+    Ok(parsed)
+}
+
+fn is_blocked_web_host_name(host: &str) -> bool {
+    host.eq_ignore_ascii_case("localhost")
+        || host.eq_ignore_ascii_case("localhost.")
+        || host.to_ascii_lowercase().ends_with(".localhost")
+}
+
+fn is_blocked_web_ip(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(ip) => {
+            let [a, b, ..] = ip.octets();
+            ip.is_private()
+                || ip.is_loopback()
+                || ip.is_link_local()
+                || ip.is_broadcast()
+                || ip.is_documentation()
+                || ip.is_unspecified()
+                || ip.is_multicast()
+                || a == 0
+                || (a == 100 && (64..=127).contains(&b))
+                || (a == 198 && matches!(b, 18 | 19))
+                || a >= 240
+        }
+        std::net::IpAddr::V6(ip) => {
+            let segments = ip.segments();
+            ip.is_loopback()
+                || ip.is_unspecified()
+                || ip.is_unique_local()
+                || ip.is_unicast_link_local()
+                || ip.is_multicast()
+                || (segments[0] == 0x2001 && segments[1] == 0x0db8)
+        }
+    }
+}
+
+async fn validate_web_outbound_url(url: &reqwest::Url) -> anyhow::Result<()> {
+    let host = url
+        .host_str()
+        .ok_or_else(|| anyhow::anyhow!("url must include a host"))?;
+    if is_blocked_web_host_name(host) {
+        anyhow::bail!("blocked local host: {host}");
+    }
+
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        if is_blocked_web_ip(ip) {
+            anyhow::bail!("blocked local address: {ip}");
+        }
+        return Ok(());
+    }
+
+    let port = url
+        .port_or_known_default()
+        .ok_or_else(|| anyhow::anyhow!("url must include a known port"))?;
+    let mut resolved_any = false;
+    for addr in tokio::net::lookup_host((host, port))
+        .await
+        .with_context(|| format!("resolve host {host}:{port}"))?
+    {
+        resolved_any = true;
+        if is_blocked_web_ip(addr.ip()) {
+            anyhow::bail!("blocked local address in dns result for {host}");
+        }
+    }
+    if !resolved_any {
+        anyhow::bail!("host did not resolve: {host}");
+    }
+    Ok(())
+}
+
+fn resolve_web_redirect_url(
+    current_url: &reqwest::Url,
+    location: &str,
+) -> anyhow::Result<reqwest::Url> {
+    let next_url = current_url
+        .join(location)
+        .with_context(|| format!("resolve redirect location from {}", current_url))?;
+    match next_url.scheme() {
+        "http" | "https" => Ok(next_url),
+        other => anyhow::bail!("unsupported redirect url scheme: {other}"),
     }
 }
 
 fn build_web_http_client() -> anyhow::Result<reqwest::Client> {
     reqwest::Client::builder()
         .timeout(Duration::from_secs(WEB_HTTP_TIMEOUT_SECONDS))
-        .redirect(reqwest::redirect::Policy::limited(5))
+        .redirect(reqwest::redirect::Policy::none())
         .user_agent("omne-agent/0.1 (web-tools)")
         .build()
         .context("build web http client")
@@ -1375,37 +1461,57 @@ async fn fetch_http_bytes_limited(
     Vec<u8>,
     bool,
 )> {
-    let response = client.get(url).send().await.context("send web request")?;
-    let status = response.status();
-    let final_url = response.url().clone();
-    let content_type = response
-        .headers()
-        .get(reqwest::header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .map(ToString::to_string);
-
-    let mut truncated = false;
-    let mut bytes = Vec::<u8>::new();
-    let max_bytes = usize::try_from(max_bytes).unwrap_or(usize::MAX);
-    let mut stream = response.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.context("read web response body chunk")?;
-        if bytes.len() >= max_bytes {
-            truncated = true;
-            break;
+    let mut current_url = url;
+    for _ in 0..=WEB_HTTP_MAX_REDIRECTS {
+        validate_web_outbound_url(&current_url).await?;
+        let response = client
+            .get(current_url.clone())
+            .send()
+            .await
+            .context("send web request")?;
+        let status = response.status();
+        if status.is_redirection() {
+            let location = response
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .ok_or_else(|| anyhow::anyhow!("redirect response missing Location header"))?
+                .to_str()
+                .context("redirect Location header is not valid utf-8")?;
+            current_url = resolve_web_redirect_url(&current_url, location)?;
+            continue;
         }
 
-        let remaining = max_bytes.saturating_sub(bytes.len());
-        if chunk.len() > remaining {
-            bytes.extend_from_slice(&chunk[..remaining]);
-            truncated = true;
-            break;
+        let final_url = response.url().clone();
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .map(ToString::to_string);
+
+        let mut truncated = false;
+        let mut bytes = Vec::<u8>::new();
+        let max_bytes = usize::try_from(max_bytes).unwrap_or(usize::MAX);
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.context("read web response body chunk")?;
+            if bytes.len() >= max_bytes {
+                truncated = true;
+                break;
+            }
+
+            let remaining = max_bytes.saturating_sub(bytes.len());
+            if chunk.len() > remaining {
+                bytes.extend_from_slice(&chunk[..remaining]);
+                truncated = true;
+                break;
+            }
+
+            bytes.extend_from_slice(&chunk);
         }
 
-        bytes.extend_from_slice(&chunk);
+        return Ok((status, final_url, content_type, bytes, truncated));
     }
-
-    Ok((status, final_url, content_type, bytes, truncated))
+    anyhow::bail!("too many redirects")
 }
 
 fn is_textual_content_type(content_type: Option<&str>) -> bool {
@@ -1790,45 +1896,6 @@ fn probe_image(bytes: &[u8], name_hint: Option<&str>) -> ImageProbe {
     }
 }
 
-async fn read_local_file_limited(
-    path: &std::path::Path,
-    max_bytes: u64,
-) -> anyhow::Result<(Vec<u8>, bool, u64)> {
-    use tokio::io::AsyncReadExt;
-
-    let mut file = tokio::fs::File::open(path)
-        .await
-        .with_context(|| format!("open {}", path.display()))?;
-    let mut bytes = Vec::<u8>::new();
-    let mut truncated = false;
-    let mut buffer = vec![0u8; 16 * 1024];
-    let max_bytes = usize::try_from(max_bytes).unwrap_or(usize::MAX);
-
-    loop {
-        let read = file.read(&mut buffer).await?;
-        if read == 0 {
-            break;
-        }
-        if bytes.len() >= max_bytes {
-            truncated = true;
-            break;
-        }
-        let remaining = max_bytes.saturating_sub(bytes.len());
-        if read > remaining {
-            bytes.extend_from_slice(&buffer[..remaining]);
-            truncated = true;
-            break;
-        }
-        bytes.extend_from_slice(&buffer[..read]);
-    }
-
-    let total_size = tokio::fs::metadata(path)
-        .await
-        .with_context(|| format!("stat {}", path.display()))?
-        .len();
-    Ok((bytes, truncated, total_size))
-}
-
 async fn handle_view_image_tool(
     server: &super::Server,
     thread_id: ThreadId,
@@ -1838,9 +1905,12 @@ async fn handle_view_image_tool(
 ) -> anyhow::Result<Value> {
     let path = normalize_optional_string(args.path);
     let url = normalize_optional_string(args.url);
-    if path.is_some() == url.is_some() {
-        anyhow::bail!("exactly one of path or url is required");
+    if path.is_some() {
+        anyhow::bail!("view_image only supports url inputs");
     }
+    let Some(url) = url else {
+        anyhow::bail!("url is required");
+    };
 
     let max_bytes = clamp_max_bytes(
         args.max_bytes,
@@ -1848,7 +1918,6 @@ async fn handle_view_image_tool(
         VIEW_IMAGE_MAX_BYTES_LIMIT,
     );
     let approval_params = serde_json::json!({
-        "path": path,
         "url": url,
         "max_bytes": max_bytes,
     });
@@ -1865,67 +1934,27 @@ async fn handle_view_image_tool(
         return Ok(result);
     }
 
-    let (bytes, truncated, source_label, source_path, source_url, total_size, name_hint) =
-        if let Some(url) = url {
-            let parsed_url = validate_http_url(&url)?;
-            let client = build_web_http_client()?;
-            let (_status, final_url, _content_type, bytes, truncated) =
-                fetch_http_bytes_limited(&client, parsed_url, max_bytes).await?;
-            let total_size = bytes.len() as u64;
-            (
-                bytes,
-                truncated,
-                "url",
-                None,
-                Some(final_url.to_string()),
-                total_size,
-                final_url
-                    .path_segments()
-                    .and_then(|mut segments| segments.next_back())
-                    .map(|s| s.to_string()),
-            )
-        } else {
-            let path = path.expect("path checked above");
-            let (_thread_rt, thread_root) = super::load_thread_root(server, thread_id).await?;
-            let root = args.root.unwrap_or(crate::FileRoot::Workspace);
-            let target_root = resolve_plan_target_root(&thread_root, root)
-                .await
-                .ok_or_else(|| anyhow::anyhow!("reference repo root is not configured"))?;
-            let rel = omne_core::modes::relative_path_under_root(
-                &target_root,
-                std::path::Path::new(&path),
-            )
-            .with_context(|| format!("path escapes root: {path}"))?;
-            let resolved_path = target_root.join(&rel);
-            let (bytes, truncated, total_size) =
-                read_local_file_limited(&resolved_path, max_bytes).await?;
-            (
-                bytes,
-                truncated,
-                "path",
-                Some(rel.display().to_string()),
-                None,
-                total_size,
-                rel.file_name()
-                    .map(|value| value.to_string_lossy().to_string()),
-            )
-        };
+    let parsed_url = validate_http_url(&url)?;
+    let client = build_web_http_client()?;
+    let (_status, final_url, _content_type, bytes, truncated) =
+        fetch_http_bytes_limited(&client, parsed_url, max_bytes).await?;
+    let name_hint = final_url
+        .path_segments()
+        .and_then(|mut segments| segments.next_back())
+        .map(|s| s.to_string());
 
     let probe = probe_image(&bytes, name_hint.as_deref());
-    let sha256 = omne_integrity_primitives::hash_sha256(&bytes).to_string();
 
     Ok(serde_json::json!({
-        "source": source_label,
-        "path": source_path,
-        "url": source_url,
+        "source": "url",
+        "path": Value::Null,
+        "url": final_url.to_string(),
         "format": probe.format,
         "mime_type": probe.mime_type,
         "width": probe.width,
         "height": probe.height,
         "bytes_read": bytes.len(),
-        "total_size": total_size,
         "truncated": truncated,
-        "sha256": sha256,
     }))
 }
 
@@ -2953,13 +2982,7 @@ fn facade_normalize_mapped_args(kind: FacadeToolKind, op: &str, mapped_args: Val
                     }
                 }
             }
-            "view_image" => {
-                if !object.contains_key("path") {
-                    if let Some(path) = object.remove("file") {
-                        object.insert("path".to_string(), path);
-                    }
-                }
-            }
+            "view_image" => {}
             _ => {}
         },
     }
@@ -3281,7 +3304,7 @@ fn facade_help_spec(
                     args_schema_hint: serde_json::json!({
                         "web_search": { "query": "string", "max_results?": "integer" },
                         "web_fetch": { "url": "string", "max_bytes?": "integer" },
-                        "view_image": { "path|string": "exactly one of path/url", "root?": "workspace|reference", "max_bytes?": "integer" }
+                        "view_image": { "url": "string", "max_bytes?": "integer" }
                     }),
                     error_examples: vec![serde_json::json!({
                         "code": FACADE_ERROR_POLICY_DENIED,
@@ -5436,4 +5459,57 @@ async fn handle_thread_events_tool(
         "thread_last_seq": thread_last_seq,
         "has_more": has_more,
     }))
+}
+
+#[cfg(test)]
+mod web_tool_boundary_tests {
+    use super::*;
+
+    #[test]
+    fn validate_http_url_rejects_unsupported_scheme() {
+        let err = validate_http_url("file:///tmp/image.png").expect_err("unsupported scheme");
+        assert!(err.to_string().contains("unsupported url scheme"));
+    }
+
+    #[test]
+    fn block_local_host_names() {
+        assert!(is_blocked_web_host_name("localhost"));
+        assert!(is_blocked_web_host_name("LOCALHOST"));
+        assert!(is_blocked_web_host_name("dev.localhost"));
+        assert!(!is_blocked_web_host_name("example.com"));
+    }
+
+    #[test]
+    fn block_local_ip_ranges() {
+        assert!(is_blocked_web_ip("127.0.0.1".parse().expect("ipv4")));
+        assert!(is_blocked_web_ip("10.0.0.8".parse().expect("ipv4")));
+        assert!(is_blocked_web_ip("::1".parse().expect("ipv6")));
+        assert!(!is_blocked_web_ip("8.8.8.8".parse().expect("ipv4")));
+    }
+
+    #[tokio::test]
+    async fn reject_loopback_literal_urls() {
+        let url = reqwest::Url::parse("http://127.0.0.1/test").expect("url");
+        let err = validate_web_outbound_url(&url)
+            .await
+            .expect_err("loopback should be denied");
+        assert!(err.to_string().contains("blocked local address"));
+    }
+
+    #[tokio::test]
+    async fn reject_localhost_urls_without_dns_lookup() {
+        let url = reqwest::Url::parse("http://localhost/test").expect("url");
+        let err = validate_web_outbound_url(&url)
+            .await
+            .expect_err("localhost should be denied");
+        assert!(err.to_string().contains("blocked local host"));
+    }
+
+    #[test]
+    fn resolve_web_redirect_url_rejects_non_http_scheme() {
+        let base = reqwest::Url::parse("https://example.com/a").expect("base");
+        let err = resolve_web_redirect_url(&base, "file:///etc/passwd")
+            .expect_err("file redirects must fail");
+        assert!(err.to_string().contains("unsupported redirect url scheme"));
+    }
 }

@@ -310,8 +310,6 @@ struct WebFetchArgs {
 #[derive(Debug, Deserialize)]
 struct ViewImageArgs {
     #[serde(default)]
-    root: Option<crate::FileRoot>,
-    #[serde(default)]
     path: Option<String>,
     #[serde(default)]
     url: Option<String>,
