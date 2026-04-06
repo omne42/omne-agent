@@ -59,155 +59,139 @@ async fn handle_process_start_inner(
         "argv": params.argv.clone(),
         "cwd": cwd_str.clone(),
     });
-    let access_mode = process_exec_access_mode(sandbox_policy);
     let tool_id = omne_protocol::ToolId::new();
-    if !access_mode.bypasses_governance() {
-        let approval_params = build_process_exec_approval_params(
-            &params.argv,
-            &requested_cwd_str,
-            params.timeout_ms,
-            None,
-        );
-        if let Some(_result) = enforce_thread_allowed_tools(
-            &thread_rt,
-            tool_id,
-            params.turn_id,
-            "process/start",
-            Some(approval_params.clone()),
-            &allowed_tools,
-        )
-        .await?
-        {
-            return process_allowed_tools_denied_response(tool_id, "process/start", &allowed_tools);
+    let approval_params =
+        build_process_exec_approval_params(&params.argv, &requested_cwd_str, params.timeout_ms, None);
+    if let Some(_result) = enforce_thread_allowed_tools(
+        &thread_rt,
+        tool_id,
+        params.turn_id,
+        "process/start",
+        Some(approval_params.clone()),
+        &allowed_tools,
+    )
+    .await?
+    {
+        return process_allowed_tools_denied_response(tool_id, "process/start", &allowed_tools);
+    }
+
+    let auth_cwd_str = cwd_str.clone();
+    let exec_governance = evaluate_process_exec_governance(
+        &ProcessExecGovernanceContext {
+            cwd: &cwd_path,
+            sandbox_policy,
+            sandbox_network_access,
+            authorization: ProcessExecAuthorizationContext {
+                thread_root: &thread_root,
+                thread_store: &server.thread_store,
+                thread_rt: &thread_rt,
+                thread_id: params.thread_id,
+                turn_id: params.turn_id,
+                approval_id: params.approval_id,
+                approval_policy,
+                mode_name: &mode_name,
+                action: "process/start",
+                exec_policy: &server.exec_policy,
+                thread_execpolicy_rules: &thread_execpolicy_rules,
+                argv: &params.argv,
+                unmatched_command_policy: UnmatchedCommandPolicy::Prompt,
+            },
+        },
+        |mode| mode.permissions.command,
+        |approval_requirement| {
+            let approval_metadata = matches!(
+                approval_requirement,
+                ProcessExecApprovalRequirement::PromptStrict
+            )
+            .then_some((
+                ProcessExecApprovalSource::ExecPolicy,
+                ProcessExecApprovalRequirement::PromptStrict,
+            ));
+            build_process_exec_approval_params(
+                &params.argv,
+                &auth_cwd_str,
+                params.timeout_ms,
+                approval_metadata,
+            )
+        },
+    )
+    .await?;
+
+    match exec_governance {
+        ProcessExecGovernance::Allowed => {}
+        ProcessExecGovernance::NeedsApproval { approval_id } => {
+            return process_needs_approval_response(params.thread_id, approval_id);
         }
-
-        let auth_cwd_str = cwd_str.clone();
-        let exec_governance = evaluate_process_exec_governance(
-            &ProcessExecGovernanceContext {
-                access_mode,
-                cwd: &cwd_path,
-                sandbox_policy,
-                sandbox_network_access,
-                authorization: ProcessExecAuthorizationContext {
-                    thread_root: &thread_root,
-                    thread_store: &server.thread_store,
-                    thread_rt: &thread_rt,
-                    thread_id: params.thread_id,
-                    turn_id: params.turn_id,
-                    approval_id: params.approval_id,
-                    approval_policy,
-                    mode_name: &mode_name,
-                    action: "process/start",
-                    exec_policy: &server.exec_policy,
-                    thread_execpolicy_rules: &thread_execpolicy_rules,
-                    argv: &params.argv,
-                    unmatched_command_policy: UnmatchedCommandPolicy::Prompt,
-                },
-            },
-            |mode| mode.permissions.command,
-            |approval_requirement| {
-                let approval_metadata = matches!(
-                    approval_requirement,
-                    ProcessExecApprovalRequirement::PromptStrict
-                )
-                .then_some((
-                    ProcessExecApprovalSource::ExecPolicy,
-                    ProcessExecApprovalRequirement::PromptStrict,
-                ));
-                build_process_exec_approval_params(
-                    &params.argv,
-                    &auth_cwd_str,
-                    params.timeout_ms,
-                    approval_metadata,
-                )
-            },
-        )
-        .await?;
-
-        match exec_governance {
-            ProcessExecGovernance::Bypassed => unreachable!(),
-            ProcessExecGovernance::Allowed => {}
-            ProcessExecGovernance::NeedsApproval { approval_id } => {
-                return process_needs_approval_response(params.thread_id, approval_id);
-            }
-            ProcessExecGovernance::Denied(ProcessExecGovernanceDenied::ApprovalDenied {
-                remembered,
-            }) => {
-                let approval_params = build_process_exec_approval_params(
-                    &params.argv,
-                    &auth_cwd_str,
-                    params.timeout_ms,
-                    None,
-                );
-                let result = process_denied_response(tool_id, params.thread_id, Some(remembered))?;
-                return emit_process_tool_denied_response(
-                    &thread_rt,
+        ProcessExecGovernance::Denied(ProcessExecGovernanceDenied::ApprovalDenied {
+            remembered,
+        }) => {
+            let approval_params = build_process_exec_approval_params(
+                &params.argv,
+                &auth_cwd_str,
+                params.timeout_ms,
+                None,
+            );
+            let result = process_denied_response(tool_id, params.thread_id, Some(remembered))?;
+            return emit_process_tool_denied_response(
+                &thread_rt,
+                tool_id,
+                params.turn_id,
+                "process/start",
+                &approval_params,
+                approval_denied_error(remembered).to_string(),
+                result,
+            )
+            .await;
+        }
+        ProcessExecGovernance::Denied(denied) => {
+            let error = process_exec_governance_denied_reason(&denied, "process/start");
+            let result = match denied {
+                ProcessExecGovernanceDenied::SandboxPolicyReadOnly => {
+                    process_sandbox_policy_denied_response(tool_id, sandbox_policy)?
+                }
+                ProcessExecGovernanceDenied::SandboxNetworkDenied => {
+                    process_sandbox_network_denied_response(tool_id, sandbox_network_access)?
+                }
+                ProcessExecGovernanceDenied::GatewayDenied(_) => {
+                    process_denied_response(tool_id, params.thread_id, None)?
+                }
+                ProcessExecGovernanceDenied::UnknownMode {
+                    available,
+                    load_error,
+                } => process_unknown_mode_denied_response(
                     tool_id,
-                    params.turn_id,
-                    "process/start",
-                    &approval_params,
-                    approval_denied_error(remembered).to_string(),
-                    result,
-                )
-                .await;
-            }
-            ProcessExecGovernance::Denied(denied) => {
-                let error = process_exec_governance_denied_reason(&denied, "process/start");
-                let result = match denied {
-                    ProcessExecGovernanceDenied::SandboxPolicyReadOnly => {
-                        process_sandbox_policy_denied_response(tool_id, sandbox_policy)?
-                    }
-                    ProcessExecGovernanceDenied::SandboxNetworkDenied => {
-                        process_sandbox_network_denied_response(tool_id, sandbox_network_access)?
-                    }
-                    ProcessExecGovernanceDenied::GatewayDenied(_) => {
-                        process_denied_response(tool_id, params.thread_id, None)?
-                    }
-                    ProcessExecGovernanceDenied::UnknownMode {
-                        available,
-                        load_error,
-                    } => process_unknown_mode_denied_response(
-                        tool_id,
-                        params.thread_id,
-                        &mode_name,
-                        available,
-                        load_error,
-                    )?,
-                    ProcessExecGovernanceDenied::ModeDenied { mode_decision } => {
-                        process_mode_denied_response(
-                            tool_id,
-                            params.thread_id,
-                            &mode_name,
-                            mode_decision,
-                        )?
-                    }
-                    ProcessExecGovernanceDenied::ExecPolicyLoad { error, details, .. } => {
-                        process_execpolicy_load_denied_response(
-                            tool_id, &mode_name, &error, details,
-                        )?
-                    }
-                    ProcessExecGovernanceDenied::ExecPolicyForbidden {
-                        matches,
-                        justification,
-                    } => process_execpolicy_denied_response(
-                        tool_id,
-                        ExecDecision::Forbidden,
-                        &matches,
-                        justification,
-                    )?,
-                    ProcessExecGovernanceDenied::ApprovalDenied { .. } => unreachable!(),
-                };
-                return emit_process_tool_denied_response(
-                    &thread_rt,
+                    params.thread_id,
+                    &mode_name,
+                    available,
+                    load_error,
+                )?,
+                ProcessExecGovernanceDenied::ModeDenied { mode_decision } => {
+                    process_mode_denied_response(tool_id, params.thread_id, &mode_name, mode_decision)?
+                }
+                ProcessExecGovernanceDenied::ExecPolicyLoad { error, details, .. } => {
+                    process_execpolicy_load_denied_response(tool_id, &mode_name, &error, details)?
+                }
+                ProcessExecGovernanceDenied::ExecPolicyForbidden {
+                    matches,
+                    justification,
+                } => process_execpolicy_denied_response(
                     tool_id,
-                    params.turn_id,
-                    "process/start",
-                    &start_tool_params,
-                    error,
-                    result,
-                )
-                .await;
-            }
+                    ExecDecision::Forbidden,
+                    &matches,
+                    justification,
+                )?,
+                ProcessExecGovernanceDenied::ApprovalDenied { .. } => unreachable!(),
+            };
+            return emit_process_tool_denied_response(
+                &thread_rt,
+                tool_id,
+                params.turn_id,
+                "process/start",
+                &start_tool_params,
+                error,
+                result,
+            )
+            .await;
         }
     }
 
@@ -298,13 +282,13 @@ async fn handle_process_start_inner(
     if let Some(env) = combined_env_opt {
         cmd.envs(env.iter());
     }
-    if !access_mode.bypasses_governance()
-        && let Err(err) = prepare_process_exec_gateway_command(
-            &params.argv,
-            &cwd_path,
-            &thread_root,
-            cmd.as_std_mut(),
-        )
+    if let Err(err) = prepare_process_exec_gateway_command(
+        &params.argv,
+        &cwd_path,
+        &thread_root,
+        sandbox_policy,
+        cmd.as_std_mut(),
+    )
     {
         if let Some(gate) = execve_gate.take() {
             shutdown_execve_gate(gate).await;
@@ -322,9 +306,7 @@ async fn handle_process_start_inner(
         .await?;
         return Ok(result);
     }
-    if !access_mode.bypasses_governance()
-        && let Some(prepared_cwd) = cmd.as_std().get_current_dir()
-    {
+    if let Some(prepared_cwd) = cmd.as_std().get_current_dir() {
         cwd_str = prepared_cwd.display().to_string();
     }
     let effective_env_summary = apply_child_process_hardening(&mut cmd, combined_env_opt)
@@ -799,7 +781,7 @@ modes:
     }
 
     #[tokio::test]
-    async fn process_start_full_access_skips_all_policy_gates() -> anyhow::Result<()> {
+    async fn process_start_full_access_still_enforces_allowed_tools() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
@@ -853,33 +835,9 @@ modes:
         )
         .await?;
 
-        let process_id: ProcessId = result["process_id"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("missing process_id"))?
-            .parse()?;
-
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
-        loop {
-            let status = {
-                let entry = {
-                    let processes = server.processes.lock().await;
-                    processes
-                        .get(&process_id)
-                        .cloned()
-                        .ok_or_else(|| anyhow::anyhow!("missing process entry"))?
-                };
-                let info = entry.info.lock().await;
-                info.status.clone()
-            };
-
-            if matches!(status, ProcessStatus::Exited) {
-                break;
-            }
-            if tokio::time::Instant::now() > deadline {
-                anyhow::bail!("process did not exit in time");
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+        assert_eq!(result["denied"], serde_json::json!(true));
+        assert_eq!(result["tool"].as_str(), Some("process/start"));
+        assert_eq!(result["allowed_tools"], serde_json::json!(["file/read"]));
 
         Ok(())
     }
