@@ -247,6 +247,7 @@ mod process_actor_tests {
             process_id,
             thread_id,
             turn_id: None,
+            os_pid: child.id(),
             argv: vec!["sleep".to_string(), "30".to_string()],
             cwd: repo_dir.display().to_string(),
             started_at: started_at.clone(),

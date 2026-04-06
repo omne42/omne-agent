@@ -4,4 +4,4 @@ import type { SandboxNetworkAccess } from "./SandboxNetworkAccess";
 import type { ThreadId } from "./ThreadId";
 import type { WriteScope } from "./WriteScope";
 
-export type ThreadConfigureParams = { thread_id: ThreadId, approval_policy?: ApprovalPolicy, sandbox_policy?: WriteScope, sandbox_writable_roots?: Array<string>, sandbox_network_access?: SandboxNetworkAccess, mode?: string, role?: string, model?: string, thinking?: string, show_thinking?: boolean, openai_base_url?: string, allowed_tools?: Array<string> | null, execpolicy_rules?: Array<string>, };
+export type ThreadConfigureParams = { thread_id: ThreadId, approval_policy?: ApprovalPolicy, sandbox_policy?: WriteScope, sandbox_writable_roots?: Array<string>, sandbox_network_access?: SandboxNetworkAccess, mode?: string, role?: string, model?: string, clear_model?: boolean, thinking?: string, clear_thinking?: boolean, show_thinking?: boolean, clear_show_thinking?: boolean, openai_base_url?: string, clear_openai_base_url?: boolean, allowed_tools?: Array<string> | null, execpolicy_rules?: Array<string>, clear_execpolicy_rules?: boolean, };

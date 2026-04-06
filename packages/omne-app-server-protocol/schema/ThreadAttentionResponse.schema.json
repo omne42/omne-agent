@@ -286,6 +286,8 @@
         "repo/search",
         "repo/index",
         "repo/symbols",
+        "repo/goto_definition",
+        "repo/find_references",
         "mcp/list_servers",
         "mcp/list_tools",
         "mcp/list_resources",

@@ -293,6 +293,16 @@
             "null"
           ]
         },
+        "result_artifact_structured_error": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/StructuredTextData"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "status": {
           "type": "string"
         },
@@ -434,6 +444,16 @@
             "null"
           ]
         },
+        "structured_error": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/StructuredTextData"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "target_workspace_cwd": {
           "type": [
             "string",
@@ -514,6 +534,16 @@
           "type": [
             "string",
             "null"
+          ]
+        },
+        "structured_error": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/StructuredTextData"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "truncated": {
@@ -821,6 +851,176 @@
         "latest",
         "history_snapshot",
         "latest_fallback"
+      ]
+    },
+    "CatalogArgData": {
+      "type": "object",
+      "required": [
+        "name",
+        "value"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/definitions/CatalogArgValueData"
+        }
+      }
+    },
+    "CatalogArgValueData": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "text"
+              ]
+            },
+            "value": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "bool"
+              ]
+            },
+            "value": {
+              "type": "boolean"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "signed"
+              ]
+            },
+            "value": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "unsigned"
+              ]
+            },
+            "value": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "nested_text"
+              ]
+            },
+            "value": {
+              "$ref": "#/definitions/StructuredTextData"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "unsupported"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "StructuredTextData": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "args",
+            "code",
+            "kind"
+          ],
+          "properties": {
+            "args": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/CatalogArgData"
+              }
+            },
+            "code": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "catalog"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "text"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "freeform"
+              ]
+            },
+            "text": {
+              "type": "string"
+            }
+          }
+        }
       ]
     }
   }

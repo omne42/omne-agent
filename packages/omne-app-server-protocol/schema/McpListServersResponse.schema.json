@@ -23,24 +23,10 @@
     "McpServerDescriptor": {
       "type": "object",
       "required": [
-        "argv",
-        "env_keys",
         "name",
         "transport"
       ],
       "properties": {
-        "argv": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "env_keys": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
         "name": {
           "type": "string"
         },

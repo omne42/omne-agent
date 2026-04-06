@@ -69,6 +69,14 @@
       "format": "uint64",
       "minimum": 0.0
     },
+    "current_context_tokens_estimate": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0.0
+    },
     "cwd": {
       "default": null,
       "type": [
@@ -169,6 +177,13 @@
         "type": "string"
       }
     },
+    "system_prompt_sha256": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "thread_id": {
       "type": "string",
       "format": "uuid"
@@ -207,14 +222,6 @@
         "boolean",
         "null"
       ]
-    },
-    "current_context_tokens_estimate": {
-      "type": [
-        "integer",
-        "null"
-      ],
-      "format": "uint64",
-      "minimum": 0.0
     },
     "total_tokens_used": {
       "type": "integer",
