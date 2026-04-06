@@ -147,11 +147,8 @@ async fn handle_mcp_list_servers(server: &Server, params: McpListServersParams) 
             .map(|(name, cfg)| omne_app_server_protocol::McpServerDescriptor {
                 name: name.to_string(),
                 transport: "stdio".to_string(),
-                argv: omne_core::redact_command_argv(cfg.argv().unwrap_or(&[])),
-                env_keys: cfg
-                    .env()
-                    .map(|env| env.keys().cloned().collect())
-                    .unwrap_or_default(),
+                argv: omne_core::redact_command_argv(cfg.argv()),
+                env_keys: cfg.env().keys().cloned().collect(),
             })
             .collect::<Vec<_>>();
 
@@ -463,9 +460,10 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
             .await?;
         return Ok(result);
     };
-    let argv = server_cfg
-        .argv()
-        .ok_or_else(|| anyhow::anyhow!("mcp server {server_name} is not stdio-configured"))?;
+    let argv = server_cfg.argv();
+    if argv.is_empty() {
+        anyhow::bail!("mcp server {server_name} is not stdio-configured");
+    }
 
     if sandbox_network_access == omne_protocol::SandboxNetworkAccess::Deny
         && mcp_server_command_requires_network_denial(argv)
