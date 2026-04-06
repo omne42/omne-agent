@@ -33,6 +33,26 @@ mod thread_manage_tests {
         )
     }
 
+    async fn running_process_entry_for_turn(
+        thread_id: ThreadId,
+        turn_id: TurnId,
+    ) -> (ProcessId, Arc<tokio::sync::Mutex<ProcessInfo>>, ProcessEntry) {
+        let (process_id, info, entry) = running_process_entry(thread_id);
+        let info_snapshot = info.lock().await.clone();
+        let info_for_turn = Arc::new(tokio::sync::Mutex::new(ProcessInfo {
+            turn_id: Some(turn_id),
+            ..info_snapshot
+        }));
+        (
+            process_id,
+            info_for_turn.clone(),
+            ProcessEntry {
+                info: info_for_turn,
+                ..entry
+            },
+        )
+    }
+
     async fn insert_stale_mcp_connection(
         server: &Server,
         thread_id: ThreadId,
@@ -4536,6 +4556,119 @@ base_url = "https://project.example/v1"
         assert!(!manager.starting.contains_key(&(thread_id, "local".to_string())));
         drop(manager);
         assert!(server.processes.lock().await.get(&process_id).is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn thread_pause_force_waits_for_active_turn_processes_to_stop() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let rt = server.get_or_load_thread(thread_id).await?;
+        let turn_id = TurnId::new();
+        rt.append_event(omne_protocol::ThreadEventKind::TurnStarted {
+            turn_id,
+            input: "pause thread".to_string(),
+            context_refs: None,
+            attachments: None,
+            directives: None,
+            priority: omne_protocol::TurnPriority::Foreground,
+        })
+        .await?;
+
+        let (process_id, _info, entry) = running_process_entry_for_turn(thread_id, turn_id).await;
+        let completion = entry.completion.clone();
+        server.processes.lock().await.insert(process_id, entry);
+
+        let server_for_cleanup = server.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(40)).await;
+            server_for_cleanup.processes.lock().await.remove(&process_id);
+            completion.mark_complete();
+        });
+
+        let response = handle_thread_pause(
+            &server,
+            ThreadPauseParams {
+                thread_id,
+                reason: Some("pause thread".to_string()),
+            },
+        )
+        .await?;
+
+        assert!(response.paused);
+        assert_eq!(response.interrupted_turn_id, Some(turn_id));
+
+        let handle = rt.handle.lock().await;
+        assert!(handle.state().paused);
+        assert!(handle.state().active_turn_id.is_none());
+        assert_eq!(
+            handle.state().last_turn_status,
+            Some(omne_protocol::TurnStatus::Interrupted)
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn thread_pause_does_not_mark_paused_when_turn_processes_remain_running() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let rt = server.get_or_load_thread(thread_id).await?;
+        let turn_id = TurnId::new();
+        rt.append_event(omne_protocol::ThreadEventKind::TurnStarted {
+            turn_id,
+            input: "pause thread".to_string(),
+            context_refs: None,
+            attachments: None,
+            directives: None,
+            priority: omne_protocol::TurnPriority::Foreground,
+        })
+        .await?;
+
+        let (process_id, _info, entry) = running_process_entry_for_turn(thread_id, turn_id).await;
+        server.processes.lock().await.insert(process_id, entry);
+
+        let err = handle_thread_pause(
+            &server,
+            ThreadPauseParams {
+                thread_id,
+                reason: Some("pause thread".to_string()),
+            },
+        )
+        .await
+        .expect_err("pause should fail while active turn processes remain running");
+        assert!(
+            err.to_string()
+                .contains("timed out waiting for thread processes to stop before pause active turn")
+        );
+
+        let handle = rt.handle.lock().await;
+        assert!(!handle.state().paused);
+        assert_eq!(handle.state().active_turn_id, Some(turn_id));
+        drop(handle);
+
+        let events = server
+            .thread_store
+            .read_events_since(thread_id, EventSeq::ZERO)
+            .await?
+            .expect("thread events should exist");
+        assert!(!events.iter().any(|event| matches!(
+            event.kind,
+            omne_protocol::ThreadEventKind::ThreadPaused { .. }
+        )));
         Ok(())
     }
 

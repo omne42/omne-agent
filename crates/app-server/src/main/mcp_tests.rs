@@ -529,7 +529,7 @@ modes:
                 omne_protocol::ThreadEventKind::ToolStarted { tool_id, tool, .. }
                     if tool == "mcp/list_tools" =>
                 {
-                    Some(tool_id.clone())
+                    Some(*tool_id)
                 }
                 _ => None,
             })
@@ -544,7 +544,7 @@ modes:
                     result,
                     ..
                 } if tool_id == &started_tool_id => {
-                    Some((status.clone(), error.clone(), result.clone()))
+                    Some((*status, error.clone(), result.clone()))
                 }
                 _ => None,
             })
