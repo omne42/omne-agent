@@ -46,7 +46,7 @@
 
 ## 验证
 
-- `./scripts/check-workspace.sh [local|ci|docs-system]`
+- `./scripts/check-workspace.sh [local|ci|docs-system|rust|full]`
 - `./scripts/check-docs-system.sh`
 - `cargo fmt --all`
 - `cargo check --workspace --all-targets`
