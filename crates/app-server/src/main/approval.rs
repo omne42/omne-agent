@@ -1572,7 +1572,7 @@ async fn resolve_sandbox_write_target(
     let Some(file_name) = path.file_name() else {
         anyhow::bail!("path has no file name: {}", path.display());
     };
-    let canon_parent = tokio::fs::canonicalize(parent)
+    let canon_parent = canonicalize_with_missing_tail(parent)
         .await
         .with_context(|| format!("canonicalize {}", parent.display()))?;
     let resolved_path = canon_parent.join(file_name);
@@ -1592,6 +1592,34 @@ async fn resolve_sandbox_write_target(
         root,
         rel_path,
     })
+}
+
+async fn canonicalize_with_missing_tail(path: &Path) -> anyhow::Result<PathBuf> {
+    let mut current = path;
+    let mut missing = Vec::<std::ffi::OsString>::new();
+    loop {
+        match tokio::fs::canonicalize(current).await {
+            Ok(canon) => {
+                let mut resolved = canon;
+                for component in missing.iter().rev() {
+                    resolved.push(component);
+                }
+                return Ok(resolved);
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                let Some(name) = current.file_name() else {
+                    return Err(err).with_context(|| format!("canonicalize {}", path.display()));
+                };
+                missing.push(name.to_os_string());
+                current = current.parent().ok_or_else(|| {
+                    anyhow::anyhow!("path has no existing ancestor: {}", path.display())
+                })?;
+            }
+            Err(err) => {
+                return Err(err).with_context(|| format!("canonicalize {}", current.display()));
+            }
+        }
+    }
 }
 
 async fn preview_sandbox_write_target(

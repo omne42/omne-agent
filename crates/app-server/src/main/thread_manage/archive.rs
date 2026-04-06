@@ -52,6 +52,18 @@ async fn handle_thread_archive(
                 break;
             }
             if tokio::time::Instant::now() >= deadline {
+                thread_rt
+                    .force_complete_turn(
+                        std::sync::Arc::new(server.clone()),
+                        turn_id,
+                        omne_protocol::TurnStatus::Interrupted,
+                        reason.clone(),
+                    )
+                    .await;
+                let handle = thread_rt.handle.lock().await;
+                if handle.state().active_turn_id.is_none() {
+                    break;
+                }
                 anyhow::bail!(
                     "timed out waiting for active turn to stop before archive: turn_id={}",
                     turn_id

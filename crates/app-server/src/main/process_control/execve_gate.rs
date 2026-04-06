@@ -417,7 +417,7 @@ async fn handle_execve_gate_decide(
         .cwd
         .as_deref()
         .map(Path::new)
-        .unwrap_or_else(|| Path::new("."));
+        .unwrap_or(ctx.thread_root.as_path());
     let approval_cwd = args
         .cwd
         .clone()

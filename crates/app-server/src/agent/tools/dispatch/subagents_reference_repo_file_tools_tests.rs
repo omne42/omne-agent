@@ -596,9 +596,9 @@ prefix_rule(
         )
         .await?;
 
-        let send = tokio::task::LocalSet::new()
+        let (send, wait, close) = tokio::task::LocalSet::new()
             .run_until(async {
-                run_tool_call_once(
+                let send = run_tool_call_once(
                     &server,
                     parent_thread_id,
                     None,
@@ -610,9 +610,40 @@ prefix_rule(
                     }),
                     None,
                 )
-                .await
+                .await?;
+
+                let wait = run_tool_call_once(
+                    &server,
+                    parent_thread_id,
+                    None,
+                    "thread",
+                    serde_json::json!({
+                        "op": "wait",
+                        "ids": [child_thread_id_str.clone()],
+                        "timeout_ms": 10_000
+                    }),
+                    None,
+                )
+                .await?;
+
+                let close = run_tool_call_once(
+                    &server,
+                    parent_thread_id,
+                    None,
+                    "thread",
+                    serde_json::json!({
+                        "op": "close",
+                        "id": child_thread_id_str.clone(),
+                        "reason": "facade close lifecycle test"
+                    }),
+                    None,
+                )
+                .await?;
+
+                Ok::<_, anyhow::Error>((send, wait, close))
             })
             .await?;
+
         assert_eq!(send["facade_tool"].as_str(), Some("thread"));
         assert_eq!(send["op"].as_str(), Some("send_input"));
         assert_eq!(send["mapped_action"].as_str(), Some("subagent/send_input"));
@@ -622,19 +653,6 @@ prefix_rule(
         );
         assert!(send["turn_id"].as_str().is_some());
 
-        let wait = run_tool_call_once(
-            &server,
-            parent_thread_id,
-            None,
-            "thread",
-            serde_json::json!({
-                "op": "wait",
-                "ids": [child_thread_id_str.clone()],
-                "timeout_ms": 10_000
-            }),
-            None,
-        )
-        .await?;
         assert_eq!(wait["facade_tool"].as_str(), Some("thread"));
         assert_eq!(wait["op"].as_str(), Some("wait"));
         assert_eq!(wait["mapped_action"].as_str(), Some("subagent/wait"));
@@ -645,19 +663,6 @@ prefix_rule(
                 .is_some()
         );
 
-        let close = run_tool_call_once(
-            &server,
-            parent_thread_id,
-            None,
-            "thread",
-            serde_json::json!({
-                "op": "close",
-                "id": child_thread_id_str.clone(),
-                "reason": "facade close lifecycle test"
-            }),
-            None,
-        )
-        .await?;
         assert_eq!(close["facade_tool"].as_str(), Some("thread"));
         assert_eq!(close["op"].as_str(), Some("close"));
         assert_eq!(close["mapped_action"].as_str(), Some("subagent/close"));

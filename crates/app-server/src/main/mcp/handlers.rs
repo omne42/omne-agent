@@ -1,3 +1,54 @@
+fn normalized_mcp_server_program_name(program: &str) -> String {
+    let mut name = program
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(program)
+        .to_ascii_lowercase();
+    if let Some(stripped) = name.strip_suffix(".exe") {
+        name = stripped.to_string();
+    }
+    name
+}
+
+fn mcp_server_command_uses_generic_launcher(argv: &[String]) -> bool {
+    let Some(program) = argv.first() else {
+        return false;
+    };
+    if argv.len() <= 1 {
+        return false;
+    }
+    matches!(
+        normalized_mcp_server_program_name(program).as_str(),
+        "python"
+            | "python3"
+            | "node"
+            | "bun"
+            | "deno"
+            | "ruby"
+            | "perl"
+            | "php"
+            | "java"
+            | "sh"
+            | "bash"
+            | "zsh"
+            | "fish"
+            | "pwsh"
+            | "powershell"
+            | "cmd"
+    )
+}
+
+fn mcp_server_command_uses_path_invocation(argv: &[String]) -> bool {
+    argv.first()
+        .is_some_and(|program| program.contains('/') || program.contains('\\'))
+}
+
+fn mcp_server_command_requires_network_denial(argv: &[String]) -> bool {
+    omne_process_runtime::command_uses_network(argv)
+        || mcp_server_command_uses_generic_launcher(argv)
+        || mcp_server_command_uses_path_invocation(argv)
+}
+
 async fn handle_mcp_list_servers(server: &Server, params: McpListServersParams) -> anyhow::Result<Value> {
     let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
     let (approval_policy, mode_name, allowed_tools) = {
@@ -87,42 +138,64 @@ async fn handle_mcp_list_servers(server: &Server, params: McpListServersParams) 
         })
         .await?;
 
-    let cfg = load_mcp_config(&thread_root).await?;
-    let servers = cfg
-        .servers()
-        .iter()
-        .filter(|(_, cfg)| matches!(cfg.transport(), McpTransport::Stdio))
-        .map(|(name, cfg)| omne_app_server_protocol::McpServerDescriptor {
-            name: name.to_string(),
-            transport: "stdio".to_string(),
-            argv: cfg.argv().unwrap_or(&[]).to_vec(),
-            env_keys: cfg
-                .env()
-                .map(|env| env.keys().cloned().collect())
-                .unwrap_or_default(),
-        })
-        .collect::<Vec<_>>();
+    let result: anyhow::Result<(Value, usize)> = async {
+        let cfg = load_mcp_config(&thread_root).await?;
+        let servers = cfg
+            .servers()
+            .iter()
+            .filter(|(_, cfg)| matches!(cfg.transport(), McpTransport::Stdio))
+            .map(|(name, cfg)| omne_app_server_protocol::McpServerDescriptor {
+                name: name.to_string(),
+                transport: "stdio".to_string(),
+                argv: omne_core::redact_command_argv(cfg.argv().unwrap_or(&[])),
+                env_keys: cfg
+                    .env()
+                    .map(|env| env.keys().cloned().collect())
+                    .unwrap_or_default(),
+            })
+            .collect::<Vec<_>>();
 
-    let server_count = servers.len();
-    let response = omne_app_server_protocol::McpListServersResponse {
-        config_path: cfg.path().as_ref().map(|p| p.display().to_string()),
-        servers,
-    };
-    let result = serde_json::to_value(response).context("serialize mcp/list_servers response")?;
+        let server_count = servers.len();
+        let response = omne_app_server_protocol::McpListServersResponse {
+            config_path: cfg.path().as_ref().map(|p| p.display().to_string()),
+            servers,
+        };
+        let response_value =
+            serde_json::to_value(response).context("serialize mcp/list_servers response")?;
+        Ok((response_value, server_count))
+    }
+    .await;
 
-    thread_rt
-        .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-            tool_id,
-            status: omne_protocol::ToolStatus::Completed,
-            structured_error: None,
-            error: None,
-            result: Some(serde_json::json!({
-                "servers": server_count,
-            })),
-        })
-        .await?;
-
-    Ok(result)
+    match result {
+        Ok((response, server_count)) => {
+            thread_rt
+                .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: omne_protocol::ToolStatus::Completed,
+                    structured_error: None,
+                    error: None,
+                    result: Some(serde_json::json!({
+                        "servers": server_count,
+                    })),
+                })
+                .await?;
+            Ok(response)
+        }
+        Err(err) => {
+            thread_rt
+                .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
+                    tool_id,
+                    status: omne_protocol::ToolStatus::Failed,
+                    structured_error: None,
+                    error: Some(err.to_string()),
+                    result: Some(serde_json::json!({
+                        "servers": 0,
+                    })),
+                })
+                .await?;
+            Err(err)
+        }
+    }
 }
 
 async fn handle_mcp_list_tools(server: &Server, params: McpListToolsParams) -> anyhow::Result<Value> {
@@ -395,7 +468,7 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
         .ok_or_else(|| anyhow::anyhow!("mcp server {server_name} is not stdio-configured"))?;
 
     if sandbox_network_access == omne_protocol::SandboxNetworkAccess::Deny
-        && omne_process_runtime::command_uses_network(argv)
+        && mcp_server_command_requires_network_denial(argv)
     {
         let result = mcp_sandbox_network_denied_response(tool_id, sandbox_network_access)?;
         emit_mcp_tool_denied(

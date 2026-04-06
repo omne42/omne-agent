@@ -57,6 +57,7 @@ pub struct LoadedProjectConfig {
 
 pub(crate) const DEFAULT_OPENAI_PROVIDER: &str = "openai-codex-apikey";
 pub(crate) const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
+const OPENAI_RUNTIME_PROVIDER: &str = "openai";
 
 pub(crate) struct ProviderBaseUrlOverrideWarning {
     pub code: String,
@@ -208,14 +209,42 @@ fn provider_auth_from_preset_hint(
     }
 }
 
+fn canonical_runtime_provider_hint(provider_name_hint: &str) -> &str {
+    match provider_name_hint.trim() {
+        DEFAULT_OPENAI_PROVIDER => OPENAI_RUNTIME_PROVIDER,
+        other => other,
+    }
+}
+
+fn normalize_routing_provider_aliases(routing: &mut ditto_core::config::ProviderRoutingConfig) {
+    for profile in routing.profiles.values_mut() {
+        let canonical = profile
+            .config
+            .provider
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .or_else(|| Some(profile.provider.trim()).filter(|value| !value.is_empty()))
+            .map(canonical_runtime_provider_hint)
+            .map(ToString::to_string);
+        if let Some(canonical) = canonical {
+            profile.provider = canonical.clone();
+            if profile.config.provider.is_some() {
+                profile.config.provider = Some(canonical);
+            }
+        }
+    }
+}
+
 pub(crate) fn resolve_provider_config(
     provider_name_hint: &str,
     provider_overrides: Option<&ProviderConfig>,
 ) -> anyhow::Result<ProviderConfig> {
     let mut config = provider_overrides.cloned().unwrap_or_default();
+    let runtime_provider_hint = canonical_runtime_provider_hint(provider_name_hint);
 
     if let Some(preset) = ditto_core::runtime_registry::builtin_runtime_registry_catalog()
-        .provider_preset(provider_name_hint)
+        .provider_preset(runtime_provider_hint)
     {
         if config
             .base_url
@@ -461,7 +490,10 @@ pub async fn load_project_config(thread_root: &Path) -> LoadedProjectConfig {
                     parsed.anthropic.providers,
                 );
                 config_openai_models = parsed.openai.models;
-                config_openai_routing = parsed.openai.routing;
+                config_openai_routing = parsed.openai.routing.map(|mut routing| {
+                    normalize_routing_provider_aliases(&mut routing);
+                    routing
+                });
                 config_ui_show_thinking = parsed.ui.show_thinking;
             }
             Err(err) => {
@@ -809,7 +841,7 @@ targets = [{ profile = "thinking", model = "o3" }]
             })
             .expect("completion plan");
         assert_eq!(completion.targets.len(), 1);
-        assert_eq!(completion.targets[0].provider, "openai-codex-apikey");
+        assert_eq!(completion.targets[0].provider, "openai");
         assert_eq!(completion.targets[0].model, "gpt-4.1");
 
         let thinking = routing
