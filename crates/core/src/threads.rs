@@ -321,7 +321,11 @@ impl ThreadHandle {
         next_state.apply(&event)?;
         let mut next_active_processes = self.active_processes.clone();
         let mut next_active_tools = self.active_tools.clone();
-        apply_runtime_event_tracking(&mut next_active_processes, &mut next_active_tools, &event.kind);
+        apply_runtime_event_tracking(
+            &mut next_active_processes,
+            &mut next_active_tools,
+            &event.kind,
+        );
 
         let event = self.writer.append(kind).await?;
         self.state = next_state;
@@ -603,7 +607,8 @@ mod tests {
             .await
             .expect_err("invalid event should be rejected before writing");
         assert!(
-            err.to_string().contains("turn completed for non-active turn"),
+            err.to_string()
+                .contains("turn completed for non-active turn"),
             "unexpected error: {err}"
         );
 
@@ -621,7 +626,11 @@ mod tests {
             .await?
             .expect("thread exists");
         let resumed_events = resumed.events_since(EventSeq::ZERO).await?;
-        assert_eq!(resumed_events.len(), 1, "resume should not see a stray event");
+        assert_eq!(
+            resumed_events.len(),
+            1,
+            "resume should not see a stray event"
+        );
         Ok(())
     }
 
