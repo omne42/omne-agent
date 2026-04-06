@@ -55,12 +55,12 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        rm -rf ../omne_foundation ../omne-runtime ../ditto-llm
-        mv _deps/omne_foundation ../omne_foundation
-        mv _deps/omne-runtime ../omne-runtime
-        mv _deps/ditto-llm ../ditto-llm
-        test -f ../omne_foundation/crates/error-kit/Cargo.toml
-        test -f ../omne_foundation/crates/mcp-kit/Cargo.toml
-        test -f ../omne-runtime/crates/omne-execution-gateway/Cargo.toml
-        test -f ../ditto-llm/crates/ditto-core/Cargo.toml
+        rm -rf omne_foundation omne-runtime ditto-llm
+        mv _deps/omne_foundation omne_foundation
+        mv _deps/omne-runtime omne-runtime
+        mv _deps/ditto-llm ditto-llm
+        test -f omne_foundation/crates/error-kit/Cargo.toml
+        test -f omne_foundation/crates/mcp-kit/Cargo.toml
+        test -f omne-runtime/crates/omne-execution-gateway/Cargo.toml
+        test -f ditto-llm/crates/ditto-core/Cargo.toml
         rmdir _deps 2>/dev/null || true
