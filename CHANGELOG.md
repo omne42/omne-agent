@@ -8,7 +8,7 @@
 ## [Unreleased]
 
 ### Fixed
-- GitHub Actions 现在会 checkout `omne_foundation`、`omne-runtime` 与 `ditto-llm` 兄弟仓，并统一执行 `scripts/check-workspace.sh ci`，把 `omne-agent` 的 docs/rust fmt/check/test/clippy 门禁接到 PR 与 `main` push，避免本地 path 依赖与 Rust 回归缺少机械化 CI 覆盖。
+- GitHub Actions 现在会 checkout `omne_foundation`、`omne-runtime` 与 `ditto-llm` 兄弟仓，并统一执行 `scripts/check-workspace.sh ci`，把 `omne-agent` 的 docs/rust fmt/check 门禁接到 PR 与 `main` push；同时保留 `full` 模式给手动运行 `cargo test --workspace` 与 `cargo clippy --workspace --all-targets --all-features -- -D warnings`。
 - `omne-core::threads`：`resume_thread()` 不再为恢复期未知状态的子进程伪造 `ProcessExited` 历史事件，只清理失效的 runtime 进程跟踪，避免把仍可能存活的 OS 进程错误写死为已退出。
 - `omne-app-server`：进程 actor 在子进程退出时立即移除内存注册表项，不再保留一个短暂但误导性的“已退出进程仍可被定位”的延迟窗口。
 - `omne-app-server`：`thread/archive` 现在会同步清理该 thread 的 MCP 连接缓存与 pending starter，避免归档后继续保留 stale MCP session。
