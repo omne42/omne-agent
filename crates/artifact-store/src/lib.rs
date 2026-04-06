@@ -67,30 +67,9 @@ pub async fn write_file_atomic(path: &Path, bytes: &[u8]) -> anyhow::Result<()> 
     tighten_file_permissions_best_effort(&tmp_path).await;
 
     if let Err(err) = tokio::fs::rename(&tmp_path, path).await {
-        if matches!(
-            err.kind(),
-            std::io::ErrorKind::AlreadyExists | std::io::ErrorKind::PermissionDenied
-        ) {
-            match tokio::fs::remove_file(path).await {
-                Ok(()) => {}
-                Err(remove_err) if remove_err.kind() == std::io::ErrorKind::NotFound => {}
-                Err(remove_err) => {
-                    let _ = tokio::fs::remove_file(&tmp_path).await;
-                    return Err(remove_err)
-                        .with_context(|| format!("remove old {}", path.display()));
-                }
-            }
-            if let Err(rename_err) = tokio::fs::rename(&tmp_path, path).await {
-                let _ = tokio::fs::remove_file(&tmp_path).await;
-                return Err(rename_err).with_context(|| {
-                    format!("rename {} -> {}", tmp_path.display(), path.display())
-                });
-            }
-        } else {
-            let _ = tokio::fs::remove_file(&tmp_path).await;
-            return Err(err)
-                .with_context(|| format!("rename {} -> {}", tmp_path.display(), path.display()));
-        }
+        let _ = tokio::fs::remove_file(&tmp_path).await;
+        return Err(err)
+            .with_context(|| format!("rename {} -> {}", tmp_path.display(), path.display()));
     }
 
     tighten_file_permissions_best_effort(path).await;
@@ -138,6 +117,19 @@ mod tests {
             .mode()
             & 0o777u32;
         assert_eq!(parent_mode, 0o700);
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    #[tokio::test]
+    async fn write_file_atomic_replaces_existing_file() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let path = tmp.path().join("artifacts/user/demo.md");
+
+        write_file_atomic(&path, b"old").await?;
+        write_file_atomic(&path, b"new").await?;
+
+        assert_eq!(tokio::fs::read(&path).await?, b"new");
         Ok(())
     }
 }
