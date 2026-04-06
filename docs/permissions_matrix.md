@@ -11,11 +11,7 @@
 | `mode` | 内置/项目自定义 mode 名 | 是 | 选择“场景能力边界”（代码/评审/文档等）。 |
 | `sandbox_policy` | `read_only` / `workspace_write` / `full_access` | 否 | 控制文件系统写入范围。`full_access` = 最大权限。 |
 | `approval_policy` | `auto_approve` / `manual` / `unless_trusted` / `auto_deny` | 否 | 控制高风险动作是否自动执行或必须审批。 |
-<<<<<<< HEAD
 | `sandbox_network_access` | `deny` / `allow` | 否 | 控制命令执行链路里的“潜在联网命令”检测与阻断。当前实现会 fail-closed 拦截已知网络客户端、generic launcher 执行代码，以及路径形式的 opaque 可执行文件；它不是内核级网络沙箱。 |
-=======
-| `sandbox_network_access` | `deny` / `allow` | 否 | 控制命令执行链路里的“潜在联网命令”检测与阻断。当前实现会 fail-closed 拦截已知网络客户端、generic launcher 执行代码，以及路径形式的 opaque 可执行文件；它不是内核级网络沙箱。 |
->>>>>>> 265f23f (fix(process-runtime): harden network deny classification)
 | `role` | role catalog 名称 | 否 | 身份语义，只做降权，不会放大 `mode` 权限。 |
 
 最外层不建议直接暴露的高级选项：
