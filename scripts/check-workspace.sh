@@ -11,6 +11,10 @@ run_docs_system() {
 run_rust_gates() {
   cargo fmt --all -- --check
   cargo check --workspace --all-targets
+}
+
+run_full_rust_gates() {
+  run_rust_gates
   cargo test --workspace
   cargo clippy --workspace --all-targets --all-features -- -D warnings
 }
@@ -28,9 +32,13 @@ case "$mode" in
   rust)
     run_rust_gates
     ;;
+  full)
+    run_docs_system
+    run_full_rust_gates
+    ;;
   *)
     echo "unknown mode: $mode" >&2
-    echo "usage: $0 [local|ci|docs-system|rust]" >&2
+    echo "usage: $0 [local|ci|docs-system|rust|full]" >&2
     exit 1
     ;;
 esac
