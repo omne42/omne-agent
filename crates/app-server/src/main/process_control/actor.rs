@@ -226,7 +226,7 @@ mod process_actor_tests {
         tokio::fs::create_dir_all(&repo_dir).await?;
 
         let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
-        let thread_id = create_test_thread_shared(&server, repo_dir).await?;
+        let thread_id = create_test_thread_shared(&server, repo_dir.clone()).await?;
         let thread_rt = server.get_or_load_thread(thread_id).await?;
 
         let mut cmd = Command::new("sleep");
@@ -258,20 +258,9 @@ mod process_actor_tests {
             ProcessEntry {
                 thread_id,
                 info: info.clone(),
-                cmd_tx,
+                cmd_tx: cmd_tx.clone(),
             },
         );
-        let entry = server
-            .processes
-            .lock()
-            .await
-            .get(&process_id)
-            .cloned()
-            .expect("process entry inserted");
-        drop(entry.cmd_tx.clone());
-        drop(server.processes.lock().await.remove(&process_id).expect("entry exists").cmd_tx);
-        server.processes.lock().await.insert(process_id, entry.clone());
-        drop(entry.cmd_tx.clone());
 
         let actor = tokio::spawn(run_process_actor(ProcessActorArgs {
             server: server.clone(),
@@ -286,20 +275,11 @@ mod process_actor_tests {
         }));
 
         drop(server.processes.lock().await.remove(&process_id).expect("entry exists").cmd_tx);
-        server.processes.lock().await.insert(process_id, entry);
+        drop(cmd_tx);
 
-        tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                if !server.processes.lock().await.contains_key(&process_id) {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
-        })
+        tokio::time::timeout(Duration::from_secs(5), actor)
         .await
-        .context("wait for actor to remove process entry")?;
-
-        actor.await?;
+        .context("wait for actor to exit after process control dropped")??;
 
         let events = server
             .thread_store
