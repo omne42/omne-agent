@@ -131,6 +131,7 @@ async fn handle_thread_archive(
             reason: reason.clone(),
         })
         .await?;
+    let _ = remove_mcp_connections_for_thread(server, params.thread_id).await;
     let auto_hook = run_auto_workspace_hook(server, params.thread_id, WorkspaceHookName::Archive).await;
     cleanup_managed_subagent_worktree(
         server,

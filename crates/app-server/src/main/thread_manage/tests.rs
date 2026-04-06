@@ -30,6 +30,29 @@ mod thread_manage_tests {
         )
     }
 
+    async fn insert_stale_mcp_connection(
+        server: &Server,
+        thread_id: ThreadId,
+        server_name: &str,
+    ) -> anyhow::Result<ProcessId> {
+        let (client_stream, peer_stream) = tokio::io::duplex(1024);
+        drop(peer_stream);
+        let (client_read, client_write) = tokio::io::split(client_stream);
+        let client = omne_jsonrpc::Client::connect_io(client_read, client_write).await?;
+        let process_id = ProcessId::new();
+
+        server.mcp.lock().await.connections.insert(
+            (thread_id, server_name.to_string()),
+            Arc::new(McpConnection {
+                process_id,
+                config_fingerprint: "stale-config".to_string(),
+                client: tokio::sync::Mutex::new(client),
+            }),
+        );
+
+        Ok(process_id)
+    }
+
     fn thread_configure_defaults(thread_id: ThreadId) -> ThreadConfigureParams {
         ThreadConfigureParams {
             thread_id,
@@ -4240,6 +4263,40 @@ base_url = "https://project.example/v1"
         let thread_rt = server.get_or_load_thread(thread_id).await?;
         let handle = thread_rt.handle.lock().await;
         assert!(handle.state().archived);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn thread_archive_clears_stale_mcp_connections_for_thread() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let process_id = insert_stale_mcp_connection(&server, thread_id, "local").await?;
+
+        let result = handle_thread_archive(
+            &server,
+            ThreadArchiveParams {
+                thread_id,
+                force: false,
+                reason: Some("archive thread".to_string()),
+            },
+        )
+        .await?;
+
+        assert!(result.archived);
+        let manager = server.mcp.lock().await;
+        assert!(!manager
+            .connections
+            .contains_key(&(thread_id, "local".to_string())));
+        assert!(!manager.starting.contains_key(&(thread_id, "local".to_string())));
+        drop(manager);
+        assert!(server.processes.lock().await.get(&process_id).is_none());
         Ok(())
     }
 
