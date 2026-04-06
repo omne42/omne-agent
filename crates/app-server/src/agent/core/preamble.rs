@@ -1,3 +1,4 @@
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -749,36 +750,48 @@ pub(crate) struct ProviderRouteTarget {
 }
 
 impl ProviderRouteTarget {
-    fn runtime_cache_key(&self) -> String {
-        let upstream_api = resolve_provider_upstream_api(&self.provider_config);
-        let capabilities = resolve_provider_capabilities(&self.provider_config, upstream_api);
-        let normalize_to = self.provider_config.normalize_to.unwrap_or(upstream_api);
-        let base_url = self
-            .provider_config
-            .base_url
-            .as_deref()
-            .unwrap_or(DEFAULT_OPENAI_BASE_URL);
-        let normalize_endpoint = self
-            .provider_config
-            .normalize_endpoint
-            .as_deref()
-            .unwrap_or("");
-        format!(
-            "{}|{}|{}|upstream_api={};normalize_to={};normalize_endpoint={}|tools={};streaming={};reasoning={};vision={};json_schema={};prompt_cache={}",
-            self.id,
-            self.provider,
-            base_url.trim(),
-            provider_api_name(upstream_api),
-            provider_api_name(normalize_to),
-            normalize_endpoint.trim(),
-            capabilities.tools,
-            capabilities.streaming,
-            capabilities.reasoning,
-            capabilities.vision,
-            capabilities.json_schema,
-            capabilities.prompt_cache
-        )
+}
+
+fn provider_runtime_cache_key(
+    target: &ProviderRouteTarget,
+    env: &ditto_core::config::Env,
+) -> String {
+    let upstream_api = resolve_provider_upstream_api(&target.provider_config);
+    let capabilities = resolve_provider_capabilities(&target.provider_config, upstream_api);
+    let normalize_to = target.provider_config.normalize_to.unwrap_or(upstream_api);
+
+    // Provider runtimes cache live at server scope, so the identity has to include thread-local
+    // dotenv/auth inputs. Otherwise another thread can inherit stale credentials or headers.
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    target.id.hash(&mut hasher);
+    target.provider.hash(&mut hasher);
+    target.model.hash(&mut hasher);
+    target.model_fallbacks.hash(&mut hasher);
+    target.provider_config.provider.hash(&mut hasher);
+    target.provider_config.enabled_capabilities.hash(&mut hasher);
+    target.provider_config.base_url.hash(&mut hasher);
+    target.provider_config.default_model.hash(&mut hasher);
+    target.provider_config.model_whitelist.hash(&mut hasher);
+    format!("{:?}", target.provider_config.http_headers).hash(&mut hasher);
+    format!("{:?}", target.provider_config.http_query_params).hash(&mut hasher);
+    format!("{:?}", target.provider_config.auth).hash(&mut hasher);
+    format!("{:?}", target.provider_config.capabilities).hash(&mut hasher);
+    format!("{:?}", target.provider_config.openai_compatible).hash(&mut hasher);
+    provider_api_name(upstream_api).hash(&mut hasher);
+    provider_api_name(normalize_to).hash(&mut hasher);
+    target.provider_config.normalize_endpoint.hash(&mut hasher);
+    capabilities.tools.hash(&mut hasher);
+    capabilities.streaming.hash(&mut hasher);
+    capabilities.reasoning.hash(&mut hasher);
+    capabilities.vision.hash(&mut hasher);
+    capabilities.json_schema.hash(&mut hasher);
+    capabilities.prompt_cache.hash(&mut hasher);
+    for (key, value) in &env.dotenv {
+        key.hash(&mut hasher);
+        value.hash(&mut hasher);
     }
+
+    format!("provider-runtime:{:016x}", hasher.finish())
 }
 
 #[derive(Debug, Clone)]

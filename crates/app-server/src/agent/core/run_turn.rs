@@ -451,7 +451,7 @@ pub async fn run_agent_turn(
     // Cache provider runtimes across turns to keep HTTP connections sticky. Some OpenAI-compatible
     // gateways implement prompt caching per-backend-instance, so new TCP connections can lead to
     // cache misses even with stable `prompt_cache_key`.
-    let provider_runtime_cache_key = completion_primary_target.runtime_cache_key();
+    let provider_runtime_cache_key = provider_runtime_cache_key(&completion_primary_target, &env);
     let cached_provider_runtime = {
         let cache = server.provider_runtimes.lock().await;
         cache.get(&provider_runtime_cache_key).cloned()

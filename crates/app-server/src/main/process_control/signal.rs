@@ -1,3 +1,5 @@
+use super::*;
+
 async fn send_process_signal(
     entry: &ProcessEntry,
     process_id: ProcessId,
@@ -39,7 +41,10 @@ async fn lookup_process_entry(
     }
 }
 
-async fn handle_process_kill(server: &Server, params: ProcessKillParams) -> anyhow::Result<Value> {
+pub(super) async fn handle_process_kill(
+    server: &Server,
+    params: ProcessKillParams,
+) -> anyhow::Result<Value> {
     let entry = lookup_process_entry(server, params.process_id).await?;
     let info = entry.info.lock().await.clone();
 
@@ -143,7 +148,7 @@ async fn handle_process_kill(server: &Server, params: ProcessKillParams) -> anyh
     }
 }
 
-async fn handle_process_interrupt(
+pub(super) async fn handle_process_interrupt(
     server: &Server,
     params: ProcessInterruptParams,
 ) -> anyhow::Result<Value> {
@@ -250,7 +255,7 @@ async fn handle_process_interrupt(
     }
 }
 
-async fn kill_processes_for_turn(
+pub(super) async fn kill_processes_for_turn(
     server: &Server,
     thread_id: ThreadId,
     turn_id: TurnId,
@@ -279,7 +284,7 @@ async fn kill_processes_for_turn(
     }
 }
 
-async fn interrupt_processes_for_turn(
+pub(super) async fn interrupt_processes_for_turn(
     server: &Server,
     thread_id: ThreadId,
     turn_id: TurnId,
@@ -308,7 +313,7 @@ async fn interrupt_processes_for_turn(
     }
 }
 
-async fn shutdown_running_processes(server: &Server) {
+pub(super) async fn shutdown_running_processes(server: &Server) {
     let entries = {
         let entries = server.processes.lock().await;
         entries.values().cloned().collect::<Vec<_>>()

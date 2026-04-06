@@ -3,7 +3,8 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 
-use crate::domain::{PrName, PullRequestStatus, RepositoryName, SessionId, TaskId};
+use crate::domain::{PrName, RepositoryName, SessionId, TaskId};
+use crate::run::PullRequestStatus;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SessionSummary {

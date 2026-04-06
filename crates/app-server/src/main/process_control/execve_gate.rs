@@ -1,3 +1,5 @@
+use super::*;
+
 #[cfg(unix)]
 const EXECVE_GATE_MCP_PROTOCOL_VERSION: &str = "2025-06-18";
 
@@ -7,29 +9,29 @@ const EXECVE_GATE_TOOL_DECIDE: &str = "omne.execve.decide";
 const EXECVE_GATE_TOOL_WAIT: &str = "omne.execve.wait";
 
 #[cfg(unix)]
-struct ExecveGateHandle {
+pub(super) struct ExecveGateHandle {
     cancel: CancellationToken,
     task: tokio::task::JoinHandle<()>,
     socket_path: PathBuf,
 }
 
 #[cfg(not(unix))]
-struct ExecveGateHandle;
+pub(super) struct ExecveGateHandle;
 
 #[cfg(unix)]
 #[derive(Clone)]
-struct ExecveGateContext {
-    thread_id: ThreadId,
-    turn_id: Option<TurnId>,
-    token: String,
-    thread_root: PathBuf,
-    thread_store: ThreadStore,
-    exec_policy: omne_execpolicy::Policy,
-    thread_rt: Arc<ThreadRuntime>,
+pub(super) struct ExecveGateContext {
+    pub(super) thread_id: ThreadId,
+    pub(super) turn_id: Option<TurnId>,
+    pub(super) token: String,
+    pub(super) thread_root: PathBuf,
+    pub(super) thread_store: ThreadStore,
+    pub(super) exec_policy: omne_execpolicy::Policy,
+    pub(super) thread_rt: Arc<ThreadRuntime>,
 }
 
 #[cfg(unix)]
-async fn spawn_execve_gate(
+pub(super) async fn spawn_execve_gate(
     ctx: ExecveGateContext,
     socket_path: PathBuf,
 ) -> anyhow::Result<ExecveGateHandle> {
@@ -71,7 +73,7 @@ async fn spawn_execve_gate(
 }
 
 #[cfg(unix)]
-async fn shutdown_execve_gate(gate: ExecveGateHandle) {
+pub(super) async fn shutdown_execve_gate(gate: ExecveGateHandle) {
     gate.cancel.cancel();
     if let Err(err) = gate.task.await {
         tracing::warn!(path = %gate.socket_path.display(), error = %err, "execve gate task join failed");
@@ -86,7 +88,7 @@ async fn shutdown_execve_gate(gate: ExecveGateHandle) {
 }
 
 #[cfg(not(unix))]
-async fn shutdown_execve_gate(_: ExecveGateHandle) {}
+pub(super) async fn shutdown_execve_gate(_: ExecveGateHandle) {}
 
 #[cfg(unix)]
 async fn run_execve_gate_server(

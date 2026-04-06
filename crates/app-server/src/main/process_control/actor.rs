@@ -1,16 +1,18 @@
-struct ProcessActorArgs {
-    server: Server,
-    thread_rt: Arc<ThreadRuntime>,
-    process_id: ProcessId,
-    child: tokio::process::Child,
-    cmd_rx: mpsc::Receiver<ProcessCommand>,
-    stdout_task: Option<tokio::task::JoinHandle<anyhow::Result<()>>>,
-    stderr_task: Option<tokio::task::JoinHandle<anyhow::Result<()>>>,
-    execve_gate: Option<ExecveGateHandle>,
-    info: Arc<tokio::sync::Mutex<ProcessInfo>>,
+use super::*;
+
+pub(super) struct ProcessActorArgs {
+    pub(super) server: Server,
+    pub(super) thread_rt: Arc<ThreadRuntime>,
+    pub(super) process_id: ProcessId,
+    pub(super) child: tokio::process::Child,
+    pub(super) cmd_rx: mpsc::Receiver<ProcessCommand>,
+    pub(super) stdout_task: Option<tokio::task::JoinHandle<anyhow::Result<()>>>,
+    pub(super) stderr_task: Option<tokio::task::JoinHandle<anyhow::Result<()>>>,
+    pub(super) execve_gate: Option<ExecveGateHandle>,
+    pub(super) info: Arc<tokio::sync::Mutex<ProcessInfo>>,
 }
 
-async fn run_process_actor(args: ProcessActorArgs) {
+pub(super) async fn run_process_actor(args: ProcessActorArgs) {
     let ProcessActorArgs {
         server,
         thread_rt,
