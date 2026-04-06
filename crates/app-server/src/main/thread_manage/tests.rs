@@ -1356,6 +1356,82 @@ modes:
     }
 
     #[tokio::test]
+    async fn thread_fork_with_new_cwd_rebases_workspace_scoped_thread_config()
+    -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let parent_repo = tmp.path().join("parent");
+        let child_repo = tmp.path().join("child");
+        let parent_nested = parent_repo.join("nested");
+        let child_nested = child_repo.join("nested");
+        let parent_rules = parent_repo.join("rules");
+        let child_rules = child_repo.join("rules");
+        tokio::fs::create_dir_all(&parent_nested).await?;
+        tokio::fs::create_dir_all(&child_nested).await?;
+        tokio::fs::create_dir_all(&parent_rules).await?;
+        tokio::fs::create_dir_all(&child_rules).await?;
+        tokio::fs::write(parent_rules.join("thread.rules"), "allow: []\n").await?;
+        tokio::fs::write(child_rules.join("thread.rules"), "allow: []\n").await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(parent_repo.clone()).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        handle_thread_configure(
+            &server,
+            ThreadConfigureParams {
+                sandbox_writable_roots: Some(vec!["nested".to_string()]),
+                execpolicy_rules: Some(vec![
+                    parent_rules
+                        .join("thread.rules")
+                        .display()
+                        .to_string(),
+                ]),
+                ..thread_configure_defaults(thread_id)
+            },
+        )
+        .await?;
+
+        let forked = handle_thread_fork(
+            &server,
+            ThreadForkParams {
+                thread_id,
+                cwd: Some(child_repo.display().to_string()),
+            },
+        )
+        .await?;
+
+        let forked_rt = server.get_or_load_thread(forked.thread_id).await?;
+        let (fork_cwd, sandbox_writable_roots, execpolicy_rules) = {
+            let handle = forked_rt.handle.lock().await;
+            let state = handle.state();
+            (
+                state.cwd.clone(),
+                state.sandbox_writable_roots.clone(),
+                state.execpolicy_rules.clone(),
+            )
+        };
+        let child_repo_canonical = tokio::fs::canonicalize(&child_repo).await?;
+
+        assert_eq!(
+            fork_cwd.as_deref(),
+            Some(child_repo_canonical.display().to_string().as_str())
+        );
+        assert_eq!(
+            sandbox_writable_roots,
+            vec![tokio::fs::canonicalize(&child_nested)
+                .await?
+                .display()
+                .to_string()]
+        );
+        assert_eq!(
+            execpolicy_rules,
+            vec![child_rules.join("thread.rules").display().to_string()]
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn thread_fork_does_not_copy_attention_markers() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");

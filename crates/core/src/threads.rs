@@ -155,6 +155,14 @@ impl ThreadStore {
         let log_path = self.events_log_path(thread_id);
         let mut handle = ThreadHandle::open_existing(thread_id, log_path).await?;
 
+        let mut recovered_pending_approvals = handle
+            .state
+            .pending_approvals
+            .iter()
+            .copied()
+            .collect::<Vec<_>>();
+        recovered_pending_approvals.sort_by_key(|approval_id| approval_id.to_string());
+
         if let Some(turn_id) = handle.state.active_turn_id {
             let status = if handle.state.active_turn_interrupt_requested {
                 TurnStatus::Interrupted
@@ -166,6 +174,17 @@ impl ThreadStore {
                     turn_id,
                     status,
                     reason: Some("recovered incomplete turn on resume".to_string()),
+                })
+                .await?;
+        }
+
+        for approval_id in recovered_pending_approvals {
+            handle
+                .append(ThreadEventKind::ApprovalDecided {
+                    approval_id,
+                    decision: omne_protocol::ApprovalDecision::Denied,
+                    remember: false,
+                    reason: Some("recovered incomplete approval on resume".to_string()),
                 })
                 .await?;
         }
@@ -429,6 +448,87 @@ mod tests {
                 reason: Some(_),
             } if *got == turn_id
         ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn resume_closes_pending_approvals_from_abandoned_runtime() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let store = ThreadStore::new(PmPaths::new(dir.path().join(".omne_data")));
+
+        let mut thread = store.create_thread(PathBuf::from("/tmp")).await?;
+        let thread_id = thread.thread_id();
+        let turn_id = omne_protocol::TurnId::new();
+        let turn_bound_approval = omne_protocol::ApprovalId::new();
+        let turnless_approval = omne_protocol::ApprovalId::new();
+        thread
+            .append(ThreadEventKind::TurnStarted {
+                turn_id,
+                input: "x".to_string(),
+                context_refs: None,
+                attachments: None,
+                directives: None,
+                priority: omne_protocol::TurnPriority::Foreground,
+            })
+            .await?;
+        thread
+            .append(ThreadEventKind::ApprovalRequested {
+                approval_id: turn_bound_approval,
+                turn_id: Some(turn_id),
+                action: "process/start".to_string(),
+                params: serde_json::json!({ "argv": ["echo", "turn-bound"] }),
+            })
+            .await?;
+        thread
+            .append(ThreadEventKind::ApprovalRequested {
+                approval_id: turnless_approval,
+                turn_id: None,
+                action: "mcp/list_servers".to_string(),
+                params: serde_json::json!({}),
+            })
+            .await?;
+        drop(thread);
+
+        let resumed = store
+            .resume_thread(thread_id)
+            .await?
+            .expect("thread exists");
+        assert!(resumed.state().pending_approvals.is_empty());
+
+        let events = resumed.events_since(EventSeq::ZERO).await?;
+        let recovered = events
+            .iter()
+            .filter_map(|event| match &event.kind {
+                ThreadEventKind::ApprovalDecided {
+                    approval_id,
+                    decision,
+                    remember,
+                    reason,
+                } => Some((*approval_id, *decision, *remember, reason.clone())),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert!(
+            recovered
+                .iter()
+                .any(|(approval_id, decision, remember, reason)| {
+                    *approval_id == turn_bound_approval
+                        && *decision == omne_protocol::ApprovalDecision::Denied
+                        && !remember
+                        && reason.as_deref() == Some("recovered incomplete approval on resume")
+                })
+        );
+        assert!(
+            recovered
+                .iter()
+                .any(|(approval_id, decision, remember, reason)| {
+                    *approval_id == turnless_approval
+                        && *decision == omne_protocol::ApprovalDecision::Denied
+                        && !remember
+                        && reason.as_deref() == Some("recovered incomplete approval on resume")
+                })
+        );
         Ok(())
     }
 
