@@ -136,11 +136,11 @@ fn mcp_server_config_fingerprint(server_cfg: &McpServerConfig) -> String {
     let _ = write!(out, "http_url={:?};", server_cfg.http_url());
     let _ = write!(
         out,
-        "bearer_token_secret={:?};",
-        server_cfg.bearer_token_secret()
+        "bearer_token_env_var={:?};",
+        server_cfg.bearer_token_env_var()
     );
     let _ = write!(out, "http_headers={:?};", server_cfg.http_headers());
-    let _ = write!(out, "secret_http_headers={:?};", server_cfg.secret_http_headers());
+    let _ = write!(out, "env_http_headers={:?};", server_cfg.env_http_headers());
     let _ = write!(out, "stdout_log={:?};", server_cfg.stdout_log());
     out
 }
@@ -165,14 +165,11 @@ async fn spawn_mcp_connection(
     if !matches!(server_cfg.transport(), McpTransport::Stdio) {
         anyhow::bail!("unsupported mcp transport (expected stdio)");
     }
-    let argv = server_cfg
-        .argv()
-        .ok_or_else(|| anyhow::anyhow!("mcp stdio transport missing argv"))?;
+    let argv = server_cfg.argv();
     if argv.is_empty() {
         anyhow::bail!("mcp server argv must not be empty");
     }
-    let empty_env = BTreeMap::new();
-    let env = server_cfg.env().unwrap_or(&empty_env);
+    let env = server_cfg.env();
 
     let process_id = ProcessId::new();
     let thread_dir = server.thread_store.thread_dir(thread_id);

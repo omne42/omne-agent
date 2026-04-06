@@ -99,9 +99,9 @@ mod mcp_tests {
         let server = cfg.servers().get("rg").unwrap();
         assert_eq!(
             server.argv(),
-            Some(vec!["mcp-rg".to_string(), "--stdio".to_string()].as_slice())
+            vec!["mcp-rg".to_string(), "--stdio".to_string()].as_slice()
         );
-        assert!(server.env().is_some_and(|env| env.contains_key("NO_COLOR")));
+        assert!(server.env().contains_key("NO_COLOR"));
     }
 
     #[tokio::test]
