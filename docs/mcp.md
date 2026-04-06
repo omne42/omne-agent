@@ -92,6 +92,7 @@ fail-closed（写死）：
 - thread start/resume 时按需建立连接（lazy）：只有当需要 list/call 某个 server 时才启动/连接。
 - resume 不承诺复用旧连接：连接是可重建的缓存，不是权威状态。
 - v1 建议每个 thread 独立管理 MCP server 进程（避免跨 thread 共享导致审计/权限边界混乱）。
+- stdio MCP server 的启动边界应与 `process/start` 对齐：在真正 `spawn()` 前，按同一套 execution gateway 预处理 `argv/cwd/workspace_root`，避免 `mcp/*` 只复用审批语义却绕过本地执行边界。
 
 事件化（建议）：
 
@@ -116,6 +117,7 @@ fail-closed（写死）：
   - approval：启用 MCP 时强烈建议 `ApprovalPolicy=manual`。
   - `prompt_strict`（已实现；见 `docs/approvals.md`）：v0.2.x 中 `mcp/call` 默认写入 `approval.requirement="prompt_strict"`，并且不可被 `remember` 自动复用。
   - 被拒绝时返回稳定 `error_code`，便于客户端自动分类（例如 `allowed_tools_denied`、`mode_denied`、`sandbox_policy_denied`、`sandbox_network_denied`、`execpolicy_denied`、`execpolicy_load_denied`、`approval_denied`）。
+- 当 `mcp/*` 需要 lazy 启动 stdio server 时，server 进程本身也属于这条治理链的一部分：本地侧既要判定“是否允许调用该 MCP 能力”，也要在 spawn 前执行 execution gateway 的边界检查与命令准备。
 
 v0.2.x 实现口径（最小）：
 

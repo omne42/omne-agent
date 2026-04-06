@@ -88,6 +88,19 @@ struct McpConnection {
     client: tokio::sync::Mutex<omne_jsonrpc::Client>,
 }
 
+#[derive(Debug)]
+struct McpConnectionStartDenied {
+    reason: String,
+}
+
+impl std::fmt::Display for McpConnectionStartDenied {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.reason)
+    }
+}
+
+impl std::error::Error for McpConnectionStartDenied {}
+
 impl std::fmt::Debug for McpConnection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("McpConnection")
@@ -158,6 +171,7 @@ async fn spawn_mcp_connection(
     thread_root: &Path,
     thread_id: ThreadId,
     turn_id: Option<TurnId>,
+    sandbox_policy: policy_meta::WriteScope,
     server_name: &str,
     server_cfg: &McpServerConfig,
 ) -> anyhow::Result<McpConnection> {
@@ -181,11 +195,36 @@ async fn spawn_mcp_connection(
     let stdout_path = process_dir.join("stdout.log");
     let stderr_path = process_dir.join("stderr.log");
 
-    let mut cmd = Command::new(&argv[0]);
+    let resolved_request = process_exec_gateway_request(argv, thread_root, thread_root)
+        .map(|request| process_exec_gateway().resolve_request(&request));
+    let mut cmd = Command::new(
+        resolved_request
+            .as_ref()
+            .filter(|_| !Path::new(&argv[0]).is_absolute())
+            .map(|request| request.program.as_os_str())
+            .unwrap_or_else(|| std::ffi::OsStr::new(&argv[0])),
+    );
     cmd.args(argv.iter().skip(1));
-    cmd.current_dir(thread_root);
+    cmd.current_dir(
+        resolved_request
+            .as_ref()
+            .map(|request| request.cwd.as_path())
+            .unwrap_or(thread_root),
+    );
     cmd.stderr(std::process::Stdio::piped());
     cmd.envs(env.iter());
+    if let Err(err) = prepare_process_exec_gateway_command(
+        argv,
+        thread_root,
+        thread_root,
+        sandbox_policy,
+        cmd.as_std_mut(),
+    ) {
+        return Err(McpConnectionStartDenied {
+            reason: process_exec_gateway_error_reason(&err),
+        }
+        .into());
+    }
     let combined_env_opt = (!env.is_empty()).then_some(env);
     let _effective_env_summary = apply_child_process_hardening(&mut cmd, combined_env_opt)
         .context("apply child process hardening for mcp server")?;
@@ -444,6 +483,7 @@ async fn get_or_start_mcp_connection(
     thread_root: &Path,
     thread_id: ThreadId,
     turn_id: Option<TurnId>,
+    sandbox_policy: policy_meta::WriteScope,
     server_name: &str,
     server_cfg: &McpServerConfig,
 ) -> anyhow::Result<Arc<McpConnection>> {
@@ -518,6 +558,7 @@ async fn get_or_start_mcp_connection(
             thread_root,
             thread_id,
             turn_id,
+            sandbox_policy,
             server_name,
             server_cfg,
         )
@@ -626,6 +667,8 @@ async fn deny_mcp_disabled(
 #[cfg(test)]
 mod mcp_runtime_tests {
     use super::*;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
 
     #[test]
     fn mcp_process_runtime_dir_uses_runtime_namespace() {
@@ -635,5 +678,52 @@ mod mcp_runtime_tests {
 
         assert!(dir.starts_with(thread_dir.join("runtime").join("processes")));
         assert!(!dir.starts_with(thread_dir.join("artifacts")));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn spawn_mcp_connection_denies_non_executable_program() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let script_path = repo_dir.join("non-executable-mcp");
+        tokio::fs::write(&script_path, "#!/bin/sh\nexit 0\n").await?;
+        tokio::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o644)).await?;
+
+        tokio::fs::write(
+            repo_dir.join("mcp.json"),
+            r#"{ "version": 1, "servers": { "local": { "transport": "stdio", "argv": ["./non-executable-mcp"] } } }"#,
+        )
+        .await?;
+
+        let server = build_test_server_shared(repo_dir.join(".omne_data"));
+        let thread_id = create_test_thread_shared(&server, repo_dir.clone()).await?;
+        let thread_rt = server.get_or_load_thread(thread_id).await?;
+        let cfg = load_mcp_config(&repo_dir).await?;
+        let server_cfg = cfg.servers().get("local").expect("local server");
+
+        let err = spawn_mcp_connection(
+            &server,
+            &thread_rt,
+            &repo_dir,
+            thread_id,
+            None,
+            policy_meta::WriteScope::WorkspaceWrite,
+            "local",
+            server_cfg,
+        )
+        .await
+        .expect_err("gateway should deny non-executable servers");
+
+        assert!(
+            err.downcast_ref::<McpConnectionStartDenied>().is_some(),
+            "unexpected error: {err:#}"
+        );
+        assert!(
+            err.to_string().contains("execution boundary denied command"),
+            "unexpected error: {err:#}"
+        );
+        Ok(())
     }
 }

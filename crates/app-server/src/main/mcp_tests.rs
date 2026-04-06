@@ -1,6 +1,8 @@
 #[cfg(test)]
 mod mcp_tests {
     use super::*;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
     use tokio::sync::mpsc;
     use tokio::sync::Mutex;
 
@@ -327,6 +329,72 @@ mod mcp_tests {
 
         assert!(result["denied"].as_bool().unwrap_or(false));
         assert_eq!(result["sandbox_network_access"].as_str(), Some("deny"));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn mcp_list_tools_denies_non_executable_server_program() -> anyhow::Result<()> {
+        let _lock = MCP_TEST_MUTEX.lock().await;
+        let _guard = McpEnabledOverrideGuard::new(Some(true));
+
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let script_path = repo_dir.join("non-executable-mcp");
+        tokio::fs::write(&script_path, "#!/bin/sh\nexit 0\n").await?;
+        tokio::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o644)).await?;
+
+        tokio::fs::write(
+            repo_dir.join("mcp.json"),
+            r#"{ "version": 1, "servers": { "local": { "transport": "stdio", "argv": ["./non-executable-mcp"] } } }"#,
+        )
+        .await?;
+
+        let server = build_test_server_shared(repo_dir.join(".omne_data"));
+        let thread_id = create_test_thread_shared(&server, repo_dir.clone()).await?;
+        handle_thread_configure(
+            &server,
+            ThreadConfigureParams {
+                thread_id,
+                approval_policy: Some(omne_protocol::ApprovalPolicy::AutoApprove),
+                sandbox_policy: Some(policy_meta::WriteScope::WorkspaceWrite),
+                sandbox_writable_roots: None,
+                sandbox_network_access: Some(omne_protocol::SandboxNetworkAccess::Allow),
+                mode: None,
+                role: None,
+                model: None,
+                clear_model: false,
+                thinking: None,
+                clear_thinking: false,
+                show_thinking: None,
+                clear_show_thinking: false,
+                openai_base_url: None,
+                clear_openai_base_url: false,
+                allowed_tools: None,
+                execpolicy_rules: None,
+                clear_execpolicy_rules: false,
+            },
+        )
+        .await?;
+
+        let result = handle_mcp_list_tools(
+            &server,
+            McpListToolsParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                server: "local".to_string(),
+            },
+        )
+        .await?;
+
+        assert!(result["denied"].as_bool().unwrap_or(false));
+        assert_eq!(
+            result["error_code"].as_str(),
+            Some("execution_boundary_denied")
+        );
         Ok(())
     }
 
@@ -667,6 +735,7 @@ modes:
             &repo_dir,
             thread_id,
             None,
+            policy_meta::WriteScope::WorkspaceWrite,
             "local",
             changed_server_cfg,
         )
@@ -743,6 +812,7 @@ modes:
             &repo_dir,
             thread_id,
             None,
+            policy_meta::WriteScope::WorkspaceWrite,
             "local",
             server_cfg,
         )
