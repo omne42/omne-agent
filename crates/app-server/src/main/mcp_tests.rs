@@ -204,6 +204,63 @@ mod mcp_tests {
     }
 
     #[tokio::test]
+    async fn mcp_denies_path_invocations_when_network_access_is_denied() -> anyhow::Result<()> {
+        let _lock = MCP_TEST_MUTEX.lock().await;
+        let _guard = McpEnabledOverrideGuard::new(Some(true));
+
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+        tokio::fs::write(
+            repo_dir.join("mcp.json"),
+            r#"{ "version": 1, "servers": { "wrapped": { "transport": "stdio", "argv": ["./mock-mcp"] } } }"#,
+        )
+        .await?;
+
+        let server = build_test_server_shared(repo_dir.join(".omne_data"));
+        let thread_id = create_test_thread_shared(&server, repo_dir.clone()).await?;
+        handle_thread_configure(
+            &server,
+            ThreadConfigureParams {
+                thread_id,
+                approval_policy: None,
+                sandbox_policy: None,
+                sandbox_writable_roots: None,
+                sandbox_network_access: Some(omne_protocol::SandboxNetworkAccess::Deny),
+                mode: None,
+                role: None,
+                model: None,
+                clear_model: false,
+                thinking: None,
+                clear_thinking: false,
+                show_thinking: None,
+                clear_show_thinking: false,
+                openai_base_url: None,
+                clear_openai_base_url: false,
+                allowed_tools: None,
+                execpolicy_rules: None,
+                clear_execpolicy_rules: false,
+            },
+        )
+        .await?;
+
+        let result = handle_mcp_list_tools(
+            &server,
+            McpListToolsParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                server: "wrapped".to_string(),
+            },
+        )
+        .await?;
+
+        assert!(result["denied"].as_bool().unwrap_or(false));
+        assert_eq!(result["sandbox_network_access"].as_str(), Some("deny"));
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn mcp_list_servers_denied_by_tool_override_reports_decision_source() -> anyhow::Result<()> {
         let _lock = MCP_TEST_MUTEX.lock().await;
         let _guard = McpEnabledOverrideGuard::new(Some(true));

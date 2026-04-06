@@ -542,6 +542,39 @@ mod process_start_tests {
     }
 
     #[tokio::test]
+    async fn process_start_denies_path_invocations_when_network_access_is_denied()
+    -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+        write_executable_sh(repo_dir.join("tool").as_path(), "#!/bin/sh\nexit 0\n").await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let result = handle_process_start(
+            &server,
+            ProcessStartParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                argv: vec!["./tool".to_string()],
+                cwd: None,
+                timeout_ms: None,
+            },
+        )
+        .await?;
+
+        assert!(result["denied"].as_bool().unwrap_or(false));
+        assert_eq!(result["sandbox_network_access"].as_str(), Some("deny"));
+        assert!(server.processes.lock().await.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn process_start_unmatched_execpolicy_requests_approval_when_mode_allows()
     -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;

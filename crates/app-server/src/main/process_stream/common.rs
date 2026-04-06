@@ -344,7 +344,8 @@ fn process_exec_governance_denied_reason(
             format!("sandbox_policy=read_only forbids {action_label}")
         }
         ProcessExecGovernanceDenied::SandboxNetworkDenied => {
-            "sandbox_network_access=deny forbids this command".to_string()
+            "sandbox_network_access=deny blocked this command via best-effort argv network classification"
+                .to_string()
         }
         ProcessExecGovernanceDenied::GatewayDenied(reason) => reason.clone(),
         ProcessExecGovernanceDenied::UnknownMode { .. } => "unknown mode".to_string(),

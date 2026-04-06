@@ -47,6 +47,9 @@ fn is_path_invocation(program: &str) -> bool {
     program.contains('/') || program.contains('\\')
 }
 
+// This is a best-effort argv classifier used by omne-agent's network deny gate.
+// It intentionally fails closed for obviously network-capable launch shapes, but it
+// is not an OS-level network isolation primitive and should not be treated as one.
 pub fn command_uses_network(argv: &[String]) -> bool {
     let Some(program) = argv.first() else {
         return false;
