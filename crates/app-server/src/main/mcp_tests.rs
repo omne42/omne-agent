@@ -47,6 +47,7 @@ mod mcp_tests {
         server.processes.lock().await.insert(
             process_id,
             ProcessEntry {
+                thread_id,
                 info: Arc::new(tokio::sync::Mutex::new(ProcessInfo {
                     process_id,
                     thread_id,

@@ -1,3 +1,61 @@
+async fn collect_thread_process_entries(
+    server: &Server,
+    thread_id: ThreadId,
+) -> Vec<(ProcessId, ProcessEntry)> {
+    let entries = server.processes.lock().await;
+    entries
+        .iter()
+        .filter(|(_, entry)| entry.thread_id == thread_id)
+        .map(|(process_id, entry)| (*process_id, entry.clone()))
+        .collect()
+}
+
+async fn running_thread_process_entries(
+    server: &Server,
+    thread_id: ThreadId,
+) -> (Vec<ProcessId>, Vec<ProcessEntry>) {
+    let mut running = Vec::<ProcessId>::new();
+    let mut to_kill = Vec::<ProcessEntry>::new();
+    for (process_id, entry) in collect_thread_process_entries(server, thread_id).await {
+        let info = entry.info.lock().await;
+        if matches!(info.status, ProcessStatus::Running) {
+            running.push(process_id);
+            to_kill.push(entry.clone());
+        }
+    }
+    (running, to_kill)
+}
+
+async fn wait_for_thread_process_entries_to_drain(
+    server: &Server,
+    thread_id: ThreadId,
+    lifecycle: &'static str,
+    timeout: Duration,
+) -> anyhow::Result<()> {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        let remaining = {
+            let entries = server.processes.lock().await;
+            entries
+                .iter()
+                .filter_map(|(process_id, entry)| {
+                    (entry.thread_id == thread_id).then_some(*process_id)
+                })
+                .collect::<Vec<_>>()
+        };
+        if remaining.is_empty() {
+            return Ok(());
+        }
+        if tokio::time::Instant::now() >= deadline {
+            anyhow::bail!(
+                "timed out waiting for thread processes to stop before {lifecycle}: {:?}",
+                remaining
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
 async fn handle_thread_archive(
     server: &Server,
     params: ThreadArchiveParams,
@@ -73,27 +131,7 @@ async fn handle_thread_archive(
         }
     }
 
-    let mut running = Vec::<ProcessId>::new();
-    let mut to_kill = Vec::<ProcessEntry>::new();
-    {
-        let entries = {
-            let entries = server.processes.lock().await;
-            entries
-                .iter()
-                .map(|(process_id, entry)| (*process_id, entry.clone()))
-                .collect::<Vec<_>>()
-        };
-        for (process_id, entry) in entries {
-            let info = entry.info.lock().await;
-            if info.thread_id != params.thread_id {
-                continue;
-            }
-            if matches!(info.status, ProcessStatus::Running) {
-                running.push(process_id);
-                to_kill.push(entry.clone());
-            }
-        }
-    }
+    let (running, to_kill) = running_thread_process_entries(server, params.thread_id).await;
 
     if !running.is_empty() && !params.force {
         anyhow::bail!(
@@ -111,39 +149,23 @@ async fn handle_thread_archive(
                 })
                 .await;
         }
-
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-        loop {
-            let has_running = {
-                let entries = server.processes.lock().await;
-                entries.values().any(|entry| {
-                    if let Ok(info) = entry.info.try_lock() {
-                        info.thread_id == params.thread_id
-                            && matches!(info.status, ProcessStatus::Running)
-                    } else {
-                        true
-                    }
-                })
-            };
-            if !has_running {
-                break;
-            }
-            if tokio::time::Instant::now() >= deadline {
-                anyhow::bail!(
-                    "timed out waiting for thread processes to stop before archive: {:?}",
-                    running
-                );
-            }
-            tokio::time::sleep(Duration::from_millis(200)).await;
-        }
     }
+
+    let _ = remove_mcp_connections_for_thread(server, params.thread_id).await;
+
+    wait_for_thread_process_entries_to_drain(
+        server,
+        params.thread_id,
+        "archive",
+        Duration::from_secs(10),
+    )
+    .await?;
 
     thread_rt
         .append_event(omne_protocol::ThreadEventKind::ThreadArchived {
             reason: reason.clone(),
         })
         .await?;
-    let _ = remove_mcp_connections_for_thread(server, params.thread_id).await;
     let auto_hook = run_auto_workspace_hook(server, params.thread_id, WorkspaceHookName::Archive).await;
     cleanup_managed_subagent_worktree(
         server,

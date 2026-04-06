@@ -468,6 +468,7 @@ async fn handle_process_start_inner(
 
     let (cmd_tx, cmd_rx) = mpsc::channel(8);
     let entry = ProcessEntry {
+        thread_id: params.thread_id,
         info: Arc::new(tokio::sync::Mutex::new(info)),
         cmd_tx,
     };

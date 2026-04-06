@@ -168,6 +168,7 @@ mod process_list_tests {
         server.processes.lock().await.insert(
             process_id,
             ProcessEntry {
+                thread_id,
                 info: info.clone(),
                 cmd_tx,
             },
