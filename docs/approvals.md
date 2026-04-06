@@ -33,6 +33,7 @@
 - **先 request 后 decided**：同一个 `approval_id` 必须先出现 `ApprovalRequested`。
 - **自动决策也要落盘**：即使 `ApprovalPolicy=auto_approve/auto_deny`，也必须写入 `ApprovalRequested + ApprovalDecided`（审计/回放需要）。
 - **事件按 `EventSeq` 单调递增排序**（订阅可重复投递；客户端按 `seq` 去重）。
+- **运行时异常恢复也要收尾**：如果 thread 在仍有 pending approvals 时被 `thread/resume` 恢复，系统会补写 `ApprovalDecided(Denied, reason=\"recovered incomplete approval on resume\")`，避免把永远无法消费的假 pending approval 留在 UI 和事件派生状态里。
 
 ---
 
