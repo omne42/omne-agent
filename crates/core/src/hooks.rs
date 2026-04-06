@@ -136,9 +136,10 @@ impl HookRunner for CommandHookRunner {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::OnceLock;
 
     use time::OffsetDateTime;
+    use tokio::sync::Mutex;
 
     use super::*;
     use crate::domain::{PrName, RepositoryName, Session, SessionId};
@@ -300,7 +301,7 @@ mod tests {
 
     #[tokio::test]
     async fn command_hook_runner_scrubs_sensitive_provider_env_vars() -> anyhow::Result<()> {
-        let _env_guard = env_lock().lock().expect("lock test env");
+        let _env_guard = env_lock().lock().await;
         let _vars = EnvGuard::set(&[
             ("OPENAI_API_KEY", "openai-secret"),
             ("OMNE_OPENAI_API_KEY", "omne-openai-secret"),
