@@ -170,15 +170,6 @@ impl ThreadStore {
                 .await?;
         }
 
-        for process_id in handle.active_processes.clone() {
-            handle
-                .append(ThreadEventKind::ProcessExited {
-                    process_id,
-                    exit_code: None,
-                    reason: Some("recovered incomplete process on resume".to_string()),
-                })
-                .await?;
-        }
         for tool_id in handle.active_tools.clone() {
             handle
                 .append(ThreadEventKind::ToolCompleted {
@@ -189,6 +180,15 @@ impl ThreadStore {
                     result: None,
                 })
                 .await?;
+        }
+        let recovered_processes = handle.recover_incomplete_processes();
+        if !recovered_processes.is_empty() {
+            tracing::warn!(
+                thread_id = %thread_id,
+                process_count = recovered_processes.len(),
+                process_ids = ?recovered_processes,
+                "recovered incomplete processes on resume without synthesizing ProcessExited"
+            );
         }
 
         Ok(Some(handle))
@@ -314,6 +314,14 @@ impl ThreadHandle {
     pub async fn events_since(&self, since_seq: EventSeq) -> anyhow::Result<Vec<ThreadEvent>> {
         read_events_since_jsonl(self.thread_id, self.log_path(), since_seq).await
     }
+
+    fn recover_incomplete_processes(&mut self) -> Vec<ProcessId> {
+        let recovered = self.active_processes.drain().collect::<Vec<_>>();
+        for process_id in &recovered {
+            self.state.running_processes.remove(process_id);
+        }
+        recovered
+    }
 }
 
 fn apply_runtime_event_tracking(
@@ -421,6 +429,49 @@ mod tests {
                 reason: Some(_),
             } if *got == turn_id
         ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn resume_drops_stale_runtime_process_tracking_without_fabricating_exit()
+    -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let store = ThreadStore::new(PmPaths::new(dir.path().join(".omne_data")));
+
+        let mut thread = store.create_thread(PathBuf::from("/tmp")).await?;
+        let thread_id = thread.thread_id();
+        let process_id = ProcessId::new();
+        thread
+            .append(ThreadEventKind::ProcessStarted {
+                process_id,
+                turn_id: None,
+                argv: vec!["sleep".to_string(), "999".to_string()],
+                cwd: "/tmp".to_string(),
+                stdout_path: "/tmp/stdout.log".to_string(),
+                stderr_path: "/tmp/stderr.log".to_string(),
+            })
+            .await?;
+        drop(thread);
+
+        let resumed = store
+            .resume_thread(thread_id)
+            .await?
+            .expect("thread exists");
+        assert!(resumed.active_processes.is_empty());
+
+        let events = resumed.events_since(EventSeq::ZERO).await?;
+        assert!(events.iter().any(|event| matches!(
+            event.kind,
+            ThreadEventKind::ProcessStarted {
+                process_id: got, ..
+            } if got == process_id
+        )));
+        assert!(!events.iter().any(|event| matches!(
+            event.kind,
+            ThreadEventKind::ProcessExited {
+                process_id: got, ..
+            } if got == process_id
+        )));
         Ok(())
     }
 
