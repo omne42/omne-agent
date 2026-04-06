@@ -1,3 +1,13 @@
+#[cfg(test)]
+const THREAD_PAUSE_WAIT_TIMEOUT: Duration = Duration::from_millis(200);
+#[cfg(not(test))]
+const THREAD_PAUSE_WAIT_TIMEOUT: Duration = Duration::from_secs(10);
+
+#[cfg(test)]
+const THREAD_PAUSE_POLL_INTERVAL: Duration = Duration::from_millis(20);
+#[cfg(not(test))]
+const THREAD_PAUSE_POLL_INTERVAL: Duration = Duration::from_millis(200);
+
 async fn handle_thread_pause(
     server: &Server,
     params: ThreadPauseParams,
@@ -33,11 +43,16 @@ async fn handle_thread_pause(
             .interrupt_turn(turn_id, reason.clone())
             .await
             .context("interrupt active turn");
-        interrupt_processes_for_turn(server, params.thread_id, turn_id, reason.clone()).await;
-        tokio::time::sleep(Duration::from_secs(2)).await;
-        kill_processes_for_turn(server, params.thread_id, turn_id, reason.clone()).await;
+        stop_turn_processes(
+            server,
+            params.thread_id,
+            turn_id,
+            reason.clone(),
+            "pause active turn",
+        )
+        .await?;
 
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        let deadline = tokio::time::Instant::now() + THREAD_PAUSE_WAIT_TIMEOUT;
         loop {
             let done = {
                 let handle = thread_rt.handle.lock().await;
@@ -47,9 +62,24 @@ async fn handle_thread_pause(
                 break;
             }
             if tokio::time::Instant::now() >= deadline {
-                break;
+                thread_rt
+                    .force_complete_turn(
+                        std::sync::Arc::new(server.clone()),
+                        turn_id,
+                        omne_protocol::TurnStatus::Interrupted,
+                        reason.clone(),
+                    )
+                    .await;
+                let handle = thread_rt.handle.lock().await;
+                if handle.state().active_turn_id.is_none() {
+                    break;
+                }
+                anyhow::bail!(
+                    "timed out waiting for active turn to stop before pause: turn_id={}",
+                    turn_id
+                );
             }
-            tokio::time::sleep(Duration::from_millis(200)).await;
+            tokio::time::sleep(THREAD_PAUSE_POLL_INTERVAL).await;
         }
     }
 
