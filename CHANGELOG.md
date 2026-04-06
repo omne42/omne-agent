@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Fixed
+- `omne-app-server`：`turn/started` 现在会先安装 `active_turn` 再发通知，消除多连接 daemon 模式下“事件已启动但并发 interrupt 仍报 no active turn”的竞态窗口，并补齐顺序回归测试。
 - `omne-process-runtime` / `omne-app-server`：扩展 `sandbox_network_access=deny` 的 best-effort argv 检测，覆盖 `npm install`、`pip install`、`cargo install`、`go get` 等常见包管理器/工具链入口及其 `process/start`/`execve gate` 回归测试，减少通过 generic launcher 绕过网络 deny 的空间。
 - `omne-process-runtime`：收敛 `command_uses_network` 辅助函数的 needless lifetime / `match_like_matches_macro` 形式，恢复 `cargo clippy --workspace --all-targets --all-features -- -D warnings` 在当前主线上的通过性。
 - `omne-app-server`：补齐 `.env.local` / `.env.production` 在 `file/patch`、`file/edit`、`file/delete` 上的拒绝回归测试，防止 env-style secret 路径只在 `file/write` 有保护而其它写路径再次退化。

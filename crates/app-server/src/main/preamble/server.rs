@@ -1692,18 +1692,6 @@ impl ThreadRuntime {
         directives: Option<Vec<omne_protocol::TurnDirective>>,
         priority: omne_protocol::TurnPriority,
     ) -> anyhow::Result<TurnId> {
-        let mut handle = self.handle.lock().await;
-        let state = handle.state();
-        if state.archived {
-            anyhow::bail!("thread is archived");
-        }
-        if state.paused {
-            anyhow::bail!("thread is paused");
-        }
-        if state.active_turn_id.is_some() {
-            anyhow::bail!("turn already active");
-        }
-
         let context_refs = match context_refs {
             Some(refs) if refs.is_empty() => None,
             other => other,
@@ -1729,6 +1717,18 @@ impl ThreadRuntime {
         }
 
         let turn_id = TurnId::new();
+        let mut handle = self.handle.lock().await;
+        let state = handle.state();
+        if state.archived {
+            anyhow::bail!("thread is archived");
+        }
+        if state.paused {
+            anyhow::bail!("thread is paused");
+        }
+        if state.active_turn_id.is_some() {
+            anyhow::bail!("turn already active");
+        }
+
         let input_for_event = input.clone();
         let clear_reason = Some("new turn started".to_string());
         let clear_plan_event = handle
@@ -1769,15 +1769,6 @@ impl ThreadRuntime {
                 priority,
             })
             .await?;
-        drop(handle);
-        self.emit_event_notifications(&clear_plan_event).await;
-        self.emit_event_notifications(&clear_diff_event).await;
-        self.emit_event_notifications(&clear_fan_out_linkage_issue_event)
-            .await;
-        self.emit_event_notifications(&clear_fan_out_auto_apply_error_event)
-            .await;
-        self.emit_event_notifications(&event).await;
-
         let cancel = CancellationToken::new();
         {
             let mut active = self.active_turn.lock().await;
@@ -1787,6 +1778,14 @@ impl ThreadRuntime {
                 interrupt_reason: None,
             });
         }
+        drop(handle);
+        self.emit_event_notifications(&clear_plan_event).await;
+        self.emit_event_notifications(&clear_diff_event).await;
+        self.emit_event_notifications(&clear_fan_out_linkage_issue_event)
+            .await;
+        self.emit_event_notifications(&clear_fan_out_auto_apply_error_event)
+            .await;
+        self.emit_event_notifications(&event).await;
 
         tokio::task::spawn_local(async move {
             self.run_turn(server, turn_id, cancel, input, priority).await;
@@ -1818,21 +1817,22 @@ impl ThreadRuntime {
     }
 
     async fn interrupt_turn(&self, turn_id: TurnId, reason: Option<String>) -> anyhow::Result<()> {
+        let mut handle = self.handle.lock().await;
+        let active_turn_id = handle.state().active_turn_id;
         let cancel = {
             let mut active = self.active_turn.lock().await;
-            let Some(active) = active.as_mut() else {
-                anyhow::bail!("no active turn");
-            };
-            if active.turn_id != turn_id {
-                anyhow::bail!("turn is not active");
+            match active.as_mut() {
+                Some(active) if active.turn_id == turn_id => {
+                    if active.interrupt_reason.is_none() {
+                        active.interrupt_reason = reason.clone();
+                    }
+                    active.cancel.clone()
+                }
+                Some(_) => anyhow::bail!("turn is not active"),
+                None if active_turn_id.is_some() => anyhow::bail!("turn is not active"),
+                None => anyhow::bail!("no active turn"),
             }
-            if active.interrupt_reason.is_none() {
-                active.interrupt_reason = reason.clone();
-            }
-            active.cancel.clone()
         };
-
-        let mut handle = self.handle.lock().await;
         if handle.state().active_turn_interrupt_requested {
             cancel.cancel();
             return Ok(());
@@ -2047,5 +2047,70 @@ mod server_cache_tests {
 
         assert_eq!(status, TurnStatus::Interrupted);
         assert_eq!(reason.as_deref(), Some("user interrupted"));
+    }
+
+    #[tokio::test]
+    async fn turn_started_notification_observes_active_turn_before_delivery() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = Arc::new(crate::build_test_server_shared(repo_dir.join(".omne_data")));
+        let thread_id = crate::create_test_thread_shared(server.as_ref(), repo_dir).await?;
+        let thread_rt = server.get_or_load_thread(thread_id).await?;
+        tokio::task::LocalSet::new()
+            .run_until({
+                let server = server.clone();
+                let thread_rt = thread_rt.clone();
+                async move {
+                    let mut notify_rx = thread_rt.notify_tx.subscribe();
+                    let start_task = tokio::task::spawn_local({
+                        let server = server.clone();
+                        let thread_rt = thread_rt.clone();
+                        async move {
+                            thread_rt
+                                .start_turn(
+                                    server,
+                                    "check notification ordering".to_string(),
+                                    None,
+                                    None,
+                                    None,
+                                    omne_protocol::TurnPriority::Foreground,
+                                )
+                                .await
+                        }
+                    });
+
+                    let turn_started_line = tokio::time::timeout(Duration::from_secs(5), async {
+                        loop {
+                            let line = notify_rx.recv().await?;
+                            if line.contains("\"method\":\"turn/started\"") {
+                                break Ok::<_, broadcast::error::RecvError>(line);
+                            }
+                        }
+                    })
+                    .await
+                    .context("wait for turn/started notification")??;
+                    assert!(
+                        turn_started_line.contains("\"method\":\"turn/started\""),
+                        "unexpected notification: {turn_started_line}"
+                    );
+
+                    let active_turn = thread_rt.active_turn.lock().await;
+                    assert!(
+                        active_turn.is_some(),
+                        "turn/started must not be delivered before active_turn is installed"
+                    );
+                    drop(active_turn);
+
+                    let turn_id = start_task.await??;
+                    thread_rt
+                        .interrupt_turn(turn_id, Some("test cleanup".to_string()))
+                        .await?;
+                    Ok::<(), anyhow::Error>(())
+                }
+            })
+            .await?;
+        Ok(())
     }
 }
