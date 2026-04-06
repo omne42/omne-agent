@@ -43,6 +43,7 @@ fn build_test_server_shared_with_cwd(cwd: PathBuf, omne_root: PathBuf) -> Server
         notify_tx,
         thread_store: ThreadStore::new(PmPaths::new(omne_root)),
         threads: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+        thread_loads: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         processes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         mcp: Arc::new(tokio::sync::Mutex::new(McpManager::default())),
         disk_warning: Arc::new(tokio::sync::Mutex::new(HashMap::new())),

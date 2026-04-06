@@ -1073,6 +1073,7 @@ struct Server {
     notify_tx: broadcast::Sender<String>,
     thread_store: ThreadStore,
     threads: Arc<tokio::sync::Mutex<HashMap<ThreadId, Arc<ThreadRuntime>>>>,
+    thread_loads: Arc<tokio::sync::Mutex<HashMap<ThreadId, Arc<tokio::sync::Notify>>>>,
     processes: Arc<tokio::sync::Mutex<HashMap<ProcessId, ProcessEntry>>>,
     mcp: Arc<tokio::sync::Mutex<McpManager>>,
     disk_warning: Arc<tokio::sync::Mutex<HashMap<ThreadId, DiskWarningState>>>,
@@ -1085,20 +1086,54 @@ struct Server {
 
 impl Server {
     async fn get_or_load_thread(&self, thread_id: ThreadId) -> anyhow::Result<Arc<ThreadRuntime>> {
-        {
-            let threads = self.threads.lock().await;
-            if let Some(rt) = threads.get(&thread_id) {
-                return Ok(rt.clone());
+        loop {
+            {
+                let threads = self.threads.lock().await;
+                if let Some(rt) = threads.get(&thread_id) {
+                    return Ok(rt.clone());
+                }
             }
-        }
 
+            let wait_for_existing = {
+                let mut loads = self.thread_loads.lock().await;
+                if let Some(notify) = loads.get(&thread_id) {
+                    Some(notify.clone())
+                } else {
+                    loads.insert(thread_id, Arc::new(tokio::sync::Notify::new()));
+                    None
+                }
+            };
+            if let Some(notify) = wait_for_existing {
+                notify.notified().await;
+                continue;
+            }
+
+            let load_result = self.load_thread_with_runtime_recovery(thread_id).await;
+            let notify = {
+                let mut loads = self.thread_loads.lock().await;
+                loads.remove(&thread_id)
+            };
+            if let Some(notify) = notify {
+                notify.notify_waiters();
+            }
+
+            return load_result;
+        }
+    }
+
+    async fn load_thread_with_runtime_recovery(
+        &self,
+        thread_id: ThreadId,
+    ) -> anyhow::Result<Arc<ThreadRuntime>> {
         let handle = self
             .thread_store
-            .resume_thread(thread_id)
+            .open_thread_without_recovery(thread_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("thread not found: {thread_id}"))?;
 
         let rt = Arc::new(ThreadRuntime::new(handle, self.notify_tx.clone()));
+        recover_thread_runtime_after_resume(thread_id, &rt).await?;
+
         let mut threads = self.threads.lock().await;
         if let Some(existing) = threads.get(&thread_id) {
             return Ok(existing.clone());
@@ -1129,6 +1164,218 @@ impl Server {
 
     async fn evict_cached_thread(&self, thread_id: ThreadId) -> bool {
         self.threads.lock().await.remove(&thread_id).is_some()
+    }
+}
+
+async fn recover_thread_runtime_after_resume(
+    thread_id: ThreadId,
+    thread_rt: &Arc<ThreadRuntime>,
+) -> anyhow::Result<()> {
+    let (active_turn_id, interrupted, mut pending_approvals, mut active_tools, recovered_processes) = {
+        let mut handle = thread_rt.handle.lock().await;
+        let active_turn_id = handle.state().active_turn_id;
+        let interrupted = handle.state().active_turn_interrupt_requested;
+        let mut pending_approvals = handle
+            .state()
+            .pending_approvals
+            .iter()
+            .copied()
+            .collect::<Vec<_>>();
+        pending_approvals.sort_by_key(|approval_id| approval_id.to_string());
+
+        let mut active_tools = handle.active_tool_ids();
+        active_tools.sort_by_key(|tool_id| tool_id.to_string());
+
+        let recovered_processes = handle.take_active_process_ids();
+        (
+            active_turn_id,
+            interrupted,
+            pending_approvals,
+            active_tools,
+            recovered_processes,
+        )
+    };
+
+    if let Some(turn_id) = active_turn_id {
+        let status = if interrupted {
+            TurnStatus::Interrupted
+        } else {
+            TurnStatus::Failed
+        };
+        thread_rt
+            .append_event(omne_protocol::ThreadEventKind::TurnCompleted {
+                turn_id,
+                status,
+                reason: Some("recovered incomplete turn on resume".to_string()),
+            })
+            .await?;
+    }
+
+    for approval_id in pending_approvals.drain(..) {
+        thread_rt
+            .append_event(omne_protocol::ThreadEventKind::ApprovalDecided {
+                approval_id,
+                decision: omne_protocol::ApprovalDecision::Denied,
+                remember: false,
+                reason: Some("recovered incomplete approval on resume".to_string()),
+            })
+            .await?;
+    }
+
+    for tool_id in active_tools.drain(..) {
+        thread_rt
+            .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
+                tool_id,
+                status: omne_protocol::ToolStatus::Cancelled,
+                structured_error: None,
+                error: Some("recovered incomplete tool on resume".to_string()),
+                result: None,
+            })
+            .await?;
+    }
+
+    if !recovered_processes.is_empty() {
+        tracing::warn!(
+            thread_id = %thread_id,
+            process_count = recovered_processes.len(),
+            process_ids = ?recovered_processes,
+            "recovered incomplete processes on resume without synthesizing ProcessExited"
+        );
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod thread_resume_recovery_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn get_or_load_thread_recovers_incomplete_runtime_state_once() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = Arc::new(build_test_server_shared(tmp.path().join(".omne_data")));
+        let mut thread = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let thread_id = thread.thread_id();
+        let turn_id = TurnId::new();
+        let approval_id = omne_protocol::ApprovalId::new();
+        let tool_id = omne_protocol::ToolId::new();
+        let process_id = ProcessId::new();
+
+        thread
+            .append(omne_protocol::ThreadEventKind::TurnStarted {
+                turn_id,
+                input: "recover me".to_string(),
+                context_refs: None,
+                attachments: None,
+                directives: None,
+                priority: omne_protocol::TurnPriority::Foreground,
+            })
+            .await?;
+        thread
+            .append(omne_protocol::ThreadEventKind::ApprovalRequested {
+                approval_id,
+                turn_id: Some(turn_id),
+                action: "process/start".to_string(),
+                params: serde_json::json!({ "argv": ["echo", "hello"] }),
+            })
+            .await?;
+        thread
+            .append(omne_protocol::ThreadEventKind::ToolStarted {
+                tool_id,
+                turn_id: Some(turn_id),
+                tool: "file/read".to_string(),
+                params: Some(serde_json::json!({ "path": "README.md" })),
+            })
+            .await?;
+        thread
+            .append(omne_protocol::ThreadEventKind::ProcessStarted {
+                process_id,
+                turn_id: Some(turn_id),
+                os_pid: None,
+                argv: vec!["sleep".to_string(), "999".to_string()],
+                cwd: repo_dir.display().to_string(),
+                stdout_path: repo_dir.join("stdout.log").display().to_string(),
+                stderr_path: repo_dir.join("stderr.log").display().to_string(),
+            })
+            .await?;
+        drop(thread);
+
+        let (first, second) = tokio::join!(
+            server.get_or_load_thread(thread_id),
+            server.get_or_load_thread(thread_id)
+        );
+        let first = first?;
+        let second = second?;
+        assert!(Arc::ptr_eq(&first, &second));
+
+        let handle = first.handle.lock().await;
+        assert!(handle.state().active_turn_id.is_none());
+        assert!(handle.state().pending_approvals.is_empty());
+        assert!(handle.state().running_processes.is_empty());
+        drop(handle);
+
+        let events = server
+            .thread_store
+            .read_events_since(thread_id, EventSeq::ZERO)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("missing thread after recovery"))?;
+
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(
+                    event.kind,
+                    omne_protocol::ThreadEventKind::TurnCompleted {
+                        turn_id: got,
+                        reason: Some(ref reason),
+                        ..
+                    } if got == turn_id && reason == "recovered incomplete turn on resume"
+                ))
+                .count(),
+            1
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(
+                    event.kind,
+                    omne_protocol::ThreadEventKind::ApprovalDecided {
+                        approval_id: got,
+                        reason: Some(ref reason),
+                        ..
+                    } if got == approval_id && reason == "recovered incomplete approval on resume"
+                ))
+                .count(),
+            1
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(
+                    event.kind,
+                    omne_protocol::ThreadEventKind::ToolCompleted {
+                        tool_id: got,
+                        error: Some(ref error),
+                        ..
+                    } if got == tool_id && error == "recovered incomplete tool on resume"
+                ))
+                .count(),
+            1
+        );
+        assert!(
+            !events.iter().any(|event| matches!(
+                event.kind,
+                omne_protocol::ThreadEventKind::ProcessExited {
+                    process_id: got, ..
+                } if got == process_id
+            )),
+            "process recovery should clear stale runtime tracking without fabricating ProcessExited"
+        );
+
+        Ok(())
     }
 }
 
