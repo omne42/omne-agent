@@ -454,7 +454,30 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
         return Ok(result);
     }
 
-    let cfg = load_mcp_config(&thread_root).await?;
+    let cfg = match load_mcp_config(&thread_root).await {
+        Ok(cfg) => cfg,
+        Err(err) => {
+            thread_rt
+                .append_event(omne_protocol::ThreadEventKind::ToolStarted {
+                    tool_id,
+                    turn_id: req.turn_id,
+                    tool: req.action.to_string(),
+                    params: Some(approval_params.clone()),
+                })
+                .await?;
+            append_mcp_tool_failed(
+                &thread_rt,
+                tool_id,
+                err.to_string(),
+                serde_json::json!({
+                    "server": server_name,
+                    "stage": "load_config",
+                }),
+            )
+            .await?;
+            return Err(err);
+        }
+    };
     let Some(server_cfg) = cfg.servers().get(server_name) else {
         let result = mcp_failed_response(tool_id, "unknown mcp server", server_name)?;
         thread_rt
@@ -465,20 +488,37 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
                 params: Some(approval_params.clone()),
             })
             .await?;
-        thread_rt
-            .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
-                tool_id,
-                status: omne_protocol::ToolStatus::Failed,
-                structured_error: structured_error_from_result_value(&result),
-                error: Some("unknown mcp server".to_string()),
-                result: Some(result.clone()),
-            })
-            .await?;
+        append_mcp_tool_failed(
+            &thread_rt,
+            tool_id,
+            "unknown mcp server".to_string(),
+            result.clone(),
+        )
+        .await?;
         return Ok(result);
     };
     let argv = server_cfg.argv();
     if argv.is_empty() {
-        anyhow::bail!("mcp server {server_name} is not stdio-configured");
+        let err = anyhow::anyhow!("mcp server {server_name} is not stdio-configured");
+        thread_rt
+            .append_event(omne_protocol::ThreadEventKind::ToolStarted {
+                tool_id,
+                turn_id: req.turn_id,
+                tool: req.action.to_string(),
+                params: Some(approval_params.clone()),
+            })
+            .await?;
+        append_mcp_tool_failed(
+            &thread_rt,
+            tool_id,
+            err.to_string(),
+            serde_json::json!({
+                "server": server_name,
+                "stage": "validate_server",
+            }),
+        )
+        .await?;
+        return Err(err);
     }
 
     if sandbox_network_access == omne_protocol::SandboxNetworkAccess::Deny
