@@ -26,6 +26,7 @@ fn fan_out_auto_apply_summary_omits_applied_payload() {
                 recovery_hint: None,
                 recovery_commands: vec![],
                 error: None,
+                structured_error: None,
             },
         ),
         status: "completed".to_string(),

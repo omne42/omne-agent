@@ -1237,11 +1237,16 @@ pub(super) async fn run_command_run(
         mode: Some(wf.frontmatter.mode.clone()),
         role: None,
         model: None,
+        clear_model: false,
         thinking: None,
+        clear_thinking: false,
         show_thinking: wf.frontmatter.show_thinking,
+        clear_show_thinking: false,
         openai_base_url: None,
+        clear_openai_base_url: false,
         allowed_tools: wf.frontmatter.allowed_tools.clone().map(Some),
         execpolicy_rules: None,
+        clear_execpolicy_rules: false,
     })
     .await?;
 

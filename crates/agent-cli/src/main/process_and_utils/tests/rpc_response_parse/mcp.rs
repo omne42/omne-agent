@@ -7,6 +7,7 @@ fn mcp_rpc_failed_response_passthrough() -> anyhow::Result<()> {
         failed: true,
         error: "server timeout".to_string(),
         server: "demo".to_string(),
+        structured_error: None,
     })
     .expect("serialize McpFailedResponse");
 
@@ -48,6 +49,7 @@ fn mcp_rpc_outcome_classifies_denied() -> anyhow::Result<()> {
         tool_id: omne_protocol::ToolId::new(),
         denied: true,
         remembered: None,
+        structured_error: None,
         error_code: None,
     })?;
 
@@ -66,6 +68,7 @@ fn mcp_rpc_denied_returns_error_includes_error_code() {
         tool_id: omne_protocol::ToolId::new(),
         denied: true,
         remembered: None,
+        structured_error: None,
         error_code: Some("allowed_tools_denied".to_string()),
     })
     .expect("serialize McpDeniedResponse");
@@ -88,6 +91,7 @@ fn mcp_rpc_outcome_keeps_failed_passthrough() -> anyhow::Result<()> {
         failed: true,
         error: "server timeout".to_string(),
         server: "demo".to_string(),
+        structured_error: None,
     })?;
 
     let outcome = parse_mcp_rpc_outcome::<McpActionOrFailedResponse>("mcp/call", value)?;
@@ -111,4 +115,3 @@ fn mcp_rpc_ok_requires_typed_success_shape() {
     .expect_err("expected error");
     assert!(err.to_string().contains("parse mcp/list_servers response"));
 }
-

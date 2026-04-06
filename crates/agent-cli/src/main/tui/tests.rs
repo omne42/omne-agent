@@ -1595,6 +1595,7 @@ assistant: Streaming...
                             dependency_blocker_status: None,
                             result_artifact_id: None,
                             result_artifact_error: None,
+                            result_artifact_structured_error: None,
                             result_artifact_error_id: None,
                             result_artifact_diagnostics: None,
                             pending_approval: Some(
@@ -1627,6 +1628,7 @@ assistant: Streaming...
                             dependency_blocker_status: Some("NeedUserInput".to_string()),
                             result_artifact_id: None,
                             result_artifact_error: None,
+                            result_artifact_structured_error: None,
                             result_artifact_error_id: None,
                             result_artifact_diagnostics: None,
                             pending_approval: None,
@@ -1791,6 +1793,7 @@ assistant: Streaming...
                             read_cmd: Some("omne artifact read thread-1 artifact-1".to_string()),
                             workspace_cwd: None,
                             error: None,
+                            structured_error: None,
                         },
                     ),
                     isolated_write_handoff: Some(
@@ -1824,6 +1827,7 @@ assistant: Streaming...
                                     read_cmd: None,
                                     workspace_cwd: None,
                                     error: None,
+                                    structured_error: None,
                                 },
                             ),
                         },
@@ -1871,6 +1875,7 @@ assistant: Streaming...
                                 },
                             ],
                             error: None,
+                            structured_error: None,
                         },
                     ),
                     status: "completed".to_string(),
@@ -1921,6 +1926,7 @@ assistant: Streaming...
             let denied = omne_app_server_protocol::ArtifactDeniedResponse {
                 tool_id: ToolId::new(),
                 denied: true,
+                structured_error: None,
                 error_code: None,
                 remembered: None,
             };
@@ -1969,6 +1975,7 @@ assistant: Streaming...
                 denied: true,
                 thread_id: ThreadId::new(),
                 remembered: None,
+                structured_error: None,
                 error_code: None,
             };
             let value = serde_json::to_value(denied)?;

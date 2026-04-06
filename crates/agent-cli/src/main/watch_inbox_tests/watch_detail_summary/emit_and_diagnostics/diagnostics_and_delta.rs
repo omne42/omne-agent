@@ -46,6 +46,7 @@ fn fan_in_result_diagnostics_summary_reports_without_dependency_blocker() {
             dependency_blocker_status: None,
             result_artifact_id: Some("artifact-1".to_string()),
             result_artifact_error: None,
+            result_artifact_structured_error: None,
             result_artifact_error_id: None,
             result_artifact_diagnostics: Some(
                 omne_app_server_protocol::ArtifactFanInSummaryResultArtifactDiagnostics {

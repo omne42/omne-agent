@@ -7,6 +7,7 @@ fn process_rpc_denied_returns_error() {
         denied: true,
         thread_id: omne_protocol::ThreadId::new(),
         remembered: None,
+        structured_error: None,
         error_code: Some("sandbox_policy_denied".to_string()),
     })
     .expect("serialize ProcessDeniedResponse");
@@ -29,6 +30,7 @@ fn process_rpc_outcome_classifies_denied() -> anyhow::Result<()> {
         denied: true,
         thread_id: omne_protocol::ThreadId::new(),
         remembered: None,
+        structured_error: None,
         error_code: None,
     })?;
 

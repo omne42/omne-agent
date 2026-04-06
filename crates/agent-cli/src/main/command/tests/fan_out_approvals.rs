@@ -79,6 +79,7 @@ fn find_pending_approval_task_from_fan_in_summary_prefers_approval_id_match() {
                 dependency_blocker_status: None,
                 result_artifact_id: None,
                 result_artifact_error: None,
+                result_artifact_structured_error: None,
                 result_artifact_error_id: None,
                 result_artifact_diagnostics: None,
                 pending_approval: Some(
@@ -103,6 +104,7 @@ fn find_pending_approval_task_from_fan_in_summary_prefers_approval_id_match() {
                 dependency_blocker_status: None,
                 result_artifact_id: None,
                 result_artifact_error: None,
+                result_artifact_structured_error: None,
                 result_artifact_error_id: None,
                 result_artifact_diagnostics: None,
                 pending_approval: Some(
@@ -146,6 +148,7 @@ fn fan_out_approval_error_from_structured_task_prefers_structured_handles() {
         dependency_blocker_status: None,
         result_artifact_id: None,
         result_artifact_error: None,
+        result_artifact_structured_error: None,
         result_artifact_error_id: None,
         result_artifact_diagnostics: None,
         pending_approval: Some(omne_app_server_protocol::ArtifactFanInSummaryPendingApproval {
@@ -193,6 +196,7 @@ fn fan_out_approval_error_from_structured_task_generates_missing_commands() {
         dependency_blocker_status: None,
         result_artifact_id: None,
         result_artifact_error: None,
+        result_artifact_structured_error: None,
         result_artifact_error_id: None,
         result_artifact_diagnostics: None,
         pending_approval: Some(omne_app_server_protocol::ArtifactFanInSummaryPendingApproval {

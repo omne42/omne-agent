@@ -39,6 +39,7 @@ fn fan_out_auto_apply_summary_reports_error_and_recovery_command_preview() {
                     },
                 ],
                 error: Some("git apply --check failed: patch does not apply".to_string()),
+                structured_error: None,
             },
         ),
         status: "completed".to_string(),

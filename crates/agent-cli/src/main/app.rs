@@ -1425,6 +1425,7 @@ mod app_preconnect_tests {
                         dependency_blocker_status: None,
                         result_artifact_id: None,
                         result_artifact_error: None,
+                        result_artifact_structured_error: None,
                         result_artifact_error_id: None,
                         result_artifact_diagnostics: None,
                         pending_approval: Some(
@@ -1453,6 +1454,7 @@ mod app_preconnect_tests {
                         dependency_blocker_status: Some("Failed".to_string()),
                         result_artifact_id: None,
                         result_artifact_error: None,
+                        result_artifact_structured_error: None,
                         result_artifact_error_id: None,
                         result_artifact_diagnostics: None,
                         pending_approval: None,
@@ -1496,6 +1498,7 @@ mod app_preconnect_tests {
                     dependency_blocker_status: None,
                     result_artifact_id: None,
                     result_artifact_error: None,
+                    result_artifact_structured_error: None,
                     result_artifact_error_id: None,
                     result_artifact_diagnostics: None,
                     pending_approval: None,
@@ -1541,6 +1544,7 @@ mod app_preconnect_tests {
                         dependency_blocker_status: None,
                         result_artifact_id: Some("artifact-1".to_string()),
                         result_artifact_error: None,
+                        result_artifact_structured_error: None,
                         result_artifact_error_id: None,
                         result_artifact_diagnostics: Some(
                             omne_app_server_protocol::ArtifactFanInSummaryResultArtifactDiagnostics {
@@ -1563,6 +1567,7 @@ mod app_preconnect_tests {
                         dependency_blocker_status: None,
                         result_artifact_id: Some("artifact-2".to_string()),
                         result_artifact_error: None,
+                        result_artifact_structured_error: None,
                         result_artifact_error_id: None,
                         result_artifact_diagnostics: Some(
                             omne_app_server_protocol::ArtifactFanInSummaryResultArtifactDiagnostics {
@@ -1677,6 +1682,7 @@ mod app_preconnect_tests {
                     read_cmd: Some("omne artifact read thread-1 artifact-1".to_string()),
                     workspace_cwd: None,
                     error: None,
+                    structured_error: None,
                 },
             ),
             isolated_write_handoff: None,
@@ -1712,6 +1718,7 @@ mod app_preconnect_tests {
                     read_cmd: None,
                     workspace_cwd: Some("/tmp/missing".to_string()),
                     error: Some("spawn git diff failed".to_string()),
+                    structured_error: None,
                 },
             ),
             isolated_write_handoff: None,
@@ -1759,6 +1766,7 @@ mod app_preconnect_tests {
                     recovery_hint: None,
                     recovery_commands: vec![],
                     error: None,
+                    structured_error: None,
                 },
             ),
             status: "completed".to_string(),
@@ -1812,6 +1820,7 @@ mod app_preconnect_tests {
                         },
                     ],
                     error: Some("git apply --check failed: patch does not apply".to_string()),
+                    structured_error: None,
                 },
             ),
             status: "completed".to_string(),

@@ -50,6 +50,7 @@ fn thread_git_snapshot_rpc_denied_returns_error() {
         omne_app_server_protocol::ThreadGitSnapshotDeniedResponse {
             denied: true,
             thread_id,
+            structured_error: None,
             error_code: Some("sandbox_policy_denied".to_string()),
             detail: omne_app_server_protocol::ThreadGitSnapshotDeniedDetail::Process(
                 omne_app_server_protocol::ThreadProcessDeniedDetail::Denied(
@@ -58,6 +59,7 @@ fn thread_git_snapshot_rpc_denied_returns_error() {
                         denied: true,
                         thread_id,
                         remembered: None,
+                        structured_error: None,
                         error_code: None,
                     },
                 ),
@@ -81,6 +83,7 @@ fn thread_patch_rpc_denied_returns_error() {
         omne_app_server_protocol::ThreadGitSnapshotDeniedResponse {
             denied: true,
             thread_id,
+            structured_error: None,
             error_code: Some("execpolicy_denied".to_string()),
             detail: omne_app_server_protocol::ThreadGitSnapshotDeniedDetail::Process(
                 omne_app_server_protocol::ThreadProcessDeniedDetail::Denied(
@@ -89,6 +92,7 @@ fn thread_patch_rpc_denied_returns_error() {
                         denied: true,
                         thread_id,
                         remembered: None,
+                        structured_error: None,
                         error_code: None,
                     },
                 ),
@@ -112,6 +116,7 @@ fn thread_patch_rpc_artifact_denied_returns_error() {
         omne_app_server_protocol::ThreadGitSnapshotDeniedResponse {
             denied: true,
             thread_id,
+            structured_error: None,
             error_code: Some("allowed_tools_denied".to_string()),
             detail: omne_app_server_protocol::ThreadGitSnapshotDeniedDetail::Artifact(
                 omne_app_server_protocol::ThreadArtifactDeniedDetail::AllowedToolsDenied(
@@ -120,6 +125,7 @@ fn thread_patch_rpc_artifact_denied_returns_error() {
                         denied: true,
                         tool: "artifact/write".to_string(),
                         allowed_tools: vec!["process/start".to_string()],
+                        structured_error: None,
                         error_code: None,
                     },
                 ),
@@ -143,6 +149,7 @@ fn thread_diff_rpc_artifact_denied_returns_error() {
         omne_app_server_protocol::ThreadGitSnapshotDeniedResponse {
             denied: true,
             thread_id,
+            structured_error: None,
             error_code: Some("allowed_tools_denied".to_string()),
             detail: omne_app_server_protocol::ThreadGitSnapshotDeniedDetail::Artifact(
                 omne_app_server_protocol::ThreadArtifactDeniedDetail::AllowedToolsDenied(
@@ -151,6 +158,7 @@ fn thread_diff_rpc_artifact_denied_returns_error() {
                         denied: true,
                         tool: "artifact/write".to_string(),
                         allowed_tools: vec!["process/start".to_string()],
+                        structured_error: None,
                         error_code: None,
                     },
                 ),
@@ -174,12 +182,14 @@ fn thread_patch_rpc_artifact_mode_denied_returns_error() {
         omne_app_server_protocol::ThreadGitSnapshotDeniedResponse {
             denied: true,
             thread_id,
+            structured_error: None,
             error_code: Some("mode_denied".to_string()),
             detail: omne_app_server_protocol::ThreadGitSnapshotDeniedDetail::Artifact(
                 omne_app_server_protocol::ThreadArtifactDeniedDetail::ModeDenied(
                     omne_app_server_protocol::ArtifactModeDeniedResponse {
                         tool_id: omne_protocol::ToolId::new(),
                         denied: true,
+                        structured_error: None,
                         error_code: None,
                         mode: "artifact-deny".to_string(),
                         decision: omne_app_server_protocol::ArtifactModeDecision::Deny,
@@ -207,12 +217,14 @@ fn thread_diff_rpc_artifact_mode_denied_returns_error() {
         omne_app_server_protocol::ThreadGitSnapshotDeniedResponse {
             denied: true,
             thread_id,
+            structured_error: None,
             error_code: Some("mode_denied".to_string()),
             detail: omne_app_server_protocol::ThreadGitSnapshotDeniedDetail::Artifact(
                 omne_app_server_protocol::ThreadArtifactDeniedDetail::ModeDenied(
                     omne_app_server_protocol::ArtifactModeDeniedResponse {
                         tool_id: omne_protocol::ToolId::new(),
                         denied: true,
+                        structured_error: None,
                         error_code: None,
                         mode: "artifact-deny".to_string(),
                         decision: omne_app_server_protocol::ArtifactModeDecision::Deny,
@@ -240,12 +252,14 @@ fn thread_patch_rpc_artifact_unknown_mode_denied_returns_error() {
         omne_app_server_protocol::ThreadGitSnapshotDeniedResponse {
             denied: true,
             thread_id,
+            structured_error: None,
             error_code: Some("mode_unknown".to_string()),
             detail: omne_app_server_protocol::ThreadGitSnapshotDeniedDetail::Artifact(
                 omne_app_server_protocol::ThreadArtifactDeniedDetail::UnknownModeDenied(
                     omne_app_server_protocol::ArtifactUnknownModeDeniedResponse {
                         tool_id: omne_protocol::ToolId::new(),
                         denied: true,
+                        structured_error: None,
                         error_code: None,
                         mode: "artifact-unknown".to_string(),
                         decision: omne_app_server_protocol::ArtifactModeDecision::Deny,
@@ -273,12 +287,14 @@ fn thread_diff_rpc_artifact_unknown_mode_denied_returns_error() {
         omne_app_server_protocol::ThreadGitSnapshotDeniedResponse {
             denied: true,
             thread_id,
+            structured_error: None,
             error_code: Some("mode_unknown".to_string()),
             detail: omne_app_server_protocol::ThreadGitSnapshotDeniedDetail::Artifact(
                 omne_app_server_protocol::ThreadArtifactDeniedDetail::UnknownModeDenied(
                     omne_app_server_protocol::ArtifactUnknownModeDeniedResponse {
                         tool_id: omne_protocol::ToolId::new(),
                         denied: true,
+                        structured_error: None,
                         error_code: None,
                         mode: "artifact-unknown".to_string(),
                         decision: omne_app_server_protocol::ArtifactModeDecision::Deny,
@@ -305,6 +321,7 @@ fn thread_git_snapshot_rpc_outcome_classifies_denied() -> anyhow::Result<()> {
     let value = serde_json::to_value(omne_app_server_protocol::ThreadGitSnapshotDeniedResponse {
         denied: true,
         thread_id,
+        structured_error: None,
         error_code: None,
         detail: omne_app_server_protocol::ThreadGitSnapshotDeniedDetail::Process(
             omne_app_server_protocol::ThreadProcessDeniedDetail::Denied(
@@ -313,6 +330,7 @@ fn thread_git_snapshot_rpc_outcome_classifies_denied() -> anyhow::Result<()> {
                     denied: true,
                     thread_id,
                     remembered: None,
+                    structured_error: None,
                     error_code: None,
                 },
             ),

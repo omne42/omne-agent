@@ -31,7 +31,6 @@ mod preset {
         allowed_tools: Option<Option<Vec<String>>>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         execpolicy_rules: Vec<String>,
-    clear_execpolicy_rules: false,
     }
 
     #[derive(Debug, Clone, Serialize)]
@@ -154,13 +153,16 @@ mod preset {
     fn ensure_within_spec_dir(omne_root: &Path, file: &Path) -> anyhow::Result<()> {
         let spec_dir = omne_root.join("spec");
         if !spec_dir.exists() {
-            anyhow::bail!("spec dir is missing: {} (run `omne init`?)", spec_dir.display());
+            anyhow::bail!(
+                "spec dir is missing: {} (run `omne init`?)",
+                spec_dir.display()
+            );
         }
 
         let spec_dir = std::fs::canonicalize(&spec_dir)
             .with_context(|| format!("canonicalize {}", spec_dir.display()))?;
-        let file =
-            std::fs::canonicalize(file).with_context(|| format!("canonicalize {}", file.display()))?;
+        let file = std::fs::canonicalize(file)
+            .with_context(|| format!("canonicalize {}", file.display()))?;
         if !file.starts_with(&spec_dir) {
             anyhow::bail!(
                 "refusing to load preset outside spec dir: file={} (spec_dir={})",
@@ -173,7 +175,10 @@ mod preset {
 
     async fn list_preset_paths(spec_dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
         if !tokio::fs::try_exists(spec_dir).await? {
-            anyhow::bail!("spec dir is missing: {} (run `omne init`?)", spec_dir.display());
+            anyhow::bail!(
+                "spec dir is missing: {} (run `omne init`?)",
+                spec_dir.display()
+            );
         }
 
         let mut out = Vec::<PathBuf>::new();
@@ -215,7 +220,10 @@ mod preset {
 
     fn sanitize_preset(mut preset: PresetFileV1) -> anyhow::Result<PresetFileV1> {
         if preset.version != 1 {
-            anyhow::bail!("unsupported preset version: {} (expected 1)", preset.version);
+            anyhow::bail!(
+                "unsupported preset version: {} (expected 1)",
+                preset.version
+            );
         }
 
         preset.name = normalize_string(preset.name, "preset.name")?;
@@ -268,7 +276,10 @@ mod preset {
         check_value("thread_config.model", &cfg.model)?;
         check_value("thread_config.openai_base_url", &cfg.openai_base_url)?;
         for (idx, root) in cfg.sandbox_writable_roots.iter().enumerate() {
-            check_value(&format!("thread_config.sandbox_writable_roots[{idx}]"), root)?;
+            check_value(
+                &format!("thread_config.sandbox_writable_roots[{idx}]"),
+                root,
+            )?;
         }
         if let Some(Some(allowed_tools)) = cfg.allowed_tools.as_ref() {
             for (idx, tool) in allowed_tools.iter().enumerate() {
@@ -402,7 +413,7 @@ mod preset {
             sandbox_writable_roots: Some(cfg.sandbox_writable_roots.clone()),
             sandbox_network_access: Some(cfg.sandbox_network_access),
             mode: Some(cfg.mode.clone()),
-                role: None,
+            role: None,
             model: Some(cfg.model.clone()),
             clear_model: false,
             thinking: None,
@@ -413,7 +424,7 @@ mod preset {
             clear_openai_base_url: false,
             allowed_tools: cfg.allowed_tools.clone(),
             execpolicy_rules: Some(cfg.execpolicy_rules.clone()),
-        clear_execpolicy_rules: false,
+            clear_execpolicy_rules: false,
         })
         .await
     }
@@ -470,10 +481,8 @@ mod preset {
             mode: explain.effective.mode,
             model: explain.effective.model,
             openai_base_url: explain.effective.openai_base_url,
-            clear_openai_base_url: false,
             allowed_tools: Some(explain.effective.allowed_tools),
             execpolicy_rules: explain.effective.execpolicy_rules,
-        clear_execpolicy_rules: false,
         };
         let mut portability_warnings = Vec::<String>::new();
 
@@ -490,8 +499,9 @@ mod preset {
                 .map(|s| s.to_string())
                 .filter(|s| !s.trim().is_empty())
         });
-        let name =
-            name.ok_or_else(|| anyhow::anyhow!("preset name is missing (pass --name or use a file name)"))?;
+        let name = name.ok_or_else(|| {
+            anyhow::anyhow!("preset name is missing (pass --name or use a file name)")
+        })?;
 
         let preset = PresetFileV1 {
             version: 1,
@@ -535,8 +545,7 @@ mod preset {
 
         let preset = read_preset_file(&file).await?;
         apply_preset(app, thread_id, &preset).await?;
-        let provenance_artifact_id =
-            record_preset_provenance(app, thread_id, &file, &preset).await;
+        let provenance_artifact_id = record_preset_provenance(app, thread_id, &file, &preset).await;
 
         if json {
             let result = serde_json::json!({
@@ -632,7 +641,9 @@ mod preset {
             (Some(file), None) => Ok(file),
             (None, Some(name)) => resolve_preset_file_by_name(&omne_root.join("spec"), &name).await,
             (Some(_), Some(_)) => anyhow::bail!("pass either --file or --name, not both"),
-            (None, None) => anyhow::bail!("missing preset selector: pass --file <path> or --name <name>"),
+            (None, None) => {
+                anyhow::bail!("missing preset selector: pass --file <path> or --name <name>")
+            }
         }
     }
 
@@ -924,7 +935,10 @@ mod preset {
             if result.ok {
                 Ok(())
             } else {
-                anyhow::bail!("preset validation failed: {} file(s) with errors", result.errors.len())
+                anyhow::bail!(
+                    "preset validation failed: {} file(s) with errors",
+                    result.errors.len()
+                )
             }
         }
         .await;
@@ -1100,8 +1114,8 @@ thread_config:
             let nonce = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)?
                 .as_nanos();
-            let tmp =
-                std::env::temp_dir().join(format!("omne-preset-list-{}-{nonce}", std::process::id()));
+            let tmp = std::env::temp_dir()
+                .join(format!("omne-preset-list-{}-{nonce}", std::process::id()));
             let spec_dir = tmp.join("spec");
             tokio::fs::create_dir_all(spec_dir.join("presets")).await?;
             tokio::fs::write(spec_dir.join("preset.yaml"), "x").await?;
@@ -1112,7 +1126,12 @@ thread_config:
             let files = list_preset_paths(&spec_dir).await?;
             let files = files
                 .iter()
-                .map(|p| p.strip_prefix(&spec_dir).unwrap().to_string_lossy().to_string())
+                .map(|p| {
+                    p.strip_prefix(&spec_dir)
+                        .unwrap()
+                        .to_string_lossy()
+                        .to_string()
+                })
                 .collect::<Vec<_>>();
             assert_eq!(
                 files,
@@ -1131,10 +1150,8 @@ thread_config:
             let nonce = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)?
                 .as_nanos();
-            let tmp = std::env::temp_dir().join(format!(
-                "omne-preset-name-{}-{nonce}",
-                std::process::id()
-            ));
+            let tmp = std::env::temp_dir()
+                .join(format!("omne-preset-name-{}-{nonce}", std::process::id()));
             let spec_dir = tmp.join("spec");
             tokio::fs::create_dir_all(spec_dir.join("presets")).await?;
             tokio::fs::write(
@@ -1251,9 +1268,11 @@ thread_config:
             let errors = duplicate_name_errors(&validated);
             assert_eq!(errors.len(), 2);
             assert!(errors.iter().all(|err| err.code == "duplicate_name"));
-            assert!(errors
-                .iter()
-                .all(|err| err.error.contains("duplicate preset name `dup`")));
+            assert!(
+                errors
+                    .iter()
+                    .all(|err| err.error.contains("duplicate preset name `dup`"))
+            );
         }
 
         #[test]
@@ -1302,7 +1321,10 @@ thread_config:
                 error: "parse preset yaml".to_string(),
             };
             let value = serde_json::to_value(item).expect("serialize PresetListError");
-            assert_eq!(value.get("code").and_then(|v| v.as_str()), Some("parse_yaml"));
+            assert_eq!(
+                value.get("code").and_then(|v| v.as_str()),
+                Some("parse_yaml")
+            );
         }
 
         #[test]
@@ -1310,7 +1332,10 @@ thread_config:
             let err = anyhow::anyhow!("parse preset yaml");
             let value = preset_error_payload("parse_yaml", &err);
             assert_eq!(value.get("ok").and_then(|v| v.as_bool()), Some(false));
-            assert_eq!(value.get("code").and_then(|v| v.as_str()), Some("parse_yaml"));
+            assert_eq!(
+                value.get("code").and_then(|v| v.as_str()),
+                Some("parse_yaml")
+            );
             let message = value
                 .get("message")
                 .and_then(|v| v.as_str())

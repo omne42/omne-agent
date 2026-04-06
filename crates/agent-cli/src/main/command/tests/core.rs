@@ -96,6 +96,7 @@ use super::*;
                     denied: true,
                     thread_id,
                     hook: "setup".to_string(),
+                    structured_error: None,
                     error_code: Some("mode_denied".to_string()),
                     config_path: Some("/tmp/.omne_data/hooks/setup".to_string()),
                     detail: omne_app_server_protocol::ThreadProcessDeniedDetail::Denied(
@@ -104,6 +105,7 @@ use super::*;
                             denied: true,
                             thread_id,
                             remembered: None,
+                            structured_error: None,
                             error_code: Some("mode_denied".to_string()),
                         },
                     ),
@@ -127,6 +129,7 @@ use super::*;
                     ok: false,
                     hook: "setup".to_string(),
                     error: "spawn failed".to_string(),
+                    structured_error: None,
                 },
             ),
         );
