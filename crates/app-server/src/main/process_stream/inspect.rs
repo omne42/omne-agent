@@ -6,12 +6,13 @@ async fn handle_process_inspect(
 
     let info = resolve_process_info(server, params.process_id).await?;
     let (thread_rt, thread_root) = load_thread_root(server, info.thread_id).await?;
-    let (approval_policy, mode_name, allowed_tools) = {
+    let (approval_policy, mode_name, role_name, allowed_tools) = {
         let handle = thread_rt.handle.lock().await;
         let state = handle.state();
         (
             state.approval_policy,
             state.mode.clone(),
+            state.role.clone(),
             state.allowed_tools.clone(),
         )
     };
@@ -44,6 +45,7 @@ async fn handle_process_inspect(
             approval_id: params.approval_id,
             approval_policy,
             mode_name: &mode_name,
+            role_name: &role_name,
             action: "process/inspect",
             tool_id,
             approval_params: &approval_params,

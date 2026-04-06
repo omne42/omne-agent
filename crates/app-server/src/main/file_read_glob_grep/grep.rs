@@ -26,12 +26,13 @@ async fn handle_file_grep(server: &Server, params: FileGrepParams) -> anyhow::Re
         "max_files": max_files,
     });
 
-    let (approval_policy, mode_name, allowed_tools) = {
+    let (approval_policy, mode_name, role_name, allowed_tools) = {
         let handle = thread_rt.handle.lock().await;
         let state = handle.state();
         (
             state.approval_policy,
             state.mode.clone(),
+            state.role.clone(),
             state.allowed_tools.clone(),
         )
     };
@@ -57,6 +58,7 @@ async fn handle_file_grep(server: &Server, params: FileGrepParams) -> anyhow::Re
             approval_id: params.approval_id,
             approval_policy,
             mode_name: &mode_name,
+            role_name: &role_name,
             action: "file/grep",
             tool_id,
             approval_params: &approval_params,

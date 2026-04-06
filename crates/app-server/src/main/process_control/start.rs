@@ -107,6 +107,7 @@ async fn handle_process_start_inner(
         sandbox_policy,
         sandbox_network_access,
         mode_name,
+        role_name,
         allowed_tools,
         thread_execpolicy_rules,
     ) = {
@@ -117,6 +118,7 @@ async fn handle_process_start_inner(
             state.sandbox_policy,
             state.sandbox_network_access,
             state.mode.clone(),
+            state.role.clone(),
             state.allowed_tools.clone(),
             state.execpolicy_rules.clone(),
         )
@@ -166,6 +168,7 @@ async fn handle_process_start_inner(
                 approval_id: params.approval_id,
                 approval_policy,
                 mode_name: &mode_name,
+                role_name: &role_name,
                 action: "process/start",
                 exec_policy: &server.exec_policy,
                 thread_execpolicy_rules: &thread_execpolicy_rules,
@@ -985,6 +988,58 @@ modes:
         Ok(())
     }
 
+    #[tokio::test]
+    async fn process_start_role_permission_mode_reports_decision_source() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let thread_id = create_test_thread_shared(&server, repo_dir).await?;
+
+        handle_thread_configure(
+            &server,
+            ThreadConfigureParams {
+                thread_id,
+                approval_policy: Some(omne_protocol::ApprovalPolicy::AutoApprove),
+                sandbox_policy: None,
+                sandbox_writable_roots: None,
+                sandbox_network_access: None,
+                mode: Some("coder".to_string()),
+                role: Some("chat".to_string()),
+                model: None,
+                clear_model: false,
+                thinking: None,
+                clear_thinking: false,
+                show_thinking: None,
+                clear_show_thinking: false,
+                openai_base_url: None,
+                clear_openai_base_url: false,
+                allowed_tools: None,
+                execpolicy_rules: None,
+                clear_execpolicy_rules: false,
+            },
+        )
+        .await?;
+
+        let result = handle_process_start(
+            &server,
+            ProcessStartParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                argv: vec!["/bin/echo".to_string(), "hello".to_string()],
+                cwd: None,
+                timeout_ms: None,
+            },
+        )
+        .await?;
+
+        assert!(result["denied"].as_bool().unwrap_or(false));
+        assert_eq!(result["decision_source"].as_str(), Some("role_permission_mode"));
+        Ok(())
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn process_start_uses_gateway_prepared_canonical_cwd() -> anyhow::Result<()> {
@@ -1392,6 +1447,61 @@ modes:
             .ok_or_else(|| anyhow::anyhow!("missing allowed_tools"))?;
         assert_eq!(allowed_tools.len(), 1);
         assert_eq!(allowed_tools[0].as_str(), Some("repo/search"));
+        assert!(server.processes.lock().await.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn process_start_respects_role_permission_mode() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        handle_thread_configure(
+            &server,
+            ThreadConfigureParams {
+                thread_id,
+                approval_policy: Some(omne_protocol::ApprovalPolicy::AutoApprove),
+                sandbox_policy: None,
+                sandbox_writable_roots: None,
+                sandbox_network_access: None,
+                mode: Some("coder".to_string()),
+                role: Some("chat".to_string()),
+                model: None,
+                clear_model: false,
+                thinking: None,
+                clear_thinking: false,
+                show_thinking: None,
+                clear_show_thinking: false,
+                openai_base_url: None,
+                clear_openai_base_url: false,
+                allowed_tools: None,
+                execpolicy_rules: None,
+                clear_execpolicy_rules: false,
+            },
+        )
+        .await?;
+
+        let result = handle_process_start(
+            &server,
+            ProcessStartParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                argv: vec!["echo".to_string(), "hi".to_string()],
+                cwd: None,
+                timeout_ms: None,
+            },
+        )
+        .await?;
+
+        assert!(result["denied"].as_bool().unwrap_or(false));
+        assert_eq!(result["decision_source"].as_str(), Some("role_permission_mode"));
         assert!(server.processes.lock().await.is_empty());
         Ok(())
     }

@@ -1,6 +1,13 @@
 async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Result<Value> {
     let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
-    let (approval_policy, sandbox_policy, sandbox_writable_roots, mode_name, allowed_tools) = {
+    let (
+        approval_policy,
+        sandbox_policy,
+        sandbox_writable_roots,
+        mode_name,
+        role_name,
+        allowed_tools,
+    ) = {
         let handle = thread_rt.handle.lock().await;
         let state = handle.state();
         (
@@ -8,6 +15,7 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
             state.sandbox_policy,
             state.sandbox_writable_roots.clone(),
             state.mode.clone(),
+            state.role.clone(),
             state.allowed_tools.clone(),
         )
     };
@@ -100,6 +108,7 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
             approval_id: params.approval_id,
             approval_policy,
             mode_name: &mode_name,
+            role_name: &role_name,
             action: "file/read",
             tool_id,
             approval_params: &approval_params,
@@ -156,8 +165,14 @@ async fn handle_file_read(server: &Server, params: FileReadParams) -> anyhow::Re
                 result,
             ));
         }
-        let base_decision = mode.permissions.read;
-        let mode_decision = resolve_mode_decision_audit(&mode, "file/read", base_decision);
+        let catalog = omne_core::modes::ModeCatalog::load(&thread_root).await;
+        let mode_decision = resolve_mode_and_role_decision_audit(
+            &catalog,
+            &mode,
+            Some(&role_name),
+            "file/read",
+            |mode| mode.permissions.read,
+        );
         if mode_decision.decision == omne_core::modes::Decision::Deny {
             let result = file_mode_denied_response(tool_id, &mode_name, mode_decision)?;
             return Err(tool_denied(

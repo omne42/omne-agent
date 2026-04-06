@@ -1,11 +1,12 @@
 async fn handle_repo_search(server: &Server, params: RepoSearchParams) -> anyhow::Result<Value> {
     let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
-    let (approval_policy, mode_name, allowed_tools) = {
+    let (approval_policy, mode_name, role_name, allowed_tools) = {
         let handle = thread_rt.handle.lock().await;
         let state = handle.state();
         (
             state.approval_policy,
             state.mode.clone(),
+            state.role.clone(),
             state.allowed_tools.clone(),
         )
     };
@@ -55,6 +56,7 @@ async fn handle_repo_search(server: &Server, params: RepoSearchParams) -> anyhow
             approval_id: params.approval_id,
             approval_policy,
             mode_name: &mode_name,
+            role_name: &role_name,
             action: "repo/search",
             tool_id,
             approval_params: &approval_params,

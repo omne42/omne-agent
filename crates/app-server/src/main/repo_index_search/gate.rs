@@ -27,6 +27,7 @@ struct RepoModeApprovalContext<'a> {
     approval_id: Option<omne_protocol::ApprovalId>,
     approval_policy: omne_protocol::ApprovalPolicy,
     mode_name: &'a str,
+    role_name: &'a str,
     action: &'static str,
     tool_id: omne_protocol::ToolId,
     approval_params: &'a Value,
@@ -61,10 +62,12 @@ async fn enforce_repo_mode_and_approval(
         }
     };
 
-    let mode_decision = resolve_mode_decision_audit(
+    let mode_decision = resolve_mode_and_role_decision_audit(
+        &catalog,
         mode,
+        Some(ctx.role_name),
         ctx.action,
-        mode.permissions.read.combine(mode.permissions.artifact),
+        |mode| mode.permissions.read.combine(mode.permissions.artifact),
     );
     if mode_decision.decision == omne_core::modes::Decision::Deny {
         let result = repo_mode_denied_response(ctx.tool_id, ctx.mode_name, mode_decision)?;

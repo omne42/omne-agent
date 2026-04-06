@@ -137,6 +137,7 @@ pub fn search_repo(req: RepoGrepRequest) -> anyhow::Result<RepoGrepOutcome> {
             continue;
         }
         if files_scanned >= req.max_files {
+            truncated = true;
             break;
         }
 
@@ -241,6 +242,29 @@ mod tests {
         })?;
         assert_eq!(out.matches.len(), 2);
         assert!(out.truncated);
+        Ok(())
+    }
+
+    #[test]
+    fn grep_marks_truncated_when_max_files_is_hit() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let root = tmp.path().to_path_buf();
+        std::fs::write(root.join("a.rs"), "nope\n")?;
+        std::fs::write(root.join("b.rs"), "needle\n")?;
+
+        let out = search_repo(RepoGrepRequest {
+            root,
+            query: "needle".to_string(),
+            is_regex: false,
+            include_glob: None,
+            max_matches: 10,
+            max_bytes_per_file: 1024 * 1024,
+            max_files: 1,
+        })?;
+
+        assert!(out.truncated);
+        assert!(out.matches.is_empty());
+        assert_eq!(out.files_scanned, 1);
         Ok(())
     }
 }
