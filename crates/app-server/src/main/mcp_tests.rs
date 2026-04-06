@@ -635,6 +635,79 @@ modes:
     }
 
     #[tokio::test]
+    async fn get_or_start_mcp_connection_prunes_exited_cached_process_entry() -> anyhow::Result<()> {
+        let _lock = MCP_TEST_MUTEX.lock().await;
+        let _guard = McpEnabledOverrideGuard::new(Some(true));
+
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+        write_test_mcp_config(&repo_dir).await?;
+
+        let server = build_test_server_shared(repo_dir.join(".omne_data"));
+        let thread_id = create_test_thread_shared(&server, repo_dir.clone()).await?;
+        let thread_rt = server.get_or_load_thread(thread_id).await?;
+
+        let cfg = load_mcp_config(&repo_dir).await?;
+        let server_cfg = cfg.servers().get("local").expect("local server");
+        let (stale_process_id, _cmd_rx) = insert_running_mcp_connection(
+            &server,
+            thread_id,
+            "local",
+            mcp_server_config_fingerprint(server_cfg),
+        )
+        .await?;
+
+        let stale_entry = {
+            let entries = server.processes.lock().await;
+            entries
+                .get(&stale_process_id)
+                .cloned()
+                .expect("stale process should exist")
+        };
+        {
+            let mut info = stale_entry.info.lock().await;
+            info.status = ProcessStatus::Exited;
+            info.exit_code = Some(0);
+        }
+
+        let err = get_or_start_mcp_connection(
+            &server,
+            &thread_rt,
+            &repo_dir,
+            thread_id,
+            None,
+            "local",
+            server_cfg,
+        )
+        .await
+        .expect_err("exited cached process should be discarded before reconnect");
+        assert!(
+            err.to_string().contains("mcp initialize failed")
+                || err.to_string().contains("mcp initialized notification failed")
+                || err.to_string().contains("mcp request failed"),
+            "unexpected error: {err:#}"
+        );
+
+        assert!(
+            !server.processes.lock().await.contains_key(&stale_process_id),
+            "exited cached process should be removed before reconnect"
+        );
+        let cached = {
+            let manager = server.mcp.lock().await;
+            manager.connections.get(&(thread_id, "local".to_string())).cloned()
+        };
+        assert!(
+            cached
+                .as_ref()
+                .is_none_or(|conn| conn.process_id != stale_process_id),
+            "stale cached process should not survive after reconnect attempt"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn mcp_list_servers_denied_by_mode_permission_reports_decision_source() -> anyhow::Result<()> {
         let _lock = MCP_TEST_MUTEX.lock().await;
         let _guard = McpEnabledOverrideGuard::new(Some(true));
