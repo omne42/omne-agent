@@ -172,8 +172,17 @@ pub struct ProcessFollowResponse {
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum ProcessSignalDelivery {
+    Queued,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
 pub struct ProcessSignalResponse {
     pub ok: bool,
+    pub accepted: bool,
+    pub process_id: omne_protocol::ProcessId,
+    pub delivery: ProcessSignalDelivery,
 }
 
 define_tool_denied_response!(ProcessDeniedResponse {

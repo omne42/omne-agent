@@ -1,5 +1,14 @@
 use super::*;
 
+fn queued_process_signal_response(process_id: ProcessId) -> omne_app_server_protocol::ProcessSignalResponse {
+    omne_app_server_protocol::ProcessSignalResponse {
+        ok: true,
+        accepted: true,
+        process_id,
+        delivery: omne_app_server_protocol::ProcessSignalDelivery::Queued,
+    }
+}
+
 async fn send_process_signal(
     entry: &ProcessEntry,
     process_id: ProcessId,
@@ -116,20 +125,20 @@ pub(super) async fn handle_process_kill(
             reason: params.reason,
         },
     )
-    .await
+        .await
     {
         Ok(()) => {
+            let response = queued_process_signal_response(params.process_id);
             thread_rt
                 .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
                     status: omne_protocol::ToolStatus::Completed,
                     structured_error: None,
                     error: None,
-                    result: Some(serde_json::json!({ "ok": true })),
+                    result: Some(serde_json::to_value(&response)?),
                 })
                 .await?;
 
-            let response = omne_app_server_protocol::ProcessSignalResponse { ok: true };
             serde_json::to_value(response).context("serialize process/kill response")
         }
         Err(err) => {
@@ -141,6 +150,8 @@ pub(super) async fn handle_process_kill(
                     error: Some(err.to_string()),
                     result: Some(serde_json::json!({
                         "ok": false,
+                        "accepted": false,
+                        "delivery": "rejected",
                         "process_id": params.process_id,
                     })),
                 })
@@ -225,20 +236,20 @@ pub(super) async fn handle_process_interrupt(
             reason: params.reason,
         },
     )
-    .await
+        .await
     {
         Ok(()) => {
+            let response = queued_process_signal_response(params.process_id);
             thread_rt
                 .append_event(omne_protocol::ThreadEventKind::ToolCompleted {
                     tool_id,
                     status: omne_protocol::ToolStatus::Completed,
                     structured_error: None,
                     error: None,
-                    result: Some(serde_json::json!({ "ok": true })),
+                    result: Some(serde_json::to_value(&response)?),
                 })
                 .await?;
 
-            let response = omne_app_server_protocol::ProcessSignalResponse { ok: true };
             serde_json::to_value(response).context("serialize process/interrupt response")
         }
         Err(err) => {
@@ -250,6 +261,8 @@ pub(super) async fn handle_process_interrupt(
                     error: Some(err.to_string()),
                     result: Some(serde_json::json!({
                         "ok": false,
+                        "accepted": false,
+                        "delivery": "rejected",
                         "process_id": params.process_id,
                     })),
                 })
@@ -400,7 +413,11 @@ mod process_signal_tests {
 
     async fn insert_running_process(server: &Server, thread_id: ThreadId) -> ProcessId {
         let process_id = ProcessId::new();
-        let (cmd_tx, _cmd_rx) = mpsc::channel(1);
+        let (cmd_tx, cmd_rx) = mpsc::channel(1);
+        tokio::spawn(async move {
+            let mut cmd_rx = cmd_rx;
+            while cmd_rx.recv().await.is_some() {}
+        });
         let now = "2026-01-01T00:00:00Z".to_string();
         let entry = ProcessEntry {
             thread_id,
@@ -489,7 +506,8 @@ modes:
         drop(handle);
 
         configure_thread_mode(&server, thread_id, "mode-x").await?;
-        let process_id = insert_running_process(&server, thread_id).await;
+        let process_id =
+            insert_process_with_status(&server, thread_id, ProcessStatus::Running, false).await;
 
         let result = handle_process_kill(
             &server,
@@ -596,6 +614,42 @@ modes:
         .expect_err("exited process should fail");
 
         assert!(err.to_string().contains("process is no longer running"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn process_kill_returns_queued_response_when_signal_is_accepted() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        configure_thread_mode(&server, thread_id, "code").await?;
+        let process_id = insert_running_process(&server, thread_id).await;
+
+        let result = handle_process_kill(
+            &server,
+            ProcessKillParams {
+                process_id,
+                turn_id: None,
+                approval_id: None,
+                reason: Some("shutdown".to_string()),
+            },
+        )
+        .await?;
+        let response: omne_app_server_protocol::ProcessSignalResponse = serde_json::from_value(result)?;
+
+        assert!(response.ok);
+        assert!(response.accepted);
+        assert_eq!(response.process_id, process_id);
+        assert_eq!(
+            response.delivery,
+            omne_app_server_protocol::ProcessSignalDelivery::Queued
+        );
         Ok(())
     }
 
