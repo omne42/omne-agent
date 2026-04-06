@@ -441,22 +441,28 @@ async fn handle_thread_configure(
     let model_changed = if params.clear_model {
         current_model.is_some()
     } else {
-        model.as_ref() != current_model.as_ref()
+        model
+            .as_ref()
+            .is_some_and(|value| current_model.as_ref() != Some(value))
     };
     let thinking_changed = if params.clear_thinking {
         current_thinking.is_some()
     } else {
-        thinking.as_ref() != current_thinking.as_ref()
+        thinking
+            .as_ref()
+            .is_some_and(|value| current_thinking.as_ref() != Some(value))
     };
     let show_thinking_changed = if params.clear_show_thinking {
         current_show_thinking.is_some()
     } else {
-        show_thinking != current_show_thinking
+        show_thinking.is_some_and(|value| current_show_thinking != Some(value))
     };
     let openai_base_url_changed = if params.clear_openai_base_url {
         current_openai_base_url.is_some()
     } else {
-        openai_base_url.as_ref() != current_openai_base_url.as_ref()
+        openai_base_url
+            .as_ref()
+            .is_some_and(|value| current_openai_base_url.as_ref() != Some(value))
     };
     let execpolicy_rules_changed = if params.clear_execpolicy_rules {
         !current_execpolicy_rules.is_empty()
