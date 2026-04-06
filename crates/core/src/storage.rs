@@ -188,6 +188,41 @@ impl FsStorage {
     }
 }
 
+#[cfg(not(windows))]
+async fn replace_file_atomic(tmp_path: &Path, path: &Path) -> std::io::Result<()> {
+    tokio::fs::rename(tmp_path, path).await
+}
+
+#[cfg(windows)]
+async fn replace_file_atomic(tmp_path: &Path, path: &Path) -> std::io::Result<()> {
+    use std::iter::once;
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
+    };
+
+    fn encode(path: &Path) -> Vec<u16> {
+        path.as_os_str().encode_wide().chain(once(0)).collect()
+    }
+
+    let tmp_path = encode(tmp_path);
+    let path = encode(path);
+
+    // Windows needs an explicit replace-existing move to avoid the delete-then-rename fallback.
+    let ok = unsafe {
+        MoveFileExW(
+            tmp_path.as_ptr(),
+            path.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if ok == 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
 #[async_trait]
 impl Storage for FsStorage {
     async fn put_json(&self, key: &str, value: &Value) -> anyhow::Result<()> {
@@ -203,32 +238,10 @@ impl Storage for FsStorage {
             .await
             .with_context(|| format!("write json to {}", tmp_path.display()))?;
 
-        if let Err(err) = tokio::fs::rename(&tmp_path, &path).await {
-            if matches!(
-                err.kind(),
-                std::io::ErrorKind::AlreadyExists | std::io::ErrorKind::PermissionDenied
-            ) {
-                match tokio::fs::remove_file(&path).await {
-                    Ok(()) => {}
-                    Err(remove_err) if remove_err.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(remove_err) => {
-                        Self::cleanup_tmp_file(&tmp_path).await;
-                        return Err(remove_err)
-                            .with_context(|| format!("remove old json {}", path.display()));
-                    }
-                }
-                if let Err(rename_err) = tokio::fs::rename(&tmp_path, &path).await {
-                    Self::cleanup_tmp_file(&tmp_path).await;
-                    return Err(rename_err).with_context(|| {
-                        format!("rename {} -> {}", tmp_path.display(), path.display())
-                    });
-                }
-            } else {
-                Self::cleanup_tmp_file(&tmp_path).await;
-                return Err(err).with_context(|| {
-                    format!("rename {} -> {}", tmp_path.display(), path.display())
-                });
-            }
+        if let Err(err) = replace_file_atomic(&tmp_path, &path).await {
+            Self::cleanup_tmp_file(&tmp_path).await;
+            return Err(err)
+                .with_context(|| format!("rename {} -> {}", tmp_path.display(), path.display()));
         }
         Ok(())
     }
@@ -564,6 +577,27 @@ mod tests {
 
         FsStorage::cleanup_tmp_file(&tmp_file).await;
         assert!(!tokio::fs::try_exists(&tmp_file).await?);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn put_json_replaces_existing_file() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let storage = FsStorage::new(dir.path().to_path_buf());
+        let key = "sessions/demo/result";
+
+        storage
+            .put_json(key, &serde_json::json!({ "value": "old" }))
+            .await?;
+        storage
+            .put_json(key, &serde_json::json!({ "value": "new" }))
+            .await?;
+
+        let written = storage
+            .get_json(key)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("missing stored json"))?;
+        assert_eq!(written["value"], "new");
         Ok(())
     }
 }
