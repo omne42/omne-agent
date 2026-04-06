@@ -48,6 +48,41 @@ pub async fn read_artifact_metadata(path: &Path) -> anyhow::Result<ArtifactMetad
     Ok(meta)
 }
 
+#[cfg(not(windows))]
+async fn replace_file_atomic(tmp_path: &Path, path: &Path) -> std::io::Result<()> {
+    tokio::fs::rename(tmp_path, path).await
+}
+
+#[cfg(windows)]
+async fn replace_file_atomic(tmp_path: &Path, path: &Path) -> std::io::Result<()> {
+    use std::iter::once;
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
+    };
+
+    fn encode(path: &Path) -> Vec<u16> {
+        path.as_os_str().encode_wide().chain(once(0)).collect()
+    }
+
+    let tmp_path = encode(tmp_path);
+    let path = encode(path);
+
+    // Windows needs an explicit replace-existing move to avoid the delete-then-rename fallback.
+    let ok = unsafe {
+        MoveFileExW(
+            tmp_path.as_ptr(),
+            path.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if ok == 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
 pub async fn write_file_atomic(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     let Some(parent) = path.parent() else {
         anyhow::bail!("path has no parent: {}", path.display());
@@ -66,31 +101,10 @@ pub async fn write_file_atomic(path: &Path, bytes: &[u8]) -> anyhow::Result<()> 
         .with_context(|| format!("write {}", tmp_path.display()))?;
     tighten_file_permissions_best_effort(&tmp_path).await;
 
-    if let Err(err) = tokio::fs::rename(&tmp_path, path).await {
-        if matches!(
-            err.kind(),
-            std::io::ErrorKind::AlreadyExists | std::io::ErrorKind::PermissionDenied
-        ) {
-            match tokio::fs::remove_file(path).await {
-                Ok(()) => {}
-                Err(remove_err) if remove_err.kind() == std::io::ErrorKind::NotFound => {}
-                Err(remove_err) => {
-                    let _ = tokio::fs::remove_file(&tmp_path).await;
-                    return Err(remove_err)
-                        .with_context(|| format!("remove old {}", path.display()));
-                }
-            }
-            if let Err(rename_err) = tokio::fs::rename(&tmp_path, path).await {
-                let _ = tokio::fs::remove_file(&tmp_path).await;
-                return Err(rename_err).with_context(|| {
-                    format!("rename {} -> {}", tmp_path.display(), path.display())
-                });
-            }
-        } else {
-            let _ = tokio::fs::remove_file(&tmp_path).await;
-            return Err(err)
-                .with_context(|| format!("rename {} -> {}", tmp_path.display(), path.display()));
-        }
+    if let Err(err) = replace_file_atomic(&tmp_path, path).await {
+        let _ = tokio::fs::remove_file(&tmp_path).await;
+        return Err(err)
+            .with_context(|| format!("rename {} -> {}", tmp_path.display(), path.display()));
     }
 
     tighten_file_permissions_best_effort(path).await;
@@ -138,6 +152,18 @@ mod tests {
             .mode()
             & 0o777u32;
         assert_eq!(parent_mode, 0o700);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn write_file_atomic_replaces_existing_file() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let path = tmp.path().join("artifacts/user/demo.md");
+
+        write_file_atomic(&path, b"old").await?;
+        write_file_atomic(&path, b"new").await?;
+
+        assert_eq!(tokio::fs::read(&path).await?, b"new");
         Ok(())
     }
 }
