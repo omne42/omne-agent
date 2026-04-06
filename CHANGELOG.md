@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Fixed
+- `omne-core`：`allowed_tools` 现在补齐 `repo/goto_definition` 与 `repo/find_references`，并沿用现有 `repo/*` 工具的 `read + artifact` 权限判定，避免 thread 白名单开启后这两个已公开接口无法合法授权。
 - `omne-app-server`：`thread/pause` 现在会像 `thread/archive`/`thread/delete` 一样先等待 active turn 关联进程真正停止，再把 thread 标记为 paused；如果 turn/process 仍未停下则直接报错，不再落一个失真的 `ThreadPaused` 事件。同时修复 `mcp_tests.rs` 的 `clone_on_copy`，让 `cargo clippy --workspace --all-targets --all-features -- -D warnings` 重新回到绿色。
 - `omne-app-server`：`thread/checkpoint/restore` 现在会在进入 `prompt_strict` 审批前先拒绝 `sandbox_writable_roots` 不支持的配置，避免先申请一个注定失败的审批，并补齐“不产生 ApprovalRequested”的回归测试。
 - `omne-app-server`：`ProcessStarted` 现在会持久化 `os_pid`，`process/list` 在 server 重启后检测到目标 pid 仍存活时会继续显示 `running`，`process/kill`/`process/interrupt` 也会在无内存 actor 时回退到 OS pid 发信号，不再把仍可治理的历史进程一律降级成 `abandoned`。

@@ -17,6 +17,8 @@ const KNOWN_ALLOWED_TOOLS: &[&str] = &[
     "repo/search",
     "repo/index",
     "repo/symbols",
+    "repo/goto_definition",
+    "repo/find_references",
     "mcp/list_servers",
     "mcp/list_tools",
     "mcp/list_resources",
@@ -107,9 +109,11 @@ fn base_mode_decision_for_tool(mode: &ModeDef, tool: &str) -> Option<Decision> {
         "file/write" | "file/patch" | "file/edit" | "file/delete" | "fs/mkdir" => {
             Some(mode.permissions.edit.decision)
         }
-        "repo/search" | "repo/index" | "repo/symbols" => {
-            Some(mode.permissions.read.combine(mode.permissions.artifact))
-        }
+        "repo/search"
+        | "repo/index"
+        | "repo/symbols"
+        | "repo/goto_definition"
+        | "repo/find_references" => Some(mode.permissions.read.combine(mode.permissions.artifact)),
         "mcp/list_servers" => Some(mode.permissions.read),
         "mcp/list_tools" | "mcp/list_resources" | "mcp/call" => {
             Some(mode.permissions.command.combine(mode.permissions.artifact))
@@ -194,13 +198,18 @@ mod tests {
         let out = normalize_allowed_tools(vec![
             " file/read ".to_string(),
             "file/read".to_string(),
+            "repo/goto_definition".to_string(),
             "".to_string(),
             "process/start".to_string(),
         ])
         .expect("normalize allowed tools");
         assert_eq!(
             out,
-            vec!["file/read".to_string(), "process/start".to_string()]
+            vec![
+                "file/read".to_string(),
+                "repo/goto_definition".to_string(),
+                "process/start".to_string(),
+            ]
         );
 
         let err = normalize_allowed_tools(vec!["bad/tool".to_string()])
@@ -260,5 +269,25 @@ mod tests {
         assert!(effective.iter().any(|tool| tool == "file/read"));
         assert!(!effective.iter().any(|tool| tool == "file/write"));
         assert!(!effective.iter().any(|tool| tool == "process/start"));
+    }
+
+    #[test]
+    fn repo_symbol_tools_share_repo_read_artifact_mode_decision() {
+        let catalog = ModeCatalog::builtin();
+        let mode = catalog.mode("coder").expect("builtin coder mode");
+
+        for tool in [
+            "repo/search",
+            "repo/index",
+            "repo/symbols",
+            "repo/goto_definition",
+            "repo/find_references",
+        ] {
+            assert_eq!(
+                effective_mode_decision_for_tool(mode, tool),
+                Some(mode.permissions.read.combine(mode.permissions.artifact)),
+                "unexpected repo tool decision for {tool}"
+            );
+        }
     }
 }
