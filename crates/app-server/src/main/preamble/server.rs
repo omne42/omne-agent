@@ -503,6 +503,7 @@ mod attention_marker_notification_tests {
     use super::TokenBudgetAttentionMarkerEmitState;
     use super::TokenBudgetAttentionMarkerTransition;
     use super::TokenBudgetWarningEmitState;
+    use super::attention_state_event;
     use super::attention_marker_notification_state;
     use super::external_attention_event;
     use super::external_attention_notification;
@@ -1014,15 +1015,14 @@ mod attention_marker_notification_tests {
         assert_eq!(emitted.len(), 1);
 
         let notification = &emitted[0];
-        assert_eq!(notification.kind, "attention_state");
-        assert_eq!(notification.severity, notify_kit::Severity::Warning);
         assert_eq!(
-            notification.tags.get("state"),
-            Some(&"fan_out_linkage_issue".to_string())
-        );
-        assert_eq!(
-            notification.tags.get("thread_id"),
-            Some(&event.thread_id.to_string())
+            notification,
+            &attention_state_event(
+                &event.thread_id,
+                "fan_out_linkage_issue",
+                notify_kit::Severity::Warning,
+                None,
+            )
         );
     }
 
@@ -1048,9 +1048,15 @@ mod attention_marker_notification_tests {
             status: omne_protocol::TurnStatus::Failed,
             reason: Some("   ".to_string()),
         });
-        let notification_event =
-            external_attention_event(&event).expect("failed turn should emit attention event");
-        assert!(notification_event.body.is_none());
+        assert_eq!(
+            external_attention_event(&event),
+            Some(attention_state_event(
+                &event.thread_id,
+                "failed",
+                notify_kit::Severity::Error,
+                None,
+            ))
+        );
     }
 }
 
