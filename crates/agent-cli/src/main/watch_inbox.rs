@@ -10,13 +10,13 @@ impl BellNotifier {
 
     fn notify_attention_state(&self, title: String, state: &str) {
         let severity = attention_state_severity(state);
-        self.hub.notify(
+        self.hub.notify_best_effort(
             notify_kit::Event::new("attention_state", severity, title).with_tag("state", state),
         );
     }
 
     fn notify_stale_process(&self, title: String) {
-        self.hub.notify(
+        self.hub.notify_best_effort(
             notify_kit::Event::new("stale_process", notify_kit::Severity::Warning, title)
                 .with_tag("state", "stale_process"),
         );
