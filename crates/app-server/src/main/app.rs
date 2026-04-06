@@ -168,6 +168,16 @@ where
             Ok(req) => req,
             Err(err) => {
                 eprintln!("app-server: invalid json: {err}");
+                let response = JsonRpcResponse::err(
+                    Value::Null,
+                    JSONRPC_PARSE_ERROR,
+                    "parse error",
+                    Some(serde_json::json!({ "error": err.to_string() })),
+                );
+                let line = serde_json::to_string(&response)?;
+                if out_tx.send(line).await.is_err() {
+                    break;
+                }
                 continue;
             }
         };
@@ -389,7 +399,45 @@ async fn write_lines_to_socket(
 #[cfg(test)]
 mod response_queue_tests {
     use super::*;
+    use serde_json::Value;
     use tokio::io::AsyncWriteExt;
+
+    #[tokio::test]
+    async fn run_request_loop_returns_jsonrpc_parse_error_for_invalid_json() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let server = Arc::new(build_test_server_shared(tmp.path().join(".omne_data")));
+        let (mut input_writer, input_reader) = tokio::io::duplex(1024);
+        let (out_tx, mut out_rx) = mpsc::channel::<String>(1);
+
+        let writer_task = tokio::spawn(async move {
+            input_writer.write_all(b"{invalid json}\n").await?;
+            input_writer.shutdown().await?;
+            anyhow::Ok(())
+        });
+
+        #[cfg(unix)]
+        let run_task = tokio::spawn(run_request_loop(server, input_reader, out_tx, None));
+        #[cfg(not(unix))]
+        let run_task = tokio::spawn(run_request_loop(server, input_reader, out_tx));
+
+        let response_line = tokio::time::timeout(Duration::from_secs(1), out_rx.recv())
+            .await
+            .context("timed out waiting for parse error response")?
+            .ok_or_else(|| anyhow::anyhow!("missing parse error response"))?;
+        let response: Value =
+            serde_json::from_str(&response_line).context("parse jsonrpc parse error response")?;
+        assert_eq!(response["jsonrpc"], serde_json::json!("2.0"));
+        assert_eq!(response["id"], Value::Null);
+        assert_eq!(response["error"]["code"], serde_json::json!(JSONRPC_PARSE_ERROR));
+        assert_eq!(response["error"]["message"], serde_json::json!("parse error"));
+        assert!(response["error"]["data"]["error"]
+            .as_str()
+            .is_some_and(|message| !message.is_empty()));
+
+        run_task.await??;
+        writer_task.await??;
+        Ok(())
+    }
 
     #[tokio::test]
     async fn run_request_loop_applies_backpressure_to_outbound_responses() -> anyhow::Result<()> {
@@ -443,6 +491,57 @@ mod response_queue_tests {
             .context("timed out waiting for second response")?
             .ok_or_else(|| anyhow::anyhow!("missing second response"))?;
         assert!(second.contains("\"id\":2"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn run_request_loop_returns_parse_error_and_continues() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let server = Arc::new(build_test_server_shared(tmp.path().join(".omne_data")));
+        let (mut input_writer, input_reader) = tokio::io::duplex(1024);
+        let (out_tx, mut out_rx) = mpsc::channel::<String>(8);
+
+        let writer_task = tokio::spawn(async move {
+            let initialize = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {},
+            });
+            input_writer.write_all(b"{invalid json}\n").await?;
+            input_writer
+                .write_all(format!("{initialize}\n").as_bytes())
+                .await?;
+            input_writer.shutdown().await?;
+            anyhow::Ok(())
+        });
+
+        #[cfg(unix)]
+        let run_task = tokio::spawn(run_request_loop(server, input_reader, out_tx, None));
+        #[cfg(not(unix))]
+        let run_task = tokio::spawn(run_request_loop(server, input_reader, out_tx));
+
+        let first = tokio::time::timeout(Duration::from_secs(1), out_rx.recv())
+            .await
+            .context("timed out waiting for parse error response")?
+            .ok_or_else(|| anyhow::anyhow!("missing parse error response"))?;
+        let first: serde_json::Value =
+            serde_json::from_str(&first).context("parse parse-error response")?;
+        assert_eq!(first["id"], Value::Null);
+        assert_eq!(first["error"]["code"], serde_json::json!(JSONRPC_PARSE_ERROR));
+        assert_eq!(first["error"]["message"], serde_json::json!("parse error"));
+
+        let second = tokio::time::timeout(Duration::from_secs(1), out_rx.recv())
+            .await
+            .context("timed out waiting for initialize response after parse error")?
+            .ok_or_else(|| anyhow::anyhow!("missing initialize response"))?;
+        let second: serde_json::Value =
+            serde_json::from_str(&second).context("parse initialize response")?;
+        assert_eq!(second["id"], serde_json::json!(1));
+        assert!(second.get("result").is_some());
+
+        run_task.await??;
+        writer_task.await??;
         Ok(())
     }
 }
