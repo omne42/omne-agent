@@ -104,56 +104,124 @@ pub struct CapturedPatch {
     pub truncated: bool,
 }
 
+async fn run_git_output(
+    cwd: &str,
+    timeout: Duration,
+    args: &[&str],
+) -> anyhow::Result<std::process::Output> {
+    tokio::time::timeout(
+        timeout,
+        tokio::process::Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .output(),
+    )
+    .await
+    .map_err(|_| {
+        anyhow::anyhow!(
+            "git {} timed out after {}ms",
+            args.join(" "),
+            timeout.as_millis()
+        )
+    })?
+    .with_context(|| format!("spawn git {} in {cwd}", args.join(" ")))
+}
+
+fn ensure_git_success(
+    cwd: &str,
+    args: &[&str],
+    output: &std::process::Output,
+) -> anyhow::Result<()> {
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    anyhow::bail!(
+        "git {} failed in {} (exit {:?}): {}",
+        args.join(" "),
+        cwd,
+        output.status.code(),
+        stderr
+    );
+}
+
+async fn git_has_head(cwd: &str, timeout: Duration) -> anyhow::Result<bool> {
+    let args = ["rev-parse", "--verify", "HEAD"];
+    let output = run_git_output(cwd, timeout, &args).await?;
+    Ok(output.status.success())
+}
+
+async fn capture_tracked_patch(cwd: &str, timeout: Duration) -> anyhow::Result<Vec<u8>> {
+    let mut args = vec![
+        "--no-pager",
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-color",
+        "--binary",
+        "--patch",
+    ];
+    if git_has_head(cwd, timeout).await? {
+        args.push("HEAD");
+    } else {
+        args.push("--cached");
+    }
+
+    let output = run_git_output(cwd, timeout, &args).await?;
+    ensure_git_success(cwd, &args, &output)?;
+    Ok(output.stdout)
+}
+
+async fn capture_untracked_patch(cwd: &str, timeout: Duration) -> anyhow::Result<Vec<u8>> {
+    let list_args = ["ls-files", "--others", "--exclude-standard", "-z"];
+    let listed = run_git_output(cwd, timeout, &list_args).await?;
+    ensure_git_success(cwd, &list_args, &listed)?;
+
+    let mut patch = Vec::new();
+    for rel_path in listed
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|entry| !entry.is_empty())
+    {
+        let rel_path = String::from_utf8(rel_path.to_vec())
+            .with_context(|| format!("decode untracked path in {cwd}"))?;
+        let diff_args = [
+            "--no-pager",
+            "diff",
+            "--no-index",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--binary",
+            "--patch",
+            "--no-color",
+            "--",
+            "/dev/null",
+            rel_path.as_str(),
+        ];
+        let diff = run_git_output(cwd, timeout, &diff_args).await?;
+        if !diff.status.success() && diff.status.code() != Some(1) {
+            ensure_git_success(cwd, &diff_args, &diff)?;
+        }
+        patch.extend(diff.stdout);
+    }
+
+    Ok(patch)
+}
+
 pub async fn capture_workspace_patch(
     cwd: &str,
     config: PatchCaptureConfig,
 ) -> anyhow::Result<Option<CapturedPatch>> {
     let max_patch_bytes = config.max_patch_bytes.max(1);
 
-    // Best-effort: include untracked files in generated patch without staging content.
-    let _ = tokio::time::timeout(
-        config.timeout,
-        tokio::process::Command::new("git")
-            .args(["add", "--intent-to-add", "--", "."])
-            .current_dir(cwd)
-            .output(),
-    )
-    .await;
+    let mut bytes = capture_tracked_patch(cwd, config.timeout).await?;
+    bytes.extend(capture_untracked_patch(cwd, config.timeout).await?);
 
-    let output = tokio::time::timeout(
-        config.timeout,
-        tokio::process::Command::new("git")
-            .args([
-                "--no-pager",
-                "diff",
-                "--no-ext-diff",
-                "--no-textconv",
-                "--no-color",
-                "--binary",
-                "--patch",
-            ])
-            .current_dir(cwd)
-            .output(),
-    )
-    .await
-    .map_err(|_| anyhow::anyhow!("git diff timed out after {}ms", config.timeout.as_millis()))?
-    .with_context(|| format!("spawn git diff in {cwd}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        anyhow::bail!(
-            "git diff --binary --patch failed in {} (exit {:?}): {}",
-            cwd,
-            output.status.code(),
-            stderr
-        );
-    }
-
-    if output.stdout.is_empty() {
+    if bytes.is_empty() {
         return Ok(None);
     }
 
-    let mut bytes = output.stdout;
     let truncated = bytes.len() > max_patch_bytes;
     if truncated {
         bytes.truncate(max_patch_bytes);
@@ -606,6 +674,29 @@ mod tests {
         );
     }
 
+    async fn run_git_stdout(cwd: &Path, args: &[&str]) -> anyhow::Result<String> {
+        let output = tokio::process::Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .output()
+            .await
+            .with_context(|| format!("spawn git {} in {}", args.join(" "), cwd.display()))?;
+        if !output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            anyhow::bail!(
+                "git {} failed in {} (exit {:?}): stdout={}, stderr={}",
+                args.join(" "),
+                cwd.display(),
+                output.status.code(),
+                stdout,
+                stderr
+            );
+        }
+
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
+
     async fn init_repo(repo_dir: &Path) -> anyhow::Result<()> {
         run_git(repo_dir, &["init"]).await?;
         run_git(repo_dir, &["config", "user.email", "test@example.com"]).await?;
@@ -649,6 +740,52 @@ mod tests {
         .ok_or_else(|| anyhow::anyhow!("expected patch output"))?;
         assert!(!patch.truncated);
         assert!(patch.text.contains("new_file.txt"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn capture_workspace_patch_includes_staged_only_diff() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+        init_repo(&repo_dir).await?;
+
+        tokio::fs::write(repo_dir.join("hello.txt"), "hello\nstaged\n").await?;
+        run_git(&repo_dir, &["add", "hello.txt"]).await?;
+        run_git(&repo_dir, &["checkout", "--", "hello.txt"]).await?;
+
+        let patch = capture_workspace_patch(
+            &repo_dir.display().to_string(),
+            PatchCaptureConfig::default(),
+        )
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("expected patch output"))?;
+        assert!(patch.text.contains("+staged"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn capture_workspace_patch_does_not_modify_git_status_for_untracked_files()
+    -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+        init_repo(&repo_dir).await?;
+
+        tokio::fs::write(repo_dir.join("new_file.txt"), "new content\n").await?;
+
+        let before = run_git_stdout(&repo_dir, &["status", "--short"]).await?;
+        let patch = capture_workspace_patch(
+            &repo_dir.display().to_string(),
+            PatchCaptureConfig::default(),
+        )
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("expected patch output"))?;
+        let after = run_git_stdout(&repo_dir, &["status", "--short"]).await?;
+
+        assert!(patch.text.contains("new_file.txt"));
+        assert_eq!(before, "?? new_file.txt\n");
+        assert_eq!(after, before);
         Ok(())
     }
 
