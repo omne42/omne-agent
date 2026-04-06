@@ -85,7 +85,7 @@ fn env_option_takes_value(arg: &str) -> bool {
     )
 }
 
-fn env_wrapped_command<'a>(argv: &'a [String]) -> &'a [String] {
+fn env_wrapped_command(argv: &[String]) -> &[String] {
     let mut index = 1usize;
     while let Some(arg) = argv.get(index) {
         if arg == "--" {
