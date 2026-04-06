@@ -467,11 +467,7 @@ async fn handle_execve_gate_decide(
             "approval_id": approval_id,
         })),
         ProcessExecGovernance::Denied(denied) => {
-            let action_label = match &denied {
-                ProcessExecGovernanceDenied::ModeDenied { .. } => "process/execve",
-                _ => "execve",
-            };
-            let reason = process_exec_governance_denied_reason(&denied, action_label);
+            let reason = process_exec_governance_denied_reason(&denied, "process/execve");
 
             match denied {
                 ProcessExecGovernanceDenied::UnknownMode {

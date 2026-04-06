@@ -599,6 +599,50 @@ modes:
     }
 
     #[tokio::test]
+    async fn process_kill_reports_exited_history_even_after_registry_eviction()
+    -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let thread_id = create_test_thread_shared(&server, repo_dir).await?;
+        let rt = server.get_or_load_thread(thread_id).await?;
+        let process_id = ProcessId::new();
+
+        rt.append_event(omne_protocol::ThreadEventKind::ProcessStarted {
+            process_id,
+            turn_id: None,
+            argv: vec!["echo".to_string(), "ok".to_string()],
+            cwd: "/tmp".to_string(),
+            stdout_path: "/tmp/stdout.log".to_string(),
+            stderr_path: "/tmp/stderr.log".to_string(),
+        })
+        .await?;
+        rt.append_event(omne_protocol::ThreadEventKind::ProcessExited {
+            process_id,
+            exit_code: Some(0),
+            reason: Some("completed".to_string()),
+        })
+        .await?;
+
+        let err = handle_process_kill(
+            &server,
+            ProcessKillParams {
+                process_id,
+                turn_id: None,
+                approval_id: None,
+                reason: None,
+            },
+        )
+        .await
+        .expect_err("evicted exited process should not look missing");
+
+        assert!(err.to_string().contains("process is no longer running"));
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn process_interrupt_denied_by_tool_override_reports_decision_source()
     -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
