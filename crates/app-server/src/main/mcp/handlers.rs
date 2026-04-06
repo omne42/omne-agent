@@ -144,11 +144,9 @@ async fn handle_mcp_list_servers(server: &Server, params: McpListServersParams) 
             .servers()
             .iter()
             .filter(|(_, cfg)| matches!(cfg.transport(), McpTransport::Stdio))
-            .map(|(name, cfg)| omne_app_server_protocol::McpServerDescriptor {
+            .map(|(name, _cfg)| omne_app_server_protocol::McpServerDescriptor {
                 name: name.to_string(),
                 transport: "stdio".to_string(),
-                argv: omne_core::redact_command_argv(cfg.argv()),
-                env_keys: cfg.env().keys().cloned().collect(),
             })
             .collect::<Vec<_>>();
 

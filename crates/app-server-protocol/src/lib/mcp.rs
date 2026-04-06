@@ -208,8 +208,6 @@ pub struct McpFailedResponse {
 pub struct McpServerDescriptor {
     pub name: String,
     pub transport: String,
-    pub argv: Vec<String>,
-    pub env_keys: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]

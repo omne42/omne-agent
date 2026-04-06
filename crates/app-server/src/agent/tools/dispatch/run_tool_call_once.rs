@@ -66,13 +66,38 @@ fn plan_architect_base_decision(
         | "repo/symbols"
         | "repo/goto_definition"
         | "repo/find_references" => mode.permissions.read.combine(mode.permissions.artifact),
-        "mcp/list_servers" | "mcp/list_tools" | "mcp/list_resources" => mode.permissions.read,
+        "mcp/list_servers" => mode.permissions.command,
+        "mcp/list_tools" | "mcp/list_resources" => mode.permissions.read,
         "process/inspect" | "process/tail" | "process/follow" => mode.permissions.process.inspect,
         "artifact/list" | "artifact/read" => mode.permissions.artifact,
         "thread/diff" => mode.permissions.command.combine(mode.permissions.artifact),
         _ => return None,
     };
     Some(decision)
+}
+
+#[cfg(test)]
+mod plan_tool_policy_tests {
+    use super::*;
+
+    #[test]
+    fn mcp_list_servers_is_not_treated_as_plan_read_only() {
+        assert!(!is_plan_read_only_tool("mcp_list_servers"));
+        assert_eq!(plan_tool_action("mcp_list_servers"), None);
+    }
+
+    #[test]
+    fn architect_uses_command_permission_for_mcp_list_servers() {
+        let mode = omne_core::modes::ModeCatalog::builtin()
+            .mode("architect")
+            .cloned()
+            .expect("builtin architect mode");
+
+        assert_eq!(
+            plan_architect_base_decision(&mode, "mcp/list_servers"),
+            Some(omne_core::modes::Decision::Prompt)
+        );
+    }
 }
 
 fn plan_architect_effective_decision(
