@@ -378,6 +378,86 @@ modes:
     }
 
     #[tokio::test]
+    async fn file_write_respects_role_permission_mode() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        write_modes_yaml_shared(
+            &repo_dir,
+            r#"
+version: 1
+modes:
+  coder:
+    description: "coder"
+    permissions:
+      read:
+        decision: allow
+      edit:
+        decision: allow
+      command:
+        decision: allow
+      artifact:
+        decision: allow
+  chat:
+    description: "chat"
+    permissions:
+      read:
+        decision: allow
+      edit:
+        decision: deny
+      command:
+        decision: allow
+      artifact:
+        decision: allow
+"#,
+        )
+        .await?;
+
+        let server = build_test_server_shared(repo_dir.join(".omne_data"));
+        let thread_id = create_test_thread_shared(&server, repo_dir).await?;
+        handle_thread_configure(
+            &server,
+            ThreadConfigureParams {
+                thread_id,
+                approval_policy: Some(omne_protocol::ApprovalPolicy::AutoApprove),
+                sandbox_policy: None,
+                sandbox_writable_roots: None,
+                sandbox_network_access: None,
+                mode: Some("coder".to_string()),
+                role: Some("chat".to_string()),
+                model: None,
+                clear_model: false,
+                thinking: None,
+                clear_thinking: false,
+                show_thinking: None,
+                clear_show_thinking: false,
+                openai_base_url: None,
+                clear_openai_base_url: false,
+                allowed_tools: None,
+                execpolicy_rules: None,
+                clear_execpolicy_rules: false,
+            },
+        )
+        .await?;
+
+        let result = handle_file_write(
+            &server,
+            FileWriteParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                path: "a.txt".to_string(),
+                text: "hello".to_string(),
+                create_parent_dirs: Some(true),
+            },
+        )
+        .await?;
+
+        assert!(result["denied"].as_bool().unwrap_or(false));
+        assert_eq!(result["decision_source"].as_str(), Some("role_permission_mode"));
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn file_read_ignores_edit_deny_globs_when_read_is_allowed() -> anyhow::Result<()> {
         let (_tmp, repo_dir, server, thread_id) = setup_thread_with_edit_deny_but_read_allow().await?;
 

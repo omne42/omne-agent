@@ -10,12 +10,13 @@ async fn handle_file_glob(server: &Server, params: FileGlobParams) -> anyhow::Re
         "max_results": max_results,
     });
 
-    let (approval_policy, mode_name, allowed_tools) = {
+    let (approval_policy, mode_name, role_name, allowed_tools) = {
         let handle = thread_rt.handle.lock().await;
         let state = handle.state();
         (
             state.approval_policy,
             state.mode.clone(),
+            state.role.clone(),
             state.allowed_tools.clone(),
         )
     };
@@ -41,6 +42,7 @@ async fn handle_file_glob(server: &Server, params: FileGlobParams) -> anyhow::Re
             approval_id: params.approval_id,
             approval_policy,
             mode_name: &mode_name,
+            role_name: &role_name,
             action: "file/glob",
             tool_id,
             approval_params: &approval_params,

@@ -450,6 +450,7 @@ struct ProcessExecAuthorizationContext<'a> {
     approval_id: Option<omne_protocol::ApprovalId>,
     approval_policy: omne_protocol::ApprovalPolicy,
     mode_name: &'a str,
+    role_name: &'a str,
     action: &'static str,
     exec_policy: &'a omne_execpolicy::Policy,
     thread_execpolicy_rules: &'a [String],
@@ -541,8 +542,13 @@ where
         }
     };
 
-    let mode_decision =
-        resolve_mode_decision_audit(&mode, ctx.action, base_decision_for_mode(&mode));
+    let mode_decision = resolve_mode_and_role_decision_audit(
+        &catalog,
+        &mode,
+        Some(ctx.role_name),
+        ctx.action,
+        &base_decision_for_mode,
+    );
     if mode_decision.decision == omne_core::modes::Decision::Deny {
         return Ok(ProcessExecAuthorization::Denied(
             ProcessExecAuthorizationDenied::ModeDenied { mode_decision },
@@ -678,6 +684,7 @@ struct ProcessModeApprovalContext<'a> {
     approval_id: Option<omne_protocol::ApprovalId>,
     approval_policy: omne_protocol::ApprovalPolicy,
     mode_name: &'a str,
+    role_name: &'a str,
     action: &'static str,
     tool_id: omne_protocol::ToolId,
     approval_params: &'a Value,
@@ -716,8 +723,13 @@ where
         }
     };
 
-    let mode_decision =
-        resolve_mode_decision_audit(&mode, ctx.action, base_decision_for_mode(&mode));
+    let mode_decision = resolve_mode_and_role_decision_audit(
+        &catalog,
+        &mode,
+        Some(ctx.role_name),
+        ctx.action,
+        &base_decision_for_mode,
+    );
     if mode_decision.decision == omne_core::modes::Decision::Deny {
         let result =
             process_mode_denied_response(ctx.tool_id, ctx.thread_id, ctx.mode_name, mode_decision)?;

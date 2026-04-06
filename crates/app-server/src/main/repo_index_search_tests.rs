@@ -71,6 +71,7 @@ modes:
         .await?;
 
         tokio::fs::write(repo_dir.join(".env"), "needle\n").await?;
+        tokio::fs::write(repo_dir.join(".env.local"), "needle\n").await?;
 
         tokio::fs::create_dir_all(repo_dir.join(".omne_data/tmp")).await?;
         tokio::fs::write(repo_dir.join(".omne_data/tmp/leak.txt"), "needle\n").await?;
@@ -104,6 +105,7 @@ modes:
         assert!(text.contains("# Repo Search"));
         assert!(text.contains("src/lib.rs"));
         assert!(!text.contains(".env"));
+        assert!(!text.contains(".env.local"));
         assert!(!text.contains(".omne_data/tmp"));
 
         Ok(())
@@ -122,6 +124,7 @@ modes:
         .await?;
 
         tokio::fs::write(repo_dir.join(".env"), "should_not_be_indexed\n").await?;
+        tokio::fs::write(repo_dir.join(".env.local"), "should_not_be_indexed\n").await?;
         tokio::fs::create_dir_all(repo_dir.join(".omne_data/tmp")).await?;
         tokio::fs::write(
             repo_dir.join(".omne_data/tmp/leak.txt"),
@@ -154,6 +157,7 @@ modes:
         assert!(text.contains("# Repo Index"));
         assert!(text.contains("src/lib.rs"));
         assert!(!text.contains(".env"));
+        assert!(!text.contains(".env.local"));
         assert!(!text.contains(".omne_data/tmp"));
 
         Ok(())
@@ -236,6 +240,92 @@ modes:
         let thread_id_str = thread_id.to_string();
         assert_eq!(result["thread_id"].as_str(), Some(thread_id_str.as_str()));
         assert!(result["approval_id"].is_string());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn repo_search_respects_role_permission_mode() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(repo_dir.join("src")).await?;
+        tokio::fs::write(repo_dir.join("src/lib.rs"), "needle\n").await?;
+        write_modes_yaml_shared(
+            &repo_dir,
+            r#"
+version: 1
+modes:
+  coder:
+    description: "coder"
+    permissions:
+      read:
+        decision: allow
+      edit:
+        decision: allow
+      command:
+        decision: allow
+      artifact:
+        decision: allow
+  chat:
+    description: "chat"
+    permissions:
+      read:
+        decision: allow
+      edit:
+        decision: deny
+      command:
+        decision: deny
+      artifact:
+        decision: deny
+"#,
+        )
+        .await?;
+
+        let server = build_test_server_shared(repo_dir.join(".omne_data"));
+        let thread_id = create_test_thread_shared(&server, repo_dir).await?;
+        handle_thread_configure(
+            &server,
+            ThreadConfigureParams {
+                thread_id,
+                approval_policy: Some(omne_protocol::ApprovalPolicy::AutoApprove),
+                sandbox_policy: None,
+                sandbox_writable_roots: None,
+                sandbox_network_access: None,
+                mode: Some("coder".to_string()),
+                role: Some("chat".to_string()),
+                model: None,
+                clear_model: false,
+                thinking: None,
+                clear_thinking: false,
+                show_thinking: None,
+                clear_show_thinking: false,
+                openai_base_url: None,
+                clear_openai_base_url: false,
+                allowed_tools: None,
+                execpolicy_rules: None,
+                clear_execpolicy_rules: false,
+            },
+        )
+        .await?;
+
+        let result = handle_repo_search(
+            &server,
+            RepoSearchParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                root: None,
+                query: "needle".to_string(),
+                is_regex: false,
+                include_glob: None,
+                max_matches: Some(20),
+                max_bytes_per_file: Some(1024 * 1024),
+                max_files: Some(20_000),
+            },
+        )
+        .await?;
+
+        assert!(result["denied"].as_bool().unwrap_or(false));
+        assert_eq!(result["decision_source"].as_str(), Some("role_permission_mode"));
         Ok(())
     }
 
@@ -669,6 +759,40 @@ pub fn caller() -> i32 {
         assert!(result["denied"].as_bool().unwrap_or(false));
         assert_eq!(result["decision_source"].as_str(), Some("tool_override"));
         assert_eq!(result["tool_override_hit"].as_bool(), Some(true));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn repo_search_marks_truncated_when_max_files_is_hit() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+        tokio::fs::write(repo_dir.join("a.txt"), "no match\n").await?;
+        tokio::fs::write(repo_dir.join("b.txt"), "needle\n").await?;
+
+        let server = build_test_server_shared(repo_dir.join(".omne_data"));
+        let thread_id = create_test_thread_shared(&server, repo_dir).await?;
+
+        let result = handle_repo_search(
+            &server,
+            RepoSearchParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                root: None,
+                query: "needle".to_string(),
+                is_regex: false,
+                include_glob: None,
+                max_matches: Some(20),
+                max_bytes_per_file: Some(1024 * 1024),
+                max_files: Some(1),
+            },
+        )
+        .await?;
+
+        let response: omne_app_server_protocol::RepoSearchResponse =
+            serde_json::from_value(result).context("parse repo/search response")?;
+        assert!(response.truncated);
         Ok(())
     }
 }

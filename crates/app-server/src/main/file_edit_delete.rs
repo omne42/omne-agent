@@ -13,7 +13,14 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
         .unwrap_or(4 * 1024 * 1024)
         .min(16 * 1024 * 1024);
 
-    let (approval_policy, sandbox_policy, sandbox_writable_roots, mode_name, allowed_tools) = {
+    let (
+        approval_policy,
+        sandbox_policy,
+        sandbox_writable_roots,
+        mode_name,
+        role_name,
+        allowed_tools,
+    ) = {
         let handle = thread_rt.handle.lock().await;
         let state = handle.state();
         (
@@ -21,6 +28,7 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
             state.sandbox_policy,
             state.sandbox_writable_roots.clone(),
             state.mode.clone(),
+            state.role.clone(),
             state.allowed_tools.clone(),
         )
     };
@@ -92,6 +100,7 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
             approval_id: params.approval_id,
             approval_policy,
             mode_name: &mode_name,
+            role_name: &role_name,
             action: "file/edit",
             tool_id,
             approval_params: &approval_params,
@@ -148,8 +157,14 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
                 result,
             ));
         }
-        let base_decision = mode.permissions.edit.decision_for_path(&target.rel_path);
-        let mode_decision = resolve_mode_decision_audit(&mode, "file/edit", base_decision);
+        let catalog = omne_core::modes::ModeCatalog::load(&thread_root).await;
+        let mode_decision = resolve_mode_and_role_decision_audit(
+            &catalog,
+            &mode,
+            Some(&role_name),
+            "file/edit",
+            |mode| mode.permissions.edit.decision_for_path(&target.rel_path),
+        );
         if mode_decision.decision == omne_core::modes::Decision::Deny {
             let result = file_mode_denied_response(tool_id, &mode_name, mode_decision)?;
             return Err(tool_denied(
@@ -235,7 +250,14 @@ async fn handle_file_edit(server: &Server, params: FileEditParams) -> anyhow::Re
 async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow::Result<Value> {
     let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
 
-    let (approval_policy, sandbox_policy, sandbox_writable_roots, mode_name, allowed_tools) = {
+    let (
+        approval_policy,
+        sandbox_policy,
+        sandbox_writable_roots,
+        mode_name,
+        role_name,
+        allowed_tools,
+    ) = {
         let handle = thread_rt.handle.lock().await;
         let state = handle.state();
         (
@@ -243,6 +265,7 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
             state.sandbox_policy,
             state.sandbox_writable_roots.clone(),
             state.mode.clone(),
+            state.role.clone(),
             state.allowed_tools.clone(),
         )
     };
@@ -313,6 +336,7 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
             approval_id: params.approval_id,
             approval_policy,
             mode_name: &mode_name,
+            role_name: &role_name,
             action: "file/delete",
             tool_id,
             approval_params: &approval_params,
@@ -361,8 +385,14 @@ async fn handle_file_delete(server: &Server, params: FileDeleteParams) -> anyhow
                 result,
             ));
         }
-        let base_decision = mode.permissions.edit.decision_for_path(&target.rel_path);
-        let mode_decision = resolve_mode_decision_audit(&mode, "file/delete", base_decision);
+        let catalog = omne_core::modes::ModeCatalog::load(&thread_root).await;
+        let mode_decision = resolve_mode_and_role_decision_audit(
+            &catalog,
+            &mode,
+            Some(&role_name),
+            "file/delete",
+            |mode| mode.permissions.edit.decision_for_path(&target.rel_path),
+        );
         if mode_decision.decision == omne_core::modes::Decision::Deny {
             let result = file_mode_denied_response(tool_id, &mode_name, mode_decision)?;
             return Err(tool_denied(

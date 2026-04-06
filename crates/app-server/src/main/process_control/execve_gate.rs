@@ -403,6 +403,7 @@ async fn handle_execve_gate_decide(
         sandbox_policy,
         sandbox_network_access,
         mode_name,
+        role_name,
         thread_execpolicy_rules,
     ) = {
         let handle = ctx.thread_rt.handle.lock().await;
@@ -412,6 +413,7 @@ async fn handle_execve_gate_decide(
             state.sandbox_policy,
             state.sandbox_network_access,
             state.mode.clone(),
+            state.role.clone(),
             state.execpolicy_rules.clone(),
         )
     };
@@ -438,6 +440,7 @@ async fn handle_execve_gate_decide(
                 approval_id: None,
                 approval_policy,
                 mode_name: &mode_name,
+                role_name: &role_name,
                 action: "process/execve",
                 exec_policy: &ctx.exec_policy,
                 thread_execpolicy_rules: &thread_execpolicy_rules,

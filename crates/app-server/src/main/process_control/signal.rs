@@ -49,12 +49,13 @@ pub(super) async fn handle_process_kill(
     let info = entry.info.lock().await.clone();
 
     let (thread_rt, thread_root) = load_thread_root(server, info.thread_id).await?;
-    let (approval_policy, mode_name, allowed_tools) = {
+    let (approval_policy, mode_name, role_name, allowed_tools) = {
         let handle = thread_rt.handle.lock().await;
         let state = handle.state();
         (
             state.approval_policy,
             state.mode.clone(),
+            state.role.clone(),
             state.allowed_tools.clone(),
         )
     };
@@ -87,6 +88,7 @@ pub(super) async fn handle_process_kill(
             approval_id: params.approval_id,
             approval_policy,
             mode_name: &mode_name,
+            role_name: &role_name,
             action: "process/kill",
             tool_id,
             approval_params: &approval_params,
@@ -156,12 +158,13 @@ pub(super) async fn handle_process_interrupt(
     let info = entry.info.lock().await.clone();
 
     let (thread_rt, thread_root) = load_thread_root(server, info.thread_id).await?;
-    let (approval_policy, mode_name, allowed_tools) = {
+    let (approval_policy, mode_name, role_name, allowed_tools) = {
         let handle = thread_rt.handle.lock().await;
         let state = handle.state();
         (
             state.approval_policy,
             state.mode.clone(),
+            state.role.clone(),
             state.allowed_tools.clone(),
         )
     };
@@ -194,6 +197,7 @@ pub(super) async fn handle_process_interrupt(
             approval_id: params.approval_id,
             approval_policy,
             mode_name: &mode_name,
+            role_name: &role_name,
             action: "process/interrupt",
             tool_id,
             approval_params: &approval_params,
