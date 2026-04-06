@@ -22,8 +22,6 @@ async fn run_process_actor(args: ProcessActorArgs) {
         mut execve_gate,
         info,
     } = args;
-    const PROCESS_ENTRY_CLEANUP_DELAY: Duration = Duration::from_secs(1);
-
     async fn finalize_process(
         server: &Server,
         process_id: ProcessId,
@@ -31,12 +29,7 @@ async fn run_process_actor(args: ProcessActorArgs) {
     ) {
         cleanup_execve_gate(execve_gate).await;
         let _ = remove_mcp_connections_for_process(server, process_id).await;
-        let server = server.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(PROCESS_ENTRY_CLEANUP_DELAY).await;
-            let mut entries = server.processes.lock().await;
-            entries.remove(&process_id);
-        });
+        server.processes.lock().await.remove(&process_id);
     }
 
     fn try_send_interrupt(child: &tokio::process::Child) -> anyhow::Result<()> {

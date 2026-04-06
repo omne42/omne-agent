@@ -458,6 +458,7 @@ mod tests {
             .await?
             .expect("thread exists");
         assert!(resumed.active_processes.is_empty());
+        assert!(resumed.state().running_processes.is_empty());
 
         let events = resumed.events_since(EventSeq::ZERO).await?;
         assert!(events.iter().any(|event| matches!(

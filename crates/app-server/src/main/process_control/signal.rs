@@ -18,14 +18,29 @@ async fn send_process_signal(
         .map_err(|_| anyhow::anyhow!("process is no longer running: {}", process_id))
 }
 
-async fn handle_process_kill(server: &Server, params: ProcessKillParams) -> anyhow::Result<Value> {
+async fn lookup_process_entry(
+    server: &Server,
+    process_id: ProcessId,
+) -> anyhow::Result<ProcessEntry> {
     let entry = {
         let entries = server.processes.lock().await;
-        entries.get(&params.process_id).cloned()
+        entries.get(&process_id).cloned()
     };
-    let Some(entry) = entry else {
-        anyhow::bail!("process not found: {}", params.process_id);
-    };
+    if let Some(entry) = entry {
+        return Ok(entry);
+    }
+
+    match resolve_process_info(server, process_id).await {
+        Ok(_) => anyhow::bail!("process is no longer running: {}", process_id),
+        Err(err) if err.to_string().contains("process not found") => {
+            anyhow::bail!("process not found: {}", process_id)
+        }
+        Err(err) => Err(err),
+    }
+}
+
+async fn handle_process_kill(server: &Server, params: ProcessKillParams) -> anyhow::Result<Value> {
+    let entry = lookup_process_entry(server, params.process_id).await?;
     let info = entry.info.lock().await.clone();
 
     let (thread_rt, thread_root) = load_thread_root(server, info.thread_id).await?;
@@ -132,13 +147,7 @@ async fn handle_process_interrupt(
     server: &Server,
     params: ProcessInterruptParams,
 ) -> anyhow::Result<Value> {
-    let entry = {
-        let entries = server.processes.lock().await;
-        entries.get(&params.process_id).cloned()
-    };
-    let Some(entry) = entry else {
-        anyhow::bail!("process not found: {}", params.process_id);
-    };
+    let entry = lookup_process_entry(server, params.process_id).await?;
     let info = entry.info.lock().await.clone();
 
     let (thread_rt, thread_root) = load_thread_root(server, info.thread_id).await?;
