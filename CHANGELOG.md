@@ -217,6 +217,7 @@
 - `omne-app-server process logs`：stdout/stderr 现在写入 thread `runtime/processes/<process_id>/`（不再归类为 `artifacts/`）；`artifacts/` 仅保留面向用户的 Markdown/图表等产物。
 
 ### Fixed
+- `omne-process-runtime`：`command_uses_network` 现在会跳过 `git -C/-c/--git-dir/...` 等前置全局参数后再识别真正的子命令，避免 `sandbox_network_access=deny` 被 `git -C repo fetch/pull` 这类常见写法绕过。
 - docs：`docs/v0.2.0_parity.md` 更新 Transformers 状态，标记 ditto-llm 接入已落地。
 - `omne-core`：thread `cwd` 现在会以规范化绝对路径持久化，避免相对路径 thread 在重启/恢复后重新解释到错误目录。
 - `omne-app-server`：managed subagent worktree 清理现在固定锚定 `omne_root/tmp/subagents`，不再从 `server.cwd/.omne_data` 反推路径边界。
