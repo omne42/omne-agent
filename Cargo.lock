@@ -781,26 +781,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c34f04666d835ff5d62e058c3995147c06f42fe86ff053337632bca83e42702d"
 
 [[package]]
-name = "enumflags2"
-version = "0.7.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1027f7680c853e056ebcec683615fb6fbbc07dbaa13b4d5d9442b146ded4ecef"
-dependencies = [
- "enumflags2_derive",
-]
-
-[[package]]
-name = "enumflags2_derive"
-version = "0.7.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67c78a4d8fdf9953a5c9d458f9efe940fd97a0cab0941c075a813ac594733827"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
-]
-
-[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1036,6 +1016,17 @@ dependencies = [
  "r-efi",
  "wasip2",
  "wasip3",
+]
+
+[[package]]
+name = "github-kit"
+version = "0.1.0"
+dependencies = [
+ "http-kit",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -1531,17 +1522,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "landlock"
-version = "0.4.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "49fefd6652c57d68aaa32544a4c0e642929725bdc1fd929367cdeb673ab81088"
-dependencies = [
- "enumflags2",
- "libc",
- "thiserror 2.0.18",
-]
-
-[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1809,11 +1789,14 @@ dependencies = [
  "anyhow",
  "base64",
  "futures-util",
+ "github-kit",
  "hmac",
  "http-kit",
+ "libc",
  "log-kit",
  "pulldown-cmark",
  "reqwest",
+ "secret-kit",
  "serde_json",
  "sha2",
  "structured-text-kit",
@@ -2083,11 +2066,14 @@ dependencies = [
 name = "omne-execution-gateway"
 version = "0.1.0"
 dependencies = [
- "landlock",
+ "fs2",
+ "libc",
  "policy-meta",
+ "same-file",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2100,7 +2086,7 @@ dependencies = [
 
 [[package]]
 name = "omne-fs"
-version = "1.0.0"
+version = "0.1.0"
 dependencies = [
  "diffy",
  "globset",
@@ -3343,6 +3329,7 @@ name = "text-assets-kit"
 version = "0.1.0"
 dependencies = [
  "omne-fs-primitives",
+ "rustix 1.1.4",
 ]
 
 [[package]]
