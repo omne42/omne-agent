@@ -2,11 +2,11 @@
 
 > 目标：把“shell 内部的每一次 `execve`”也纳入 `mode/sandbox/execpolicy/approval` 的裁决链路，避免 `bash -lc '...'` 一次启动里偷偷跑多个高风险子命令而绕过策略。
 >
-> 状态：v0.2.x **已实现（实验性；unix + patched bash / bash-as-sh entrypoint）**。实现落点：
+> 状态：v0.2.x **已实现（实验性；unix + bash-compatible shell）**。实现落点：
 >
 > - execve gate（MCP server over unix socket）：`crates/app-server/src/main/process_control/execve_gate.rs`
 > - execve wrapper 二进制：`crates/execve-wrapper`（`omne-execve-wrapper`）
-> - 启用方式（最小）：`OMNE_EXECVE_WRAPPER=omne-execve-wrapper` + 用 patched bash 运行 `process/start`；当前会对 `bash` 和 `sh` 入口名尝试注入 wrapper（见下文边界）。
+> - 启用方式（最小）：`OMNE_EXECVE_WRAPPER=omne-execve-wrapper` + 用 patched bash 运行 `process/start`（见下文）；`sh` 仅在它实际解析到 bash-compatible shell 时才会接入，否则会直接拒绝启动，避免静默绕过。
 
 背景参考：
 
@@ -26,7 +26,7 @@
 非目标（先别碰）：
 
 - 取代 sandbox（Landlock/Seatbelt/容器）——wrapper 不是安全边界，只是**更早、更细粒度**的拦截点。
-- 兼容所有 shell（zsh/fish/powershell/dash/busybox sh…）；当前只覆盖 patched `bash` 的 `bash` / `sh` 入口名。
+- 兼容所有 shell（zsh/fish/powershell…）；当前只覆盖 patched `bash`，以及实际解析到 bash-compatible shell 的 `sh` 路径。
 - 把每一次 allow 的 `execve` 都变成事件（会爆炸）：只对 **prompt/deny/escalate** 做强审计。
 
 ---
@@ -40,13 +40,12 @@
 
 现状（启用后）：
 
-- 当 `process/start` 启动 `bash` 或 `sh`，且设置了 `OMNE_EXECVE_WRAPPER` 时，server 会启动一个 per-process 的 execve gate（unix socket, `0600`），并向 child 注入：
+- 当 `process/start` 启动 patched `bash`，或启动的 `sh` 实际解析到 patched `bash`，且设置了 `OMNE_EXECVE_WRAPPER` 时，server 会启动一个 per-process 的 execve gate（unix socket, `0600`），并向 child 注入：
   - `BASH_EXEC_WRAPPER=<OMNE_EXECVE_WRAPPER>`
   - `OMNE_EXECVE_SOCKET=<.../execve-gate.sock>`
   - `OMNE_EXECVE_TOKEN=<random nonce>`
   - `OMNE_THREAD_ID=<thread_id>`
   - `OMNE_TURN_ID=<turn_id>`（如有）
-- 如果 `sh` 实际上也是同一份 patched bash（二进制或兼容入口名），它会沿用同一套 `BASH_EXEC_WRAPPER` 机制；独立的 `dash` / `busybox sh` 仍不在覆盖面内。
 - patched bash 在每次 `execve` 前会改写 argv：`[wrapper, orig_command, <original argv...>]`；`omne-execve-wrapper` 通过 gate 做裁决后再 `execve` 原命令。
 
 最低防线（现在就能做）：
@@ -61,7 +60,7 @@
 
 ### 2.1 组件
 
-- **patched bash**：在 bash 触发 `execve` 前回调一个外部程序（约定环境变量 `BASH_EXEC_WRAPPER` 指向 wrapper）。当前 `process/start` 会对 `bash` 和 `sh` 入口名注入该环境变量，但只有由 patched bash 提供的入口才会真正生效。
+- **patched bash**：在 bash 触发 `execve` 前回调一个外部程序（约定环境变量 `BASH_EXEC_WRAPPER` 指向 wrapper）。如果 `sh` 最终解析到的不是 bash-compatible shell，server 会在启用 wrapper 时直接拒绝这次 `process/start`，不允许退回“顶层 argv 可见、子 execve 不可见”的半截治理状态。
 - **execve-wrapper**：一个小二进制；接收 `cwd/argv/pid/...`，向决策服务请求裁决后决定放行/拒绝。
 - **execve gate（decision service）**：本地服务端（v0.2.x 实现为 MCP server，transport=unix socket）。
   - 负责运行 `sandbox_network_access` 与 `execpolicy + approvals` 链路并返回 `run/deny/escalate`。

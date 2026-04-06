@@ -1,16 +1,3 @@
-#[cfg(unix)]
-fn execve_wrapper_enabled_shell(argv0: &str) -> bool {
-    let mut name = Path::new(argv0)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or(argv0)
-        .to_ascii_lowercase();
-    if let Some(stripped) = name.strip_suffix(".exe") {
-        name = stripped.to_string();
-    }
-    matches!(name.as_str(), "bash" | "sh")
-}
-
 async fn handle_process_start(
     server: &Server,
     params: ProcessStartParams,
@@ -24,6 +11,80 @@ async fn handle_process_start_with_env(
     extra_env: &std::collections::BTreeMap<String, String>,
 ) -> anyhow::Result<Value> {
     handle_process_start_inner(server, params, Some(extra_env)).await
+}
+
+#[cfg(unix)]
+#[derive(Debug, Eq, PartialEq)]
+enum ExecveWrapperTarget {
+    Disabled,
+    Supported,
+    Unsupported(String),
+}
+
+#[cfg(unix)]
+fn normalized_execve_shell_name(program: &str) -> String {
+    let mut name = Path::new(program)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(program)
+        .to_ascii_lowercase();
+    if let Some(stripped) = name.strip_suffix(".exe") {
+        name = stripped.to_string();
+    }
+    name
+}
+
+#[cfg(unix)]
+fn resolve_execve_shell_program(
+    program: &str,
+    path_override: Option<&std::ffi::OsStr>,
+) -> Option<std::path::PathBuf> {
+    if program.contains('/') {
+        return Some(std::path::PathBuf::from(program));
+    }
+
+    let path_storage;
+    let path = if let Some(path) = path_override {
+        path
+    } else {
+        path_storage = std::env::var_os("PATH")?;
+        path_storage.as_os_str()
+    };
+    for base in std::env::split_paths(path) {
+        let candidate = base.join(program);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+#[cfg(unix)]
+fn execve_wrapper_target_for_shell(
+    argv0: &str,
+    path_override: Option<&std::ffi::OsStr>,
+) -> ExecveWrapperTarget {
+    match normalized_execve_shell_name(argv0).as_str() {
+        "bash" | "rbash" => ExecveWrapperTarget::Supported,
+        "sh" => {
+            let Some(path) = resolve_execve_shell_program(argv0, path_override) else {
+                return ExecveWrapperTarget::Unsupported(format!(
+                    "execve wrapper requires a bash-compatible shell; failed to resolve {argv0}"
+                ));
+            };
+            let resolved = std::fs::canonicalize(&path).unwrap_or(path);
+            let resolved_name = normalized_execve_shell_name(&resolved.display().to_string());
+            if matches!(resolved_name.as_str(), "bash" | "rbash") {
+                ExecveWrapperTarget::Supported
+            } else {
+                ExecveWrapperTarget::Unsupported(format!(
+                    "execve wrapper requires a bash-compatible shell; {argv0} resolves to {}",
+                    resolved.display()
+                ))
+            }
+        }
+        _ => ExecveWrapperTarget::Disabled,
+    }
 }
 
 async fn handle_process_start_inner(
@@ -228,46 +289,61 @@ async fn handle_process_start_inner(
 
     let mut execve_gate: Option<ExecveGateHandle> = None;
     #[cfg(unix)]
-    {
-        if execve_wrapper_enabled_shell(&params.argv[0])
-            && let Ok(wrapper_path) = std::env::var("OMNE_EXECVE_WRAPPER")
-        {
-            let wrapper_path = wrapper_path.trim().to_string();
-            if wrapper_path.is_empty() {
-                anyhow::bail!("OMNE_EXECVE_WRAPPER must not be empty");
-            }
-            if wrapper_path.chars().any(|c| c.is_whitespace()) {
-                anyhow::bail!("OMNE_EXECVE_WRAPPER must not contain whitespace");
-            }
-
-            let token = omne_protocol::ApprovalId::new().to_string();
-            let socket_path = process_dir.join("execve-gate.sock");
-
-            execve_gate = Some(
-                spawn_execve_gate(
-                    ExecveGateContext {
-                        thread_id: params.thread_id,
-                        turn_id: params.turn_id,
-                        token: token.clone(),
-                        thread_root: thread_root.clone(),
-                        thread_store: server.thread_store.clone(),
-                        exec_policy: server.exec_policy.clone(),
-                        thread_rt: thread_rt.clone(),
-                    },
-                    socket_path.clone(),
+    if let Ok(wrapper_path) = std::env::var("OMNE_EXECVE_WRAPPER") {
+        match execve_wrapper_target_for_shell(&params.argv[0], None) {
+            ExecveWrapperTarget::Disabled => {}
+            ExecveWrapperTarget::Unsupported(reason) => {
+                let result = process_denied_response(tool_id, params.thread_id, None)?;
+                emit_process_tool_denied(
+                    &thread_rt,
+                    tool_id,
+                    params.turn_id,
+                    "process/start",
+                    &start_tool_params,
+                    reason,
+                    result.clone(),
                 )
-                .await?,
-            );
+                .await?;
+                return Ok(result);
+            }
+            ExecveWrapperTarget::Supported => {
+                let wrapper_path = wrapper_path.trim().to_string();
+                if wrapper_path.is_empty() {
+                    anyhow::bail!("OMNE_EXECVE_WRAPPER must not be empty");
+                }
+                if wrapper_path.chars().any(|c| c.is_whitespace()) {
+                    anyhow::bail!("OMNE_EXECVE_WRAPPER must not contain whitespace");
+                }
 
-            combined_env.insert("BASH_EXEC_WRAPPER".to_string(), wrapper_path);
-            combined_env.insert(
-                "OMNE_EXECVE_SOCKET".to_string(),
-                socket_path.display().to_string(),
-            );
-            combined_env.insert("OMNE_EXECVE_TOKEN".to_string(), token);
-            combined_env.insert("OMNE_THREAD_ID".to_string(), params.thread_id.to_string());
-            if let Some(turn_id) = params.turn_id {
-                combined_env.insert("OMNE_TURN_ID".to_string(), turn_id.to_string());
+                let token = omne_protocol::ApprovalId::new().to_string();
+                let socket_path = process_dir.join("execve-gate.sock");
+
+                execve_gate = Some(
+                    spawn_execve_gate(
+                        ExecveGateContext {
+                            thread_id: params.thread_id,
+                            turn_id: params.turn_id,
+                            token: token.clone(),
+                            thread_root: thread_root.clone(),
+                            thread_store: server.thread_store.clone(),
+                            exec_policy: server.exec_policy.clone(),
+                            thread_rt: thread_rt.clone(),
+                        },
+                        socket_path.clone(),
+                    )
+                    .await?,
+                );
+
+                combined_env.insert("BASH_EXEC_WRAPPER".to_string(), wrapper_path);
+                combined_env.insert(
+                    "OMNE_EXECVE_SOCKET".to_string(),
+                    socket_path.display().to_string(),
+                );
+                combined_env.insert("OMNE_EXECVE_TOKEN".to_string(), token);
+                combined_env.insert("OMNE_THREAD_ID".to_string(), params.thread_id.to_string());
+                if let Some(turn_id) = params.turn_id {
+                    combined_env.insert("OMNE_TURN_ID".to_string(), turn_id.to_string());
+                }
             }
         }
     }
@@ -469,30 +545,6 @@ fn merge_exec_policies(
 #[cfg(test)]
 mod process_start_tests {
     use super::*;
-    use std::ffi::OsString;
-
-    struct EnvVarGuard {
-        key: &'static str,
-        previous: Option<OsString>,
-    }
-
-    impl EnvVarGuard {
-        fn set(key: &'static str, value: &str) -> Self {
-            let previous = std::env::var_os(key);
-            unsafe { std::env::set_var(key, value) };
-            Self { key, previous }
-        }
-    }
-
-    impl Drop for EnvVarGuard {
-        fn drop(&mut self) {
-            if let Some(value) = self.previous.as_ref() {
-                unsafe { std::env::set_var(self.key, value) };
-            } else {
-                unsafe { std::env::remove_var(self.key) };
-            }
-        }
-    }
 
     async fn write_executable_sh(path: &Path, script: &str) -> anyhow::Result<()> {
         tokio::fs::write(path, script).await?;
@@ -1705,47 +1757,49 @@ prefix_rule(
         Ok(())
     }
 
+    #[cfg(unix)]
     #[test]
-    fn execve_wrapper_shell_detection_covers_bash_and_sh_entrypoints() {
-        assert!(execve_wrapper_enabled_shell("bash"));
-        assert!(execve_wrapper_enabled_shell("/bin/bash"));
-        assert!(execve_wrapper_enabled_shell("sh"));
-        assert!(execve_wrapper_enabled_shell("/bin/sh"));
-        assert!(execve_wrapper_enabled_shell("BASH.EXE"));
-        assert!(execve_wrapper_enabled_shell("SH.EXE"));
-        assert!(!execve_wrapper_enabled_shell("zsh"));
-        assert!(!execve_wrapper_enabled_shell("dash"));
+    fn execve_wrapper_supports_sh_when_it_resolves_to_bash() -> anyhow::Result<()> {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = tempfile::tempdir()?;
+        let bash_path = dir.path().join("bash");
+        std::fs::write(&bash_path, "#!/bin/sh\nexit 0\n")?;
+        let mut perms = std::fs::metadata(&bash_path)?.permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&bash_path, perms)?;
+        std::os::unix::fs::symlink(&bash_path, dir.path().join("sh"))?;
+
+        let target = execve_wrapper_target_for_shell(
+            "sh",
+            Some(dir.path().as_os_str()),
+        );
+        assert_eq!(target, ExecveWrapperTarget::Supported);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn process_start_validates_execve_wrapper_for_sh_entrypoint() -> anyhow::Result<()> {
-        let _guard = EnvVarGuard::set("OMNE_EXECVE_WRAPPER", "bad wrapper");
-        let tmp = tempfile::tempdir()?;
-        let repo_dir = tmp.path().join("repo");
-        tokio::fs::create_dir_all(&repo_dir).await?;
+    #[cfg(unix)]
+    #[test]
+    fn execve_wrapper_rejects_sh_when_it_resolves_to_non_bash_shell() -> anyhow::Result<()> {
+        use std::os::unix::fs::PermissionsExt as _;
 
-        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
-        let handle = server.thread_store.create_thread(repo_dir).await?;
-        let thread_id = handle.thread_id();
-        drop(handle);
+        let dir = tempfile::tempdir()?;
+        let dash_path = dir.path().join("dash");
+        std::fs::write(&dash_path, "#!/bin/sh\nexit 0\n")?;
+        let mut perms = std::fs::metadata(&dash_path)?.permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&dash_path, perms)?;
+        std::os::unix::fs::symlink(&dash_path, dir.path().join("sh"))?;
 
-        let err = handle_process_start(
-            &server,
-            ProcessStartParams {
-                thread_id,
-                turn_id: None,
-                approval_id: None,
-                argv: vec!["/bin/sh".to_string(), "-lc".to_string(), "exit 0".to_string()],
-                cwd: None,
-                timeout_ms: None,
-            },
-        )
-        .await
-        .expect_err("invalid execve wrapper path should fail before spawn");
-
-        assert!(err
-            .to_string()
-            .contains("OMNE_EXECVE_WRAPPER must not contain whitespace"));
+        let target = execve_wrapper_target_for_shell(
+            "sh",
+            Some(dir.path().as_os_str()),
+        );
+        assert!(matches!(
+            target,
+            ExecveWrapperTarget::Unsupported(reason)
+                if reason.contains("requires a bash-compatible shell")
+        ));
         Ok(())
     }
 }
