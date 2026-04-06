@@ -363,7 +363,7 @@ fn maybe_emit_external_token_budget_warning(thread_id: ThreadId, total_tokens_us
         notify_kit::Severity::Warning,
         Some(body),
     );
-    hub.notify(event);
+    hub.notify_best_effort(event);
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -494,7 +494,9 @@ fn emit_external_notification_for_event(event: &ThreadEvent) {
     let Some(hub) = app_notify_hub() else {
         return;
     };
-    emit_external_notification_with(event, |notification_event| hub.notify(notification_event));
+    emit_external_notification_with(event, |notification_event| {
+        hub.notify_best_effort(notification_event)
+    });
 }
 
 #[cfg(test)]
