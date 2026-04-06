@@ -5,6 +5,20 @@ use tokio::io::AsyncWriteExt;
 use crate::paths::{PmPaths, SessionPaths};
 use crate::run::{HookSpec, RunResult};
 
+const HOOK_SCRUBBED_ENV_KEYS: &[&str] = &[
+    "OPENAI_API_KEY",
+    "OMNE_OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "OPENROUTER_API_KEY",
+    "GEMINI_API_KEY",
+];
+
+fn scrub_command_hook_env(cmd: &mut tokio::process::Command) {
+    for key in HOOK_SCRUBBED_ENV_KEYS {
+        cmd.env_remove(key);
+    }
+}
+
 #[async_trait]
 pub trait HookRunner: Send + Sync {
     async fn run(
@@ -61,7 +75,9 @@ impl HookRunner for CommandHookRunner {
         let stdout_log = logs_dir.join("hook.stdout.log");
         let stderr_log = logs_dir.join("hook.stderr.log");
 
-        let mut child = tokio::process::Command::new(program)
+        let mut cmd = tokio::process::Command::new(program);
+        scrub_command_hook_env(&mut cmd);
+        let mut child = cmd
             .args(args)
             .env("OMNE_SESSION_ID", session.id.to_string())
             .env("OMNE_REPO", session.repo.as_str())
@@ -120,12 +136,39 @@ impl HookRunner for CommandHookRunner {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+    use std::sync::{Mutex, OnceLock};
 
     use time::OffsetDateTime;
 
     use super::*;
     use crate::domain::{PrName, RepositoryName, Session, SessionId};
     use crate::run::{CheckSummary, MergeResult, PullRequest, RunResult};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    struct EnvGuard;
+
+    impl EnvGuard {
+        fn set(vars: &[(&'static str, &'static str)]) -> Self {
+            for (key, value) in vars {
+                // Tests serialize env mutation with `env_lock`.
+                unsafe { std::env::set_var(key, value) };
+            }
+            Self
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            for key in HOOK_SCRUBBED_ENV_KEYS {
+                // Tests serialize env mutation with `env_lock`.
+                unsafe { std::env::remove_var(key) };
+            }
+        }
+    }
 
     struct TestContext {
         _tmp: tempfile::TempDir,
@@ -251,6 +294,40 @@ mod tests {
             tokio::fs::read_to_string(&stderr_log).await?,
             "hello stderr\n"
         );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn command_hook_runner_scrubs_sensitive_provider_env_vars() -> anyhow::Result<()> {
+        let _env_guard = env_lock().lock().expect("lock test env");
+        let _vars = EnvGuard::set(&[
+            ("OPENAI_API_KEY", "openai-secret"),
+            ("OMNE_OPENAI_API_KEY", "omne-openai-secret"),
+            ("ANTHROPIC_API_KEY", "anthropic-secret"),
+            ("OPENROUTER_API_KEY", "openrouter-secret"),
+            ("GEMINI_API_KEY", "gemini-secret"),
+        ]);
+        let ctx = setup().await?;
+        let out_path = ctx.session_paths.root().join("hook-sensitive-env.txt");
+        let script = format!(
+            "printf '%s\\n' \\\n  \"$OPENAI_API_KEY\" \\\n  \"$OMNE_OPENAI_API_KEY\" \\\n  \"$ANTHROPIC_API_KEY\" \\\n  \"$OPENROUTER_API_KEY\" \\\n  \"$GEMINI_API_KEY\" \\\n  > '{}'",
+            out_path.display()
+        );
+
+        let hook = HookSpec::Command {
+            program: PathBuf::from("sh"),
+            args: vec!["-c".to_string(), script],
+        };
+
+        let runner = CommandHookRunner;
+        runner
+            .run(&hook, &ctx.omne_paths, &ctx.session_paths, &ctx.result)
+            .await?;
+
+        let text = tokio::fs::read_to_string(&out_path).await?;
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines, vec!["", "", "", "", ""]);
 
         Ok(())
     }
