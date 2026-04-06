@@ -54,6 +54,45 @@ mod thread_manage_tests {
     }
 
     #[tokio::test]
+    async fn thread_clear_artifacts_preserves_runtime_process_logs() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let thread_dir = server.thread_store.thread_dir(thread_id);
+        let artifact_dir = thread_dir.join("artifacts").join("user");
+        let runtime_process_dir = thread_dir
+            .join("runtime")
+            .join("processes")
+            .join(ProcessId::new().to_string());
+        tokio::fs::create_dir_all(&artifact_dir).await?;
+        tokio::fs::create_dir_all(&runtime_process_dir).await?;
+        tokio::fs::write(artifact_dir.join("report.md"), "artifact\n").await?;
+        let runtime_log = runtime_process_dir.join("stdout.log");
+        tokio::fs::write(&runtime_log, "process log\n").await?;
+
+        let response = handle_thread_clear_artifacts(
+            &server,
+            ThreadClearArtifactsParams {
+                thread_id,
+                force: false,
+            },
+        )
+        .await?;
+
+        assert!(response.removed);
+        assert!(!tokio::fs::try_exists(thread_dir.join("artifacts")).await?);
+        assert!(tokio::fs::try_exists(&runtime_log).await?);
+        assert_eq!(tokio::fs::read_to_string(runtime_log).await?, "process log\n");
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn thread_state_includes_cache_token_aggregates() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");
