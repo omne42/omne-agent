@@ -75,18 +75,19 @@ async fn handle_process_list(
     }
 
     let mut in_mem_running = HashSet::<ProcessId>::new();
-    {
+    let entries = {
         let entries = server.processes.lock().await;
-        for entry in entries.values() {
-            let info = entry.info.lock().await;
-            if params.thread_id.is_some_and(|id| id != info.thread_id) {
-                continue;
-            }
-            if matches!(info.status, ProcessStatus::Running) {
-                in_mem_running.insert(info.process_id);
-            }
-            derived.insert(info.process_id, info.clone());
+        entries.values().cloned().collect::<Vec<_>>()
+    };
+    for entry in entries {
+        let info = entry.info.lock().await;
+        if params.thread_id.is_some_and(|id| id != info.thread_id) {
+            continue;
         }
+        if matches!(info.status, ProcessStatus::Running) {
+            in_mem_running.insert(info.process_id);
+        }
+        derived.insert(info.process_id, info.clone());
     }
 
     for info in derived.values_mut() {
@@ -127,5 +128,64 @@ fn into_protocol_process_info(info: ProcessInfo) -> omne_app_server_protocol::Pr
         stdout_path: info.stdout_path,
         stderr_path: info.stderr_path,
         last_update_at: info.last_update_at,
+    }
+}
+
+#[cfg(test)]
+mod process_list_tests {
+    use super::*;
+    use std::sync::Arc;
+    use tokio::sync::mpsc;
+
+    #[tokio::test]
+    async fn process_list_does_not_hold_global_lock_while_waiting_for_entry_info() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let thread_id = crate::create_test_thread_shared(&server, repo_dir).await?;
+
+        let process_id = ProcessId::new();
+        let now = "2026-01-01T00:00:00Z".to_string();
+        let (cmd_tx, _cmd_rx) = mpsc::channel(1);
+        let entry = ProcessEntry {
+            info: Arc::new(tokio::sync::Mutex::new(ProcessInfo {
+                process_id,
+                thread_id,
+                turn_id: None,
+                argv: vec!["sleep".to_string(), "999".to_string()],
+                cwd: "/tmp".to_string(),
+                started_at: now.clone(),
+                status: ProcessStatus::Running,
+                exit_code: None,
+                stdout_path: "/tmp/omne-test.stdout.log".to_string(),
+                stderr_path: "/tmp/omne-test.stderr.log".to_string(),
+                last_update_at: now,
+            })),
+            cmd_tx,
+        };
+        server
+            .processes
+            .lock()
+            .await
+            .insert(process_id, entry.clone());
+
+        let info_guard = entry.info.lock().await;
+        let server_for_task = server.clone();
+        let list_task = tokio::spawn(async move {
+            handle_process_list(&server_for_task, ProcessListParams { thread_id: None }).await
+        });
+
+        tokio::task::yield_now().await;
+        assert!(
+            server.processes.try_lock().is_ok(),
+            "process list should not hold server.processes while waiting for entry.info"
+        );
+
+        drop(info_guard);
+        let listed = list_task.await??;
+        assert!(listed.iter().any(|info| info.process_id == process_id));
+        Ok(())
     }
 }
