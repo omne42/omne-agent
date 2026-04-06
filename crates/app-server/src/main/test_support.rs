@@ -33,9 +33,13 @@ fn restore_locked_process_env(key: &str, previous: Option<&str>) {
 }
 
 fn build_test_server_shared(omne_root: PathBuf) -> Server {
+    build_test_server_shared_with_cwd(omne_root.clone(), omne_root)
+}
+
+fn build_test_server_shared_with_cwd(cwd: PathBuf, omne_root: PathBuf) -> Server {
     let (notify_tx, _notify_rx) = broadcast::channel::<String>(16);
     Server {
-        cwd: omne_root.clone(),
+        cwd,
         notify_tx,
         thread_store: ThreadStore::new(PmPaths::new(omne_root)),
         threads: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
