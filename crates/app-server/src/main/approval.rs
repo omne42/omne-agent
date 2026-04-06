@@ -1451,6 +1451,23 @@ async fn load_thread_root(
     Ok((thread_rt, thread_root))
 }
 
+async fn load_thread_root_without_recovery(
+    server: &Server,
+    thread_id: ThreadId,
+) -> anyhow::Result<(Arc<ThreadRuntime>, PathBuf)> {
+    let thread_rt = server.load_thread_without_recovery(thread_id).await?;
+    let thread_cwd = {
+        let handle = thread_rt.handle.lock().await;
+        handle
+            .state()
+            .cwd
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("thread cwd is missing: {}", thread_id))?
+    };
+    let thread_root = resolve_thread_root_from_cwd(server, &thread_cwd).await?;
+    Ok((thread_rt, thread_root))
+}
+
 async fn resolve_thread_root_from_cwd(server: &Server, cwd: &str) -> anyhow::Result<PathBuf> {
     let cwd = Path::new(cwd);
     if cwd.is_absolute() {
