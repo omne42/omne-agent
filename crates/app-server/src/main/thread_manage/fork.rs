@@ -63,22 +63,18 @@ async fn handle_thread_fork(
                 if skipped_active_turn_approvals.contains(&approval_id) => {}
             omne_protocol::ThreadEventKind::AssistantMessage { turn_id: Some(turn_id), .. }
                 if active_turn_id == Some(turn_id) => {}
-            omne_protocol::ThreadEventKind::AttentionMarkerSet { turn_id: Some(turn_id), .. }
-                if active_turn_id == Some(turn_id) => {}
-            omne_protocol::ThreadEventKind::AttentionMarkerCleared { turn_id: Some(turn_id), .. }
-                if active_turn_id == Some(turn_id) => {}
             kind @ omne_protocol::ThreadEventKind::TurnStarted { .. }
             | kind @ omne_protocol::ThreadEventKind::ModelRouted { .. }
             | kind @ omne_protocol::ThreadEventKind::TurnInterruptRequested { .. }
             | kind @ omne_protocol::ThreadEventKind::TurnCompleted { .. }
             | kind @ omne_protocol::ThreadEventKind::ApprovalRequested { .. }
             | kind @ omne_protocol::ThreadEventKind::ApprovalDecided { .. }
-            | kind @ omne_protocol::ThreadEventKind::AttentionMarkerSet { .. }
-            | kind @ omne_protocol::ThreadEventKind::AttentionMarkerCleared { .. }
             | kind @ omne_protocol::ThreadEventKind::AssistantMessage { .. } => {
                 forked.append(kind).await?;
             }
-            omne_protocol::ThreadEventKind::ToolStarted { .. }
+            omne_protocol::ThreadEventKind::AttentionMarkerSet { .. }
+            | omne_protocol::ThreadEventKind::AttentionMarkerCleared { .. }
+            | omne_protocol::ThreadEventKind::ToolStarted { .. }
             | omne_protocol::ThreadEventKind::ToolCompleted { .. }
             | omne_protocol::ThreadEventKind::AgentStep { .. }
             | omne_protocol::ThreadEventKind::ProcessStarted { .. }
