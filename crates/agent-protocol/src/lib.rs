@@ -698,6 +698,8 @@ pub enum ThreadEventKind {
         process_id: ProcessId,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         turn_id: Option<TurnId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        os_pid: Option<u32>,
         argv: Vec<String>,
         cwd: String,
         stdout_path: String,

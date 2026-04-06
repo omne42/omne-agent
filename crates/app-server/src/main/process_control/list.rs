@@ -1,5 +1,76 @@
 use super::*;
 
+#[cfg(unix)]
+fn arg0_matches(actual: &str, expected: &str) -> bool {
+    let actual_name = Path::new(actual)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(actual);
+    let expected_name = Path::new(expected)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(expected);
+    actual_name == expected_name
+}
+
+#[cfg(unix)]
+pub(super) fn os_process_exists(pid: u32) -> bool {
+    use nix::errno::Errno;
+    use nix::sys::signal::kill;
+    use nix::unistd::Pid;
+
+    match kill(Pid::from_raw(pid as i32), None) {
+        Ok(()) => true,
+        Err(Errno::EPERM) => true,
+        Err(Errno::ESRCH) => false,
+        Err(_) => false,
+    }
+}
+
+#[cfg(not(unix))]
+pub(super) fn os_process_exists(_pid: u32) -> bool {
+    false
+}
+
+#[cfg(all(unix, target_os = "linux"))]
+pub(super) fn os_process_matches_argv(pid: u32, argv: &[String]) -> bool {
+    if !os_process_exists(pid) {
+        return false;
+    }
+    if argv.is_empty() {
+        return true;
+    }
+
+    let Ok(cmdline) = std::fs::read(format!("/proc/{pid}/cmdline")) else {
+        return true;
+    };
+    let actual = cmdline
+        .split(|byte| *byte == b'\0')
+        .filter(|part| !part.is_empty())
+        .map(|part| String::from_utf8_lossy(part).into_owned())
+        .collect::<Vec<_>>();
+    if actual.is_empty() {
+        return true;
+    }
+    if actual.len() != argv.len() {
+        return false;
+    }
+    if !arg0_matches(&actual[0], &argv[0]) {
+        return false;
+    }
+    actual.iter().skip(1).eq(argv.iter().skip(1))
+}
+
+#[cfg(all(unix, not(target_os = "linux")))]
+pub(super) fn os_process_matches_argv(pid: u32, _argv: &[String]) -> bool {
+    os_process_exists(pid)
+}
+
+#[cfg(not(unix))]
+pub(super) fn os_process_matches_argv(_pid: u32, _argv: &[String]) -> bool {
+    false
+}
+
 pub(super) async fn handle_process_list(
     server: &Server,
     params: ProcessListParams,
@@ -28,6 +99,7 @@ pub(super) async fn handle_process_list(
                 omne_protocol::ThreadEventKind::ProcessStarted {
                     process_id,
                     turn_id,
+                    os_pid,
                     argv,
                     cwd,
                     stdout_path,
@@ -39,6 +111,7 @@ pub(super) async fn handle_process_list(
                             process_id,
                             thread_id: event.thread_id,
                             turn_id,
+                            os_pid,
                             argv,
                             cwd,
                             started_at: ts.clone(),
@@ -97,7 +170,12 @@ pub(super) async fn handle_process_list(
         if matches!(info.status, ProcessStatus::Running)
             && !in_mem_running.contains(&info.process_id)
         {
-            info.status = ProcessStatus::Abandoned;
+            info.status = match info.os_pid {
+                Some(os_pid) if os_process_matches_argv(os_pid, &info.argv) => {
+                    ProcessStatus::Running
+                }
+                _ => ProcessStatus::Abandoned,
+            };
         }
     }
 
@@ -123,6 +201,7 @@ pub(super) fn into_protocol_process_info(info: ProcessInfo) -> omne_app_server_p
         process_id: info.process_id,
         thread_id: info.thread_id,
         turn_id: info.turn_id,
+        os_pid: info.os_pid,
         argv: info.argv,
         cwd: info.cwd,
         started_at: info.started_at,
@@ -156,6 +235,7 @@ mod process_list_tests {
             process_id,
             thread_id,
             turn_id: None,
+            os_pid: None,
             argv: vec!["sleep".to_string(), "999".to_string()],
             cwd: "/tmp".to_string(),
             started_at: now.clone(),
@@ -202,6 +282,64 @@ mod process_list_tests {
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].process_id, process_id);
         assert!(matches!(listed[0].status, ProcessStatus::Running));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn process_list_keeps_running_status_for_live_pid_without_registry_entry()
+    -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let child = std::process::Command::new("sleep").arg("30").spawn()?;
+        let os_pid = child.id();
+        let thread_id = ThreadId::new();
+        let process_id = ProcessId::new();
+        let log_path = tmp
+            .path()
+            .join(".omne_data")
+            .join("threads")
+            .join(thread_id.to_string())
+            .join("events.jsonl");
+        let mut writer = omne_eventlog::EventLogWriter::open(thread_id, log_path).await?;
+        writer
+            .append(omne_protocol::ThreadEventKind::ThreadCreated {
+                cwd: repo_dir.display().to_string(),
+            })
+            .await?;
+        writer
+            .append(omne_protocol::ThreadEventKind::ProcessStarted {
+                process_id,
+                turn_id: None,
+                os_pid: Some(os_pid),
+                argv: vec!["sleep".to_string(), "30".to_string()],
+                cwd: repo_dir.display().to_string(),
+                stdout_path: repo_dir.join("stdout.log").display().to_string(),
+                stderr_path: repo_dir.join("stderr.log").display().to_string(),
+            })
+            .await?;
+        drop(writer);
+
+        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let listed = handle_process_list(
+            &server,
+            ProcessListParams {
+                thread_id: Some(thread_id),
+            },
+        )
+        .await?;
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].process_id, process_id);
+        assert_eq!(listed[0].os_pid, Some(os_pid));
+        assert!(matches!(listed[0].status, ProcessStatus::Running));
+
+        let _ = nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(os_pid as i32),
+            nix::sys::signal::Signal::SIGKILL,
+        );
+        let _ = nix::sys::wait::waitpid(nix::unistd::Pid::from_raw(os_pid as i32), None);
         Ok(())
     }
 }

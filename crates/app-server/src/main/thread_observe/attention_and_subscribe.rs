@@ -1826,6 +1826,7 @@ mod attention_marker_tests {
             .append_event(omne_protocol::ThreadEventKind::ProcessStarted {
                 process_id,
                 turn_id: Some(turn_id),
+                os_pid: None,
                 argv: vec!["cargo".to_string(), "test".to_string()],
                 cwd: repo_dir.display().to_string(),
                 stdout_path: tmp.path().join("stdout.log").display().to_string(),
@@ -2003,6 +2004,7 @@ mod attention_marker_tests {
             .append_event(omne_protocol::ThreadEventKind::ProcessStarted {
                 process_id,
                 turn_id: Some(turn_id),
+                os_pid: None,
                 argv: vec!["cargo".to_string(), "test".to_string()],
                 cwd: repo_dir.display().to_string(),
                 stdout_path: tmp.path().join("stdout.log").display().to_string(),

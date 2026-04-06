@@ -16,6 +16,129 @@
     }
   ],
   "definitions": {
+    "CatalogArgData": {
+      "type": "object",
+      "required": [
+        "name",
+        "value"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/definitions/CatalogArgValueData"
+        }
+      }
+    },
+    "CatalogArgValueData": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "text"
+              ]
+            },
+            "value": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "bool"
+              ]
+            },
+            "value": {
+              "type": "boolean"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "signed"
+              ]
+            },
+            "value": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "unsigned"
+              ]
+            },
+            "value": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "nested_text"
+              ]
+            },
+            "value": {
+              "$ref": "#/definitions/StructuredTextData"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "unsupported"
+              ]
+            }
+          }
+        }
+      ]
+    },
     "ExecPolicyDecision": {
       "type": "string",
       "enum": [
@@ -114,6 +237,17 @@
             "null"
           ]
         },
+        "structured_error": {
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/definitions/StructuredTextData"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "tool": {
           "type": "string"
         },
@@ -146,6 +280,17 @@
           "type": [
             "boolean",
             "null"
+          ]
+        },
+        "structured_error": {
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/definitions/StructuredTextData"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "thread_id": {
@@ -193,6 +338,17 @@
             "$ref": "#/definitions/ExecPolicyRuleMatch"
           }
         },
+        "structured_error": {
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/definitions/StructuredTextData"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "tool_id": {
           "type": "string",
           "format": "uuid"
@@ -227,6 +383,17 @@
         },
         "mode": {
           "type": "string"
+        },
+        "structured_error": {
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/definitions/StructuredTextData"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "tool_id": {
           "type": "string",
@@ -273,6 +440,17 @@
         "mode": {
           "type": "string"
         },
+        "structured_error": {
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/definitions/StructuredTextData"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "thread_id": {
           "type": "string",
           "format": "uuid"
@@ -307,6 +485,17 @@
         "sandbox_network_access": {
           "$ref": "#/definitions/SandboxNetworkAccess"
         },
+        "structured_error": {
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/definitions/StructuredTextData"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "tool_id": {
           "type": "string",
           "format": "uuid"
@@ -333,6 +522,17 @@
         },
         "sandbox_policy": {
           "$ref": "#/definitions/WriteScope"
+        },
+        "structured_error": {
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/definitions/StructuredTextData"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "tool_id": {
           "type": "string",
@@ -377,6 +577,17 @@
         "mode": {
           "type": "string"
         },
+        "structured_error": {
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/definitions/StructuredTextData"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "thread_id": {
           "type": "string",
           "format": "uuid"
@@ -392,6 +603,53 @@
       "enum": [
         "deny",
         "allow"
+      ]
+    },
+    "StructuredTextData": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "args",
+            "code",
+            "kind"
+          ],
+          "properties": {
+            "args": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/CatalogArgData"
+              }
+            },
+            "code": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "catalog"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "text"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "freeform"
+              ]
+            },
+            "text": {
+              "type": "string"
+            }
+          }
+        }
       ]
     },
     "ThreadHookRunDeniedResponse": {
@@ -425,6 +683,16 @@
         "hook": {
           "type": "string"
         },
+        "structured_error": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/StructuredTextData"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "thread_id": {
           "type": "string",
           "format": "uuid"
@@ -447,6 +715,16 @@
         },
         "ok": {
           "type": "boolean"
+        },
+        "structured_error": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/StructuredTextData"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       }
     },

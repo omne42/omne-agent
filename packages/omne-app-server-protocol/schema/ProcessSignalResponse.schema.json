@@ -3,11 +3,32 @@
   "title": "ProcessSignalResponse",
   "type": "object",
   "required": [
-    "ok"
+    "accepted",
+    "delivery",
+    "ok",
+    "process_id"
   ],
   "properties": {
+    "accepted": {
+      "type": "boolean"
+    },
+    "delivery": {
+      "$ref": "#/definitions/ProcessSignalDelivery"
+    },
     "ok": {
       "type": "boolean"
+    },
+    "process_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  },
+  "definitions": {
+    "ProcessSignalDelivery": {
+      "type": "string",
+      "enum": [
+        "queued"
+      ]
     }
   }
 }

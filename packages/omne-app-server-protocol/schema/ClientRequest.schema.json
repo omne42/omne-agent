@@ -1004,6 +1004,50 @@
         "method": {
           "type": "string",
           "enum": [
+            "repo/goto_definition"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/RepoGotoDefinitionParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "repo/find_references"
+          ]
+        },
+        "params": {
+          "$ref": "#/definitions/RepoFindReferencesParams"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
             "mcp/list_servers"
           ]
         },
@@ -2530,6 +2574,185 @@
         }
       }
     },
+    "RepoFindReferencesParams": {
+      "type": "object",
+      "required": [
+        "symbol",
+        "thread_id"
+      ],
+      "properties": {
+        "approval_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "include_glob": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "max_bytes_per_file": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "max_files": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "max_matches": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "path": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "root": {
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/definitions/FileRoot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "symbol": {
+          "type": "string"
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turn_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      },
+      "additionalProperties": false
+    },
+    "RepoGotoDefinitionParams": {
+      "type": "object",
+      "required": [
+        "symbol",
+        "thread_id"
+      ],
+      "properties": {
+        "approval_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "include_glob": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "max_bytes_per_file": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "max_files": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "max_results": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "max_symbols": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "path": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "root": {
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/definitions/FileRoot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "symbol": {
+          "type": "string"
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turn_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      },
+      "additionalProperties": false
+    },
     "RepoIndexParams": {
       "type": "object",
       "required": [
@@ -2583,7 +2806,8 @@
           ],
           "format": "uuid"
         }
-      }
+      },
+      "additionalProperties": false
     },
     "RepoSearchParams": {
       "type": "object",
@@ -2664,7 +2888,8 @@
           ],
           "format": "uuid"
         }
-      }
+      },
+      "additionalProperties": false
     },
     "RepoSymbolsParams": {
       "type": "object",
@@ -2737,7 +2962,8 @@
           ],
           "format": "uuid"
         }
-      }
+      },
+      "additionalProperties": false
     },
     "RequestId": {
       "anyOf": [
@@ -2910,6 +3136,21 @@
               "type": "null"
             }
           ]
+        },
+        "clear_execpolicy_rules": {
+          "type": "boolean"
+        },
+        "clear_model": {
+          "type": "boolean"
+        },
+        "clear_openai_base_url": {
+          "type": "boolean"
+        },
+        "clear_show_thinking": {
+          "type": "boolean"
+        },
+        "clear_thinking": {
+          "type": "boolean"
         },
         "execpolicy_rules": {
           "default": null,
@@ -3100,6 +3341,7 @@
       "type": "string",
       "enum": [
         "thread_created",
+        "thread_system_prompt_snapshot",
         "thread_archived",
         "thread_unarchived",
         "thread_paused",

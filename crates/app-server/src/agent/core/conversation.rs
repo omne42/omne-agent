@@ -931,6 +931,7 @@ fn format_event_for_context(kind: &ThreadEventKind) -> Option<String> {
             cwd,
             stdout_path,
             stderr_path,
+            ..
         } => Some(format!(
             "[process/start] process_id={process_id} turn_id={} argv={} cwd={cwd} stdout={stdout_path} stderr={stderr_path}",
             turn_id
