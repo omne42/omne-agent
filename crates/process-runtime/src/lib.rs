@@ -78,6 +78,98 @@ fn git_subcommand_uses_network(argv: &[String]) -> bool {
         .unwrap_or(false)
 }
 
+fn first_non_option_arg<'a>(argv: &'a [String], start_index: usize) -> Option<&'a str> {
+    argv.iter()
+        .skip(start_index)
+        .find(|arg| !arg.starts_with('-') || arg.as_str() == "-")
+        .map(String::as_str)
+}
+
+fn npm_subcommand_uses_network(argv: &[String]) -> bool {
+    matches!(
+        first_non_option_arg(argv, 1),
+        Some(
+            "install"
+                | "i"
+                | "add"
+                | "update"
+                | "upgrade"
+                | "publish"
+                | "search"
+                | "view"
+                | "info"
+                | "audit"
+                | "outdated"
+                | "login"
+                | "logout"
+                | "ping"
+                | "dist-tag"
+                | "owner"
+                | "team"
+                | "org"
+                | "access"
+                | "whoami"
+                | "create"
+        )
+    )
+}
+
+fn pnpm_subcommand_uses_network(argv: &[String]) -> bool {
+    matches!(
+        first_non_option_arg(argv, 1),
+        Some(
+            "install"
+                | "i"
+                | "add"
+                | "update"
+                | "up"
+                | "dlx"
+                | "create"
+                | "publish"
+                | "search"
+                | "info"
+                | "audit"
+                | "outdated"
+                | "login"
+                | "logout"
+                | "ping"
+        )
+    )
+}
+
+fn yarn_subcommand_uses_network(argv: &[String]) -> bool {
+    match first_non_option_arg(argv, 1) {
+        None => true,
+        Some(
+            "install" | "add" | "up" | "upgrade" | "dlx" | "create" | "npm" | "search" | "info"
+            | "audit" | "outdated" | "login" | "logout" | "publish",
+        ) => true,
+        _ => false,
+    }
+}
+
+fn pip_subcommand_uses_network_from(argv: &[String], start_index: usize) -> bool {
+    matches!(
+        first_non_option_arg(argv, start_index),
+        Some("install" | "download" | "wheel" | "search" | "index")
+    )
+}
+
+fn cargo_subcommand_uses_network(argv: &[String]) -> bool {
+    matches!(
+        first_non_option_arg(argv, 1),
+        Some("install" | "search" | "publish" | "add" | "login" | "owner")
+    )
+}
+
+fn go_subcommand_uses_network(argv: &[String]) -> bool {
+    match first_non_option_arg(argv, 1) {
+        Some("get" | "install") => true,
+        Some("mod") => matches!(first_non_option_arg(argv, 2), Some("download" | "tidy")),
+        _ => false,
+    }
+}
+
 fn env_option_takes_value(arg: &str) -> bool {
     matches!(
         arg,
@@ -137,7 +229,16 @@ fn python_eval_uses_network(argv: &[String], depth_remaining: usize) -> bool {
                     || code.contains("import websockets")
                     || code.contains("from websockets");
             }
-            "-m" | "--module" => return false,
+            "-m" | "--module" => {
+                let Some(module) = argv.get(index + 1) else {
+                    return false;
+                };
+                let module = module.to_ascii_lowercase();
+                if matches!(module.as_str(), "pip" | "pip3") {
+                    return pip_subcommand_uses_network_from(argv, index + 2);
+                }
+                return false;
+            }
             _ => {
                 if !arg.starts_with('-') {
                     return false;
@@ -224,6 +325,12 @@ fn argv_uses_network(argv: &[String], depth_remaining: usize) -> bool {
         "curl" | "wget" | "ssh" | "scp" | "sftp" | "ftp" | "telnet" | "nc" | "ncat" | "netcat"
         | "gh" => true,
         "git" => git_subcommand_uses_network(argv),
+        "npm" | "npx" => npm_subcommand_uses_network(argv) || name == "npx",
+        "pnpm" | "pnpx" => pnpm_subcommand_uses_network(argv) || name == "pnpx",
+        "yarn" => yarn_subcommand_uses_network(argv),
+        "pip" | "pip3" => pip_subcommand_uses_network_from(argv, 1),
+        "cargo" => cargo_subcommand_uses_network(argv),
+        "go" => go_subcommand_uses_network(argv),
         "env" => {
             let wrapped = env_wrapped_command(argv);
             !wrapped.is_empty() && argv_uses_network(wrapped, depth_remaining.saturating_sub(1))
@@ -339,6 +446,9 @@ mod tests {
             "-lc",
             "git -C repo fetch origin"
         ])));
+        assert!(command_uses_network(&argv(&[
+            "python", "-m", "pip", "install", "requests"
+        ])));
     }
 
     #[test]
@@ -358,5 +468,33 @@ mod tests {
             "-lc",
             "echo ok && pwd"
         ])));
+    }
+
+    #[test]
+    fn detects_package_manager_and_toolchain_network_commands() {
+        assert!(command_uses_network(&argv(&["npm", "install"])));
+        assert!(command_uses_network(&argv(&["npx", "create-vite@latest"])));
+        assert!(command_uses_network(&argv(&["pnpm", "add", "zod"])));
+        assert!(command_uses_network(&argv(&["yarn"])));
+        assert!(command_uses_network(&argv(&["pip", "install", "requests"])));
+        assert!(command_uses_network(&argv(&[
+            "cargo", "install", "ripgrep"
+        ])));
+        assert!(command_uses_network(&argv(&["go", "get", "example.com/x"])));
+        assert!(command_uses_network(&argv(&["go", "mod", "download"])));
+    }
+
+    #[test]
+    fn local_package_manager_commands_without_network_shape_remain_allowed() {
+        assert!(!command_uses_network(&argv(&["npm", "run", "test"])));
+        assert!(!command_uses_network(&argv(&["pnpm", "test"])));
+        assert!(!command_uses_network(&argv(&["yarn", "test"])));
+        assert!(!command_uses_network(&argv(&[
+            "pip",
+            "uninstall",
+            "requests"
+        ])));
+        assert!(!command_uses_network(&argv(&["cargo", "build"])));
+        assert!(!command_uses_network(&argv(&["go", "test", "./..."])));
     }
 }
