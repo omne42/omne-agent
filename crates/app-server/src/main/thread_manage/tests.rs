@@ -10,6 +10,7 @@ mod thread_manage_tests {
             process_id,
             thread_id,
             turn_id: None,
+            os_pid: None,
             argv: vec!["sleep".to_string(), "1".to_string()],
             cwd: ".".to_string(),
             started_at: "2026-04-06T00:00:00Z".to_string(),
@@ -51,6 +52,7 @@ mod thread_manage_tests {
                     process_id,
                     thread_id,
                     turn_id: None,
+                    os_pid: None,
                     argv: vec!["mock-mcp".to_string()],
                     cwd: ".".to_string(),
                     started_at: "2026-04-06T00:00:00Z".to_string(),
@@ -3576,34 +3578,6 @@ modes:
         >(created)?;
         let checkpoint_id = created.checkpoint_id;
 
-        let first_restore = handle_thread_checkpoint_restore(
-            &server,
-            ThreadCheckpointRestoreParams {
-                thread_id,
-                checkpoint_id,
-                turn_id: None,
-                approval_id: None,
-            },
-        )
-        .await?;
-        let first_restore = serde_json::from_value::<
-            omne_app_server_protocol::ThreadCheckpointRestoreNeedsApprovalResponse,
-        >(first_restore)?;
-        assert!(first_restore.needs_approval);
-        let approval_id = first_restore.approval_id;
-
-        handle_approval_decide(
-            &server,
-            ApprovalDecideParams {
-                thread_id,
-                approval_id,
-                decision: omne_protocol::ApprovalDecision::Approved,
-                remember: false,
-                reason: None,
-            },
-        )
-        .await?;
-
         handle_thread_configure(
             &server,
             ThreadConfigureParams {
@@ -3619,13 +3593,14 @@ modes:
                 thread_id,
                 checkpoint_id,
                 turn_id: None,
-                approval_id: Some(approval_id),
+                approval_id: None,
             },
         )
         .await?;
-        let restore = serde_json::from_value::<
-            omne_app_server_protocol::ThreadCheckpointRestoreDeniedResponse,
-        >(restore)?;
+        let restore =
+            serde_json::from_value::<omne_app_server_protocol::ThreadCheckpointRestoreDeniedResponse>(
+                restore,
+            )?;
         assert!(restore.denied);
         assert_eq!(
             restore.error_code.as_deref(),
@@ -3635,6 +3610,19 @@ modes:
             .sandbox_writable_roots
             .ok_or_else(|| anyhow::anyhow!("missing sandbox_writable_roots"))?;
         assert_eq!(roots.len(), 1);
+
+        let events = server
+            .thread_store
+            .read_events_since(thread_id, EventSeq::ZERO)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("thread not found"))?;
+        assert!(!events.iter().any(|event| {
+            matches!(
+                &event.kind,
+                omne_protocol::ThreadEventKind::ApprovalRequested { action, .. }
+                    if action == "thread/checkpoint/restore"
+            )
+        }));
         Ok(())
     }
 

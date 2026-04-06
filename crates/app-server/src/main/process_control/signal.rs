@@ -29,19 +29,30 @@ async fn send_process_signal(
         .map_err(|_| anyhow::anyhow!("process is no longer running: {}", process_id))
 }
 
-async fn lookup_process_entry(
+enum ProcessSignalTarget {
+    Managed(ProcessEntry),
+    External(ProcessInfo),
+}
+
+async fn lookup_process_target(
     server: &Server,
     process_id: ProcessId,
-) -> anyhow::Result<ProcessEntry> {
+) -> anyhow::Result<ProcessSignalTarget> {
     let entry = {
         let entries = server.processes.lock().await;
         entries.get(&process_id).cloned()
     };
     if let Some(entry) = entry {
-        return Ok(entry);
+        return Ok(ProcessSignalTarget::Managed(entry));
     }
 
     match resolve_process_info(server, process_id).await {
+        Ok(info)
+            if matches!(info.status, ProcessStatus::Running)
+                && info.os_pid.is_some_and(os_process_is_running) =>
+        {
+            Ok(ProcessSignalTarget::External(info))
+        }
         Ok(_) => anyhow::bail!("process is no longer running: {}", process_id),
         Err(err) if err.to_string().contains("process not found") => {
             anyhow::bail!("process not found: {}", process_id)
@@ -50,12 +61,111 @@ async fn lookup_process_entry(
     }
 }
 
+async fn append_external_signal_requested(
+    thread_rt: &Arc<ThreadRuntime>,
+    process_id: ProcessId,
+    command: &ProcessCommand,
+) {
+    let event = match command {
+        ProcessCommand::Interrupt { reason } => {
+            omne_protocol::ThreadEventKind::ProcessInterruptRequested {
+                process_id,
+                reason: reason.clone(),
+            }
+        }
+        ProcessCommand::Kill { reason } => omne_protocol::ThreadEventKind::ProcessKillRequested {
+            process_id,
+            reason: reason.clone(),
+        },
+    };
+    if let Err(err) = thread_rt.append_event(event).await {
+        tracing::warn!(process_id = %process_id, error = %err, "failed to append external process signal request");
+    }
+}
+
+fn send_external_process_signal(command: &ProcessCommand, os_pid: u32) -> anyhow::Result<()> {
+    #[cfg(unix)]
+    {
+        let signal = match command {
+            ProcessCommand::Interrupt { .. } => nix::libc::SIGINT,
+            ProcessCommand::Kill { .. } => nix::libc::SIGKILL,
+        };
+        send_os_process_signal(os_pid, signal)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = command;
+        let _ = os_pid;
+        anyhow::bail!("external process signaling is not supported on this platform")
+    }
+}
+
+fn spawn_external_process_exit_watch(
+    thread_rt: Arc<ThreadRuntime>,
+    process_id: ProcessId,
+    os_pid: u32,
+    reason: Option<String>,
+) {
+    tokio::spawn(async move {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while tokio::time::Instant::now() < deadline {
+            if !os_process_is_running(os_pid) {
+                if let Err(err) = thread_rt
+                    .append_event(omne_protocol::ThreadEventKind::ProcessExited {
+                        process_id,
+                        exit_code: None,
+                        reason,
+                    })
+                    .await
+                {
+                    tracing::warn!(process_id = %process_id, os_pid, error = %err, "failed to append external ProcessExited event");
+                }
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    });
+}
+
+async fn deliver_process_signal(
+    thread_rt: &Arc<ThreadRuntime>,
+    target: &ProcessSignalTarget,
+    process_id: ProcessId,
+    command: ProcessCommand,
+) -> anyhow::Result<()> {
+    match target {
+        ProcessSignalTarget::Managed(entry) => send_process_signal(entry, process_id, command).await,
+        ProcessSignalTarget::External(info) => {
+            let os_pid = info
+                .os_pid
+                .filter(|pid| os_process_is_running(*pid))
+                .ok_or_else(|| anyhow::anyhow!("process is no longer running: {}", process_id))?;
+            append_external_signal_requested(thread_rt, process_id, &command).await;
+            send_external_process_signal(&command, os_pid)?;
+            spawn_external_process_exit_watch(
+                thread_rt.clone(),
+                process_id,
+                os_pid,
+                match &command {
+                    ProcessCommand::Interrupt { reason } | ProcessCommand::Kill { reason } => {
+                        reason.clone()
+                    }
+                },
+            );
+            Ok(())
+        }
+    }
+}
+
 pub(super) async fn handle_process_kill(
     server: &Server,
     params: ProcessKillParams,
 ) -> anyhow::Result<Value> {
-    let entry = lookup_process_entry(server, params.process_id).await?;
-    let info = entry.info.lock().await.clone();
+    let target = lookup_process_target(server, params.process_id).await?;
+    let info = match &target {
+        ProcessSignalTarget::Managed(entry) => entry.info.lock().await.clone(),
+        ProcessSignalTarget::External(info) => info.clone(),
+    };
 
     let (thread_rt, thread_root) = load_thread_root(server, info.thread_id).await?;
     let (approval_policy, mode_name, role_name, allowed_tools) = {
@@ -118,15 +228,15 @@ pub(super) async fn handle_process_kill(
         })
         .await?;
 
-    match send_process_signal(
-        &entry,
+    match deliver_process_signal(
+        &thread_rt,
+        &target,
         params.process_id,
         ProcessCommand::Kill {
             reason: params.reason,
         },
     )
-        .await
-    {
+    .await {
         Ok(()) => {
             let response = queued_process_signal_response(params.process_id);
             thread_rt
@@ -165,8 +275,11 @@ pub(super) async fn handle_process_interrupt(
     server: &Server,
     params: ProcessInterruptParams,
 ) -> anyhow::Result<Value> {
-    let entry = lookup_process_entry(server, params.process_id).await?;
-    let info = entry.info.lock().await.clone();
+    let target = lookup_process_target(server, params.process_id).await?;
+    let info = match &target {
+        ProcessSignalTarget::Managed(entry) => entry.info.lock().await.clone(),
+        ProcessSignalTarget::External(info) => info.clone(),
+    };
 
     let (thread_rt, thread_root) = load_thread_root(server, info.thread_id).await?;
     let (approval_policy, mode_name, role_name, allowed_tools) = {
@@ -229,15 +342,15 @@ pub(super) async fn handle_process_interrupt(
         })
         .await?;
 
-    match send_process_signal(
-        &entry,
+    match deliver_process_signal(
+        &thread_rt,
+        &target,
         params.process_id,
         ProcessCommand::Interrupt {
             reason: params.reason,
         },
     )
-        .await
-    {
+    .await {
         Ok(()) => {
             let response = queued_process_signal_response(params.process_id);
             thread_rt
@@ -376,6 +489,7 @@ pub(super) async fn shutdown_running_processes(server: &Server) {
 #[cfg(test)]
 mod process_signal_tests {
     use super::*;
+    use std::path::Path;
     use std::sync::Arc;
     use tokio::sync::mpsc;
 
@@ -425,6 +539,7 @@ mod process_signal_tests {
                 process_id,
                 thread_id,
                 turn_id: None,
+                os_pid: None,
                 argv: vec!["sleep".to_string(), "999".to_string()],
                 cwd: "/tmp".to_string(),
                 started_at: now.clone(),
@@ -462,6 +577,7 @@ mod process_signal_tests {
                 process_id,
                 thread_id,
                 turn_id: None,
+                os_pid: None,
                 argv: vec!["sleep".to_string(), "999".to_string()],
                 cwd: "/tmp".to_string(),
                 started_at: now.clone(),
@@ -777,6 +893,152 @@ modes:
         Ok(())
     }
 
+    #[cfg(unix)]
+    async fn write_executable_sh(path: &Path, script: &str) -> anyhow::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        tokio::fs::write(path, script).await?;
+        tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).await?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    async fn wait_for_pid_to_stop(os_pid: u32) -> anyhow::Result<()> {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while tokio::time::Instant::now() < deadline {
+            if !os_process_is_running(os_pid) {
+                return Ok(());
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        anyhow::bail!("pid {os_pid} did not stop in time")
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn process_list_keeps_running_after_registry_eviction_when_pid_is_alive()
+    -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+        let script_path = repo_dir.join("loop.sh");
+        write_executable_sh(
+            &script_path,
+            "#!/usr/bin/env bash\ntrap 'exit 0' INT TERM\nwhile true; do sleep 1; done\n",
+        )
+        .await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let started = handle_process_start(
+            &server,
+            ProcessStartParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                argv: vec![script_path.display().to_string()],
+                cwd: None,
+                timeout_ms: None,
+            },
+        )
+        .await?;
+        let started: omne_app_server_protocol::ProcessStartResponse = serde_json::from_value(started)?;
+        let process_id = started.process_id;
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        server.processes.lock().await.clear();
+
+        let listed = handle_process_list(
+            &server,
+            ProcessListParams {
+                thread_id: Some(thread_id),
+            },
+        )
+        .await?;
+        let info = listed
+            .into_iter()
+            .find(|info| info.process_id == process_id)
+            .ok_or_else(|| anyhow::anyhow!("missing process info"))?;
+        let os_pid = info.os_pid.ok_or_else(|| anyhow::anyhow!("missing os_pid"))?;
+        assert!(os_process_is_running(os_pid));
+        assert!(matches!(info.status, ProcessStatus::Running));
+
+        let _ = handle_process_kill(
+            &server,
+            ProcessKillParams {
+                process_id,
+                turn_id: None,
+                approval_id: None,
+                reason: Some("cleanup".to_string()),
+            },
+        )
+        .await?;
+        wait_for_pid_to_stop(os_pid).await?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn process_kill_can_signal_running_process_after_registry_eviction()
+    -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+        let script_path = repo_dir.join("loop.sh");
+        write_executable_sh(
+            &script_path,
+            "#!/usr/bin/env bash\ntrap 'exit 0' INT TERM\nwhile true; do sleep 1; done\n",
+        )
+        .await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let started = handle_process_start(
+            &server,
+            ProcessStartParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                argv: vec![script_path.display().to_string()],
+                cwd: None,
+                timeout_ms: None,
+            },
+        )
+        .await?;
+        let started: omne_app_server_protocol::ProcessStartResponse = serde_json::from_value(started)?;
+        let process_id = started.process_id;
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let info = resolve_process_info(&server, process_id).await?;
+        let os_pid = info.os_pid.ok_or_else(|| anyhow::anyhow!("missing os_pid"))?;
+        server.processes.lock().await.clear();
+
+        let result = handle_process_kill(
+            &server,
+            ProcessKillParams {
+                process_id,
+                turn_id: None,
+                approval_id: None,
+                reason: Some("recovered shutdown".to_string()),
+            },
+        )
+        .await?;
+        let response: omne_app_server_protocol::ProcessSignalResponse = serde_json::from_value(result)?;
+        assert!(response.ok);
+        assert!(response.accepted);
+
+        wait_for_pid_to_stop(os_pid).await?;
+        let recovered = resolve_process_info(&server, process_id).await?;
+        assert!(matches!(recovered.status, ProcessStatus::Exited | ProcessStatus::Abandoned));
+        Ok(())
+    }
+
     #[tokio::test]
     async fn shutdown_running_processes_waits_for_actor_completion() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
@@ -800,6 +1062,7 @@ modes:
                     process_id,
                     thread_id,
                     turn_id: None,
+                    os_pid: None,
                     argv: vec!["sleep".to_string(), "999".to_string()],
                     cwd: "/tmp".to_string(),
                     started_at: now.clone(),
