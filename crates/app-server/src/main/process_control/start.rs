@@ -470,10 +470,12 @@ async fn handle_process_start_inner(
     };
 
     let (cmd_tx, cmd_rx) = mpsc::channel(8);
+    let completion = ProcessCompletion::new();
     let entry = ProcessEntry {
         thread_id: params.thread_id,
         info: Arc::new(tokio::sync::Mutex::new(info)),
         cmd_tx,
+        completion: completion.clone(),
     };
     server
         .processes
@@ -491,6 +493,7 @@ async fn handle_process_start_inner(
         stderr_task,
         execve_gate,
         info: entry.info.clone(),
+        completion,
     }));
     if let Some(timeout_ms) = params.timeout_ms {
         let timeout_cmd_tx = entry.cmd_tx.clone();

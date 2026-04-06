@@ -250,6 +250,7 @@ async fn spawn_mcp_connection(
         thread_id,
         info: std::sync::Arc::new(tokio::sync::Mutex::new(info)),
         cmd_tx,
+        completion: ProcessCompletion::new(),
     };
     server
         .processes
@@ -267,6 +268,7 @@ async fn spawn_mcp_connection(
         stderr_task: Some(stderr_task),
         execve_gate: None,
         info: entry.info.clone(),
+        completion: entry.completion.clone(),
     }));
 
     let initialize_params = serde_json::json!({

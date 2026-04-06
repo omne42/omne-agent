@@ -10,6 +10,7 @@ pub(super) struct ProcessActorArgs {
     pub(super) stderr_task: Option<tokio::task::JoinHandle<anyhow::Result<()>>>,
     pub(super) execve_gate: Option<ExecveGateHandle>,
     pub(super) info: Arc<tokio::sync::Mutex<ProcessInfo>>,
+    pub(super) completion: ProcessCompletion,
 }
 
 pub(super) async fn run_process_actor(args: ProcessActorArgs) {
@@ -23,15 +24,18 @@ pub(super) async fn run_process_actor(args: ProcessActorArgs) {
         stderr_task,
         mut execve_gate,
         info,
+        completion,
     } = args;
     async fn finalize_process(
         server: &Server,
         process_id: ProcessId,
         execve_gate: &mut Option<ExecveGateHandle>,
+        completion: &ProcessCompletion,
     ) {
         cleanup_execve_gate(execve_gate).await;
         let _ = remove_mcp_connections_for_process(server, process_id).await;
         server.processes.lock().await.remove(&process_id);
+        completion.mark_complete();
     }
 
     fn try_send_interrupt(child: &tokio::process::Child) -> anyhow::Result<()> {
@@ -202,12 +206,12 @@ pub(super) async fn run_process_actor(args: ProcessActorArgs) {
                         tracing::warn!(process_id = %process_id, error = %err, "failed to append AttentionMarkerCleared(test_failed) event");
                     }
                 }
-                finalize_process(&server, process_id, &mut execve_gate).await;
+                finalize_process(&server, process_id, &mut execve_gate, &completion).await;
                 return;
             }
             Ok(None) => {}
             Err(_) => {
-                finalize_process(&server, process_id, &mut execve_gate).await;
+                finalize_process(&server, process_id, &mut execve_gate, &completion).await;
                 return;
             }
         }
@@ -253,12 +257,14 @@ mod process_actor_tests {
             last_update_at: started_at,
         }));
         let (cmd_tx, cmd_rx) = mpsc::channel(1);
+        let completion = ProcessCompletion::new();
         server.processes.lock().await.insert(
             process_id,
             ProcessEntry {
                 thread_id,
                 info: info.clone(),
                 cmd_tx: cmd_tx.clone(),
+                completion: completion.clone(),
             },
         );
 
@@ -272,6 +278,7 @@ mod process_actor_tests {
             stderr_task: None,
             execve_gate: None,
             info: info.clone(),
+            completion,
         }));
 
         drop(server.processes.lock().await.remove(&process_id).expect("entry exists").cmd_tx);

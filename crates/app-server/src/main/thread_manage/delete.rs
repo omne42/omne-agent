@@ -23,9 +23,14 @@ async fn handle_thread_delete(
             .interrupt_turn(turn_id, reason.clone())
             .await
             .context("interrupt active turn");
-        interrupt_processes_for_turn(server, params.thread_id, turn_id, reason.clone()).await;
-        tokio::time::sleep(Duration::from_secs(2)).await;
-        kill_processes_for_turn(server, params.thread_id, turn_id, reason.clone()).await;
+        stop_turn_processes(
+            server,
+            params.thread_id,
+            turn_id,
+            reason.clone(),
+            "delete active turn",
+        )
+        .await?;
 
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
         loop {

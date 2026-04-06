@@ -1133,11 +1133,43 @@ struct ProcessInfo {
     last_update_at: String,
 }
 
+#[derive(Clone, Default)]
+struct ProcessCompletion {
+    done: Arc<std::sync::atomic::AtomicBool>,
+    notify: Arc<tokio::sync::Notify>,
+}
+
+impl ProcessCompletion {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn mark_complete(&self) {
+        let was_done = self
+            .done
+            .swap(true, std::sync::atomic::Ordering::Release);
+        if !was_done {
+            self.notify.notify_waiters();
+        }
+    }
+
+    fn is_complete(&self) -> bool {
+        self.done.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    async fn wait(&self) {
+        while !self.is_complete() {
+            self.notify.notified().await;
+        }
+    }
+}
+
 #[derive(Clone)]
 struct ProcessEntry {
     thread_id: ThreadId,
     info: Arc<tokio::sync::Mutex<ProcessInfo>>,
     cmd_tx: mpsc::Sender<ProcessCommand>,
+    completion: ProcessCompletion,
 }
 
 #[derive(Debug)]

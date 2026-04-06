@@ -62,6 +62,7 @@ mod mcp_tests {
                     last_update_at: started_at,
                 })),
                 cmd_tx,
+                completion: ProcessCompletion::new(),
             },
         );
         server.mcp.lock().await.connections.insert(
