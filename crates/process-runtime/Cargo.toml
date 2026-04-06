@@ -3,3 +3,6 @@ name = "omne-process-runtime"
 edition.workspace = true
 rust-version.workspace = true
 version.workspace = true
+
+[dependencies]
+shlex.workspace = true
