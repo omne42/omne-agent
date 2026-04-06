@@ -43,6 +43,10 @@ fn is_generic_command_launcher(name: &str) -> bool {
     )
 }
 
+fn is_path_invocation(program: &str) -> bool {
+    program.contains('/') || program.contains('\\')
+}
+
 pub fn command_uses_network(argv: &[String]) -> bool {
     let Some(program) = argv.first() else {
         return false;
@@ -55,6 +59,7 @@ pub fn command_uses_network(argv: &[String]) -> bool {
         | "gh" => true,
         "git" => git_subcommand_uses_network(argv.get(1)),
         name if is_generic_command_launcher(name) && argv.len() > 1 => true,
+        _ if is_path_invocation(program) => true,
         _ => false,
     }
 }
@@ -100,5 +105,12 @@ mod tests {
         ])));
         assert!(command_uses_network(&argv(&["node", "server.js"])));
         assert!(command_uses_network(&argv(&["bash", "script.sh"])));
+    }
+
+    #[test]
+    fn path_invocations_are_treated_as_network_capable() {
+        assert!(command_uses_network(&argv(&["./local-tool"])));
+        assert!(command_uses_network(&argv(&["tools/local-tool"])));
+        assert!(command_uses_network(&argv(&["C:\\tools\\local-tool.exe"])));
     }
 }
