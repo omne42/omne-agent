@@ -27,11 +27,13 @@ static PROCESS_EXEC_GATEWAY: OnceLock<omne_execution_gateway::ExecGateway> = Onc
 
 fn process_exec_gateway() -> &'static omne_execution_gateway::ExecGateway {
     PROCESS_EXEC_GATEWAY.get_or_init(|| {
-        let mut policy = omne_execution_gateway::GatewayPolicy::default();
-        // omne-agent process tools legitimately execute non-allowlisted programs.
-        policy.enforce_allowlisted_program_for_mutation = false;
-        // Preserve current OMNE_HARDENING=off behavior.
-        policy.allow_isolation_none = true;
+        let policy = omne_execution_gateway::GatewayPolicy {
+            // omne-agent process tools legitimately execute non-allowlisted programs.
+            enforce_allowlisted_program_for_mutation: false,
+            // Preserve current OMNE_HARDENING=off behavior.
+            allow_isolation_none: true,
+            ..Default::default()
+        };
         omne_execution_gateway::ExecGateway::with_policy(policy)
     })
 }

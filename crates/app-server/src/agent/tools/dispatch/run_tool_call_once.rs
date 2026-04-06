@@ -1080,7 +1080,7 @@ fn resolve_request_user_input_answers(
     let mut answered_count = 0usize;
     let mut answers = Vec::<Value>::with_capacity(questions.len());
     for question in questions {
-        let answer_value = answer_map.get(&question.id).or_else(|| {
+        let answer_value = answer_map.get(&question.id).or({
             if questions.len() == 1 {
                 single_answer
             } else {

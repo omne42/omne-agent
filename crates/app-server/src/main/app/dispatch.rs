@@ -162,6 +162,15 @@ where
     }
 }
 
+pub(super) fn method_not_found(id: serde_json::Value, method: &str) -> JsonRpcResponse {
+    JsonRpcResponse::err(
+        id,
+        JSONRPC_METHOD_NOT_FOUND,
+        "method not found",
+        Some(serde_json::json!({ "method": method })),
+    )
+}
+
 #[cfg(test)]
 mod dispatch_tests {
     use super::*;
@@ -184,13 +193,4 @@ mod dispatch_tests {
         let message = error.data.unwrap_or_default().to_string();
         assert!(message.contains("unexpected"));
     }
-}
-
-pub(super) fn method_not_found(id: serde_json::Value, method: &str) -> JsonRpcResponse {
-    JsonRpcResponse::err(
-        id,
-        JSONRPC_METHOD_NOT_FOUND,
-        "method not found",
-        Some(serde_json::json!({ "method": method })),
-    )
 }

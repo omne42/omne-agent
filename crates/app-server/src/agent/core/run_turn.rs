@@ -114,9 +114,9 @@ fn append_role_identity_prompt(
     instructions.push_str("\n\n# Role identity\n\n");
     instructions.push_str(&format!("Active role: `{role_name}`\n"));
     if let Some(description) = role_description {
-        instructions.push_str("\n");
+        instructions.push('\n');
         instructions.push_str(description);
-        instructions.push_str("\n");
+        instructions.push('\n');
     }
 }
 

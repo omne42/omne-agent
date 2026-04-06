@@ -547,23 +547,22 @@ impl ToolLoop {
                     .as_ref()
                     .and_then(|usage| usage.get("cache_input_tokens"))
                     .is_none()
+                && runtime.openai_responses_client.is_none()
             {
-                if runtime.openai_responses_client.is_none() {
-                    thread_rt
-                        .emit_item_delta_warning_once(
-                            format!(
-                                "openai_compat_prompt_cache_usage_missing:{}:{}",
-                                active_target.provider, active_target.id
-                            ),
-                            thread_id,
-                            turn_id,
-                            format!(
-                                "provider={} route_target={} advertises prompt_cache=true, but usage has no cache_input_tokens. This endpoint may support cache internally but not expose cached token counters.",
-                                active_target.provider, active_target.id
-                            ),
-                        )
-                        .await;
-                }
+                thread_rt
+                    .emit_item_delta_warning_once(
+                        format!(
+                            "openai_compat_prompt_cache_usage_missing:{}:{}",
+                            active_target.provider, active_target.id
+                        ),
+                        thread_id,
+                        turn_id,
+                        format!(
+                            "provider={} route_target={} advertises prompt_cache=true, but usage has no cache_input_tokens. This endpoint may support cache internally but not expose cached token counters.",
+                            active_target.provider, active_target.id
+                        ),
+                    )
+                    .await;
             }
 
             if !resp.warnings.is_empty() {
