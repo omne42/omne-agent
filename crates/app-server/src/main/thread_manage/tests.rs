@@ -24,6 +24,7 @@ mod thread_manage_tests {
             process_id,
             info.clone(),
             ProcessEntry {
+                thread_id,
                 info,
                 cmd_tx,
             },
@@ -40,6 +41,27 @@ mod thread_manage_tests {
         let (client_read, client_write) = tokio::io::split(client_stream);
         let client = omne_jsonrpc::Client::connect_io(client_read, client_write).await?;
         let process_id = ProcessId::new();
+        let (cmd_tx, _cmd_rx) = mpsc::channel(1);
+        server.processes.lock().await.insert(
+            process_id,
+            ProcessEntry {
+                thread_id,
+                info: Arc::new(tokio::sync::Mutex::new(ProcessInfo {
+                    process_id,
+                    thread_id,
+                    turn_id: None,
+                    argv: vec!["mock-mcp".to_string()],
+                    cwd: ".".to_string(),
+                    started_at: "2026-04-06T00:00:00Z".to_string(),
+                    status: ProcessStatus::Exited,
+                    exit_code: Some(0),
+                    stdout_path: String::new(),
+                    stderr_path: String::new(),
+                    last_update_at: "2026-04-06T00:00:00Z".to_string(),
+                })),
+                cmd_tx,
+            },
+        );
 
         server.mcp.lock().await.connections.insert(
             (thread_id, server_name.to_string()),
@@ -4456,19 +4478,18 @@ base_url = "https://project.example/v1"
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
 
-        let (process_id, info, entry) = running_process_entry(thread_id);
+        let (process_id, _info, entry) = running_process_entry(thread_id);
         server.processes.lock().await.insert(process_id, entry);
 
+        let server_for_cleanup = server.clone();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(250)).await;
-            let mut info = info.lock().await;
-            info.status = ProcessStatus::Exited;
-            info.exit_code = Some(0);
+            server_for_cleanup.processes.lock().await.remove(&process_id);
         });
 
         let started = tokio::time::Instant::now();
@@ -4498,7 +4519,7 @@ base_url = "https://project.example/v1"
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
         let handle = server.thread_store.create_thread(repo_dir).await?;
         let thread_id = handle.thread_id();
         drop(handle);
@@ -4532,19 +4553,18 @@ base_url = "https://project.example/v1"
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
 
-        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
         let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
         let thread_id = handle.thread_id();
         drop(handle);
 
-        let (process_id, info, entry) = running_process_entry(thread_id);
+        let (process_id, _info, entry) = running_process_entry(thread_id);
         server.processes.lock().await.insert(process_id, entry);
 
+        let server_for_cleanup = server.clone();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(250)).await;
-            let mut info = info.lock().await;
-            info.status = ProcessStatus::Exited;
-            info.exit_code = Some(0);
+            server_for_cleanup.processes.lock().await.remove(&process_id);
         });
 
         let thread_dir = server.thread_store.thread_dir(thread_id);
