@@ -704,6 +704,7 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
         &thread_root,
         req.thread_id,
         req.turn_id,
+        sandbox_policy,
         server_name,
         server_cfg,
     )
@@ -711,6 +712,20 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
     {
         Ok(conn) => conn,
         Err(err) => {
+            if let Some(denied) = err.downcast_ref::<McpConnectionStartDenied>() {
+                let result = mcp_execution_boundary_denied_response(tool_id)?;
+                emit_mcp_tool_denied(
+                    &thread_rt,
+                    tool_id,
+                    req.turn_id,
+                    req.action,
+                    &approval_params,
+                    denied.reason.clone(),
+                    result.clone(),
+                )
+                .await?;
+                return Ok(result);
+            }
             append_mcp_tool_failed(
                 &thread_rt,
                 tool_id,
@@ -820,6 +835,18 @@ fn mcp_denied_response(
             error_code,
         },
     )
+}
+
+fn mcp_execution_boundary_denied_response(tool_id: omne_protocol::ToolId) -> anyhow::Result<Value> {
+    let structured_error = catalog_structured_error("execution_boundary_denied")?;
+    let response = omne_app_server_protocol::McpDeniedResponse {
+        tool_id,
+        denied: true,
+        remembered: None,
+        structured_error: Some(structured_error.clone()),
+        error_code: structured_error_code(&structured_error),
+    };
+    serde_json::to_value(response).context("serialize mcp execution boundary denied response")
 }
 
 fn mcp_needs_approval_response(
