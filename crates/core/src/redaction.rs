@@ -553,4 +553,40 @@ mod tests {
             Some("<REDACTED>")
         );
     }
+
+    #[test]
+    fn tool_completed_structured_error_handles_unsupported_catalog_args() {
+        let mut kind = ThreadEventKind::ToolCompleted {
+            tool_id: omne_protocol::ToolId::new(),
+            status: omne_protocol::ToolStatus::Failed,
+            structured_error: Some(StructuredTextData::Catalog {
+                code: "error".to_string(),
+                args: vec![
+                    structured_text_protocol::CatalogArgData {
+                        name: "api_key".to_string(),
+                        value: CatalogArgValueData::Unsupported,
+                    },
+                    structured_text_protocol::CatalogArgData {
+                        name: "details".to_string(),
+                        value: CatalogArgValueData::Unsupported,
+                    },
+                ],
+            }),
+            error: None,
+            result: None,
+        };
+
+        redact_thread_event_kind(&mut kind);
+
+        let ThreadEventKind::ToolCompleted {
+            structured_error: Some(StructuredTextData::Catalog { args, .. }),
+            ..
+        } = kind
+        else {
+            unreachable!("expected ToolCompleted with catalog structured_error");
+        };
+
+        assert!(matches!(args[0].value, CatalogArgValueData::Text(ref text) if text == REDACTED));
+        assert!(matches!(args[1].value, CatalogArgValueData::Unsupported));
+    }
 }
