@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Fixed
+- `omne-app-server`：MCP 重连路径现在会在缓存进程已退出时同步清理 stale `ProcessEntry`，避免 thread 运行态残留死掉的 MCP 进程记录，并补齐对应回归测试。
 - GitHub Actions 现在会 checkout `omne_foundation`、`omne-runtime` 与 `ditto-llm` 兄弟仓，并统一执行 `scripts/check-workspace.sh ci`，把 `omne-agent` 的 docs/rust fmt/check 门禁接到 PR 与 `main` push；同时保留 `full` 模式给手动运行 `cargo test --workspace` 与 `cargo clippy --workspace --all-targets --all-features -- -D warnings`。
 - `omne-core::threads`：`resume_thread()` 不再为恢复期未知状态的子进程伪造 `ProcessExited` 历史事件，只清理失效的 runtime 进程跟踪，避免把仍可能存活的 OS 进程错误写死为已退出。
 - `omne-app-server`：进程 actor 在子进程退出时立即移除内存注册表项，不再保留一个短暂但误导性的“已退出进程仍可被定位”的延迟窗口。

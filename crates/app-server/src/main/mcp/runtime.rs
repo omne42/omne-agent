@@ -304,12 +304,33 @@ async fn spawn_mcp_connection(
 }
 
 async fn remove_mcp_connections_for_process(server: &Server, process_id: ProcessId) -> usize {
-    let mut manager = server.mcp.lock().await;
-    let before = manager.connections.len();
-    manager
-        .connections
-        .retain(|_, conn| conn.process_id != process_id);
-    before.saturating_sub(manager.connections.len())
+    let removed = {
+        let mut manager = server.mcp.lock().await;
+        let before = manager.connections.len();
+        manager
+            .connections
+            .retain(|_, conn| conn.process_id != process_id);
+        before.saturating_sub(manager.connections.len())
+    };
+
+    let removable = {
+        let entry = {
+            let entries = server.processes.lock().await;
+            entries.get(&process_id).cloned()
+        };
+        match entry {
+            Some(entry) => {
+                let info = entry.info.lock().await;
+                !matches!(info.status, ProcessStatus::Running)
+            }
+            None => false,
+        }
+    };
+    if removable {
+        server.processes.lock().await.remove(&process_id);
+    }
+
+    removed
 }
 
 async fn remove_mcp_connections_for_thread(server: &Server, thread_id: ThreadId) -> usize {
