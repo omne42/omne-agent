@@ -331,6 +331,55 @@ modes:
     }
 
     #[tokio::test]
+    async fn mcp_list_servers_redacts_sensitive_argv_tokens() -> anyhow::Result<()> {
+        let _lock = MCP_TEST_MUTEX.lock().await;
+        let _guard = McpEnabledOverrideGuard::new(Some(true));
+
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+        tokio::fs::write(
+            repo_dir.join("mcp.json"),
+            r#"{
+  "version": 1,
+  "servers": {
+    "local": {
+      "transport": "stdio",
+      "argv": ["mcp-server", "--api-key", "super-secret", "authorization=Bearer abcdefghijklmnopqrstuvwxyz"]
+    }
+  }
+}"#,
+        )
+        .await?;
+
+        let server = build_test_server_shared(repo_dir.join(".omne_data"));
+        let thread_id = create_test_thread_shared(&server, repo_dir.clone()).await?;
+
+        let result = handle_mcp_list_servers(
+            &server,
+            McpListServersParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+            },
+        )
+        .await?;
+        let parsed: omne_app_server_protocol::McpListServersResponse =
+            serde_json::from_value(result)?;
+
+        assert_eq!(
+            parsed.servers[0].argv,
+            vec![
+                "mcp-server".to_string(),
+                "--api-key".to_string(),
+                "<REDACTED>".to_string(),
+                "authorization=<REDACTED>".to_string(),
+            ]
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn mcp_list_servers_filters_unsupported_transports() -> anyhow::Result<()> {
         let _lock = MCP_TEST_MUTEX.lock().await;
         let _guard = McpEnabledOverrideGuard::new(Some(true));
@@ -368,6 +417,72 @@ modes:
         assert_eq!(parsed.servers.len(), 1);
         assert_eq!(parsed.servers[0].name, "local");
         assert_eq!(parsed.servers[0].transport, "stdio");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn mcp_list_servers_failure_still_appends_tool_completed() -> anyhow::Result<()> {
+        let _lock = MCP_TEST_MUTEX.lock().await;
+        let _guard = McpEnabledOverrideGuard::new(Some(true));
+
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+        tokio::fs::write(repo_dir.join("mcp.json"), r#"{ "version": 1, "#).await?;
+
+        let server = build_test_server_shared(repo_dir.join(".omne_data"));
+        let thread_id = create_test_thread_shared(&server, repo_dir.clone()).await?;
+
+        let err = handle_mcp_list_servers(
+            &server,
+            McpListServersParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+            },
+        )
+        .await
+        .expect_err("invalid mcp config should fail");
+        assert!(err.to_string().contains("parse"), "err={err:#}");
+
+        let events = server
+            .thread_store
+            .read_events_since(thread_id, EventSeq::ZERO)
+            .await?
+            .expect("thread events should exist");
+        let tool_events = events
+            .into_iter()
+            .filter_map(|event| match event.kind {
+                omne_protocol::ThreadEventKind::ToolStarted { tool, .. } if tool == "mcp/list_servers" => {
+                    Some(("started".to_string(), None, None))
+                }
+                omne_protocol::ThreadEventKind::ToolCompleted {
+                    status,
+                    error,
+                    result,
+                    ..
+                } => Some(("completed".to_string(), Some(status), Some((error, result)))),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert!(tool_events.iter().any(|(kind, _, _)| kind == "started"));
+        let completed = tool_events
+            .iter()
+            .find_map(|(kind, status, payload)| {
+                (kind == "completed").then_some((status.clone(), payload.clone()))
+            })
+            .expect("mcp/list_servers should append ToolCompleted on failure");
+        assert_eq!(completed.0, Some(omne_protocol::ToolStatus::Failed));
+        let (error, result) = completed.1.expect("failure payload");
+        assert!(error.is_some());
+        assert_eq!(
+            result
+                .as_ref()
+                .and_then(|value| value.get("servers"))
+                .and_then(Value::as_u64),
+            Some(0)
+        );
         Ok(())
     }
 
