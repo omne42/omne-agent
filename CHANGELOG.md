@@ -9,6 +9,7 @@
 
 ### Fixed
 - `omne-core::threads`：`resume_thread()` 不再为恢复期未知状态的子进程伪造 `ProcessExited` 历史事件，只清理失效的 runtime 进程跟踪，避免把仍可能存活的 OS 进程错误写死为已退出。
+- `omne-app-server`：进程 actor 在子进程退出时立即移除内存注册表项，不再保留一个短暂但误导性的“已退出进程仍可被定位”的延迟窗口。
 
 ### Added
 - 新增 `docs/reports/domain-boundary-audit-20260304.md`：对 `omne-agent` 与 `omne-execution-gateway`（审计启动时文档里仍写作 `agent-exec-gateway`）/`ditto-llm`/`mcp-kit`/`notify-kit`/`safe-fs-tools`/`policy-meta-spec` 的领域边界、职责重复与抽象重叠进行专项审计并给出整改建议。

@@ -564,15 +564,16 @@ mod process_start_tests {
     ) -> anyhow::Result<ProcessInfo> {
         let deadline = tokio::time::Instant::now() + timeout;
         loop {
-            let info = {
-                let entry = {
-                    let processes = server.processes.lock().await;
-                    processes
-                        .get(&process_id)
-                        .cloned()
-                        .ok_or_else(|| anyhow::anyhow!("missing process entry"))?
-                };
-                entry.info.lock().await.clone()
+            let info = match resolve_process_info(server, process_id).await {
+                Ok(info) => info,
+                Err(err) if err.to_string().contains("process not found") => {
+                    if tokio::time::Instant::now() > deadline {
+                        return Err(err);
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    continue;
+                }
+                Err(err) => return Err(err),
             };
 
             if matches!(info.status, ProcessStatus::Exited) {
@@ -778,28 +779,7 @@ modes:
             .ok_or_else(|| anyhow::anyhow!("missing process_id"))?
             .parse()?;
 
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
-        loop {
-            let status = {
-                let entry = {
-                    let processes = server.processes.lock().await;
-                    processes
-                        .get(&process_id)
-                        .cloned()
-                        .ok_or_else(|| anyhow::anyhow!("missing process entry"))?
-                };
-                let info = entry.info.lock().await;
-                info.status.clone()
-            };
-
-            if matches!(status, ProcessStatus::Exited) {
-                break;
-            }
-            if tokio::time::Instant::now() > deadline {
-                anyhow::bail!("process did not exit in time");
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+        let _ = wait_for_process_exit(&server, process_id, Duration::from_secs(2)).await?;
 
         Ok(())
     }
@@ -864,28 +844,7 @@ modes:
             .ok_or_else(|| anyhow::anyhow!("missing process_id"))?
             .parse()?;
 
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
-        loop {
-            let status = {
-                let entry = {
-                    let processes = server.processes.lock().await;
-                    processes
-                        .get(&process_id)
-                        .cloned()
-                        .ok_or_else(|| anyhow::anyhow!("missing process entry"))?
-                };
-                let info = entry.info.lock().await;
-                info.status.clone()
-            };
-
-            if matches!(status, ProcessStatus::Exited) {
-                break;
-            }
-            if tokio::time::Instant::now() > deadline {
-                anyhow::bail!("process did not exit in time");
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+        let _ = wait_for_process_exit(&server, process_id, Duration::from_secs(2)).await?;
 
         Ok(())
     }
@@ -1089,28 +1048,7 @@ modes:
             .ok_or_else(|| anyhow::anyhow!("missing injected_defaults"))?;
         assert!(injected_defaults.is_empty());
 
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
-        loop {
-            let status = {
-                let entry = {
-                    let processes = server.processes.lock().await;
-                    processes
-                        .get(&process_id)
-                        .cloned()
-                        .ok_or_else(|| anyhow::anyhow!("missing process entry"))?
-                };
-                let info = entry.info.lock().await;
-                info.status.clone()
-            };
-
-            if matches!(status, ProcessStatus::Exited) {
-                break;
-            }
-            if tokio::time::Instant::now() > deadline {
-                anyhow::bail!("process did not exit in time");
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+        let _ = wait_for_process_exit(&server, process_id, Duration::from_secs(2)).await?;
 
         Ok(())
     }
@@ -1144,7 +1082,7 @@ modes:
     }
 
     #[tokio::test]
-    async fn process_start_evictions_exited_entries_after_grace_period() -> anyhow::Result<()> {
+    async fn process_start_evicts_exited_entries_after_exit() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");
         tokio::fs::create_dir_all(&repo_dir).await?;
@@ -1171,7 +1109,7 @@ modes:
             .parse()?;
         let _ = wait_for_process_exit(&server, process_id, Duration::from_secs(2)).await?;
 
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
         loop {
             let present = server.processes.lock().await.contains_key(&process_id);
             if !present {
@@ -1214,28 +1152,7 @@ modes:
             .ok_or_else(|| anyhow::anyhow!("missing process_id"))?
             .parse()?;
 
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
-        loop {
-            let status = {
-                let entry = {
-                    let processes = server.processes.lock().await;
-                    processes
-                        .get(&process_id)
-                        .cloned()
-                        .ok_or_else(|| anyhow::anyhow!("missing process entry"))?
-                };
-                let info = entry.info.lock().await;
-                info.status.clone()
-            };
-
-            if matches!(status, ProcessStatus::Exited) {
-                break;
-            }
-            if tokio::time::Instant::now() > deadline {
-                anyhow::bail!("process did not exit before timeout deadline");
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+        let _ = wait_for_process_exit(&server, process_id, Duration::from_secs(3)).await?;
 
         let events = server
             .thread_store
@@ -1731,28 +1648,8 @@ prefix_rule(
             .ok_or_else(|| anyhow::anyhow!("missing process_id"))?
             .parse()?;
 
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
-        loop {
-            let info = {
-                let entry = {
-                    let processes = server.processes.lock().await;
-                    processes
-                        .get(&process_id)
-                        .cloned()
-                        .ok_or_else(|| anyhow::anyhow!("missing process entry"))?
-                };
-                entry.info.lock().await.clone()
-            };
-
-            if matches!(info.status, ProcessStatus::Exited) {
-                assert_eq!(info.exit_code, Some(0));
-                break;
-            }
-            if tokio::time::Instant::now() > deadline {
-                anyhow::bail!("process did not exit in time");
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+        let info = wait_for_process_exit(&server, process_id, Duration::from_secs(2)).await?;
+        assert_eq!(info.exit_code, Some(0));
 
         Ok(())
     }
