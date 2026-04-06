@@ -4,4 +4,4 @@ import type { ProcessStatus } from "./ProcessStatus";
 import type { ThreadId } from "./ThreadId";
 import type { TurnId } from "./TurnId";
 
-export type ProcessInfo = { process_id: ProcessId, thread_id: ThreadId, turn_id?: TurnId, argv: Array<string>, cwd: string, started_at: string, status: ProcessStatus, exit_code?: number, stdout_path: string, stderr_path: string, last_update_at: string, };
+export type ProcessInfo = { process_id: ProcessId, thread_id: ThreadId, turn_id?: TurnId, os_pid?: number, argv: Array<string>, cwd: string, started_at: string, status: ProcessStatus, exit_code?: number, stdout_path: string, stderr_path: string, last_update_at: string, };

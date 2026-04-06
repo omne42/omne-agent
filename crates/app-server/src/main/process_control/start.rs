@@ -419,6 +419,8 @@ async fn handle_process_start_inner(
             return Err(err).with_context(|| format!("spawn {:?}", params.argv));
         }
     };
+    let os_pid = child.id();
+    write_process_pid_file(&thread_dir, process_id, os_pid).await?;
 
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
@@ -459,6 +461,7 @@ async fn handle_process_start_inner(
         process_id,
         thread_id: params.thread_id,
         turn_id: params.turn_id,
+        os_pid,
         argv: params.argv.clone(),
         cwd: cwd_str,
         started_at: started_at.clone(),

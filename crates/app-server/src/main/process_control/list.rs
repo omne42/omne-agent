@@ -39,6 +39,11 @@ pub(super) async fn handle_process_list(
                             process_id,
                             thread_id: event.thread_id,
                             turn_id,
+                            os_pid: read_process_pid_file(
+                                &server.thread_store.thread_dir(event.thread_id),
+                                process_id,
+                            )
+                            .await,
                             argv,
                             cwd,
                             started_at: ts.clone(),
@@ -96,6 +101,7 @@ pub(super) async fn handle_process_list(
     for info in derived.values_mut() {
         if matches!(info.status, ProcessStatus::Running)
             && !in_mem_running.contains(&info.process_id)
+            && !info.os_pid.is_some_and(os_process_is_running)
         {
             info.status = ProcessStatus::Abandoned;
         }
@@ -123,6 +129,7 @@ pub(super) fn into_protocol_process_info(info: ProcessInfo) -> omne_app_server_p
         process_id: info.process_id,
         thread_id: info.thread_id,
         turn_id: info.turn_id,
+        os_pid: info.os_pid,
         argv: info.argv,
         cwd: info.cwd,
         started_at: info.started_at,
@@ -156,6 +163,7 @@ mod process_list_tests {
             process_id,
             thread_id,
             turn_id: None,
+            os_pid: None,
             argv: vec!["sleep".to_string(), "999".to_string()],
             cwd: "/tmp".to_string(),
             started_at: now.clone(),

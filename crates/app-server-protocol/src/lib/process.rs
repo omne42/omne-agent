@@ -121,6 +121,9 @@ pub struct ProcessInfo {
     #[serde(default)]
     #[ts(optional)]
     pub turn_id: Option<omne_protocol::TurnId>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub os_pid: Option<u32>,
     pub argv: Vec<String>,
     pub cwd: String,
     pub started_at: String,

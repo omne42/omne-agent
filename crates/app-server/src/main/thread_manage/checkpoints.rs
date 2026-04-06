@@ -516,6 +516,44 @@ async fn handle_thread_checkpoint_restore(
         );
     }
 
+    if !sandbox_writable_roots.is_empty() {
+        let reason =
+            "checkpoint restore is not supported when sandbox_writable_roots is set".to_string();
+        let report_artifact_id = write_checkpoint_restore_report(
+            server,
+            params.thread_id,
+            params.turn_id,
+            params.checkpoint_id,
+            &reason,
+            None,
+        )
+        .await;
+        thread_rt
+            .append_event(omne_protocol::ThreadEventKind::CheckpointRestored {
+                checkpoint_id: params.checkpoint_id,
+                turn_id: params.turn_id,
+                status: omne_protocol::CheckpointRestoreStatus::Failed,
+                reason: Some(reason),
+                report_artifact_id,
+            })
+            .await?;
+        return checkpoint_restore_denied_response(
+            omne_app_server_protocol::ThreadCheckpointRestoreDeniedResponse {
+                thread_id: params.thread_id,
+                checkpoint_id: params.checkpoint_id,
+                denied: true,
+                structured_error: None,
+                error_code: Some("sandbox_writable_roots_unsupported".to_string()),
+                sandbox_policy: None,
+                mode: None,
+                decision: None,
+                available: None,
+                load_error: None,
+                sandbox_writable_roots: Some(sandbox_writable_roots),
+            },
+        );
+    }
+
     let plan = omne_checkpoint_runtime::compute_restore_plan(
         &thread_root,
         &snapshot_root,
@@ -589,44 +627,6 @@ async fn handle_thread_checkpoint_restore(
                 &plan,
             );
         }
-    }
-
-    if !sandbox_writable_roots.is_empty() {
-        let reason =
-            "checkpoint restore is not supported when sandbox_writable_roots is set".to_string();
-        let report_artifact_id = write_checkpoint_restore_report(
-            server,
-            params.thread_id,
-            params.turn_id,
-            params.checkpoint_id,
-            &reason,
-            Some(&plan),
-        )
-        .await;
-        thread_rt
-            .append_event(omne_protocol::ThreadEventKind::CheckpointRestored {
-                checkpoint_id: params.checkpoint_id,
-                turn_id: params.turn_id,
-                status: omne_protocol::CheckpointRestoreStatus::Failed,
-                reason: Some(reason),
-                report_artifact_id,
-            })
-            .await?;
-        return checkpoint_restore_denied_response(
-            omne_app_server_protocol::ThreadCheckpointRestoreDeniedResponse {
-                thread_id: params.thread_id,
-                checkpoint_id: params.checkpoint_id,
-                denied: true,
-                structured_error: None,
-                error_code: Some("sandbox_writable_roots_unsupported".to_string()),
-                sandbox_policy: None,
-                mode: None,
-                decision: None,
-                available: None,
-                load_error: None,
-                sandbox_writable_roots: Some(sandbox_writable_roots),
-            },
-        );
     }
 
     let result = omne_checkpoint_runtime::restore_workspace_from_snapshot(

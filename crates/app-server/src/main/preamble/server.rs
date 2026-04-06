@@ -1123,6 +1123,7 @@ struct ProcessInfo {
     process_id: ProcessId,
     thread_id: ThreadId,
     turn_id: Option<TurnId>,
+    os_pid: Option<u32>,
     argv: Vec<String>,
     cwd: String,
     started_at: String,
@@ -1131,6 +1132,69 @@ struct ProcessInfo {
     stdout_path: String,
     stderr_path: String,
     last_update_at: String,
+}
+
+fn process_runtime_dir(thread_dir: &Path, process_id: ProcessId) -> PathBuf {
+    thread_dir
+        .join("runtime")
+        .join("processes")
+        .join(process_id.to_string())
+}
+
+fn process_pid_path(thread_dir: &Path, process_id: ProcessId) -> PathBuf {
+    process_runtime_dir(thread_dir, process_id).join("pid")
+}
+
+async fn write_process_pid_file(
+    thread_dir: &Path,
+    process_id: ProcessId,
+    os_pid: Option<u32>,
+) -> anyhow::Result<()> {
+    let Some(os_pid) = os_pid else {
+        return Ok(());
+    };
+    let pid_path = process_pid_path(thread_dir, process_id);
+    tokio::fs::write(&pid_path, format!("{os_pid}\n"))
+        .await
+        .with_context(|| format!("write {}", pid_path.display()))
+}
+
+async fn read_process_pid_file(thread_dir: &Path, process_id: ProcessId) -> Option<u32> {
+    let pid_path = process_pid_path(thread_dir, process_id);
+    let raw = tokio::fs::read_to_string(&pid_path).await.ok()?;
+    raw.trim().parse::<u32>().ok()
+}
+
+#[cfg(unix)]
+fn os_process_is_running(os_pid: u32) -> bool {
+    let rc = unsafe { nix::libc::kill(os_pid as i32, 0) };
+    if rc == 0 {
+        return true;
+    }
+    matches!(
+        std::io::Error::last_os_error().raw_os_error(),
+        Some(nix::libc::EPERM)
+    )
+}
+
+#[cfg(not(unix))]
+fn os_process_is_running(_os_pid: u32) -> bool {
+    false
+}
+
+#[cfg(unix)]
+fn send_os_process_signal(os_pid: u32, signal: nix::libc::c_int) -> anyhow::Result<()> {
+    let rc = unsafe { nix::libc::kill(os_pid as i32, signal) };
+    if rc == 0 {
+        return Ok(());
+    }
+    Err(std::io::Error::last_os_error())
+        .with_context(|| format!("send signal {signal} to pid {os_pid}"))
+}
+
+#[cfg(not(unix))]
+fn send_os_process_signal(_os_pid: u32, _signal: i32) -> anyhow::Result<()> {
+    anyhow::bail!("external process signaling is not supported on this platform")
 }
 
 #[derive(Clone, Default)]

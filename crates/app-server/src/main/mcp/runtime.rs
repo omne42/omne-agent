@@ -145,13 +145,6 @@ fn mcp_server_config_fingerprint(server_cfg: &McpServerConfig) -> String {
     out
 }
 
-fn mcp_process_runtime_dir(thread_dir: &Path, process_id: ProcessId) -> PathBuf {
-    thread_dir
-        .join("runtime")
-        .join("processes")
-        .join(process_id.to_string())
-}
-
 async fn spawn_mcp_connection(
     server: &Server,
     thread_rt: &Arc<ThreadRuntime>,
@@ -173,7 +166,7 @@ async fn spawn_mcp_connection(
 
     let process_id = ProcessId::new();
     let thread_dir = server.thread_store.thread_dir(thread_id);
-    let process_dir = mcp_process_runtime_dir(&thread_dir, process_id);
+    let process_dir = process_runtime_dir(&thread_dir, process_id);
     tokio::fs::create_dir_all(&process_dir)
         .await
         .with_context(|| format!("create dir {}", process_dir.display()))?;
@@ -211,6 +204,8 @@ async fn spawn_mcp_connection(
     let mut child = client
         .take_child()
         .ok_or_else(|| anyhow::anyhow!("mcp transport does not expose a child process"))?;
+    let os_pid = child.id();
+    write_process_pid_file(&thread_dir, process_id, os_pid).await?;
     let stderr = child
         .stderr
         .take()
@@ -235,6 +230,7 @@ async fn spawn_mcp_connection(
         process_id,
         thread_id,
         turn_id,
+        os_pid,
         argv: argv.to_vec(),
         cwd: thread_root.display().to_string(),
         started_at: started_at.clone(),
@@ -628,7 +624,7 @@ mod mcp_runtime_tests {
     fn mcp_process_runtime_dir_uses_runtime_namespace() {
         let thread_dir = Path::new("/tmp/thread");
         let process_id = ProcessId::new();
-        let dir = mcp_process_runtime_dir(thread_dir, process_id);
+        let dir = process_runtime_dir(thread_dir, process_id);
 
         assert!(dir.starts_with(thread_dir.join("runtime").join("processes")));
         assert!(!dir.starts_with(thread_dir.join("artifacts")));
