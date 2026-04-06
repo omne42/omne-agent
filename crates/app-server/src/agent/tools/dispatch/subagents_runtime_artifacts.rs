@@ -279,6 +279,10 @@ fn sanitize_isolated_workspace_component(input: &str) -> String {
     out.chars().take(80).collect::<String>()
 }
 
+fn isolated_subagent_root(server: &super::Server) -> std::path::PathBuf {
+    server.thread_store.root().join("tmp").join("subagents")
+}
+
 fn is_isolated_runtime_rel_path(rel: &std::path::Path) -> bool {
     let mut components = rel.components();
     let Some(first) = components.next() else {
@@ -369,11 +373,7 @@ async fn prepare_isolated_workspace_with_details(
     let source_root = source_root.to_path_buf();
     let label = sanitize_isolated_workspace_component(task_id);
     let nonce = omne_protocol::ToolId::new().to_string();
-    let isolated_root = server
-        .cwd
-        .join(".omne_data")
-        .join("tmp")
-        .join("subagents")
+    let isolated_root = isolated_subagent_root(server)
         .join(parent_thread_id.to_string())
         .join(format!("{label}-{nonce}"))
         .join("repo");

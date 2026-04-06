@@ -98,12 +98,47 @@ mod agent_spawn_guard_tests {
         assert!(
             isolated_root.starts_with(
                 omne_root
-                    .join(".omne_data")
                     .join("tmp")
                     .join("subagents")
                     .join(parent_thread_id.to_string())
             )
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn isolated_workspace_root_uses_thread_store_root_not_server_cwd() -> anyhow::Result<()> {
+        let _lock = crate::app_server_process_env_lock().lock().await;
+        let _backend = ScopedEnvVar::set("OMNE_SUBAGENT_ISOLATED_BACKEND", "copy");
+        let _legacy = ScopedEnvVar::unset("OMNE_SUBAGENT_ISOLATED_WORKTREE_FIRST");
+
+        let tmp = tempfile::tempdir()?;
+        let cwd_root = tmp.path().join("cwd-root");
+        let omne_root = tmp.path().join("real-omne-root");
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&cwd_root).await?;
+        tokio::fs::create_dir_all(&repo_dir).await?;
+        tokio::fs::write(repo_dir.join("hello.txt"), "hello\n").await?;
+
+        let server = crate::build_test_server_shared_with_cwd(cwd_root.clone(), omne_root.clone());
+        let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let parent_thread_id = handle.thread_id();
+        drop(handle);
+
+        let isolated = prepare_isolated_workspace_with_details(
+            &server,
+            parent_thread_id,
+            "distinct-root",
+            &repo_dir,
+        )
+        .await?;
+        assert!(isolated.cwd.starts_with(
+            omne_root
+                .join("tmp")
+                .join("subagents")
+                .join(parent_thread_id.to_string())
+        ));
+        assert!(!isolated.cwd.starts_with(cwd_root.join(".omne_data")));
         Ok(())
     }
 
