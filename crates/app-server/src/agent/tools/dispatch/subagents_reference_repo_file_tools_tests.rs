@@ -176,6 +176,7 @@ mod reference_repo_file_tools_tests {
             .append_event(omne_protocol::ThreadEventKind::ProcessStarted {
                 process_id,
                 turn_id: None,
+                os_pid: None,
                 argv: vec!["echo".to_string(), "cross-thread".to_string()],
                 cwd: "/tmp".to_string(),
                 stdout_path: "/tmp/omne-test.stdout.log".to_string(),

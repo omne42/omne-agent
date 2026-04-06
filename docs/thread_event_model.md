@@ -42,7 +42,7 @@ Turn 的边界：
 | delta（文本流） | JSON-RPC `item/delta` | 来自 Responses SSE `response.output_text.delta`；断线不影响最终 `AssistantMessage` 落盘 |
 | tool | `ToolStarted` / `ToolCompleted` | 只记录工具名与参数元信息；结果写入 `result`（避免大 payload） |
 | approval | `ApprovalRequested` / `ApprovalDecided` | `ApprovalId` 为 join key；自动决策也落盘 |
-| process | `ProcessStarted` / `ProcessExited` / `ProcessInterruptRequested` / `ProcessKillRequested` | stdout/stderr 路径是 artifacts；支持 `tail/follow`（只读 attach） |
+| process | `ProcessStarted` / `ProcessExited` / `ProcessInterruptRequested` / `ProcessKillRequested` | stdout/stderr 路径是 artifacts；`ProcessStarted.os_pid` 用于重启后继续识别仍存活的进程并回退到 OS signal；支持 `tail/follow`（只读 attach） |
 | attention marker | `AttentionMarkerSet` / `AttentionMarkerCleared` | 结构化“需要人介入”信号；当前 `plan_ready/diff_ready`（artifact/write）、`test_failed`（测试进程失败）、`fan_out_linkage_issue`（artifact_type=`fan_out_linkage_issue`）、`fan_out_auto_apply_error`（`fan_out_result` 结构化字段 `isolated_write_auto_apply.error`）以及 `token_budget_warning/token_budget_exceeded`（由 token budget 利用率/超限状态变化触发）显式落盘；`fan_out_linkage_issue` 可由 `artifact_type=\"fan_out_linkage_issue_clear\"` 显式清除，`fan_out_auto_apply_error` 在后续无错误 fan-out 结果或新 turn 开始时清除（此外 `plan_ready/diff_ready/fan_out_linkage_issue` 在新 turn 开始时清除，`test_failed` 在测试成功后清除，token budget 两个 marker 在状态回落时自动清除）；`thread/attention` 优先消费事件并对历史线程回退推断 |
 | file edit | `ToolStarted/Completed`（`file/write|edit|patch|delete|fs/mkdir`） | 事件记录 `path/bytes/...`，**不记录文件内容**；真实内容在 workspace，可用 diff 工具生成产物 |
 | diff | `thread/diff` / `thread/patch` + artifact | v0.2.0 已支持 `thread/diff` 与 `thread/patch`，输出为 user artifact（`artifact_type="diff"` / `artifact_type="patch"`，预览类型见 `docs/artifacts.md`） |

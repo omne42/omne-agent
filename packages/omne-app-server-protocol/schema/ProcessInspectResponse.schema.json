@@ -58,6 +58,15 @@
         "last_update_at": {
           "type": "string"
         },
+        "os_pid": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        },
         "process_id": {
           "type": "string",
           "format": "uuid"

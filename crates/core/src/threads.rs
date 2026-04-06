@@ -545,6 +545,7 @@ mod tests {
             .append(ThreadEventKind::ProcessStarted {
                 process_id,
                 turn_id: None,
+                os_pid: None,
                 argv: vec!["sleep".to_string(), "999".to_string()],
                 cwd: "/tmp".to_string(),
                 stdout_path: "/tmp/stdout.log".to_string(),

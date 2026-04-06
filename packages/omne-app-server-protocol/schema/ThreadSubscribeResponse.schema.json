@@ -138,6 +138,129 @@
         "token_budget_exceeded"
       ]
     },
+    "CatalogArgData": {
+      "type": "object",
+      "required": [
+        "name",
+        "value"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/definitions/CatalogArgValueData"
+        }
+      }
+    },
+    "CatalogArgValueData": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "text"
+              ]
+            },
+            "value": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "bool"
+              ]
+            },
+            "value": {
+              "type": "boolean"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "signed"
+              ]
+            },
+            "value": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "unsigned"
+              ]
+            },
+            "value": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "nested_text"
+              ]
+            },
+            "value": {
+              "$ref": "#/definitions/StructuredTextData"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "unsupported"
+              ]
+            }
+          }
+        }
+      ]
+    },
     "CheckpointRestoreStatus": {
       "type": "string",
       "enum": [
@@ -230,6 +353,53 @@
         "allow"
       ]
     },
+    "StructuredTextData": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "args",
+            "code",
+            "kind"
+          ],
+          "properties": {
+            "args": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/CatalogArgData"
+              }
+            },
+            "code": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "catalog"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "text"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "freeform"
+              ]
+            },
+            "text": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
     "ThreadEvent": {
       "type": "object",
       "oneOf": [
@@ -247,6 +417,34 @@
               "type": "string",
               "enum": [
                 "thread_created"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "prompt_sha256",
+            "prompt_text",
+            "type"
+          ],
+          "properties": {
+            "prompt_sha256": {
+              "type": "string"
+            },
+            "prompt_text": {
+              "type": "string"
+            },
+            "source": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "thread_system_prompt_snapshot"
               ]
             }
           }
@@ -501,6 +699,21 @@
             "approval_policy": {
               "$ref": "#/definitions/ApprovalPolicy"
             },
+            "clear_execpolicy_rules": {
+              "type": "boolean"
+            },
+            "clear_model": {
+              "type": "boolean"
+            },
+            "clear_openai_base_url": {
+              "type": "boolean"
+            },
+            "clear_show_thinking": {
+              "type": "boolean"
+            },
+            "clear_thinking": {
+              "type": "boolean"
+            },
             "execpolicy_rules": {
               "type": [
                 "array",
@@ -696,6 +909,16 @@
             "status": {
               "$ref": "#/definitions/ToolStatus"
             },
+            "structured_error": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/StructuredTextData"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "tool_id": {
               "type": "string",
               "format": "uuid"
@@ -825,6 +1048,14 @@
             },
             "cwd": {
               "type": "string"
+            },
+            "os_pid": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0.0
             },
             "process_id": {
               "type": "string",

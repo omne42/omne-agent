@@ -443,10 +443,12 @@ async fn handle_process_start_inner(
         None
     };
 
+    let os_pid = child.id();
     let started = thread_rt
         .append_event(omne_protocol::ThreadEventKind::ProcessStarted {
             process_id,
             turn_id: params.turn_id,
+            os_pid,
             argv: params.argv.clone(),
             cwd: cwd_str.clone(),
             stdout_path: stdout_path.display().to_string(),
@@ -459,6 +461,7 @@ async fn handle_process_start_inner(
         process_id,
         thread_id: params.thread_id,
         turn_id: params.turn_id,
+        os_pid,
         argv: params.argv.clone(),
         cwd: cwd_str,
         started_at: started_at.clone(),
