@@ -1082,16 +1082,22 @@ modes:
             .ok_or_else(|| anyhow::anyhow!("missing thread/start result"))?;
         let result = serde_json::from_value::<omne_app_server_protocol::ThreadStartResponse>(result)?;
 
-        let state = handle_thread_state(
+        let response = handle_thread_request(
             &server,
-            ThreadStateParams {
-                thread_id: result.thread_id,
-            },
+            serde_json::json!(2),
+            "thread/state",
+            serde_json::json!({ "thread_id": result.thread_id }),
         )
-        .await?;
+        .await;
+        assert!(response.error.is_none());
+        let state = serde_json::from_value::<omne_app_server_protocol::ThreadStateResponse>(
+            response
+                .result
+                .ok_or_else(|| anyhow::anyhow!("missing thread/state result"))?,
+        )?;
         assert_eq!(
             state.cwd,
-            tokio::fs::canonicalize(&repo_dir).await?.display().to_string()
+            Some(tokio::fs::canonicalize(&repo_dir).await?.display().to_string())
         );
         Ok(())
     }

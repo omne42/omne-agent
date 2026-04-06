@@ -1,0 +1,69 @@
+name: rust-gates
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "AGENTS.md"
+      - "README.md"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/**"
+      - "docs/**"
+      - "scripts/**"
+      - ".github/actions/checkout-shared-deps/**"
+      - ".github/workflows/rust-gates.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "AGENTS.md"
+      - "README.md"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/**"
+      - "docs/**"
+      - "scripts/**"
+      - ".github/actions/checkout-shared-deps/**"
+      - ".github/workflows/rust-gates.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-gates-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  workspace:
+    name: workspace-rust
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: omne-agent
+    steps:
+      - name: Checkout omne-agent
+        uses: actions/checkout@v6
+        with:
+          path: omne-agent
+
+      - name: Checkout shared deps
+        uses: ./omne-agent/.github/actions/checkout-shared-deps
+        with:
+          repo-owner: ${{ github.repository_owner }}
+          token: ${{ secrets.OMNE_REPO_READ_TOKEN || github.token }}
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            omne-agent -> omne-agent/target
+
+      - name: Run workspace gates
+        run: ./scripts/check-workspace.sh ci

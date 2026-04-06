@@ -1600,7 +1600,7 @@ async fn preview_sandbox_write_target(
     sandbox_writable_roots: &[String],
     input: &Path,
 ) -> anyhow::Result<SandboxWriteTarget> {
-    let preview_path = omne_core::preview_file_for_sandbox_write(
+    let preview_path = omne_core::sandbox::preview_file_for_sandbox_write(
         thread_root,
         sandbox_policy,
         sandbox_writable_roots,
