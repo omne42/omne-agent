@@ -15,9 +15,10 @@ async fn handle_thread_fork(
         )
     };
 
+    let parent_root = resolve_thread_root_from_cwd(server, &current_cwd).await?;
     let cwd = match params.cwd.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
         Some(cwd) => resolve_thread_root_from_cwd(server, cwd).await?,
-        None => resolve_thread_root_from_cwd(server, &current_cwd).await?,
+        None => parent_root.clone(),
     };
 
     let events = server
@@ -26,7 +27,7 @@ async fn handle_thread_fork(
         .await?
         .ok_or_else(|| anyhow::anyhow!("thread not found: {}", params.thread_id))?;
 
-    let mut forked = server.thread_store.create_thread(cwd).await?;
+    let mut forked = server.thread_store.create_thread(cwd.clone()).await?;
     let forked_id = forked.thread_id();
     let mut skipped_active_turn_approvals =
         std::collections::HashSet::<omne_protocol::ApprovalId>::new();
@@ -44,7 +45,9 @@ async fn handle_thread_fork(
                 forked.append(kind).await?;
             }
             kind @ omne_protocol::ThreadEventKind::ThreadConfigUpdated { .. } => {
-                forked.append(kind).await?;
+                forked
+                    .append(rewrite_thread_config_for_fork(kind, &parent_root, &cwd))
+                    .await?;
             }
             kind @ omne_protocol::ThreadEventKind::TurnStarted { turn_id, .. }
                 if active_turn_id == Some(turn_id) =>
@@ -121,4 +124,85 @@ async fn handle_thread_fork(
         log_path,
         last_seq,
     })
+}
+
+fn rewrite_thread_config_for_fork(
+    kind: omne_protocol::ThreadEventKind,
+    parent_root: &std::path::Path,
+    fork_root: &std::path::Path,
+) -> omne_protocol::ThreadEventKind {
+    let omne_protocol::ThreadEventKind::ThreadConfigUpdated {
+        approval_policy,
+        sandbox_policy,
+        sandbox_writable_roots,
+        sandbox_network_access,
+        mode,
+        role,
+        model,
+        clear_model,
+        thinking,
+        clear_thinking,
+        show_thinking,
+        clear_show_thinking,
+        openai_base_url,
+        clear_openai_base_url,
+        allowed_tools,
+        execpolicy_rules,
+        clear_execpolicy_rules,
+    } = kind
+    else {
+        return kind;
+    };
+
+    let sandbox_writable_roots = sandbox_writable_roots.map(|roots| {
+        roots
+            .into_iter()
+            .map(|root| rebase_fork_workspace_path(&root, parent_root, fork_root, true))
+            .collect()
+    });
+    let execpolicy_rules = execpolicy_rules.map(|rules| {
+        rules
+            .into_iter()
+            .map(|rule| rebase_fork_workspace_path(&rule, parent_root, fork_root, false))
+            .collect()
+    });
+
+    omne_protocol::ThreadEventKind::ThreadConfigUpdated {
+        approval_policy,
+        sandbox_policy,
+        sandbox_writable_roots,
+        sandbox_network_access,
+        mode,
+        role,
+        model,
+        clear_model,
+        thinking,
+        clear_thinking,
+        show_thinking,
+        clear_show_thinking,
+        openai_base_url,
+        clear_openai_base_url,
+        allowed_tools,
+        execpolicy_rules,
+        clear_execpolicy_rules,
+    }
+}
+
+fn rebase_fork_workspace_path(
+    value: &str,
+    parent_root: &std::path::Path,
+    fork_root: &std::path::Path,
+    rebase_relative: bool,
+) -> String {
+    let path = std::path::Path::new(value);
+    if path.is_absolute() {
+        return path
+            .strip_prefix(parent_root)
+            .map(|suffix| fork_root.join(suffix).display().to_string())
+            .unwrap_or_else(|_| value.to_string());
+    }
+    if rebase_relative {
+        return fork_root.join(path).display().to_string();
+    }
+    value.to_string()
 }
