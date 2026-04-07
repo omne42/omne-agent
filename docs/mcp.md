@@ -143,10 +143,14 @@ v0.2.x 实现口径（最小）：
 
 ### 1.6 大结果的落盘（避免把 payload 塞进事件）
 
-建议：
+v0.2.x 当前口径：
 
 - `mcp/call` 的结果如果超过阈值（例如 256KiB），写入 artifact（`artifact_type="mcp_result"`），`ToolCompleted.result` 只返回 `artifact_id/path/summary`。
-- 对返回文本做脱敏（见 `docs/redaction.md`）。
+- 写入前会先对 JSON 结果做结构化脱敏：
+  - 敏感 key（如 `token`、`authorization`、`api_key`）的值替换成 `"<REDACTED>"`。
+  - 其它 string 值仍会经过 `redact_text()`，覆盖 Bearer token 与常见密钥形态。
+
+见 `docs/redaction.md` 与 `crates/app-server/src/main/mcp/runtime.rs`。
 
 ---
 

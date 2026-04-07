@@ -19,6 +19,8 @@ type McpConfig = omne_mcp_kit::Config;
 type McpServerConfig = omne_mcp_kit::ServerConfig;
 type McpTransport = omne_mcp_kit::Transport;
 
+const REDACTED_JSON_VALUE: &str = "<REDACTED>";
+
 fn parse_bool_env_value(raw: &str) -> Option<bool> {
     match raw.trim().to_ascii_lowercase().as_str() {
         "1" | "true" | "yes" | "on" => Some(true),
@@ -702,6 +704,39 @@ fn json_value_size_bytes(value: &Value) -> usize {
     serde_json::to_string(value).map(|s| s.len()).unwrap_or(0)
 }
 
+fn redact_mcp_result_artifact_value(value: &mut Value) {
+    match value {
+        Value::Null | Value::Bool(_) | Value::Number(_) => {}
+        Value::String(text) => {
+            *text = omne_core::redact_text(text);
+        }
+        Value::Array(items) => {
+            for item in items {
+                redact_mcp_result_artifact_value(item);
+            }
+        }
+        Value::Object(map) => {
+            for (key, item) in map.iter_mut() {
+                if omne_core::is_sensitive_key(key) {
+                    *item = Value::String(REDACTED_JSON_VALUE.to_string());
+                } else {
+                    redact_mcp_result_artifact_value(item);
+                }
+            }
+        }
+    }
+}
+
+fn render_mcp_result_artifact_text(summary: &str, result: &Value) -> String {
+    let mut redacted_result = result.clone();
+    redact_mcp_result_artifact_value(&mut redacted_result);
+    format!(
+        "# MCP Result\n\n_summary: {summary}_\n\n```json\n{}\n```\n",
+        serde_json::to_string_pretty(&redacted_result)
+            .unwrap_or_else(|_| "<invalid-json>".to_string())
+    )
+}
+
 #[cfg(test)]
 mod runtime_tests {
     use super::*;
@@ -755,10 +790,7 @@ async fn maybe_write_mcp_result_artifact(
         return Ok(None);
     }
 
-    let text = format!(
-        "# MCP Result\n\n_summary: {summary}_\n\n```json\n{}\n```\n",
-        serde_json::to_string_pretty(result).unwrap_or_else(|_| "<invalid-json>".to_string())
-    );
+    let text = render_mcp_result_artifact_text(&summary, result);
 
     let (artifact_response, _completed) = write_user_artifact(
         server,
@@ -865,6 +897,33 @@ mod mcp_runtime_tests {
 
         assert!(dir.starts_with(thread_dir.join("runtime").join("processes")));
         assert!(!dir.starts_with(thread_dir.join("artifacts")));
+    }
+
+    #[test]
+    fn render_mcp_result_artifact_text_redacts_sensitive_json_content() {
+        let text = render_mcp_result_artifact_text(
+            "mcp/call: demo",
+            &serde_json::json!({
+                "token": "super-secret-token-abcdefghijklmnopqrstuvwxyz",
+                "nested": {
+                    "authorization": "Bearer abcdefghijklmnopqrstuvwxyz0123456789",
+                    "note": "plain text"
+                },
+                "items": [
+                    "Bearer qwertyuiopasdfghjklzxcvbnm1234567890",
+                    { "api_key": "sk-1234567890abcdefghijklmnop" }
+                ]
+            }),
+        );
+
+        assert!(!text.contains("super-secret-token-abcdefghijklmnopqrstuvwxyz"));
+        assert!(!text.contains("abcdefghijklmnopqrstuvwxyz0123456789"));
+        assert!(!text.contains("sk-1234567890abcdefghijklmnop"));
+        assert!(text.contains("\"token\": \"<REDACTED>\""));
+        assert!(text.contains("\"authorization\": \"<REDACTED>\""));
+        assert!(text.contains("Bearer <REDACTED>"));
+        assert!(text.contains("\"api_key\": \"<REDACTED>\""));
+        assert!(text.contains("\"note\": \"plain text\""));
     }
 
     #[cfg(unix)]
