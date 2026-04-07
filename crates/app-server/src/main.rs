@@ -9,7 +9,13 @@ include!("main/notify_integration.rs");
 include!("main/preamble.rs");
 include!("main/app.rs");
 include!("main/structured_error.rs");
-include!("main/thread_observe.rs");
+
+mod thread_observe {
+    use super::*;
+    include!("main/thread_observe.rs");
+}
+use thread_observe::*;
+
 include!("main/thread_manage.rs");
 include!("main/approval.rs");
 include!("main/mode_gate.rs");
