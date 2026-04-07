@@ -162,17 +162,19 @@ async fn handle_process_start_inner(
 
     let auth_cwd_str = cwd_str.clone();
     let exec_governance = evaluate_thread_process_exec_governance(
-        &server.thread_store,
-        &server.exec_policy,
-        &thread_rt,
-        &thread_root,
-        &snapshot,
-        params.thread_id,
-        params.turn_id,
-        params.approval_id,
-        &cwd_path,
-        "process/start",
-        &params.argv,
+        &ThreadProcessExecGovernanceContext {
+            thread_store: &server.thread_store,
+            exec_policy: &server.exec_policy,
+            thread_rt: &thread_rt,
+            thread_root: &thread_root,
+            snapshot: &snapshot,
+            thread_id: params.thread_id,
+            turn_id: params.turn_id,
+            approval_id: params.approval_id,
+            cwd: &cwd_path,
+            action: "process/start",
+            argv: &params.argv,
+        },
         |mode| mode.permissions.command,
         |approval_requirement| {
             let approval_metadata = matches!(

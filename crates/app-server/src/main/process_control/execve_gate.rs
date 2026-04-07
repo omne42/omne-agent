@@ -409,17 +409,19 @@ async fn handle_execve_gate_decide(
         .clone()
         .unwrap_or_else(|| ctx.thread_root.display().to_string());
     let exec_governance = evaluate_thread_process_exec_governance(
-        &ctx.thread_store,
-        &ctx.exec_policy,
-        &ctx.thread_rt,
-        &ctx.thread_root,
-        &snapshot,
-        ctx.thread_id,
-        ctx.turn_id,
-        None,
-        gateway_cwd,
-        "process/execve",
-        &args.argv,
+        &ThreadProcessExecGovernanceContext {
+            thread_store: &ctx.thread_store,
+            exec_policy: &ctx.exec_policy,
+            thread_rt: &ctx.thread_rt,
+            thread_root: &ctx.thread_root,
+            snapshot: &snapshot,
+            thread_id: ctx.thread_id,
+            turn_id: ctx.turn_id,
+            approval_id: None,
+            cwd: gateway_cwd,
+            action: "process/execve",
+            argv: &args.argv,
+        },
         |mode| mode.permissions.command,
         |approval_requirement| {
             build_process_exec_approval_params(
