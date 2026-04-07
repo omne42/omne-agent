@@ -316,3 +316,57 @@ async fn handle_repo_goto_definition(
         }
     }
 }
+
+#[cfg(test)]
+mod goto_definition_tests {
+    use super::{select_repo_definition_candidates, symbol_tail_name};
+
+    fn repo_symbol(
+        path: &str,
+        kind: &str,
+        name: &str,
+        start_line: usize,
+    ) -> omne_repo_symbols_runtime::RepoSymbol {
+        omne_repo_symbols_runtime::RepoSymbol {
+            path: path.to_string(),
+            kind: kind.to_string(),
+            name: name.to_string(),
+            start_line,
+            end_line: start_line,
+        }
+    }
+
+    #[test]
+    fn symbol_tail_name_handles_qualified_symbols() {
+        assert_eq!(symbol_tail_name("foo::bar::Baz"), "Baz");
+        assert_eq!(symbol_tail_name("Widget"), "Widget");
+    }
+
+    #[test]
+    fn goto_definition_prefers_exact_qualified_name_over_tail_match() {
+        let symbols = vec![
+            repo_symbol("src/bar.rs", "struct", "bar::Thing", 8),
+            repo_symbol("src/foo.rs", "struct", "foo::Thing", 4),
+        ];
+
+        let ranked = select_repo_definition_candidates(&symbols, "foo::Thing", None, 10);
+        assert_eq!(
+            ranked.first().map(|symbol| symbol.name.as_str()),
+            Some("foo::Thing")
+        );
+    }
+
+    #[test]
+    fn goto_definition_uses_path_hint_to_break_tail_ties() {
+        let symbols = vec![
+            repo_symbol("src/bar.rs", "struct", "bar::Thing", 8),
+            repo_symbol("src/foo.rs", "struct", "foo::Thing", 4),
+        ];
+
+        let ranked = select_repo_definition_candidates(&symbols, "Thing", Some("src/foo.rs"), 10);
+        assert_eq!(
+            ranked.first().map(|symbol| symbol.path.as_str()),
+            Some("src/foo.rs")
+        );
+    }
+}
