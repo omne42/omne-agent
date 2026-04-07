@@ -2122,6 +2122,8 @@ dependencies = [
 name = "omne-fs-policy"
 version = "0.1.1"
 dependencies = [
+ "anyhow",
+ "tempfile",
  "walkdir",
 ]
 

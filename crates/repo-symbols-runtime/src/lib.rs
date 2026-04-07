@@ -379,4 +379,30 @@ mod outer {
         );
         Ok(())
     }
+
+    #[test]
+    fn collect_repo_symbols_skips_omne_data_runtime_files() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let root = tmp.path().to_path_buf();
+        std::fs::create_dir_all(root.join(".omne_data"))?;
+        std::fs::write(root.join(".omne_data/hidden.rs"), "pub fn hidden() {}\n")?;
+        std::fs::create_dir_all(root.join("src"))?;
+        std::fs::write(root.join("src/lib.rs"), "pub fn visible() {}\n")?;
+
+        let out = collect_repo_symbols(RepoSymbolsRequest {
+            root,
+            include_glob: "**/*.rs".to_string(),
+            max_files: 100,
+            max_bytes_per_file: 1024 * 1024,
+            max_symbols: 100,
+        })?;
+
+        assert!(out.symbols.iter().any(|symbol| symbol.name == "visible"));
+        assert!(
+            !out.symbols
+                .iter()
+                .any(|symbol| symbol.path == ".omne_data/hidden.rs")
+        );
+        Ok(())
+    }
 }
