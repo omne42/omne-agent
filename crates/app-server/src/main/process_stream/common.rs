@@ -446,6 +446,33 @@ fn default_unmatched_command_policy() -> UnmatchedCommandPolicy {
     UnmatchedCommandPolicy::Prompt
 }
 
+#[derive(Clone)]
+struct ThreadProcessExecSnapshot {
+    approval_policy: omne_protocol::ApprovalPolicy,
+    sandbox_policy: policy_meta::WriteScope,
+    sandbox_network_access: omne_protocol::SandboxNetworkAccess,
+    mode_name: String,
+    role_name: String,
+    allowed_tools: Option<Vec<String>>,
+    thread_execpolicy_rules: Vec<String>,
+}
+
+async fn load_thread_process_exec_snapshot(
+    thread_rt: &Arc<ThreadRuntime>,
+) -> ThreadProcessExecSnapshot {
+    let handle = thread_rt.handle.lock().await;
+    let state = handle.state();
+    ThreadProcessExecSnapshot {
+        approval_policy: state.approval_policy,
+        sandbox_policy: state.sandbox_policy,
+        sandbox_network_access: state.sandbox_network_access,
+        mode_name: state.mode.clone(),
+        role_name: state.role.clone(),
+        allowed_tools: state.allowed_tools.clone(),
+        thread_execpolicy_rules: state.execpolicy_rules.clone(),
+    }
+}
+
 struct ProcessExecAuthorizationContext<'a> {
     thread_root: &'a Path,
     thread_store: &'a ThreadStore,
@@ -674,6 +701,53 @@ where
             Ok(ProcessExecGovernance::Denied(denied.into()))
         }
     }
+}
+
+async fn evaluate_thread_process_exec_governance<F, G>(
+    thread_store: &ThreadStore,
+    exec_policy: &omne_execpolicy::Policy,
+    thread_rt: &Arc<ThreadRuntime>,
+    thread_root: &Path,
+    snapshot: &ThreadProcessExecSnapshot,
+    thread_id: ThreadId,
+    turn_id: Option<TurnId>,
+    approval_id: Option<omne_protocol::ApprovalId>,
+    cwd: &Path,
+    action: &'static str,
+    argv: &[String],
+    base_decision_for_mode: F,
+    approval_params_for_requirement: G,
+) -> anyhow::Result<ProcessExecGovernance>
+where
+    F: Fn(&omne_core::modes::ModeDef) -> omne_core::modes::Decision,
+    G: Fn(ProcessExecApprovalRequirement) -> Value,
+{
+    evaluate_process_exec_governance(
+        &ProcessExecGovernanceContext {
+            cwd,
+            sandbox_policy: snapshot.sandbox_policy,
+            sandbox_network_access: snapshot.sandbox_network_access,
+            authorization: ProcessExecAuthorizationContext {
+                thread_root,
+                thread_store,
+                thread_rt,
+                thread_id,
+                turn_id,
+                approval_id,
+                approval_policy: snapshot.approval_policy,
+                mode_name: &snapshot.mode_name,
+                role_name: &snapshot.role_name,
+                action,
+                exec_policy,
+                thread_execpolicy_rules: &snapshot.thread_execpolicy_rules,
+                argv,
+                unmatched_command_policy: default_unmatched_command_policy(),
+            },
+        },
+        base_decision_for_mode,
+        approval_params_for_requirement,
+    )
+    .await
 }
 
 enum ProcessModeGate {

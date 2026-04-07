@@ -398,25 +398,7 @@ async fn handle_execve_gate_decide(
         anyhow::bail!("argv must not be empty");
     }
 
-    let (
-        approval_policy,
-        sandbox_policy,
-        sandbox_network_access,
-        mode_name,
-        role_name,
-        thread_execpolicy_rules,
-    ) = {
-        let handle = ctx.thread_rt.handle.lock().await;
-        let state = handle.state();
-        (
-            state.approval_policy,
-            state.sandbox_policy,
-            state.sandbox_network_access,
-            state.mode.clone(),
-            state.role.clone(),
-            state.execpolicy_rules.clone(),
-        )
-    };
+    let snapshot = load_thread_process_exec_snapshot(&ctx.thread_rt).await;
     let gateway_cwd = args
         .cwd
         .as_deref()
@@ -426,28 +408,18 @@ async fn handle_execve_gate_decide(
         .cwd
         .clone()
         .unwrap_or_else(|| ctx.thread_root.display().to_string());
-    let exec_governance = evaluate_process_exec_governance(
-        &ProcessExecGovernanceContext {
-            cwd: gateway_cwd,
-            sandbox_policy,
-            sandbox_network_access,
-            authorization: ProcessExecAuthorizationContext {
-                thread_root: &ctx.thread_root,
-                thread_store: &ctx.thread_store,
-                thread_rt: &ctx.thread_rt,
-                thread_id: ctx.thread_id,
-                turn_id: ctx.turn_id,
-                approval_id: None,
-                approval_policy,
-                mode_name: &mode_name,
-                role_name: &role_name,
-                action: "process/execve",
-                exec_policy: &ctx.exec_policy,
-                thread_execpolicy_rules: &thread_execpolicy_rules,
-                argv: &args.argv,
-                unmatched_command_policy: default_unmatched_command_policy(),
-            },
-        },
+    let exec_governance = evaluate_thread_process_exec_governance(
+        &ctx.thread_store,
+        &ctx.exec_policy,
+        &ctx.thread_rt,
+        &ctx.thread_root,
+        &snapshot,
+        ctx.thread_id,
+        ctx.turn_id,
+        None,
+        gateway_cwd,
+        "process/execve",
+        &args.argv,
         |mode| mode.permissions.command,
         |approval_requirement| {
             build_process_exec_approval_params(
@@ -481,7 +453,7 @@ async fn handle_execve_gate_decide(
                 } => Ok(serde_json::json!({
                     "decision": "deny",
                     "reason": reason,
-                    "mode": mode_name,
+                    "mode": snapshot.mode_name,
                     "available": available,
                     "load_error": load_error,
                 })),
@@ -489,7 +461,7 @@ async fn handle_execve_gate_decide(
                     Ok(serde_json::json!({
                         "decision": "deny",
                         "reason": reason,
-                        "mode": mode_name,
+                        "mode": snapshot.mode_name,
                         "mode_decision": format!("{:?}", mode_decision.decision).to_lowercase(),
                         "decision_source": mode_decision.decision_source,
                         "tool_override_hit": mode_decision.tool_override_hit,
@@ -499,7 +471,7 @@ async fn handle_execve_gate_decide(
                     Ok(serde_json::json!({
                         "decision": "deny",
                         "reason": reason,
-                        "mode": mode_name,
+                        "mode": snapshot.mode_name,
                         "rules": rules,
                         "details": details,
                     }))
