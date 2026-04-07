@@ -437,8 +437,8 @@ async fn handle_process_start_inner(
             return Err(err).with_context(|| format!("spawn {:?}", params.argv));
         }
     };
-    let process_tree_cleanup =
-        capture_process_tree_cleanup(&mut child, &mut execve_gate, &params.argv).await?;
+    let mut process_tree_cleanup =
+        Some(capture_process_tree_cleanup(&mut child, &mut execve_gate, &params.argv).await?);
 
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
@@ -464,7 +464,7 @@ async fn handle_process_start_inner(
     };
 
     let os_pid = child.id();
-    let started = thread_rt
+    let started = match thread_rt
         .append_event(omne_protocol::ThreadEventKind::ProcessStarted {
             process_id,
             turn_id: params.turn_id,
@@ -474,7 +474,21 @@ async fn handle_process_start_inner(
             stdout_path: stdout_path.display().to_string(),
             stderr_path: stderr_path.display().to_string(),
         })
-        .await?;
+        .await
+    {
+        Ok(started) => started,
+        Err(err) => {
+            cleanup_untracked_spawned_process(
+                &mut child,
+                &mut process_tree_cleanup,
+                &mut execve_gate,
+                stdout_task,
+                stderr_task,
+            )
+            .await;
+            return Err(err).context("append ProcessStarted event");
+        }
+    };
     let started_at = started.timestamp.format(&Rfc3339)?;
 
     let info = ProcessInfo {
@@ -511,7 +525,7 @@ async fn handle_process_start_inner(
         thread_rt,
         process_id,
         child,
-        process_tree_cleanup: Some(process_tree_cleanup),
+        process_tree_cleanup,
         cmd_rx,
         stdout_task,
         stderr_task,
@@ -540,6 +554,40 @@ async fn handle_process_start_inner(
         timeout_ms: params.timeout_ms,
     };
     serde_json::to_value(response).context("serialize process/start response")
+}
+
+async fn cleanup_untracked_spawned_process(
+    child: &mut tokio::process::Child,
+    process_tree_cleanup: &mut Option<omne_process_primitives::ProcessTreeCleanup>,
+    execve_gate: &mut Option<ExecveGateHandle>,
+    stdout_task: Option<tokio::task::JoinHandle<anyhow::Result<()>>>,
+    stderr_task: Option<tokio::task::JoinHandle<anyhow::Result<()>>>,
+) {
+    let needs_direct_child_kill = match process_tree_cleanup.as_mut() {
+        Some(cleanup) => matches!(
+            cleanup.start_termination(),
+            omne_process_primitives::CleanupDisposition::DirectChildKillRequired
+        ),
+        None => true,
+    };
+    if let Some(cleanup) = process_tree_cleanup.as_ref() {
+        cleanup.kill_tree();
+    }
+    if needs_direct_child_kill {
+        let _ = child.start_kill();
+    }
+    let _ = child.wait().await;
+
+    if let Some(task) = stdout_task {
+        let _ = task.await;
+    }
+    if let Some(task) = stderr_task {
+        let _ = task.await;
+    }
+
+    if let Some(gate) = execve_gate.take() {
+        shutdown_execve_gate(gate).await;
+    }
 }
 
 async fn resolve_execpolicy_rule_paths(
@@ -1975,6 +2023,35 @@ prefix_rule(
             ExecveWrapperTarget::Unsupported(reason)
                 if reason.contains("requires a bash-compatible shell")
         ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cleanup_untracked_spawned_process_kills_child_before_registration()
+    -> anyhow::Result<()> {
+        let mut cmd = Command::new("/bin/sh");
+        cmd.arg("-lc").arg("sleep 30");
+        cmd.stdin(Stdio::null());
+        cmd.stdout(Stdio::null());
+        cmd.stderr(Stdio::null());
+        omne_process_primitives::configure_command_for_process_tree(&mut cmd);
+
+        let mut child = cmd.spawn()?;
+        let mut process_tree_cleanup =
+            Some(omne_process_primitives::ProcessTreeCleanup::new(&mut child)?);
+        let mut execve_gate = None;
+
+        cleanup_untracked_spawned_process(
+            &mut child,
+            &mut process_tree_cleanup,
+            &mut execve_gate,
+            None,
+            None,
+        )
+        .await;
+
+        let status = child.try_wait()?.ok_or_else(|| anyhow::anyhow!("child still running"))?;
+        assert!(!status.success());
         Ok(())
     }
 }
