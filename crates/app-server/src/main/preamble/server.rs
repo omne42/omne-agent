@@ -1483,6 +1483,8 @@ struct ThreadRuntime {
     handle: tokio::sync::Mutex<omne_core::ThreadHandle>,
     active_turn: tokio::sync::Mutex<Option<ActiveTurn>>,
     invalidated: std::sync::atomic::AtomicBool,
+    #[cfg(test)]
+    fail_next_turn_completion_append: std::sync::atomic::AtomicBool,
     notify_tx: broadcast::Sender<String>,
     warned_item_delta_keys: tokio::sync::Mutex<std::collections::HashSet<String>>,
 }
@@ -1598,6 +1600,8 @@ impl ThreadRuntime {
             handle: tokio::sync::Mutex::new(handle),
             active_turn: tokio::sync::Mutex::new(None),
             invalidated: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(test)]
+            fail_next_turn_completion_append: std::sync::atomic::AtomicBool::new(false),
             notify_tx,
             warned_item_delta_keys: tokio::sync::Mutex::new(std::collections::HashSet::new()),
         }
@@ -1616,6 +1620,18 @@ impl ThreadRuntime {
     #[allow(dead_code)]
     fn invalidate_for_tests(&self) {
         self.invalidate();
+    }
+
+    #[cfg(test)]
+    fn fail_next_turn_completion_append_for_tests(&self) {
+        self.fail_next_turn_completion_append
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    #[cfg(test)]
+    fn take_turn_completion_append_failure_for_tests(&self) -> bool {
+        self.fail_next_turn_completion_append
+            .swap(false, std::sync::atomic::Ordering::AcqRel)
     }
 
     fn ensure_not_invalidated(&self) -> anyhow::Result<()> {
@@ -1976,6 +1992,21 @@ impl ThreadRuntime {
         let (final_status, final_reason) =
             Self::resolve_turn_completion(handle.state(), status, reason);
         let reason_for_report = final_reason.clone();
+        #[cfg(test)]
+        let turn_completed = if self.take_turn_completion_append_failure_for_tests() {
+            Err(anyhow::anyhow!(
+                "injected TurnCompleted append failure for tests"
+            ))
+        } else {
+            handle
+                .append(omne_protocol::ThreadEventKind::TurnCompleted {
+                    turn_id,
+                    status: final_status,
+                    reason: final_reason,
+                })
+                .await
+        };
+        #[cfg(not(test))]
         let turn_completed = handle
             .append(omne_protocol::ThreadEventKind::TurnCompleted {
                 turn_id,
@@ -2159,6 +2190,98 @@ mod server_cache_tests {
         assert!(err
             .to_string()
             .contains("thread runtime is invalidated; reload required"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn turn_completion_append_failure_invalidates_and_recovers_on_reload()
+    -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = Arc::new(crate::build_test_server_shared(repo_dir.join(".omne_data")));
+        let mut handle = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let thread_id = handle.thread_id();
+        let turn_id = TurnId::new();
+        handle
+            .append(omne_protocol::ThreadEventKind::TurnStarted {
+                turn_id,
+                input: "complete me".to_string(),
+                context_refs: None,
+                attachments: None,
+                directives: None,
+                priority: TurnPriority::Foreground,
+            })
+            .await?;
+        let thread_rt = Arc::new(ThreadRuntime::new(handle, server.notify_tx.clone()));
+        {
+            let mut active = thread_rt.active_turn.lock().await;
+            *active = Some(ActiveTurn {
+                turn_id,
+                cancel: CancellationToken::new(),
+                interrupt_reason: None,
+            });
+        }
+        server.threads.lock().await.insert(thread_id, thread_rt.clone());
+
+        thread_rt.fail_next_turn_completion_append_for_tests();
+        thread_rt
+            .force_complete_turn(server.clone(), turn_id, TurnStatus::Completed, None)
+            .await;
+
+        assert!(thread_rt.is_invalidated());
+        assert!(
+            server.threads.lock().await.get(&thread_id).is_none(),
+            "failed TurnCompleted append should evict the cached runtime"
+        );
+        assert!(
+            thread_rt
+                .start_turn(
+                    server.clone(),
+                    "retry".to_string(),
+                    None,
+                    None,
+                    None,
+                    TurnPriority::Foreground,
+                )
+                .await
+                .is_err(),
+            "invalidated runtime should reject new turns"
+        );
+
+        let reloaded = server.get_or_load_thread(thread_id).await?;
+        let reloaded_handle = reloaded.handle.lock().await;
+        assert!(reloaded_handle.state().active_turn_id.is_none());
+        assert_eq!(
+            reloaded_handle.state().last_turn_status,
+            Some(TurnStatus::Failed)
+        );
+        assert_eq!(
+            reloaded_handle.state().last_turn_reason.as_deref(),
+            Some("recovered incomplete turn on resume")
+        );
+        drop(reloaded_handle);
+
+        let events = server
+            .thread_store
+            .read_events_since(thread_id, EventSeq::ZERO)
+            .await?
+            .expect("thread events should exist");
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(
+                    &event.kind,
+                    ThreadEventKind::TurnCompleted {
+                        turn_id: got_turn_id,
+                        reason: Some(reason),
+                        ..
+                    } if *got_turn_id == turn_id && reason == "recovered incomplete turn on resume"
+                ))
+                .count(),
+            1
+        );
         Ok(())
     }
 
