@@ -165,6 +165,18 @@ fn mcp_process_runtime_dir(thread_dir: &Path, process_id: ProcessId) -> PathBuf 
         .join(process_id.to_string())
 }
 
+fn configure_mcp_child_process_env<'a>(
+    cmd: &mut Command,
+    server_cfg: &'a McpServerConfig,
+) -> Option<&'a BTreeMap<String, String>> {
+    if !server_cfg.inherit_env() {
+        cmd.env_clear();
+    }
+    let env = server_cfg.env();
+    cmd.envs(env.iter());
+    (!env.is_empty()).then_some(env)
+}
+
 async fn spawn_mcp_connection(
     server: &Server,
     thread_rt: &Arc<ThreadRuntime>,
@@ -200,7 +212,6 @@ async fn spawn_mcp_connection(
     if argv.is_empty() {
         anyhow::bail!("mcp server argv must not be empty");
     }
-    let env = server_cfg.env();
 
     let process_id = ProcessId::new();
     let thread_dir = server.thread_store.thread_dir(thread_id);
@@ -229,7 +240,7 @@ async fn spawn_mcp_connection(
             .unwrap_or(thread_root),
     );
     cmd.stderr(std::process::Stdio::piped());
-    cmd.envs(env.iter());
+    let combined_env_opt = configure_mcp_child_process_env(&mut cmd, server_cfg);
     if let Err(err) = prepare_process_exec_gateway_command(
         argv,
         thread_root,
@@ -242,7 +253,6 @@ async fn spawn_mcp_connection(
         }
         .into());
     }
-    let combined_env_opt = (!env.is_empty()).then_some(env);
     omne_process_primitives::configure_command_for_process_tree(&mut cmd);
     let _effective_env_summary = apply_child_process_hardening(&mut cmd, combined_env_opt)
         .context("apply child process hardening for mcp server")?;
@@ -743,6 +753,64 @@ mod mcp_runtime_tests {
         assert!(
             err.to_string().contains("execution boundary denied command"),
             "unexpected error: {err:#}"
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn configure_mcp_child_process_env_respects_inherit_env_false() -> anyhow::Result<()> {
+        let inherited_key = std::env::vars()
+            .map(|(key, _)| key)
+            .find(|key| {
+                !matches!(
+                    key.as_str(),
+                    "GIT_TERMINAL_PROMPT" | "NO_COLOR" | "OMNE_TEST_MCP_ONLY" | "PAGER"
+                )
+            })
+            .expect("test process should expose at least one inherited env key");
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+        tokio::fs::write(
+            repo_dir.join("mcp.json"),
+            r#"
+            {
+              "version": 1,
+              "servers": {
+                "local": {
+                  "transport": "stdio",
+                  "argv": ["/usr/bin/env"],
+                  "inherit_env": false,
+                  "env": {
+                    "OMNE_TEST_MCP_ONLY": "kept"
+                  }
+                }
+              }
+            }
+            "#,
+        )
+        .await?;
+
+        let cfg = load_mcp_config(&repo_dir).await?;
+        let server_cfg = cfg.servers().get("local").expect("local server");
+
+        let mut cmd = Command::new(&server_cfg.argv()[0]);
+        cmd.args(server_cfg.argv().iter().skip(1));
+        cmd.stdout(std::process::Stdio::piped());
+
+        let combined_env_opt = configure_mcp_child_process_env(&mut cmd, server_cfg);
+        let _summary = apply_child_process_hardening(&mut cmd, combined_env_opt)?;
+        let output = cmd.output().await?;
+        let stdout = String::from_utf8(output.stdout)?;
+
+        assert!(output.status.success(), "unexpected status: {:?}", output.status);
+        assert!(stdout.lines().any(|line| line == "OMNE_TEST_MCP_ONLY=kept"));
+        assert!(
+            !stdout
+                .lines()
+                .any(|line| line.starts_with(&format!("{inherited_key}="))),
+            "did not expect inherited env key {inherited_key} in child env, got: {stdout}"
         );
         Ok(())
     }
