@@ -33,6 +33,16 @@ mod thread_manage_tests {
         )
     }
 
+    fn running_process_entry_with_closed_channel(
+        thread_id: ThreadId,
+    ) -> (ProcessId, Arc<tokio::sync::Mutex<ProcessInfo>>, ProcessEntry) {
+        let (process_id, info, mut entry) = running_process_entry(thread_id);
+        let (cmd_tx, cmd_rx) = mpsc::channel(1);
+        drop(cmd_rx);
+        entry.cmd_tx = cmd_tx;
+        (process_id, info, entry)
+    }
+
     async fn running_process_entry_for_turn(
         thread_id: ThreadId,
         turn_id: TurnId,
@@ -4886,6 +4896,66 @@ base_url = "https://project.example/v1"
         assert!(result.deleted);
         assert_eq!(result.thread_id, thread_id);
         assert!(!thread_dir.exists());
+        assert!(!server.processes.lock().await.contains_key(&process_id));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn thread_delete_force_reconciles_closed_command_channels() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let (process_id, _info, entry) = running_process_entry_with_closed_channel(thread_id);
+        server.processes.lock().await.insert(process_id, entry);
+
+        let thread_dir = server.thread_store.thread_dir(thread_id);
+        let result = handle_thread_delete(
+            &server,
+            ThreadDeleteParams {
+                thread_id,
+                force: true,
+            },
+        )
+        .await?;
+
+        assert!(result.deleted);
+        assert!(!thread_dir.exists());
+        assert!(!server.processes.lock().await.contains_key(&process_id));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn thread_archive_force_reconciles_closed_command_channels() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let (process_id, _info, entry) = running_process_entry_with_closed_channel(thread_id);
+        server.processes.lock().await.insert(process_id, entry);
+
+        let result = handle_thread_archive(
+            &server,
+            ThreadArchiveParams {
+                thread_id,
+                force: true,
+                reason: Some("archive thread".to_string()),
+            },
+        )
+        .await?;
+
+        assert!(result.archived);
+        assert_eq!(result.killed_processes, Some(vec![process_id]));
         assert!(!server.processes.lock().await.contains_key(&process_id));
         Ok(())
     }
