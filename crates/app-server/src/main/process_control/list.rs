@@ -198,7 +198,7 @@ pub(super) fn into_protocol_process_info(info: ProcessInfo) -> omne_app_server_p
         thread_id: info.thread_id,
         turn_id: info.turn_id,
         os_pid: info.os_pid,
-        argv: info.argv,
+        argv: omne_core::redact_command_argv(&info.argv),
         cwd: info.cwd,
         started_at: info.started_at,
         status: into_protocol_process_status(info.status),
@@ -395,4 +395,40 @@ mod process_list_tests {
         ));
         Ok(())
     }
+
+    #[test]
+    fn into_protocol_process_info_redacts_sensitive_argv() {
+        let info = ProcessInfo {
+            process_id: ProcessId::new(),
+            thread_id: ThreadId::new(),
+            turn_id: None,
+            os_pid: Some(42),
+            argv: vec![
+                "tool".to_string(),
+                "--api-key".to_string(),
+                "super-secret".to_string(),
+                "--token=value".to_string(),
+            ],
+            cwd: "/tmp/repo".to_string(),
+            started_at: "2026-01-01T00:00:00Z".to_string(),
+            status: ProcessStatus::Running,
+            exit_code: None,
+            stdout_path: "/tmp/stdout.log".to_string(),
+            stderr_path: "/tmp/stderr.log".to_string(),
+            last_update_at: "2026-01-01T00:00:00Z".to_string(),
+        };
+
+        let protocol = into_protocol_process_info(info);
+
+        assert_eq!(
+            protocol.argv,
+            vec![
+                "tool".to_string(),
+                "--api-key".to_string(),
+                "<REDACTED>".to_string(),
+                "--token=<REDACTED>".to_string(),
+            ]
+        );
+    }
+
 }

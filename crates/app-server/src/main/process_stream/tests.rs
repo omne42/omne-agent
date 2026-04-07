@@ -781,4 +781,72 @@ modes:
         ));
         Ok(())
     }
+
+    #[tokio::test]
+    async fn process_inspect_redacts_sensitive_argv_in_response() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = build_test_server_shared(repo_dir.join(".omne_data"));
+        let thread_id = create_test_thread_shared(&server, repo_dir).await?;
+        let process_id = ProcessId::new();
+        let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::channel(1);
+        let now = "2026-01-01T00:00:00Z".to_string();
+        let stdout_path = tmp.path().join("stdout.log");
+        let stderr_path = tmp.path().join("stderr.log");
+
+        server.processes.lock().await.insert(
+            process_id,
+            ProcessEntry {
+                thread_id,
+                info: Arc::new(tokio::sync::Mutex::new(ProcessInfo {
+                    process_id,
+                    thread_id,
+                    turn_id: None,
+                    os_pid: Some(7),
+                    argv: vec![
+                        "tool".to_string(),
+                        "--api-key".to_string(),
+                        "super-secret".to_string(),
+                    ],
+                    cwd: "/tmp/repo".to_string(),
+                    started_at: now.clone(),
+                    status: ProcessStatus::Running,
+                    exit_code: None,
+                    stdout_path: stdout_path.display().to_string(),
+                    stderr_path: stderr_path.display().to_string(),
+                    last_update_at: now,
+                })),
+                cmd_tx,
+                completion: ProcessCompletion::new(),
+            },
+        );
+
+        tokio::fs::write(&stdout_path, b"stdout").await?;
+        tokio::fs::write(&stderr_path, b"stderr").await?;
+
+        let result = handle_process_inspect(
+            &server,
+            ProcessInspectParams {
+                process_id,
+                turn_id: None,
+                approval_id: None,
+                max_lines: Some(20),
+            },
+        )
+        .await?;
+        let parsed = serde_json::from_value::<omne_app_server_protocol::ProcessInspectResponse>(result)?;
+
+        assert_eq!(
+            parsed.process.argv,
+            vec![
+                "tool".to_string(),
+                "--api-key".to_string(),
+                "<REDACTED>".to_string(),
+            ]
+        );
+
+        Ok(())
+    }
 }
