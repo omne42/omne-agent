@@ -41,6 +41,88 @@ async fn running_turn_process_entries(
     running
 }
 
+#[cfg(unix)]
+fn os_process_exists(pid: u32) -> bool {
+    use nix::errno::Errno;
+    use nix::sys::signal::kill;
+    use nix::unistd::Pid;
+
+    match kill(Pid::from_raw(pid as i32), None) {
+        Ok(()) => true,
+        Err(Errno::EPERM) => true,
+        Err(Errno::ESRCH) => false,
+        Err(_) => false,
+    }
+}
+
+#[cfg(unix)]
+fn send_kill_signal(pid: u32) -> anyhow::Result<()> {
+    use nix::sys::signal::{kill, Signal};
+    use nix::unistd::Pid;
+
+    kill(Pid::from_raw(pid as i32), Signal::SIGKILL)
+        .with_context(|| format!("send SIGKILL to pid {pid}"))?;
+    Ok(())
+}
+
+#[cfg(unix)]
+async fn wait_for_os_process_exit(pid: u32, timeout: Duration) -> anyhow::Result<()> {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        if !os_process_exists(pid) {
+            return Ok(());
+        }
+        if tokio::time::Instant::now() >= deadline {
+            anyhow::bail!("timed out waiting for pid {pid} to exit");
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+async fn reconcile_closed_process_entry(
+    server: &Server,
+    process_id: ProcessId,
+    entry: &ProcessEntry,
+    lifecycle: &'static str,
+) -> anyhow::Result<()> {
+    let snapshot = entry.info.lock().await.clone();
+    if matches!(snapshot.status, ProcessStatus::Running) {
+        #[cfg(unix)]
+        if let Some(os_pid) = snapshot.os_pid
+            && os_process_exists(os_pid)
+        {
+            send_kill_signal(os_pid)
+                .with_context(|| format!("force-stop orphaned process during {lifecycle}"))?;
+            wait_for_os_process_exit(os_pid, Duration::from_secs(5))
+                .await
+                .with_context(|| format!("wait for orphaned process during {lifecycle}"))?;
+        }
+    }
+
+    server.processes.lock().await.remove(&process_id);
+    entry.completion.mark_complete();
+    Ok(())
+}
+
+async fn send_lifecycle_process_command(
+    server: &Server,
+    process_id: ProcessId,
+    entry: &ProcessEntry,
+    command: ProcessCommand,
+    lifecycle: &'static str,
+) -> anyhow::Result<()> {
+    if entry.cmd_tx.send(command).await.is_ok() {
+        return Ok(());
+    }
+
+    tracing::warn!(
+        process_id = %process_id,
+        lifecycle,
+        "process command channel closed during lifecycle cleanup; reconciling stale entry",
+    );
+    reconcile_closed_process_entry(server, process_id, entry, lifecycle).await
+}
+
 async fn wait_for_process_entries_to_complete(
     entries: &[ProcessEntry],
     process_ids: &[ProcessId],
@@ -114,13 +196,17 @@ async fn stop_turn_processes(
         return Ok(());
     }
 
-    for (_, entry) in &running {
-        let _ = entry
-            .cmd_tx
-            .send(ProcessCommand::Interrupt {
+    for (process_id, entry) in &running {
+        send_lifecycle_process_command(
+            server,
+            *process_id,
+            entry,
+            ProcessCommand::Interrupt {
                 reason: reason.clone(),
-            })
-            .await;
+            },
+            lifecycle,
+        )
+        .await?;
     }
 
     let entries = running
@@ -143,13 +229,17 @@ async fn stop_turn_processes(
         .into_iter()
         .filter(|(_, entry)| !entry.completion.is_complete())
         .collect::<Vec<_>>();
-    for (_, entry) in &survivors {
-        let _ = entry
-            .cmd_tx
-            .send(ProcessCommand::Kill {
+    for (process_id, entry) in &survivors {
+        send_lifecycle_process_command(
+            server,
+            *process_id,
+            entry,
+            ProcessCommand::Kill {
                 reason: reason.clone(),
-            })
-            .await;
+            },
+            lifecycle,
+        )
+        .await?;
     }
     let survivor_ids = survivors
         .iter()
@@ -258,13 +348,17 @@ async fn handle_thread_archive(
     }
 
     if params.force {
-        for entry in to_kill {
-            let _ = entry
-                .cmd_tx
-                .send(ProcessCommand::Kill {
+        for (process_id, entry) in running.iter().copied().zip(to_kill.into_iter()) {
+            send_lifecycle_process_command(
+                server,
+                process_id,
+                &entry,
+                ProcessCommand::Kill {
                     reason: reason.clone(),
-                })
-                .await;
+                },
+                "archive",
+            )
+            .await?;
         }
     }
 

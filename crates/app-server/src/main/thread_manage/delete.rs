@@ -73,13 +73,17 @@ async fn handle_thread_delete(
     }
 
     if params.force {
-        for entry in to_kill {
-            let _ = entry
-                .cmd_tx
-                .send(ProcessCommand::Kill {
+        for (process_id, entry) in running.iter().copied().zip(to_kill.into_iter()) {
+            send_lifecycle_process_command(
+                server,
+                process_id,
+                &entry,
+                ProcessCommand::Kill {
                     reason: reason.clone(),
-                })
-                .await;
+                },
+                "delete",
+            )
+            .await?;
         }
     }
 
