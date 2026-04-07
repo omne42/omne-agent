@@ -317,27 +317,6 @@ fn should_walk_isolated_workspace_entry(
     !is_isolated_runtime_rel_path(rel)
 }
 
-#[cfg(unix)]
-fn create_isolated_symlink(
-    target: &std::path::Path,
-    destination: &std::path::Path,
-) -> std::io::Result<()> {
-    std::os::unix::fs::symlink(target, destination)
-}
-
-#[cfg(windows)]
-fn create_isolated_symlink(
-    target: &std::path::Path,
-    destination: &std::path::Path,
-) -> std::io::Result<()> {
-    let metadata = std::fs::metadata(target);
-    if metadata.as_ref().is_ok_and(|meta| meta.is_dir()) {
-        std::os::windows::fs::symlink_dir(target, destination)
-    } else {
-        std::os::windows::fs::symlink_file(target, destination)
-    }
-}
-
 async fn prepare_isolated_workspace(
     server: &super::Server,
     parent_thread_id: ThreadId,
@@ -493,16 +472,10 @@ async fn copy_workspace_into_isolated_root(
                 continue;
             }
             if entry.file_type().is_symlink() {
-                if let Some(parent) = destination.parent() {
-                    std::fs::create_dir_all(parent)
-                        .with_context(|| format!("create {}", parent.display()))?;
-                }
-                let target = std::fs::read_link(entry.path())
-                    .with_context(|| format!("read symlink {}", entry.path().display()))?;
-                create_isolated_symlink(&target, &destination).with_context(|| {
-                    format!("symlink {} -> {}", destination.display(), target.display())
-                })?;
-                continue;
+                anyhow::bail!(
+                    "isolated workspace copy does not support symlinks: {}",
+                    rel.display()
+                );
             }
             if !entry.file_type().is_file() {
                 continue;
@@ -544,6 +517,34 @@ async fn copy_workspace_into_isolated_root(
     .await
     .context("join isolated workspace copy task")??;
     Ok(())
+}
+
+#[cfg(test)]
+mod isolated_workspace_copy_tests {
+    use super::*;
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn copy_workspace_into_isolated_root_rejects_symlinks() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let source_root = tmp.path().join("source");
+        let isolated_root = tmp.path().join("isolated");
+        let outside = tmp.path().join("outside.txt");
+
+        tokio::fs::create_dir_all(&source_root).await?;
+        tokio::fs::write(&outside, "secret\n").await?;
+        std::os::unix::fs::symlink(&outside, source_root.join("leak.txt"))?;
+
+        let err = copy_workspace_into_isolated_root(&source_root, &isolated_root, 1024, 4096)
+            .await
+            .expect_err("symlinks must be rejected for isolated copy backend");
+        assert!(
+            err.to_string()
+                .contains("isolated workspace copy does not support symlinks: leak.txt")
+        );
+        assert!(!isolated_root.join("leak.txt").exists());
+        Ok(())
+    }
 }
 
 #[allow(dead_code)]
