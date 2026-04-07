@@ -29,6 +29,7 @@ async fn handle_thread_delete(
             turn_id,
             reason.clone(),
             "delete active turn",
+            ClosedProcessCommandPolicy::ReconcileAggressively,
         )
         .await?;
 
@@ -82,6 +83,7 @@ async fn handle_thread_delete(
                     reason: reason.clone(),
                 },
                 "delete",
+                ClosedProcessCommandPolicy::ReconcileAggressively,
             )
             .await?;
         }
