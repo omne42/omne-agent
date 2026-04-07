@@ -120,29 +120,14 @@ async fn handle_process_start_inner(
     }
 
     let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
-    let (
-        approval_policy,
-        sandbox_policy,
-        sandbox_network_access,
-        mode_name,
-        role_name,
-        allowed_tools,
-        thread_execpolicy_rules,
-    ) = {
-        let handle = thread_rt.handle.lock().await;
-        let state = handle.state();
-        (
-            state.approval_policy,
-            state.sandbox_policy,
-            state.sandbox_network_access,
-            state.mode.clone(),
-            state.role.clone(),
-            state.allowed_tools.clone(),
-            state.execpolicy_rules.clone(),
-        )
-    };
+    let snapshot = load_thread_process_exec_snapshot(&thread_rt).await;
     let cwd_path = if let Some(cwd) = params.cwd.as_deref() {
-        omne_core::resolve_dir_for_sandbox(&thread_root, sandbox_policy, Path::new(cwd)).await?
+        omne_core::resolve_dir_for_sandbox(
+            &thread_root,
+            snapshot.sandbox_policy,
+            Path::new(cwd),
+        )
+        .await?
     } else {
         thread_root.clone()
     };
@@ -164,36 +149,30 @@ async fn handle_process_start_inner(
         params.turn_id,
         "process/start",
         Some(approval_params.clone()),
-        &allowed_tools,
+        &snapshot.allowed_tools,
     )
     .await?
     {
-        return process_allowed_tools_denied_response(tool_id, "process/start", &allowed_tools);
+        return process_allowed_tools_denied_response(
+            tool_id,
+            "process/start",
+            &snapshot.allowed_tools,
+        );
     }
 
     let auth_cwd_str = cwd_str.clone();
-    let exec_governance = evaluate_process_exec_governance(
-        &ProcessExecGovernanceContext {
-            cwd: &cwd_path,
-            sandbox_policy,
-            sandbox_network_access,
-            authorization: ProcessExecAuthorizationContext {
-                thread_root: &thread_root,
-                thread_store: &server.thread_store,
-                thread_rt: &thread_rt,
-                thread_id: params.thread_id,
-                turn_id: params.turn_id,
-                approval_id: params.approval_id,
-                approval_policy,
-                mode_name: &mode_name,
-                role_name: &role_name,
-                action: "process/start",
-                exec_policy: &server.exec_policy,
-                thread_execpolicy_rules: &thread_execpolicy_rules,
-                argv: &params.argv,
-                unmatched_command_policy: default_unmatched_command_policy(),
-            },
-        },
+    let exec_governance = evaluate_thread_process_exec_governance(
+        &server.thread_store,
+        &server.exec_policy,
+        &thread_rt,
+        &thread_root,
+        &snapshot,
+        params.thread_id,
+        params.turn_id,
+        params.approval_id,
+        &cwd_path,
+        "process/start",
+        &params.argv,
         |mode| mode.permissions.command,
         |approval_requirement| {
             let approval_metadata = matches!(
@@ -244,10 +223,13 @@ async fn handle_process_start_inner(
             let error = process_exec_governance_denied_reason(&denied, "process/start");
             let result = match denied {
                 ProcessExecGovernanceDenied::SandboxPolicyReadOnly => {
-                    process_sandbox_policy_denied_response(tool_id, sandbox_policy)?
+                    process_sandbox_policy_denied_response(tool_id, snapshot.sandbox_policy)?
                 }
                 ProcessExecGovernanceDenied::SandboxNetworkDenied => {
-                    process_sandbox_network_denied_response(tool_id, sandbox_network_access)?
+                    process_sandbox_network_denied_response(
+                        tool_id,
+                        snapshot.sandbox_network_access,
+                    )?
                 }
                 ProcessExecGovernanceDenied::GatewayDenied(_) => {
                     process_denied_response(tool_id, params.thread_id, None)?
@@ -258,15 +240,25 @@ async fn handle_process_start_inner(
                 } => process_unknown_mode_denied_response(
                     tool_id,
                     params.thread_id,
-                    &mode_name,
+                    &snapshot.mode_name,
                     available,
                     load_error,
                 )?,
                 ProcessExecGovernanceDenied::ModeDenied { mode_decision } => {
-                    process_mode_denied_response(tool_id, params.thread_id, &mode_name, mode_decision)?
+                    process_mode_denied_response(
+                        tool_id,
+                        params.thread_id,
+                        &snapshot.mode_name,
+                        mode_decision,
+                    )?
                 }
                 ProcessExecGovernanceDenied::ExecPolicyLoad { error, details, .. } => {
-                    process_execpolicy_load_denied_response(tool_id, &mode_name, &error, details)?
+                    process_execpolicy_load_denied_response(
+                        tool_id,
+                        &snapshot.mode_name,
+                        &error,
+                        details,
+                    )?
                 }
                 ProcessExecGovernanceDenied::ExecPolicyForbidden {
                     matches,
@@ -402,7 +394,7 @@ async fn handle_process_start_inner(
         &params.argv,
         &cwd_path,
         &thread_root,
-        sandbox_policy,
+        snapshot.sandbox_policy,
         cmd.as_std_mut(),
     )
     {
