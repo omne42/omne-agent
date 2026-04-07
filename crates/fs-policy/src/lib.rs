@@ -1,6 +1,21 @@
-use std::path::Path;
+use std::path::{Component, Path};
 
-const DEFAULT_IGNORED_DIRS: &[&str] = &[".git", ".omne", "target", "node_modules", "example"];
+const DEFAULT_IGNORED_DIRS: &[&str] = &[
+    ".git",
+    ".omne",
+    ".omne_data",
+    "target",
+    "node_modules",
+    "example",
+];
+const REPO_TOOL_HIDDEN_COMPONENTS: &[&str] = &[
+    ".git",
+    ".omne",
+    ".omne_data",
+    "target",
+    "node_modules",
+    "example",
+];
 
 fn is_blocked_env_style_name(file_name: &str) -> bool {
     let file_name = file_name.to_ascii_lowercase();
@@ -34,6 +49,16 @@ pub fn is_read_blocked_rel_path(rel_path: &Path) -> bool {
         .and_then(|name| name.to_str())
         .map(is_blocked_env_style_name)
         .unwrap_or(false)
+}
+
+pub fn is_repo_tool_hidden_rel_path(rel_path: &Path) -> bool {
+    is_read_blocked_rel_path(rel_path)
+        || rel_path.components().any(|component| match component {
+            Component::Normal(name) => REPO_TOOL_HIDDEN_COMPONENTS
+                .iter()
+                .any(|blocked| name == std::ffi::OsStr::new(blocked)),
+            _ => false,
+        })
 }
 
 pub fn should_walk_entry(entry: &walkdir::DirEntry) -> bool {
@@ -104,6 +129,38 @@ mod tests {
                 is_read_blocked_rel_path(path),
                 expected,
                 "read-blocked: {}",
+                path.display()
+            );
+        }
+    }
+
+    #[test]
+    fn repo_tool_hidden_paths_cover_runtime_and_generated_dirs() {
+        for path in [
+            Path::new(".omne_data/AGENTS.md"),
+            Path::new("nested/.omne_data/threads/state.json"),
+            Path::new(".omne/config.toml"),
+            Path::new("target/debug/app"),
+            Path::new("node_modules/pkg/index.js"),
+            Path::new("example/demo.txt"),
+            Path::new(".env.local"),
+        ] {
+            assert!(
+                is_repo_tool_hidden_rel_path(path),
+                "expected hidden: {}",
+                path.display()
+            );
+        }
+
+        for path in [
+            Path::new("src/main.rs"),
+            Path::new(".env.example"),
+            Path::new("examples/demo.rs"),
+            Path::new("example.txt"),
+        ] {
+            assert!(
+                !is_repo_tool_hidden_rel_path(path),
+                "expected visible: {}",
                 path.display()
             );
         }
