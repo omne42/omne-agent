@@ -702,6 +702,15 @@ async fn gate_approval_with_deps(
 }
 
 fn approval_rule_key(action: &str, params: &serde_json::Value) -> anyhow::Result<String> {
+    fn fingerprint_value(value: &serde_json::Value) -> anyhow::Result<String> {
+        let bytes = serde_json::to_vec(value).context("serialize approval value fingerprint")?;
+        Ok(omne_integrity_primitives::hash_sha256(&bytes).to_string())
+    }
+
+    fn fingerprint_string(value: Option<&str>) -> String {
+        omne_integrity_primitives::hash_sha256(value.unwrap_or_default().as_bytes()).to_string()
+    }
+
     let obj = params.as_object();
     match action {
         "file/write" => {
@@ -713,8 +722,11 @@ fn approval_rule_key(action: &str, params: &serde_json::Value) -> anyhow::Result
                 .and_then(|o| o.get("create_parent_dirs"))
                 .and_then(|v| v.as_bool())
                 .unwrap_or(true);
+            let text_fingerprint = fingerprint_string(
+                obj.and_then(|o| o.get("text")).and_then(|v| v.as_str()),
+            );
             Ok(format!(
-                "file/write|path={path}|create_parent_dirs={create_parent_dirs}"
+                "file/write|path={path}|create_parent_dirs={create_parent_dirs}|text_sha256={text_fingerprint}"
             ))
         }
         "file/delete" => {
@@ -744,14 +756,23 @@ fn approval_rule_key(action: &str, params: &serde_json::Value) -> anyhow::Result
                 .and_then(|o| o.get("path"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            Ok(format!("file/edit|path={path}"))
+            let edits_fingerprint =
+                fingerprint_value(obj.and_then(|o| o.get("edits")).unwrap_or(&serde_json::Value::Null))?;
+            Ok(format!(
+                "file/edit|path={path}|edits_sha256={edits_fingerprint}"
+            ))
         }
         "file/patch" => {
             let path = obj
                 .and_then(|o| o.get("path"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            Ok(format!("file/patch|path={path}"))
+            let patch_fingerprint = fingerprint_string(
+                obj.and_then(|o| o.get("patch")).and_then(|v| v.as_str()),
+            );
+            Ok(format!(
+                "file/patch|path={path}|patch_sha256={patch_fingerprint}"
+            ))
         }
         "process/start" => {
             let serialized = serde_json::to_string(params).context("serialize approval params")?;
@@ -1423,6 +1444,112 @@ mod approval_prompt_strict_tests {
                 approval_id: None,
                 action: "file/write",
                 params: &params,
+            },
+        )
+        .await?;
+
+        let ApprovalGate::NeedsApproval { .. } = gate else {
+            anyhow::bail!("expected NeedsApproval, got {gate:?}");
+        };
+        Ok(())
+    }
+
+    #[test]
+    fn approval_rule_key_distinguishes_file_mutation_content() -> anyhow::Result<()> {
+        let write_a = serde_json::json!({
+            "path": "foo.txt",
+            "create_parent_dirs": true,
+            "text": "alpha",
+        });
+        let write_b = serde_json::json!({
+            "path": "foo.txt",
+            "create_parent_dirs": true,
+            "text": "beta",
+        });
+        assert_ne!(
+            approval_rule_key("file/write", &write_a)?,
+            approval_rule_key("file/write", &write_b)?,
+        );
+
+        let edit_a = serde_json::json!({
+            "path": "foo.txt",
+            "edits": [{"old": "a", "new": "b"}],
+        });
+        let edit_b = serde_json::json!({
+            "path": "foo.txt",
+            "edits": [{"old": "a", "new": "c"}],
+        });
+        assert_ne!(
+            approval_rule_key("file/edit", &edit_a)?,
+            approval_rule_key("file/edit", &edit_b)?,
+        );
+
+        let patch_a = serde_json::json!({
+            "path": "foo.txt",
+            "patch": "*** Begin Patch\n*** Update File: foo.txt\n-a\n+b\n*** End Patch\n",
+        });
+        let patch_b = serde_json::json!({
+            "path": "foo.txt",
+            "patch": "*** Begin Patch\n*** Update File: foo.txt\n-a\n+c\n*** End Patch\n",
+        });
+        assert_ne!(
+            approval_rule_key("file/patch", &patch_a)?,
+            approval_rule_key("file/patch", &patch_b)?,
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn remembered_file_write_approval_does_not_reuse_different_content() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+
+        tokio::fs::create_dir_all(repo_dir.join(".omne_data")).await?;
+        let server = crate::build_test_server_shared(repo_dir.join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let thread_rt = server.get_or_load_thread(thread_id).await?;
+        let approval_id = omne_protocol::ApprovalId::new();
+        let original_params = serde_json::json!({
+            "path": "foo.txt",
+            "create_parent_dirs": true,
+            "text": "alpha",
+        });
+        thread_rt
+            .append_event(omne_protocol::ThreadEventKind::ApprovalRequested {
+                approval_id,
+                turn_id: None,
+                action: "file/write".to_string(),
+                params: original_params,
+            })
+            .await?;
+        thread_rt
+            .append_event(omne_protocol::ThreadEventKind::ApprovalDecided {
+                approval_id,
+                decision: omne_protocol::ApprovalDecision::Approved,
+                remember: true,
+                reason: Some("test".to_string()),
+            })
+            .await?;
+
+        let changed_params = serde_json::json!({
+            "path": "foo.txt",
+            "create_parent_dirs": true,
+            "text": "beta",
+        });
+        let gate = gate_approval(
+            &server,
+            &thread_rt,
+            thread_id,
+            None,
+            omne_protocol::ApprovalPolicy::Manual,
+            ApprovalRequest {
+                approval_id: None,
+                action: "file/write",
+                params: &changed_params,
             },
         )
         .await?;
