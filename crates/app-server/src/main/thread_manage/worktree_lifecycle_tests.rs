@@ -445,4 +445,28 @@ mod thread_manage_worktree_lifecycle_tests {
         assert!(resolved.is_none(), "noncanonical escape must be rejected");
         Ok(())
     }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn managed_subagent_worktree_path_rejects_symlink_escape() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let managed_root = managed_subagent_worktree_root(&server);
+        tokio::fs::create_dir_all(managed_root.join("parent")).await?;
+
+        let outside_repo = tmp.path().join("outside").join("repo");
+        tokio::fs::create_dir_all(&outside_repo).await?;
+
+        let symlink_path = managed_root.join("parent").join("escape-link");
+        std::os::unix::fs::symlink(&outside_repo, &symlink_path)?;
+
+        let spoofed = symlink_path.join("nested");
+        let resolved = managed_subagent_worktree_path(
+            &server,
+            Some(spoofed.to_string_lossy().as_ref()),
+        )
+        .await;
+        assert!(resolved.is_none(), "symlink escape must be rejected");
+        Ok(())
+    }
 }
