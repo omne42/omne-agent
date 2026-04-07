@@ -3490,6 +3490,85 @@ modes:
     }
 
     #[tokio::test]
+    async fn checkpoint_restore_rejects_paths_outside_edit_allow_globs() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(repo_dir.join(".omne_data/spec")).await?;
+        tokio::fs::write(
+            repo_dir.join(".omne_data/spec/modes.yaml"),
+            r#"
+version: 1
+modes:
+  scoped-restore:
+    description: "only allow checkpoint writes under allowed.txt"
+    permissions:
+      edit:
+        decision: allow
+        allow_globs:
+          - "allowed.txt"
+"#,
+        )
+        .await?;
+        tokio::fs::write(repo_dir.join("allowed.txt"), "v1\n").await?;
+        tokio::fs::write(repo_dir.join("blocked.txt"), "v1\n").await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let created = handle_thread_checkpoint_create(
+            &server,
+            ThreadCheckpointCreateParams {
+                thread_id,
+                label: Some("before scoped restore".to_string()),
+            },
+        )
+        .await?;
+        let created = serde_json::from_value::<
+            omne_app_server_protocol::ThreadCheckpointCreateResponse,
+        >(created)?;
+
+        tokio::fs::write(repo_dir.join("allowed.txt"), "v2\n").await?;
+        tokio::fs::write(repo_dir.join("blocked.txt"), "v2\n").await?;
+
+        handle_thread_configure(
+            &server,
+            ThreadConfigureParams {
+                mode: Some("scoped-restore".to_string()),
+                ..thread_configure_defaults(thread_id)
+            },
+        )
+        .await?;
+
+        let restore = handle_thread_checkpoint_restore(
+            &server,
+            ThreadCheckpointRestoreParams {
+                thread_id,
+                checkpoint_id: created.checkpoint_id,
+                turn_id: None,
+                approval_id: None,
+            },
+        )
+        .await?;
+        let restore = serde_json::from_value::<
+            omne_app_server_protocol::ThreadCheckpointRestoreDeniedResponse,
+        >(restore)?;
+        assert!(restore.denied);
+        assert_eq!(restore.error_code.as_deref(), Some("mode_denied"));
+        assert_eq!(restore.mode.as_deref(), Some("scoped-restore"));
+        assert_eq!(
+            std::fs::read_to_string(repo_dir.join("allowed.txt"))?,
+            "v2\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo_dir.join("blocked.txt"))?,
+            "v2\n"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn checkpoint_restore_unknown_mode_reports_typed_decision() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");

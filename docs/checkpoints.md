@@ -132,6 +132,7 @@ restore 是破坏性操作，最小约束建议写死：
   - 必须没有 running process（否则直接拒绝；由用户先 kill）
   - thread `sandbox_policy` 不能是 `read_only`
   - 当 thread 配置了 `sandbox_writable_roots` 时，restore 会在进入审批前直接拒绝（避免绕过“只允许写某些目录”的约束，也避免申请一个注定失败的审批）。
+  - restore 会先计算实际 `create/modify/delete` 的文件集合，并对每条受影响路径逐个套用 mode 的 `permissions.edit.decision_for_path`；只对 `"."` 做一次目录级判断是不够的。
 - 审批（强制）：
   - restore 必须请求人工审批（建议使用 `approval.requirement="prompt_strict"`；见 `docs/approvals.md`），避免 `ApprovalPolicy=auto_approve` 静默覆盖文件树。
   - `prompt_strict` 不应被 remembered decision 自动复用（见 `docs/approvals.md`）。

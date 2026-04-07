@@ -21,6 +21,25 @@ pub struct RestorePlan {
     pub delete: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RestoreChangeKind {
+    Create,
+    Modify,
+    Delete,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RestoreChange {
+    pub path: std::path::PathBuf,
+    pub kind: RestoreChangeKind,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct RestorePlanDetails {
+    pub plan: RestorePlan,
+    pub changes: Vec<RestoreChange>,
+}
+
 pub fn checkpoint_ignored_globs() -> Vec<String> {
     vec![
         ".git/**".to_string(),
@@ -132,10 +151,22 @@ pub async fn compute_restore_plan(
     snapshot_root: &Path,
     max_file_bytes: u64,
 ) -> anyhow::Result<RestorePlan> {
+    Ok(
+        compute_restore_plan_details(thread_root, snapshot_root, max_file_bytes)
+            .await?
+            .plan,
+    )
+}
+
+pub async fn compute_restore_plan_details(
+    thread_root: &Path,
+    snapshot_root: &Path,
+    max_file_bytes: u64,
+) -> anyhow::Result<RestorePlanDetails> {
     let thread_root = thread_root.to_path_buf();
     let snapshot_root = snapshot_root.to_path_buf();
 
-    tokio::task::spawn_blocking(move || -> anyhow::Result<RestorePlan> {
+    tokio::task::spawn_blocking(move || -> anyhow::Result<RestorePlanDetails> {
         let mut snapshot_sizes = BTreeMap::<String, u64>::new();
         for entry in WalkDir::new(&snapshot_root).follow_links(false) {
             let entry = entry?;
@@ -184,10 +215,22 @@ pub async fn compute_restore_plan(
         let snapshot_paths = snapshot_sizes.keys().cloned().collect::<BTreeSet<_>>();
         let current_paths = current_sizes.keys().cloned().collect::<BTreeSet<_>>();
 
-        let create = snapshot_paths.difference(&current_paths).count() as u64;
-        let delete = current_paths.difference(&snapshot_paths).count() as u64;
+        let mut changes = Vec::<RestoreChange>::new();
 
-        let mut modify = 0u64;
+        for path in snapshot_paths.difference(&current_paths) {
+            changes.push(RestoreChange {
+                path: std::path::PathBuf::from(path),
+                kind: RestoreChangeKind::Create,
+            });
+        }
+
+        for path in current_paths.difference(&snapshot_paths) {
+            changes.push(RestoreChange {
+                path: std::path::PathBuf::from(path),
+                kind: RestoreChangeKind::Delete,
+            });
+        }
+
         for path in snapshot_paths.intersection(&current_paths) {
             let Some(snap_len) = snapshot_sizes.get(path) else {
                 continue;
@@ -202,15 +245,23 @@ pub async fn compute_restore_plan(
                     max_file_bytes,
                 )?
             {
-                modify += 1;
+                changes.push(RestoreChange {
+                    path: std::path::PathBuf::from(path),
+                    kind: RestoreChangeKind::Modify,
+                });
             }
         }
 
-        Ok(RestorePlan {
-            create,
-            modify,
-            delete,
-        })
+        let mut plan = RestorePlan::default();
+        for change in &changes {
+            match change.kind {
+                RestoreChangeKind::Create => plan.create += 1,
+                RestoreChangeKind::Modify => plan.modify += 1,
+                RestoreChangeKind::Delete => plan.delete += 1,
+            }
+        }
+
+        Ok(RestorePlanDetails { plan, changes })
     })
     .await
     .context("join checkpoint plan task")?
@@ -393,6 +444,41 @@ mod tests {
         assert_eq!(plan.create, 0);
         assert_eq!(plan.modify, 1);
         assert_eq!(plan.delete, 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn restore_plan_details_track_change_kinds_per_path() -> anyhow::Result<()> {
+        let thread_root = TestDir::new()?;
+        let snapshot_root = TestDir::new()?;
+
+        std::fs::write(thread_root.path().join("delete.txt"), "gone")?;
+        std::fs::write(thread_root.path().join("modify.txt"), "old")?;
+        std::fs::write(snapshot_root.path().join("create.txt"), "new")?;
+        std::fs::write(snapshot_root.path().join("modify.txt"), "updated")?;
+
+        let details =
+            compute_restore_plan_details(thread_root.path(), snapshot_root.path(), 16).await?;
+        assert_eq!(details.plan.create, 1);
+        assert_eq!(details.plan.modify, 1);
+        assert_eq!(details.plan.delete, 1);
+        assert_eq!(
+            details.changes,
+            vec![
+                RestoreChange {
+                    path: std::path::PathBuf::from("create.txt"),
+                    kind: RestoreChangeKind::Create,
+                },
+                RestoreChange {
+                    path: std::path::PathBuf::from("delete.txt"),
+                    kind: RestoreChangeKind::Delete,
+                },
+                RestoreChange {
+                    path: std::path::PathBuf::from("modify.txt"),
+                    kind: RestoreChangeKind::Modify,
+                },
+            ]
+        );
         Ok(())
     }
 

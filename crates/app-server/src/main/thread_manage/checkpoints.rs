@@ -469,17 +469,22 @@ async fn handle_thread_checkpoint_restore(
         }
     };
 
-    let base_decision = mode.permissions.edit.decision_for_path(Path::new("."));
-    let effective_decision = match mode
+    let plan_details = omne_checkpoint_runtime::compute_restore_plan_details(
+        &thread_root,
+        &snapshot_root,
+        CHECKPOINT_MAX_FILE_BYTES,
+    )
+    .await?;
+    let plan = plan_details.plan;
+
+    let restore_override = mode
         .tool_overrides
         .get("thread/checkpoint/restore")
-        .copied()
-    {
-        Some(override_decision) => base_decision.combine(override_decision),
-        None => base_decision,
-    };
+        .copied();
 
-    if effective_decision == omne_core::modes::Decision::Deny {
+    if restore_override.is_some_and(|decision| decision == omne_core::modes::Decision::Deny)
+        || mode.permissions.edit.decision == omne_core::modes::Decision::Deny
+    {
         let reason = "mode denies checkpoint restore".to_string();
         let report_artifact_id = write_checkpoint_restore_report(
             server,
@@ -487,7 +492,7 @@ async fn handle_thread_checkpoint_restore(
             params.turn_id,
             params.checkpoint_id,
             &reason,
-            None,
+            Some(&plan),
         )
         .await;
         thread_rt
@@ -516,12 +521,53 @@ async fn handle_thread_checkpoint_restore(
         );
     }
 
-    let plan = omne_checkpoint_runtime::compute_restore_plan(
-        &thread_root,
-        &snapshot_root,
-        CHECKPOINT_MAX_FILE_BYTES,
-    )
-    .await?;
+    if let Some(denied_change) = plan_details.changes.iter().find(|change| {
+        mode.permissions
+            .edit
+            .decision_for_path(&change.path)
+            .combine(
+                restore_override.unwrap_or(omne_core::modes::Decision::Allow),
+            )
+            == omne_core::modes::Decision::Deny
+    }) {
+        let reason = format!(
+            "mode denies checkpoint restore for path {}",
+            denied_change.path.display()
+        );
+        let report_artifact_id = write_checkpoint_restore_report(
+            server,
+            params.thread_id,
+            params.turn_id,
+            params.checkpoint_id,
+            &reason,
+            Some(&plan),
+        )
+        .await;
+        thread_rt
+            .append_event(omne_protocol::ThreadEventKind::CheckpointRestored {
+                checkpoint_id: params.checkpoint_id,
+                turn_id: params.turn_id,
+                status: omne_protocol::CheckpointRestoreStatus::Failed,
+                reason: Some(reason),
+                report_artifact_id,
+            })
+            .await?;
+        return checkpoint_restore_denied_response(
+            omne_app_server_protocol::ThreadCheckpointRestoreDeniedResponse {
+                thread_id: params.thread_id,
+                checkpoint_id: params.checkpoint_id,
+                denied: true,
+                structured_error: None,
+                error_code: Some("mode_denied".to_string()),
+                sandbox_policy: None,
+                mode: Some(mode_name),
+                decision: Some(omne_app_server_protocol::ThreadCheckpointDecision::Deny),
+                available: None,
+                load_error: None,
+                sandbox_writable_roots: None,
+            },
+        );
+    }
 
     if !sandbox_writable_roots.is_empty() {
         let reason =
