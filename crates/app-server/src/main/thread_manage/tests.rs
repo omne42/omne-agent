@@ -2386,6 +2386,71 @@ modes:
     }
 
     #[tokio::test]
+    async fn thread_subscribe_wait_wakes_on_thread_notification() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+        let initial_events = server
+            .thread_store
+            .read_events_since(thread_id, EventSeq::ZERO)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("missing thread events"))?;
+        let since_seq = initial_events
+            .last()
+            .map(|event| event.seq.0)
+            .ok_or_else(|| anyhow::anyhow!("missing initial thread event"))?;
+
+        let subscribe_server = server.clone();
+        let subscribe_task = tokio::spawn(async move {
+            handle_thread_request(
+                &subscribe_server,
+                serde_json::json!(1),
+                "thread/subscribe",
+                serde_json::json!({
+                    "thread_id": thread_id,
+                    "since_seq": since_seq,
+                    "wait_ms": 5_000,
+                }),
+            )
+            .await
+        });
+
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        let rt = server.get_or_load_thread(thread_id).await?;
+        let turn_id = TurnId::new();
+        rt.append_event(omne_protocol::ThreadEventKind::TurnStarted {
+            turn_id,
+            input: "wake subscribe".to_string(),
+            context_refs: None,
+            attachments: None,
+            directives: None,
+            priority: omne_protocol::TurnPriority::Foreground,
+        })
+        .await?;
+
+        let response = tokio::time::timeout(Duration::from_millis(150), subscribe_task)
+            .await
+            .context("thread/subscribe did not wake on notification")??;
+        assert!(response.error.is_none());
+        let result = response
+            .result
+            .ok_or_else(|| anyhow::anyhow!("missing thread/subscribe result"))?;
+        let events = result["events"]
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("missing subscribe events"))?;
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["type"].as_str(), Some("turn_started"));
+        assert_eq!(result["timed_out"].as_bool(), Some(false));
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn thread_subscribe_kind_filter_includes_token_budget_markers() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");
