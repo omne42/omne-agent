@@ -2158,6 +2158,7 @@ dependencies = [
  "anyhow",
  "omne-fs",
  "policy-meta",
+ "tempfile",
 ]
 
 [[package]]

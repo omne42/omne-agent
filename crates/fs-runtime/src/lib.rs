@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use omne_fs::ops::{
     Context, DeleteKind, DeleteRequest, GlobRequest, GrepRequest, MkdirRequest, PatchRequest,
@@ -108,6 +108,32 @@ pub struct EditReplaceOutcome {
     pub bytes_written: u64,
 }
 
+fn rel_path_is_secret(rel_path: &Path) -> bool {
+    rel_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(is_blocked_env_style_name)
+        .unwrap_or(false)
+}
+
+fn is_blocked_env_style_name(file_name: &str) -> bool {
+    let file_name = file_name.to_ascii_lowercase();
+    if !file_name.starts_with(".env") {
+        return false;
+    }
+
+    let suffix = &file_name[".env".len()..];
+    if !suffix.is_empty()
+        && !suffix.starts_with('.')
+        && !suffix.starts_with('_')
+        && !suffix.starts_with('-')
+    {
+        return false;
+    }
+
+    !(file_name.contains("example") || file_name.contains("template"))
+}
+
 pub fn read_text_read_only(
     root_id: String,
     root: PathBuf,
@@ -169,7 +195,7 @@ pub fn glob_read_only_paths(
             ..Default::default()
         },
         limits,
-        false,
+        true,
     )?;
     let response =
         glob_paths(&ctx, GlobRequest { root_id, pattern }).map_err(anyhow::Error::new)?;
@@ -178,6 +204,7 @@ pub fn glob_read_only_paths(
         paths: response
             .matches
             .into_iter()
+            .filter(|path| !rel_path_is_secret(path))
             .map(|path| path.to_string_lossy().to_string())
             .collect::<Vec<_>>(),
         truncated: response.truncated,
@@ -210,7 +237,7 @@ pub fn grep_read_only_paths(
             ..Default::default()
         },
         limits,
-        false,
+        true,
     )?;
     let response = grep(
         &ctx,
@@ -227,6 +254,7 @@ pub fn grep_read_only_paths(
         matches: response
             .matches
             .into_iter()
+            .filter(|item| !rel_path_is_secret(&item.path))
             .map(|item| GrepMatchOutcome {
                 path: item.path.to_string_lossy().to_string(),
                 line_number: item.line,
@@ -539,4 +567,60 @@ fn count_non_overlapping(haystack: &str, needle: &str) -> usize {
         rest = &rest[(index + needle.len())..];
     }
     count
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn glob_allows_env_examples_but_hides_real_env_secrets() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let root = tmp.path().to_path_buf();
+        std::fs::write(root.join(".env.local"), "SECRET=1\n")?;
+        std::fs::write(root.join(".env.example"), "EXAMPLE=1\n")?;
+        std::fs::write(root.join("visible.txt"), "ok\n")?;
+
+        let outcome = glob_read_only_paths("workspace".to_string(), root, "**/*".to_string(), 100)?;
+
+        assert!(outcome.paths.iter().any(|path| path == ".env.example"));
+        assert!(outcome.paths.iter().any(|path| path == "visible.txt"));
+        assert!(!outcome.paths.iter().any(|path| path == ".env.local"));
+        Ok(())
+    }
+
+    #[test]
+    fn grep_allows_env_examples_but_hides_real_env_secrets() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let root = tmp.path().to_path_buf();
+        std::fs::write(root.join(".env.local"), "needle\n")?;
+        std::fs::write(root.join(".env.example"), "needle\n")?;
+        std::fs::write(root.join("visible.txt"), "needle\n")?;
+
+        let outcome = grep_read_only_paths(
+            "workspace".to_string(),
+            root,
+            "needle".to_string(),
+            false,
+            None,
+            100,
+            1024 * 1024,
+            100,
+        )?;
+
+        assert!(
+            outcome
+                .matches
+                .iter()
+                .any(|item| item.path == ".env.example")
+        );
+        assert!(
+            outcome
+                .matches
+                .iter()
+                .any(|item| item.path == "visible.txt")
+        );
+        assert!(!outcome.matches.iter().any(|item| item.path == ".env.local"));
+        Ok(())
+    }
 }
