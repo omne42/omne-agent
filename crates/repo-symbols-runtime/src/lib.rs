@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 
 use anyhow::Context;
 use globset::Glob;
@@ -57,7 +57,7 @@ impl RustSymbolCollector {
         let Some(tree) = self.parser.parse(source, None) else {
             return false;
         };
-        let mut module_stack = Vec::<String>::new();
+        let mut module_stack = implicit_module_stack_for_rust_path(path);
         collect_rust_symbols(
             tree.root_node(),
             source,
@@ -152,6 +152,51 @@ pub fn collect_repo_symbols(req: RepoSymbolsRequest) -> anyhow::Result<RepoSymbo
         files_skipped_binary,
         files_failed_parse,
     })
+}
+
+fn implicit_module_stack_for_rust_path(path: &str) -> Vec<String> {
+    let path = Path::new(path);
+    let mut components = path
+        .components()
+        .filter_map(|component| match component {
+            Component::Normal(name) => name.to_str(),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    let Some(file_name) = components.pop() else {
+        return Vec::new();
+    };
+    let file_path = Path::new(file_name);
+    if file_path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
+        return Vec::new();
+    }
+
+    let in_src_tree = matches!(components.first(), Some(component) if *component == "src");
+    if in_src_tree {
+        components.remove(0);
+        if matches!(
+            components.first().copied(),
+            Some("bin" | "tests" | "examples" | "benches")
+        ) {
+            return Vec::new();
+        }
+    } else if !components.is_empty() {
+        return Vec::new();
+    }
+
+    let Some(file_stem) = file_path.file_stem().and_then(|stem| stem.to_str()) else {
+        return Vec::new();
+    };
+
+    let mut module_stack = components
+        .into_iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    if !matches!(file_stem, "lib" | "main" | "mod" | "build") {
+        module_stack.push(file_stem.to_string());
+    }
+    module_stack
 }
 
 fn collect_rust_symbols(
@@ -292,6 +337,46 @@ mod outer {
         assert!(out.files_scanned >= 1);
         assert!(out.symbols.iter().any(|s| s.name == "a"));
         assert!(out.symbols.iter().any(|s| s.name == "a::f"));
+        Ok(())
+    }
+
+    #[test]
+    fn collect_repo_symbols_uses_file_backed_module_namespaces() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let root = tmp.path().to_path_buf();
+        std::fs::create_dir_all(root.join("src/foo"))?;
+        std::fs::write(root.join("src/lib.rs"), "mod foo;\n")?;
+        std::fs::write(root.join("src/foo.rs"), "pub fn top() {}\nmod bar;\n")?;
+        std::fs::write(root.join("src/foo/bar.rs"), "pub struct Baz;\n")?;
+
+        let out = collect_repo_symbols(RepoSymbolsRequest {
+            root,
+            include_glob: "**/*.rs".to_string(),
+            max_files: 100,
+            max_bytes_per_file: 1024 * 1024,
+            max_symbols: 1000,
+        })?;
+
+        assert!(
+            out.symbols
+                .iter()
+                .any(|s| s.kind == "mod" && s.name == "foo")
+        );
+        assert!(
+            out.symbols
+                .iter()
+                .any(|s| s.kind == "fn" && s.name == "foo::top")
+        );
+        assert!(
+            out.symbols
+                .iter()
+                .any(|s| s.kind == "mod" && s.name == "foo::bar")
+        );
+        assert!(
+            out.symbols
+                .iter()
+                .any(|s| s.kind == "struct" && s.name == "foo::bar::Baz")
+        );
         Ok(())
     }
 }
