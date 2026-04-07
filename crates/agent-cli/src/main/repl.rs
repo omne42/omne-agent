@@ -703,7 +703,7 @@ fn repl_help_text() -> &'static str {
   /state                        show current thread state (JSON)
   /config                       show config explain (JSON)
   /set <key> <value>            update thread config (and print new state)
-    keys: approval_policy | sandbox_policy | sandbox_network_access | mode | model | openai_base_url | thinking | allowed_tools | execpolicy_rules
+    keys: approval_policy | sandbox_policy | sandbox_network_access | mode | model | openai_base_url | thinking | show_thinking | allowed_tools | execpolicy_rules
     allowed_tools value: comma-separated tool names, or clear|none|null
     execpolicy_rules value: comma-separated paths, or clear|none|null
 
@@ -758,6 +758,7 @@ mod repl_tests {
     #[test]
     fn repl_help_mentions_facade_help_first_usage() {
         let help = repl_help_text();
+        assert!(help.contains("show_thinking"));
         assert!(help.contains("facade tools: workspace, process, thread, artifact"));
         assert!(help.contains("{\"op\":\"help\"}"));
         assert!(help.contains("{\"op\":\"help\",\"topic\":\"<op>\"}"));

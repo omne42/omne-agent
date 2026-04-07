@@ -4471,6 +4471,100 @@ base_url = "https://project.example/v1"
     }
 
     #[tokio::test]
+    async fn thread_config_clear_thinking_reverts_to_effective_baseline() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let baseline =
+            handle_thread_config_explain(&server, ThreadConfigExplainParams { thread_id })
+                .await?
+                .effective
+                .thinking;
+        let override_thinking = ["small", "medium", "high", "xhigh", "unsupported"]
+            .into_iter()
+            .find(|candidate| *candidate != baseline)
+            .unwrap_or("high")
+            .to_string();
+
+        handle_thread_configure(
+            &server,
+            ThreadConfigureParams {
+                thinking: Some(override_thinking.clone()),
+                ..thread_configure_defaults(thread_id)
+            },
+        )
+        .await?;
+        let overridden =
+            handle_thread_config_explain(&server, ThreadConfigExplainParams { thread_id }).await?;
+        assert_eq!(overridden.effective.thinking, override_thinking);
+
+        handle_thread_configure(
+            &server,
+            ThreadConfigureParams {
+                clear_thinking: true,
+                ..thread_configure_defaults(thread_id)
+            },
+        )
+        .await?;
+
+        let cleared =
+            handle_thread_config_explain(&server, ThreadConfigExplainParams { thread_id }).await?;
+        assert_eq!(cleared.effective.thinking, baseline);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn thread_config_clear_show_thinking_reverts_to_effective_baseline() -> anyhow::Result<()>
+    {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let baseline =
+            handle_thread_config_explain(&server, ThreadConfigExplainParams { thread_id })
+                .await?
+                .effective
+                .show_thinking;
+
+        handle_thread_configure(
+            &server,
+            ThreadConfigureParams {
+                show_thinking: Some(!baseline),
+                ..thread_configure_defaults(thread_id)
+            },
+        )
+        .await?;
+        let overridden =
+            handle_thread_config_explain(&server, ThreadConfigExplainParams { thread_id }).await?;
+        assert_eq!(overridden.effective.show_thinking, !baseline);
+
+        handle_thread_configure(
+            &server,
+            ThreadConfigureParams {
+                clear_show_thinking: true,
+                ..thread_configure_defaults(thread_id)
+            },
+        )
+        .await?;
+
+        let cleared =
+            handle_thread_config_explain(&server, ThreadConfigExplainParams { thread_id }).await?;
+        assert_eq!(cleared.effective.show_thinking, baseline);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn thread_config_clear_noop_does_not_append_event() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");
