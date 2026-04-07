@@ -811,6 +811,75 @@ modes:
     }
 
     #[tokio::test]
+    async fn get_or_start_mcp_connection_failed_start_wakes_waiters_and_clears_starting(
+    ) -> anyhow::Result<()> {
+        let _lock = MCP_TEST_MUTEX.lock().await;
+        let _guard = McpEnabledOverrideGuard::new(Some(true));
+
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+        write_test_mcp_config(&repo_dir).await?;
+
+        let server = build_test_server_shared(repo_dir.join(".omne_data"));
+        let thread_id = create_test_thread_shared(&server, repo_dir.clone()).await?;
+        let thread_rt = server.get_or_load_thread(thread_id).await?;
+
+        let cfg = load_mcp_config(&repo_dir).await?;
+        let server_cfg = cfg.servers().get("local").expect("local server");
+        let key = (thread_id, "local".to_string());
+
+        let (first, second) = tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::join!(
+                get_or_start_mcp_connection(
+                    &server,
+                    &thread_rt,
+                    &repo_dir,
+                    thread_id,
+                    None,
+                    policy_meta::WriteScope::WorkspaceWrite,
+                    "local",
+                    server_cfg,
+                ),
+                get_or_start_mcp_connection(
+                    &server,
+                    &thread_rt,
+                    &repo_dir,
+                    thread_id,
+                    None,
+                    policy_meta::WriteScope::WorkspaceWrite,
+                    "local",
+                    server_cfg,
+                )
+            )
+        })
+        .await
+        .context("concurrent mcp connection attempts should not deadlock")?;
+
+        for err in [first, second] {
+            let err = err.expect_err("printf-backed mcp server should not initialize");
+            assert!(
+                err.to_string().contains("mcp initialize failed")
+                    || err.to_string().contains("mcp initialized notification failed")
+                    || err.to_string().contains("mcp request failed"),
+                "unexpected error: {err:#}"
+            );
+        }
+
+        let manager = server.mcp.lock().await;
+        assert!(
+            !manager.starting.contains_key(&key),
+            "failed start should wake waiters and clear starting state"
+        );
+        assert!(
+            !manager.connections.contains_key(&key),
+            "failed start must not cache a dead connection"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn mcp_list_servers_denied_by_mode_permission_reports_decision_source() -> anyhow::Result<()> {
         let _lock = MCP_TEST_MUTEX.lock().await;
         let _guard = McpEnabledOverrideGuard::new(Some(true));
