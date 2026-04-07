@@ -1,6 +1,36 @@
 use super::*;
 use omne_eventlog::ThreadState;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ThreadObservationSignature {
+    events_len: u64,
+    events_modified_ns: Option<u128>,
+    artifacts_modified_ns: Option<u128>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ThreadObservationCacheEntry {
+    signature: ThreadObservationSignature,
+    snapshot: ThreadObservationSnapshot,
+}
+
+#[derive(Debug, Clone)]
+struct ThreadObservationSnapshot {
+    state: ThreadState,
+    created_at: Option<OffsetDateTime>,
+    updated_at: Option<OffsetDateTime>,
+    first_message: Option<String>,
+    title: Option<String>,
+    pending_approvals: Vec<omne_app_server_protocol::ThreadAttentionPendingApproval>,
+    pending_subagent_proxy_approvals: usize,
+    attention_markers: AttentionMarkers,
+    fan_out_auto_apply: Option<omne_app_server_protocol::ThreadFanOutAutoApplySummary>,
+    fan_in_dependency_blocker:
+        Option<omne_app_server_protocol::ThreadFanInDependencyBlockedSummary>,
+    fan_in_result_diagnostics:
+        Option<omne_app_server_protocol::ThreadFanInResultDiagnosticsSummary>,
+}
+
 #[derive(serde::Deserialize)]
 struct ThreadNotificationEnvelope {
     method: String,
@@ -44,103 +74,13 @@ pub(crate) async fn handle_thread_attention(
     server: &Server,
     params: ThreadAttentionParams,
 ) -> anyhow::Result<omne_app_server_protocol::ThreadAttentionResponse> {
-    let rt = server.get_or_load_thread(params.thread_id).await?;
-
-    let (
-        last_seq,
-        active_turn_id,
-        active_turn_interrupt_requested,
-        last_turn_id,
-        last_turn_status,
-        last_turn_reason,
-        archived,
-        archived_at,
-        archived_reason,
-        paused,
-        paused_at,
-        paused_reason,
-        failed_processes,
-        approval_policy,
-        sandbox_policy,
-        model,
-        openai_base_url,
-        cwd,
-        total_tokens_used,
-    ) = {
-        let handle = rt.handle.lock().await;
-        let state = handle.state();
-        (
-            handle.last_seq().0,
-            state.active_turn_id,
-            state.active_turn_interrupt_requested,
-            state.last_turn_id,
-            state.last_turn_status,
-            state.last_turn_reason.clone(),
-            state.archived,
-            state.archived_at.and_then(|ts| ts.format(&Rfc3339).ok()),
-            state.archived_reason.clone(),
-            state.paused,
-            state.paused_at.and_then(|ts| ts.format(&Rfc3339).ok()),
-            state.paused_reason.clone(),
-            state.failed_processes.iter().copied().collect::<Vec<_>>(),
-            state.approval_policy,
-            state.sandbox_policy,
-            state.model.clone(),
-            state.openai_base_url.clone(),
-            state.cwd.clone(),
-            state.total_tokens_used,
-        )
-    };
-
-    let events = server
-        .thread_store
-        .read_events_since(params.thread_id, EventSeq::ZERO)
+    server.get_or_load_thread(params.thread_id).await?;
+    let observation = get_or_compute_thread_observation(server, params.thread_id)
         .await?
         .ok_or_else(|| anyhow::anyhow!("thread not found: {}", params.thread_id))?;
+    let state = &observation.state;
 
-    let mut requested =
-        BTreeMap::<omne_protocol::ApprovalId, omne_app_server_protocol::ThreadAttentionPendingApproval>::new();
-    let mut decided = HashSet::<omne_protocol::ApprovalId>::new();
-
-    for event in &events {
-        let ts = event.timestamp.format(&Rfc3339)?;
-        match &event.kind {
-            omne_protocol::ThreadEventKind::ApprovalRequested {
-                approval_id,
-                turn_id,
-                action,
-                params: approval_params,
-            } => {
-                requested.insert(
-                    *approval_id,
-                    omne_app_server_protocol::ThreadAttentionPendingApproval {
-                        approval_id: *approval_id,
-                        turn_id: *turn_id,
-                        action: Some(action.clone()),
-                        action_id: Some(parse_thread_approval_action_id(action)),
-                        params: Some(approval_params.clone()),
-                        summary: summarize_pending_approval_with_context(
-                            Some(params.thread_id),
-                            Some(*approval_id),
-                            Some(action.as_str()),
-                            approval_params,
-                        ),
-                        requested_at: Some(ts),
-                    },
-                );
-            }
-            omne_protocol::ThreadEventKind::ApprovalDecided { approval_id, .. } => {
-                decided.insert(*approval_id);
-            }
-            _ => {}
-        }
-    }
-
-    let mut pending_approvals = requested
-        .into_iter()
-        .filter(|(id, _)| !decided.contains(id))
-        .map(|(_, v)| v)
-        .collect::<Vec<_>>();
+    let mut pending_approvals = observation.pending_approvals.clone();
     enrich_pending_approvals_with_child_thread_state(server, &mut pending_approvals).await;
 
     let processes = handle_process_list(
@@ -175,18 +115,15 @@ pub(crate) async fn handle_thread_attention(
             ),
         })
         .collect::<Vec<_>>();
-    let attention_markers =
-        build_attention_markers(server, params.thread_id, &events).await?;
+    let attention_markers = observation.attention_markers.clone();
     let has_plan_ready = attention_markers.plan_ready.is_some();
     let has_diff_ready = attention_markers.diff_ready.is_some();
     let has_fan_out_linkage_issue = attention_markers.fan_out_linkage_issue.is_some();
     let has_fan_out_auto_apply_error = attention_markers.fan_out_auto_apply_error.is_some();
-    let fan_out_auto_apply = latest_fan_out_auto_apply_summary(server, params.thread_id).await?;
-    let fan_in_dependency_blocker =
-        latest_fan_in_dependency_blocked_summary(server, params.thread_id).await?;
+    let fan_out_auto_apply = observation.fan_out_auto_apply.clone();
+    let fan_in_dependency_blocker = observation.fan_in_dependency_blocker.clone();
     let has_fan_in_dependency_blocked = fan_in_dependency_blocker.is_some();
-    let fan_in_result_diagnostics =
-        latest_fan_in_result_diagnostics_summary(server, params.thread_id).await?;
+    let fan_in_result_diagnostics = observation.fan_in_result_diagnostics.clone();
     let has_fan_in_result_diagnostics = fan_in_result_diagnostics.is_some();
     let has_test_failed = attention_markers.test_failed.is_some();
     let (
@@ -195,40 +132,40 @@ pub(crate) async fn handle_thread_attention(
         token_budget_utilization,
         token_budget_exceeded,
         token_budget_warning_active,
-    ) = thread_token_budget_snapshot(total_tokens_used, token_budget_warning_threshold_ratio());
+    ) = thread_token_budget_snapshot(state.total_tokens_used, token_budget_warning_threshold_ratio());
 
     let attention_state = compute_attention_state(
-        archived,
+        state.archived,
         !pending_approvals.is_empty(),
-        !failed_processes.is_empty(),
+        !state.failed_processes.is_empty(),
         has_fan_out_auto_apply_error,
         has_fan_out_linkage_issue,
-        active_turn_id.is_some() || !running_processes.is_empty(),
-        paused,
-        last_turn_status,
+        state.active_turn_id.is_some() || !running_processes.is_empty(),
+        state.paused,
+        state.last_turn_status,
         false,
     );
 
     Ok(omne_app_server_protocol::ThreadAttentionResponse {
         thread_id: params.thread_id,
-        cwd,
-        archived,
-        archived_at,
-        archived_reason,
-        paused,
-        paused_at,
-        paused_reason,
-        failed_processes,
-        approval_policy,
-        sandbox_policy,
-        model,
-        openai_base_url,
-        last_seq,
-        active_turn_id,
-        active_turn_interrupt_requested,
-        last_turn_id,
-        last_turn_status,
-        last_turn_reason,
+        cwd: state.cwd.clone(),
+        archived: state.archived,
+        archived_at: state.archived_at.and_then(|ts| ts.format(&Rfc3339).ok()),
+        archived_reason: state.archived_reason.clone(),
+        paused: state.paused,
+        paused_at: state.paused_at.and_then(|ts| ts.format(&Rfc3339).ok()),
+        paused_reason: state.paused_reason.clone(),
+        failed_processes: state.failed_processes.iter().copied().collect::<Vec<_>>(),
+        approval_policy: state.approval_policy,
+        sandbox_policy: state.sandbox_policy,
+        model: state.model.clone(),
+        openai_base_url: state.openai_base_url.clone(),
+        last_seq: state.last_seq.0,
+        active_turn_id: state.active_turn_id,
+        active_turn_interrupt_requested: state.active_turn_interrupt_requested,
+        last_turn_id: state.last_turn_id,
+        last_turn_status: state.last_turn_status,
+        last_turn_reason: state.last_turn_reason.clone(),
         token_budget_limit,
         token_budget_remaining,
         token_budget_utilization,
@@ -250,6 +187,187 @@ pub(crate) async fn handle_thread_attention(
         fan_in_result_diagnostics,
         has_test_failed,
     })
+}
+
+fn system_time_nanos(time: std::time::SystemTime) -> Option<u128> {
+    time.duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_nanos())
+}
+
+async fn metadata_signature(path: &Path) -> anyhow::Result<Option<(u64, Option<u128>)>> {
+    let metadata = match tokio::fs::metadata(path).await {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err).with_context(|| format!("metadata {}", path.display())),
+    };
+    Ok(Some((
+        metadata.len(),
+        metadata.modified().ok().and_then(system_time_nanos),
+    )))
+}
+
+async fn thread_observation_signature(
+    server: &Server,
+    thread_id: ThreadId,
+) -> anyhow::Result<Option<ThreadObservationSignature>> {
+    let events_path = server.thread_store.events_log_path(thread_id);
+    let Some((events_len, events_modified_ns)) = metadata_signature(&events_path).await? else {
+        return Ok(None);
+    };
+    let artifacts_path = user_artifacts_dir_for_thread(server, thread_id);
+    let artifacts_modified_ns = metadata_signature(&artifacts_path)
+        .await?
+        .and_then(|(_, modified_ns)| modified_ns);
+    Ok(Some(ThreadObservationSignature {
+        events_len,
+        events_modified_ns,
+        artifacts_modified_ns,
+    }))
+}
+
+fn collect_pending_approvals(
+    thread_id: ThreadId,
+    events: &[ThreadEvent],
+) -> anyhow::Result<Vec<omne_app_server_protocol::ThreadAttentionPendingApproval>> {
+    let mut requested =
+        BTreeMap::<omne_protocol::ApprovalId, omne_app_server_protocol::ThreadAttentionPendingApproval>::new();
+    let mut decided = HashSet::<omne_protocol::ApprovalId>::new();
+
+    for event in events {
+        let ts = event.timestamp.format(&Rfc3339)?;
+        match &event.kind {
+            omne_protocol::ThreadEventKind::ApprovalRequested {
+                approval_id,
+                turn_id,
+                action,
+                params: approval_params,
+            } => {
+                requested.insert(
+                    *approval_id,
+                    omne_app_server_protocol::ThreadAttentionPendingApproval {
+                        approval_id: *approval_id,
+                        turn_id: *turn_id,
+                        action: Some(action.clone()),
+                        action_id: Some(parse_thread_approval_action_id(action)),
+                        params: Some(approval_params.clone()),
+                        summary: summarize_pending_approval_with_context(
+                            Some(thread_id),
+                            Some(*approval_id),
+                            Some(action.as_str()),
+                            approval_params,
+                        ),
+                        requested_at: Some(ts),
+                    },
+                );
+            }
+            omne_protocol::ThreadEventKind::ApprovalDecided { approval_id, .. } => {
+                decided.insert(*approval_id);
+            }
+            _ => {}
+        }
+    }
+
+    Ok(requested
+        .into_iter()
+        .filter(|(approval_id, _)| !decided.contains(approval_id))
+        .map(|(_, pending)| pending)
+        .collect::<Vec<_>>())
+}
+
+async fn build_thread_observation_snapshot(
+    server: &Server,
+    thread_id: ThreadId,
+    events: &[ThreadEvent],
+) -> anyhow::Result<ThreadObservationSnapshot> {
+    let mut state = ThreadState::new(thread_id);
+    for event in events {
+        state.apply(event)?;
+    }
+
+    let created_at = events.first().map(|event| event.timestamp);
+    let updated_at = events.last().map(|event| event.timestamp);
+    let first_message = events
+        .iter()
+        .find_map(|event| match &event.kind {
+            omne_protocol::ThreadEventKind::TurnStarted { input, .. } => Some(input.clone()),
+            _ => None,
+        })
+        .map(|text| truncate_chars(&omne_core::redact_text(text.trim()), 500))
+        .filter(|text| !text.trim().is_empty());
+    let title = first_message.as_deref().and_then(|text| {
+        let line = text.lines().find(|line| !line.trim().is_empty())?;
+        let line = line.trim();
+        if line.is_empty() {
+            None
+        } else {
+            Some(truncate_chars(line, 120))
+        }
+    });
+
+    let pending_approvals = collect_pending_approvals(thread_id, events)?;
+    let pending_subagent_proxy_approvals = pending_approvals
+        .iter()
+        .filter(|pending| pending.action.as_deref() == Some("subagent/proxy_approval"))
+        .count();
+    let artifacts = list_thread_artifact_metadata(server, thread_id).await?;
+    let attention_markers = build_attention_markers_from_artifacts(events, &artifacts).await?;
+    let fan_out_auto_apply = infer_fan_out_auto_apply_summary_from_artifacts(&artifacts).await?;
+    let (fan_in_dependency_blocker, fan_in_result_diagnostics) =
+        infer_fan_in_summary_signals_from_artifacts(&artifacts).await?;
+
+    Ok(ThreadObservationSnapshot {
+        state,
+        created_at,
+        updated_at,
+        first_message,
+        title,
+        pending_approvals,
+        pending_subagent_proxy_approvals,
+        attention_markers,
+        fan_out_auto_apply,
+        fan_in_dependency_blocker,
+        fan_in_result_diagnostics,
+    })
+}
+
+async fn get_or_compute_thread_observation(
+    server: &Server,
+    thread_id: ThreadId,
+) -> anyhow::Result<Option<ThreadObservationSnapshot>> {
+    let Some(signature) = thread_observation_signature(server, thread_id).await? else {
+        server.thread_observation_cache.lock().await.remove(&thread_id);
+        return Ok(None);
+    };
+
+    if let Some(entry) = server
+        .thread_observation_cache
+        .lock()
+        .await
+        .get(&thread_id)
+        .cloned()
+        .filter(|entry| entry.signature == signature)
+    {
+        return Ok(Some(entry.snapshot));
+    }
+
+    let Some(events) = server
+        .thread_store
+        .read_events_since(thread_id, EventSeq::ZERO)
+        .await?
+    else {
+        server.thread_observation_cache.lock().await.remove(&thread_id);
+        return Ok(None);
+    };
+    let snapshot = build_thread_observation_snapshot(server, thread_id, &events).await?;
+    server.thread_observation_cache.lock().await.insert(
+        thread_id,
+        ThreadObservationCacheEntry {
+            signature,
+            snapshot: snapshot.clone(),
+        },
+    );
+    Ok(Some(snapshot))
 }
 
 fn compute_attention_state(
@@ -749,6 +867,14 @@ async fn build_attention_markers(
     thread_id: ThreadId,
     events: &[ThreadEvent],
 ) -> anyhow::Result<AttentionMarkers> {
+    let artifacts = list_thread_artifact_metadata(server, thread_id).await?;
+    build_attention_markers_from_artifacts(events, &artifacts).await
+}
+
+async fn build_attention_markers_from_artifacts(
+    events: &[ThreadEvent],
+    artifacts: &[ArtifactMetadata],
+) -> anyhow::Result<AttentionMarkers> {
     let mut markers = AttentionMarkers::default();
     let mut explicit_plan_marker_seen = false;
     let mut explicit_diff_marker_seen = false;
@@ -941,9 +1067,8 @@ async fn build_attention_markers(
         || (!explicit_token_budget_warning_marker_seen && markers.token_budget_warning.is_none())
         || (!explicit_token_budget_exceeded_marker_seen && markers.token_budget_exceeded.is_none())
     {
-        let artifacts = list_thread_artifact_metadata(server, thread_id).await?;
         let mut fan_out_auto_apply_fallback_resolved = false;
-        for meta in &artifacts {
+        for meta in artifacts {
             if !explicit_plan_marker_seen && markers.plan_ready.is_none() && meta.artifact_type == "plan" {
                 markers.plan_ready = Some(attention_artifact_marker(meta)?);
             }
@@ -1028,14 +1153,6 @@ async fn infer_fan_out_auto_apply_error_from_result_artifact(
     Ok(Some(has_auto_apply_error))
 }
 
-async fn latest_fan_out_auto_apply_summary(
-    server: &Server,
-    thread_id: ThreadId,
-) -> anyhow::Result<Option<omne_app_server_protocol::ThreadFanOutAutoApplySummary>> {
-    let artifacts = list_thread_artifact_metadata(server, thread_id).await?;
-    infer_fan_out_auto_apply_summary_from_artifacts(&artifacts).await
-}
-
 async fn infer_fan_out_auto_apply_summary_from_artifacts(
     artifacts: &[ArtifactMetadata],
 ) -> anyhow::Result<Option<omne_app_server_protocol::ThreadFanOutAutoApplySummary>> {
@@ -1080,24 +1197,6 @@ fn fan_out_auto_apply_summary_from_payload(
     payload: &omne_app_server_protocol::ArtifactFanOutResultStructuredData,
 ) -> Option<omne_app_server_protocol::ThreadFanOutAutoApplySummary> {
     omne_app_server_protocol::fan_out_auto_apply_summary_from_payload(payload, 120)
-}
-
-async fn latest_fan_in_dependency_blocked_summary(
-    server: &Server,
-    thread_id: ThreadId,
-) -> anyhow::Result<Option<omne_app_server_protocol::ThreadFanInDependencyBlockedSummary>> {
-    let artifacts = list_thread_artifact_metadata(server, thread_id).await?;
-    let (dependency_blocked, _) = infer_fan_in_summary_signals_from_artifacts(&artifacts).await?;
-    Ok(dependency_blocked)
-}
-
-async fn latest_fan_in_result_diagnostics_summary(
-    server: &Server,
-    thread_id: ThreadId,
-) -> anyhow::Result<Option<omne_app_server_protocol::ThreadFanInResultDiagnosticsSummary>> {
-    let artifacts = list_thread_artifact_metadata(server, thread_id).await?;
-    let (_, diagnostics) = infer_fan_in_summary_signals_from_artifacts(&artifacts).await?;
-    Ok(diagnostics)
 }
 
 type FanInSummarySignals = (
@@ -1464,6 +1563,128 @@ mod attention_marker_tests {
         let metadata_bytes =
             serde_json::to_vec_pretty(&metadata).context("serialize test artifact metadata")?;
         write_file_atomic(&metadata_path, &metadata_bytes).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn thread_observation_cache_reuses_snapshot_until_event_signature_changes()
+    -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let rt = server.get_or_load_thread(thread_id).await?;
+        let turn_id = TurnId::new();
+        rt.append_event(omne_protocol::ThreadEventKind::TurnStarted {
+            turn_id,
+            input: "cache me".to_string(),
+            context_refs: None,
+            attachments: None,
+            directives: None,
+            priority: omne_protocol::TurnPriority::Foreground,
+        })
+        .await?;
+
+        let first = get_or_compute_thread_observation(&server, thread_id)
+            .await?
+            .expect("thread should exist");
+        assert_eq!(first.title.as_deref(), Some("cache me"));
+
+        {
+            let mut cache = server.thread_observation_cache.lock().await;
+            let entry = cache.get_mut(&thread_id).expect("cache entry should exist");
+            entry.snapshot.title = Some("cached title".to_string());
+            entry.snapshot.first_message = Some("cached first message".to_string());
+        }
+
+        let cached = get_or_compute_thread_observation(&server, thread_id)
+            .await?
+            .expect("thread should exist");
+        assert_eq!(cached.title.as_deref(), Some("cached title"));
+        assert_eq!(cached.first_message.as_deref(), Some("cached first message"));
+
+        rt.append_event(omne_protocol::ThreadEventKind::AssistantMessage {
+            turn_id: Some(turn_id),
+            text: "invalidate cache".to_string(),
+            model: None,
+            response_id: None,
+            token_usage: None,
+        })
+        .await?;
+
+        let refreshed = get_or_compute_thread_observation(&server, thread_id)
+            .await?
+            .expect("thread should exist");
+        assert_eq!(refreshed.title.as_deref(), Some("cache me"));
+        assert_ne!(refreshed.first_message.as_deref(), Some("cached first message"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn thread_observation_cache_recomputes_when_artifact_signature_changes()
+    -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let first = get_or_compute_thread_observation(&server, thread_id)
+            .await?
+            .expect("thread should exist");
+        assert!(first.fan_out_auto_apply.is_none());
+
+        {
+            let mut cache = server.thread_observation_cache.lock().await;
+            let entry = cache.get_mut(&thread_id).expect("cache entry should exist");
+            entry.snapshot.fan_out_auto_apply = Some(
+                omne_app_server_protocol::ThreadFanOutAutoApplySummary {
+                    task_id: "cached".to_string(),
+                    status: "cached".to_string(),
+                    stage: None,
+                    patch_artifact_id: None,
+                    recovery_commands: None,
+                    recovery_1: None,
+                    error: None,
+                },
+            );
+        }
+
+        let cached = get_or_compute_thread_observation(&server, thread_id)
+            .await?
+            .expect("thread should exist");
+        assert_eq!(
+            cached.fan_out_auto_apply.as_ref().map(|summary| summary.task_id.as_str()),
+            Some("cached")
+        );
+
+        write_raw_fan_out_result_artifact(
+            &server,
+            thread_id,
+            ArtifactId::new(),
+            "fan-out result with auto apply error",
+            &fan_out_result_text(Some("git apply --check failed")),
+            OffsetDateTime::now_utc(),
+        )
+        .await?;
+
+        let refreshed = get_or_compute_thread_observation(&server, thread_id)
+            .await?
+            .expect("thread should exist");
+        let summary = refreshed
+            .fan_out_auto_apply
+            .as_ref()
+            .expect("fan-out auto-apply summary should be recomputed");
+        assert_eq!(summary.task_id, "task-1");
+        assert_eq!(summary.status, "error");
         Ok(())
     }
 
@@ -3504,26 +3725,6 @@ async fn build_stuck_report_markdown(
     Ok(md)
 }
 
-fn pending_subagent_proxy_approval_count(events: &[ThreadEvent]) -> usize {
-    let mut pending = HashMap::<omne_protocol::ApprovalId, bool>::new();
-    for event in events {
-        match &event.kind {
-            omne_protocol::ThreadEventKind::ApprovalRequested {
-                approval_id,
-                action,
-                ..
-            } => {
-                pending.insert(*approval_id, action == "subagent/proxy_approval");
-            }
-            omne_protocol::ThreadEventKind::ApprovalDecided { approval_id, .. } => {
-                pending.remove(approval_id);
-            }
-            _ => {}
-        }
-    }
-    pending.values().filter(|is_subagent| **is_subagent).count()
-}
-
 pub(crate) async fn handle_thread_list_meta(
     server: &Server,
     params: ThreadListMetaParams,
@@ -3534,58 +3735,34 @@ pub(crate) async fn handle_thread_list_meta(
         Vec::<(Option<i128>, ThreadId, omne_app_server_protocol::ThreadListMetaItem)>::new();
 
     for thread_id in thread_ids {
-        let Some(events) = server
-            .thread_store
-            .read_events_since(thread_id, EventSeq::ZERO)
+        let Some(observation) = get_or_compute_thread_observation(server, thread_id)
             .await?
         else {
             continue;
         };
-        let mut state = ThreadState::new(thread_id);
-        for event in &events {
-            state.apply(event)?;
-        }
+        let state = &observation.state;
 
         if state.archived && !params.include_archived {
             continue;
         }
 
-        let created_at = events.first().map(|event| event.timestamp);
-        let updated_at = events.last().map(|event| event.timestamp);
+        let created_at = observation.created_at;
+        let updated_at = observation.updated_at;
         let created_at_rfc3339 = created_at.and_then(|ts| ts.format(&Rfc3339).ok());
         let updated_at_rfc3339 = updated_at.and_then(|ts| ts.format(&Rfc3339).ok());
 
-        let first_message = events.iter().find_map(|event| match &event.kind {
-            omne_protocol::ThreadEventKind::TurnStarted { input, .. } => Some(input.clone()),
-            _ => None,
-        });
-        let first_message = first_message
-            .map(|text| truncate_chars(&omne_core::redact_text(text.trim()), 500))
-            .filter(|text| !text.trim().is_empty());
-        let title = first_message.as_deref().and_then(|text| {
-            let line = text.lines().find(|line| !line.trim().is_empty())?;
-            let line = line.trim();
-            if line.is_empty() {
-                None
-            } else {
-                Some(truncate_chars(line, 120))
-            }
-        });
-
         let archived_at = state.archived_at.and_then(|ts| ts.format(&Rfc3339).ok());
-        let attention_markers = build_attention_markers(server, thread_id, &events).await?;
+        let attention_markers = observation.attention_markers.clone();
         let has_plan_ready = attention_markers.plan_ready.is_some();
         let has_diff_ready = attention_markers.diff_ready.is_some();
         let has_fan_out_linkage_issue = attention_markers.fan_out_linkage_issue.is_some();
         let has_fan_out_auto_apply_error = attention_markers.fan_out_auto_apply_error.is_some();
-        let fan_out_auto_apply = latest_fan_out_auto_apply_summary(server, thread_id).await?;
-        let fan_in_dependency_blocker =
-            latest_fan_in_dependency_blocked_summary(server, thread_id).await?;
+        let fan_out_auto_apply = observation.fan_out_auto_apply.clone();
+        let fan_in_dependency_blocker = observation.fan_in_dependency_blocker.clone();
         let has_fan_in_dependency_blocked = fan_in_dependency_blocker.is_some();
-        let fan_in_result_diagnostics =
-            latest_fan_in_result_diagnostics_summary(server, thread_id).await?;
+        let fan_in_result_diagnostics = observation.fan_in_result_diagnostics.clone();
         let has_fan_in_result_diagnostics = fan_in_result_diagnostics.is_some();
-        let pending_subagent_proxy_approvals = pending_subagent_proxy_approval_count(&events);
+        let pending_subagent_proxy_approvals = observation.pending_subagent_proxy_approvals;
         let has_test_failed = attention_markers.test_failed.is_some();
         let (
             token_budget_limit,
@@ -3616,20 +3793,20 @@ pub(crate) async fn handle_thread_list_meta(
             .map(|ts| ts.unix_timestamp_nanos());
         let mut thread_meta = omne_app_server_protocol::ThreadListMetaItem {
             thread_id,
-            cwd: state.cwd,
+            cwd: state.cwd.clone(),
             archived: state.archived,
             archived_at,
-            archived_reason: state.archived_reason,
+            archived_reason: state.archived_reason.clone(),
             approval_policy: state.approval_policy,
             sandbox_policy: state.sandbox_policy,
-            model: state.model,
-            openai_base_url: state.openai_base_url,
+            model: state.model.clone(),
+            openai_base_url: state.openai_base_url.clone(),
             last_seq: state.last_seq.0,
             active_turn_id: state.active_turn_id,
             active_turn_interrupt_requested: state.active_turn_interrupt_requested,
             last_turn_id: state.last_turn_id,
             last_turn_status: state.last_turn_status,
-            last_turn_reason: state.last_turn_reason,
+            last_turn_reason: state.last_turn_reason.clone(),
             token_budget_limit,
             token_budget_remaining,
             token_budget_utilization,
@@ -3649,8 +3826,8 @@ pub(crate) async fn handle_thread_list_meta(
             has_test_failed,
             created_at: created_at_rfc3339,
             updated_at: updated_at_rfc3339,
-            title,
-            first_message,
+            title: observation.title.clone(),
+            first_message: observation.first_message.clone(),
             attention_markers: None,
         };
         if params.include_attention_markers {

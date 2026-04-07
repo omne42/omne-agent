@@ -1074,6 +1074,15 @@ struct Server {
     thread_store: ThreadStore,
     threads: Arc<tokio::sync::Mutex<HashMap<ThreadId, Arc<ThreadRuntime>>>>,
     thread_loads: Arc<tokio::sync::Mutex<HashMap<ThreadId, Arc<tokio::sync::Notify>>>>,
+    thread_observation_cache:
+        Arc<
+            tokio::sync::Mutex<
+                HashMap<
+                    ThreadId,
+                    crate::thread_observe::ThreadObservationCacheEntry,
+                >,
+            >,
+        >,
     processes: Arc<tokio::sync::Mutex<HashMap<ProcessId, ProcessEntry>>>,
     mcp: Arc<tokio::sync::Mutex<McpManager>>,
     disk_warning: Arc<tokio::sync::Mutex<HashMap<ThreadId, DiskWarningState>>>,
