@@ -1087,11 +1087,21 @@ struct Server {
 impl Server {
     async fn get_or_load_thread(&self, thread_id: ThreadId) -> anyhow::Result<Arc<ThreadRuntime>> {
         loop {
-            {
+            let cached = {
                 let threads = self.threads.lock().await;
-                if let Some(rt) = threads.get(&thread_id) {
-                    return Ok(rt.clone());
+                threads.get(&thread_id).cloned()
+            };
+            if let Some(rt) = cached {
+                if !rt.is_invalidated() {
+                    return Ok(rt);
                 }
+                if Arc::strong_count(&rt) > 2 {
+                    anyhow::bail!(
+                        "thread runtime invalidated; retry after outstanding references are released"
+                    );
+                }
+                self.evict_cached_thread(thread_id).await;
+                continue;
             }
 
             let wait_for_existing = {
@@ -1146,11 +1156,20 @@ impl Server {
         &self,
         thread_id: ThreadId,
     ) -> anyhow::Result<Arc<ThreadRuntime>> {
-        {
+        let cached = {
             let threads = self.threads.lock().await;
-            if let Some(rt) = threads.get(&thread_id) {
-                return Ok(rt.clone());
+            threads.get(&thread_id).cloned()
+        };
+        if let Some(rt) = cached {
+            if !rt.is_invalidated() {
+                return Ok(rt);
             }
+            if Arc::strong_count(&rt) > 2 {
+                anyhow::bail!(
+                    "thread runtime invalidated; retry after outstanding references are released"
+                );
+            }
+            self.evict_cached_thread(thread_id).await;
         }
 
         let handle = self
@@ -1451,6 +1470,7 @@ enum ProcessCommand {
 struct ThreadRuntime {
     handle: tokio::sync::Mutex<omne_core::ThreadHandle>,
     active_turn: tokio::sync::Mutex<Option<ActiveTurn>>,
+    invalidated: std::sync::atomic::AtomicBool,
     notify_tx: broadcast::Sender<String>,
     warned_item_delta_keys: tokio::sync::Mutex<std::collections::HashSet<String>>,
 }
@@ -1565,9 +1585,32 @@ impl ThreadRuntime {
         Self {
             handle: tokio::sync::Mutex::new(handle),
             active_turn: tokio::sync::Mutex::new(None),
+            invalidated: std::sync::atomic::AtomicBool::new(false),
             notify_tx,
             warned_item_delta_keys: tokio::sync::Mutex::new(std::collections::HashSet::new()),
         }
+    }
+
+    fn is_invalidated(&self) -> bool {
+        self.invalidated.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    fn invalidate(&self) {
+        self.invalidated
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    #[cfg(test)]
+    #[allow(dead_code)]
+    fn invalidate_for_tests(&self) {
+        self.invalidate();
+    }
+
+    fn ensure_not_invalidated(&self) -> anyhow::Result<()> {
+        if self.is_invalidated() {
+            anyhow::bail!("thread runtime is invalidated; reload required");
+        }
+        Ok(())
     }
 
     fn emit_notification<T>(&self, method: &'static str, params: &T)
@@ -1715,6 +1758,7 @@ impl ThreadRuntime {
         if let Some(directives) = directives.as_deref() {
             validate_turn_directives(directives)?;
         }
+        self.ensure_not_invalidated()?;
 
         let turn_id = TurnId::new();
         let mut handle = self.handle.lock().await;
@@ -1808,6 +1852,7 @@ impl ThreadRuntime {
         &self,
         kind: omne_protocol::ThreadEventKind,
     ) -> anyhow::Result<(ThreadEvent, u64)> {
+        self.ensure_not_invalidated()?;
         let mut handle = self.handle.lock().await;
         let event = handle.append(kind).await?;
         let total_tokens_used = handle.state().total_tokens_used;
@@ -1817,6 +1862,7 @@ impl ThreadRuntime {
     }
 
     async fn interrupt_turn(&self, turn_id: TurnId, reason: Option<String>) -> anyhow::Result<()> {
+        self.ensure_not_invalidated()?;
         let mut handle = self.handle.lock().await;
         let active_turn_id = handle.state().active_turn_id;
         let cancel = {
@@ -1929,6 +1975,7 @@ impl ThreadRuntime {
         let turn_completed_event = match turn_completed {
             Ok(event) => Some(event),
             Err(err) => {
+                self.invalidate();
                 let evicted = server.evict_cached_thread(thread_id).await;
                 tracing::warn!(
                     thread_id = %thread_id,
@@ -1937,7 +1984,11 @@ impl ThreadRuntime {
                     evicted,
                     "failed to append TurnCompleted; evicted cached thread runtime"
                 );
-                None
+                let mut active = self.active_turn.lock().await;
+                if active.as_ref().is_some_and(|active| active.turn_id == turn_id) {
+                    *active = None;
+                }
+                return;
             }
         };
         if let Some(event) = turn_completed_event {
@@ -2012,6 +2063,7 @@ struct ActiveTurn {
 #[cfg(test)]
 mod server_cache_tests {
     use super::*;
+    use omne_protocol::TurnPriority;
 
     #[tokio::test]
     async fn evict_cached_thread_removes_loaded_runtime() -> anyhow::Result<()> {
@@ -2028,6 +2080,73 @@ mod server_cache_tests {
         assert!(server.evict_cached_thread(thread_id).await);
         assert!(server.threads.lock().await.get(&thread_id).is_none());
         assert!(!server.evict_cached_thread(thread_id).await);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn get_or_load_thread_reloads_invalidated_cached_runtime_after_stale_refs_drop()
+    -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(repo_dir.join(".omne_data")).await?;
+
+        let server = crate::build_test_server_shared(repo_dir.join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        let thread_rt = Arc::new(ThreadRuntime::new(handle, server.notify_tx.clone()));
+        let stale_ptr = Arc::as_ptr(&thread_rt);
+        thread_rt.invalidate_for_tests();
+        server.threads.lock().await.insert(thread_id, thread_rt.clone());
+
+        let err = match server.get_or_load_thread(thread_id).await {
+            Ok(_) => anyhow::bail!("reload should fail while a stale runtime ref still exists"),
+            Err(err) => err,
+        };
+        assert!(err
+            .to_string()
+            .contains("thread runtime invalidated; retry after outstanding references are released"));
+
+        drop(thread_rt);
+        let reloaded = server.get_or_load_thread(thread_id).await?;
+
+        assert_ne!(Arc::as_ptr(&reloaded), stale_ptr);
+        assert!(!reloaded.is_invalidated());
+        let cached = server
+            .threads
+            .lock()
+            .await
+            .get(&thread_id)
+            .cloned()
+            .expect("reloaded runtime should be cached");
+        assert!(Arc::ptr_eq(&cached, &reloaded));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn invalidated_runtime_rejects_new_turns() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(repo_dir.join(".omne_data")).await?;
+
+        let server = Arc::new(crate::build_test_server_shared(repo_dir.join(".omne_data")));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_rt = Arc::new(ThreadRuntime::new(handle, server.notify_tx.clone()));
+        thread_rt.invalidate_for_tests();
+
+        let err = thread_rt
+            .start_turn(
+                server,
+                "hello".to_string(),
+                None,
+                None,
+                None,
+                TurnPriority::Foreground,
+            )
+            .await
+            .expect_err("invalidated runtime should reject new turns");
+        assert!(err
+            .to_string()
+            .contains("thread runtime is invalidated; reload required"));
         Ok(())
     }
 
