@@ -191,7 +191,7 @@ async fn handle_process_start_inner(
                 exec_policy: &server.exec_policy,
                 thread_execpolicy_rules: &thread_execpolicy_rules,
                 argv: &params.argv,
-                unmatched_command_policy: UnmatchedCommandPolicy::Prompt,
+                unmatched_command_policy: default_unmatched_command_policy(),
             },
         },
         |mode| mode.permissions.command,
@@ -766,6 +766,18 @@ mod process_start_tests {
                 "go".to_string(),
                 "get".to_string(),
                 "example.com/x".to_string(),
+            ],
+            vec![
+                "git".to_string(),
+                "--git-dir".to_string(),
+                "/tmp/repo.git".to_string(),
+                "fetch".to_string(),
+            ],
+            vec![
+                "git".to_string(),
+                "--attr-source".to_string(),
+                "HEAD".to_string(),
+                "push".to_string(),
             ],
         ] {
             let result = handle_process_start(
