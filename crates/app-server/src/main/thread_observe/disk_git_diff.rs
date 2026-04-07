@@ -80,7 +80,7 @@ fn scan_thread_disk_usage(
     })
 }
 
-pub(super) async fn handle_thread_disk_usage(
+pub(crate) async fn handle_thread_disk_usage(
     server: &Server,
     params: ThreadDiskUsageParams,
 ) -> anyhow::Result<omne_app_server_protocol::ThreadDiskUsageResponse> {
@@ -154,7 +154,7 @@ fn build_thread_disk_report_markdown(
     report
 }
 
-pub(super) async fn handle_thread_disk_report(
+pub(crate) async fn handle_thread_disk_report(
     server: &Server,
     params: ThreadDiskReportParams,
 ) -> anyhow::Result<omne_app_server_protocol::ThreadDiskReportResponse> {
@@ -218,14 +218,14 @@ pub(super) async fn handle_thread_disk_report(
     })
 }
 
-pub(super) struct ThreadGitSnapshotSpec {
-    pub(super) thread_id: ThreadId,
-    pub(super) turn_id: Option<TurnId>,
-    pub(super) approval_id: Option<omne_protocol::ApprovalId>,
-    pub(super) max_bytes: Option<u64>,
-    pub(super) wait_seconds: Option<u64>,
-    pub(super) kind: SnapshotKind,
-    pub(super) recipe_override: Option<SnapshotRecipe>,
+pub(crate) struct ThreadGitSnapshotSpec {
+    pub(crate) thread_id: ThreadId,
+    pub(crate) turn_id: Option<TurnId>,
+    pub(crate) approval_id: Option<omne_protocol::ApprovalId>,
+    pub(crate) max_bytes: Option<u64>,
+    pub(crate) wait_seconds: Option<u64>,
+    pub(crate) kind: SnapshotKind,
+    pub(crate) recipe_override: Option<SnapshotRecipe>,
 }
 
 fn thread_git_snapshot_denied_error_code(
@@ -313,7 +313,7 @@ fn thread_git_snapshot_denied_error_code(
     }
 }
 
-pub(super) async fn handle_thread_git_snapshot(
+pub(crate) async fn handle_thread_git_snapshot(
     server: &Server,
     spec: ThreadGitSnapshotSpec,
 ) -> anyhow::Result<omne_app_server_protocol::ThreadGitSnapshotRpcResponse> {
@@ -516,7 +516,7 @@ pub(super) async fn handle_thread_git_snapshot(
     ))
 }
 
-pub(super) async fn handle_thread_diff(
+pub(crate) async fn handle_thread_diff(
     server: &Server,
     params: ThreadDiffParams,
 ) -> anyhow::Result<omne_app_server_protocol::ThreadGitSnapshotRpcResponse> {
@@ -535,7 +535,7 @@ pub(super) async fn handle_thread_diff(
     .await
 }
 
-pub(super) async fn handle_thread_patch(
+pub(crate) async fn handle_thread_patch(
     server: &Server,
     params: ThreadPatchParams,
 ) -> anyhow::Result<omne_app_server_protocol::ThreadGitSnapshotRpcResponse> {
@@ -608,7 +608,7 @@ async fn read_rotating_log_prefix(
     Ok((out, truncated))
 }
 
-pub(super) async fn maybe_emit_thread_disk_warning(
+pub(crate) async fn maybe_emit_thread_disk_warning(
     server: &Server,
     thread_id: ThreadId,
 ) -> anyhow::Result<()> {

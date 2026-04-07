@@ -1,7 +1,7 @@
 use super::*;
 use omne_eventlog::ThreadState;
 
-pub(super) async fn handle_thread_attention(
+pub(crate) async fn handle_thread_attention(
     server: &Server,
     params: ThreadAttentionParams,
 ) -> anyhow::Result<omne_app_server_protocol::ThreadAttentionResponse> {
@@ -252,7 +252,7 @@ fn compute_attention_state(
     }
 }
 
-pub(super) fn summarize_pending_approval(
+pub(crate) fn summarize_pending_approval(
     params: &serde_json::Value,
 ) -> Option<omne_app_server_protocol::ThreadAttentionPendingApprovalSummary> {
     summarize_pending_approval_with_context(None, None, None, params)
@@ -489,7 +489,7 @@ fn child_attention_state_from_state(state: &ThreadState) -> &'static str {
     }
 }
 
-pub(super) fn parse_thread_approval_action_id(
+pub(crate) fn parse_thread_approval_action_id(
     action: &str,
 ) -> omne_app_server_protocol::ThreadApprovalActionId {
     match action {
@@ -1143,7 +1143,7 @@ fn fan_in_result_diagnostics_summary_from_payload(
     omne_app_server_protocol::fan_in_result_diagnostics_summary_from_payload(payload)
 }
 
-pub(super) fn process_command_label(argv: &[String]) -> Option<String> {
+pub(crate) fn process_command_label(argv: &[String]) -> Option<String> {
     let first = argv.first()?.trim();
     if first.is_empty() {
         return None;
@@ -1157,7 +1157,7 @@ pub(super) fn process_command_label(argv: &[String]) -> Option<String> {
     Some(first.to_string())
 }
 
-pub(super) fn looks_like_test_command(argv: &[String]) -> bool {
+pub(crate) fn looks_like_test_command(argv: &[String]) -> bool {
     let Some(first_raw) = argv.first() else {
         return false;
     };
@@ -3169,7 +3169,7 @@ mod attention_marker_tests {
     }
 }
 
-pub(super) async fn maybe_write_stuck_report(
+pub(crate) async fn maybe_write_stuck_report(
     server: &Server,
     thread_id: ThreadId,
     turn_id: TurnId,
@@ -3507,7 +3507,7 @@ fn pending_subagent_proxy_approval_count(events: &[ThreadEvent]) -> usize {
     pending.values().filter(|is_subagent| **is_subagent).count()
 }
 
-pub(super) async fn handle_thread_list_meta(
+pub(crate) async fn handle_thread_list_meta(
     server: &Server,
     params: ThreadListMetaParams,
 ) -> anyhow::Result<omne_app_server_protocol::ThreadListMetaResponse> {
@@ -3654,7 +3654,7 @@ pub(super) async fn handle_thread_list_meta(
     })
 }
 
-pub(super) async fn handle_thread_subscribe(
+pub(crate) async fn handle_thread_subscribe(
     server: &Server,
     params: ThreadSubscribeParams,
 ) -> anyhow::Result<omne_app_server_protocol::ThreadSubscribeResponse> {
