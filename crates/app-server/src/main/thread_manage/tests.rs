@@ -4560,6 +4560,39 @@ base_url = "https://project.example/v1"
     }
 
     #[tokio::test]
+    async fn thread_delete_clears_stale_mcp_connections_for_thread() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let process_id = insert_stale_mcp_connection(&server, thread_id, "local").await?;
+
+        let result = handle_thread_delete(
+            &server,
+            ThreadDeleteParams {
+                thread_id,
+                force: false,
+            },
+        )
+        .await?;
+
+        assert!(result.deleted);
+        let manager = server.mcp.lock().await;
+        assert!(!manager
+            .connections
+            .contains_key(&(thread_id, "local".to_string())));
+        assert!(!manager.starting.contains_key(&(thread_id, "local".to_string())));
+        drop(manager);
+        assert!(server.processes.lock().await.get(&process_id).is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn thread_pause_force_waits_for_active_turn_processes_to_stop() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");

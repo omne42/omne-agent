@@ -307,4 +307,100 @@ mod process_actor_tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn process_actor_exit_clears_cached_mcp_connection() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let thread_id = create_test_thread_shared(&server, repo_dir.clone()).await?;
+        let thread_rt = server.get_or_load_thread(thread_id).await?;
+
+        let mut cmd = Command::new("true");
+        cmd.stdin(Stdio::null());
+        cmd.stdout(Stdio::null());
+        cmd.stderr(Stdio::null());
+        cmd.kill_on_drop(true);
+        let child = cmd.spawn().context("spawn test child")?;
+
+        let process_id = ProcessId::new();
+        let started_at = time::OffsetDateTime::now_utc().format(&Rfc3339)?;
+        let info = Arc::new(tokio::sync::Mutex::new(ProcessInfo {
+            process_id,
+            thread_id,
+            turn_id: None,
+            os_pid: child.id(),
+            argv: vec!["true".to_string()],
+            cwd: repo_dir.display().to_string(),
+            started_at: started_at.clone(),
+            status: ProcessStatus::Running,
+            exit_code: None,
+            stdout_path: String::new(),
+            stderr_path: String::new(),
+            last_update_at: started_at,
+        }));
+        let (cmd_tx, cmd_rx) = mpsc::channel(1);
+        let completion = ProcessCompletion::new();
+        server.processes.lock().await.insert(
+            process_id,
+            ProcessEntry {
+                thread_id,
+                info: info.clone(),
+                cmd_tx,
+                completion: completion.clone(),
+            },
+        );
+
+        let (client_stream, peer_stream) = tokio::io::duplex(1024);
+        drop(peer_stream);
+        let (client_read, client_write) = tokio::io::split(client_stream);
+        let client = omne_jsonrpc::Client::connect_io(client_read, client_write).await?;
+        let server_name = "local".to_string();
+        server.mcp.lock().await.connections.insert(
+            (thread_id, server_name.clone()),
+            Arc::new(McpConnection {
+                process_id,
+                config_fingerprint: "test-config".to_string(),
+                client: tokio::sync::Mutex::new(client),
+            }),
+        );
+
+        let actor = tokio::spawn(run_process_actor(ProcessActorArgs {
+            server: server.clone(),
+            thread_rt: thread_rt.clone(),
+            process_id,
+            child,
+            cmd_rx,
+            stdout_task: None,
+            stderr_task: None,
+            execve_gate: None,
+            info,
+            completion: completion.clone(),
+        }));
+
+        tokio::time::timeout(Duration::from_secs(5), actor)
+            .await
+            .context("wait for actor to exit")??;
+        tokio::time::timeout(Duration::from_secs(5), completion.wait())
+            .await
+            .context("wait for completion")?;
+
+        assert!(
+            !server
+                .mcp
+                .lock()
+                .await
+                .connections
+                .contains_key(&(thread_id, server_name)),
+            "process exit should invalidate cached mcp connections"
+        );
+        assert!(
+            server.processes.lock().await.get(&process_id).is_none(),
+            "process exit should evict the managed process entry"
+        );
+
+        Ok(())
+    }
 }
