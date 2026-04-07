@@ -278,6 +278,42 @@ mod tests {
     }
 
     #[test]
+    fn repo_tools_skip_omne_data_runtime_files() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let root = tmp.path().to_path_buf();
+        std::fs::create_dir_all(root.join(".omne_data"))?;
+        std::fs::write(root.join(".omne_data/AGENTS.md"), "needle\n")?;
+        std::fs::write(root.join("visible.txt"), "needle\n")?;
+
+        let index = scan_repo_index(root.clone(), None, 100)?;
+        assert!(index.paths.iter().any(|path| path == "visible.txt"));
+        assert!(
+            !index
+                .paths
+                .iter()
+                .any(|path| path == ".omne_data/AGENTS.md")
+        );
+
+        let grep = search_repo(RepoGrepRequest {
+            root,
+            query: "needle".to_string(),
+            is_regex: false,
+            include_glob: None,
+            max_matches: 10,
+            max_bytes_per_file: 1024 * 1024,
+            max_files: 100,
+        })?;
+        assert!(grep.matches.iter().any(|m| m.path == "visible.txt"));
+        assert!(
+            !grep
+                .matches
+                .iter()
+                .any(|m| m.path == ".omne_data/AGENTS.md")
+        );
+        Ok(())
+    }
+
+    #[test]
     fn grep_marks_truncated_when_max_files_is_hit() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let root = tmp.path().to_path_buf();

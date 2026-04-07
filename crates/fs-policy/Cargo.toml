@@ -6,3 +6,7 @@ version.workspace = true
 
 [dependencies]
 walkdir.workspace = true
+
+[dev-dependencies]
+anyhow.workspace = true
+tempfile.workspace = true
