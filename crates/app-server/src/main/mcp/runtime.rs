@@ -187,6 +187,43 @@ fn mcp_process_runtime_dir(thread_dir: &Path, process_id: ProcessId) -> PathBuf 
         .join(process_id.to_string())
 }
 
+async fn cleanup_untracked_mcp_process(
+    child: &mut tokio::process::Child,
+    process_tree_cleanup: &mut Option<omne_process_primitives::ProcessTreeCleanup>,
+    stderr_task: Option<tokio::task::JoinHandle<anyhow::Result<()>>>,
+    argv: &[String],
+    server_name: &str,
+) {
+    let needs_direct_child_kill = match process_tree_cleanup.as_mut() {
+        Some(cleanup) => matches!(
+            cleanup.start_termination(),
+            omne_process_primitives::CleanupDisposition::DirectChildKillRequired
+        ),
+        None => true,
+    };
+    if let Some(cleanup) = process_tree_cleanup.as_ref() {
+        cleanup.kill_tree();
+    }
+    if needs_direct_child_kill && child.start_kill().is_err() {
+        tracing::warn!(?argv, server_name, "failed to kill rolled back mcp child");
+    }
+    if let Err(err) = child.wait().await {
+        tracing::warn!(error = %err, ?argv, server_name, "failed waiting for rolled back mcp child");
+    }
+
+    if let Some(task) = stderr_task {
+        match task.await {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                tracing::warn!(error = %err, ?argv, server_name, "mcp rollback stderr capture failed");
+            }
+            Err(err) => {
+                tracing::warn!(error = %err, ?argv, server_name, "mcp rollback stderr task panicked");
+            }
+        }
+    }
+}
+
 async fn spawn_mcp_connection(
     server: &Server,
     thread_rt: &Arc<ThreadRuntime>,
@@ -289,18 +326,32 @@ async fn spawn_mcp_connection(
     let mut child = client
         .take_child()
         .ok_or_else(|| anyhow::anyhow!("mcp transport does not expose a child process"))?;
-    let process_tree_cleanup =
-        capture_process_tree_cleanup(&mut child, argv, server_name).await?;
+    let mut process_tree_cleanup =
+        Some(capture_process_tree_cleanup(&mut child, argv, server_name).await?);
     let stderr = child
         .stderr
         .take()
-        .ok_or_else(|| anyhow::anyhow!("mcp server stderr not captured"))?;
+        .ok_or_else(|| anyhow::anyhow!("mcp server stderr not captured"));
+    let stderr = match stderr {
+        Ok(stderr) => stderr,
+        Err(err) => {
+            cleanup_untracked_mcp_process(
+                &mut child,
+                &mut process_tree_cleanup,
+                None,
+                argv,
+                server_name,
+            )
+            .await;
+            return Err(err);
+        }
+    };
     let stderr_path_for_task = stderr_path.clone();
-    let stderr_task =
-        tokio::spawn(async move { capture_rotating_log(stderr, stderr_path_for_task, max_bytes_per_part).await });
+    let mut stderr_task =
+        Some(tokio::spawn(async move { capture_rotating_log(stderr, stderr_path_for_task, max_bytes_per_part).await }));
 
     let os_pid = child.id();
-    let started = thread_rt
+    let started = match thread_rt
         .append_event(omne_protocol::ThreadEventKind::ProcessStarted {
             process_id,
             turn_id,
@@ -310,7 +361,21 @@ async fn spawn_mcp_connection(
             stdout_path: stdout_path.display().to_string(),
             stderr_path: stderr_path.display().to_string(),
         })
-        .await?;
+        .await
+    {
+        Ok(started) => started,
+        Err(err) => {
+            cleanup_untracked_mcp_process(
+                &mut child,
+                &mut process_tree_cleanup,
+                stderr_task.take(),
+                argv,
+                server_name,
+            )
+            .await;
+            return Err(err).context("append ProcessStarted event");
+        }
+    };
     let started_at = started.timestamp.format(&Rfc3339)?;
 
     let info = ProcessInfo {
@@ -346,10 +411,10 @@ async fn spawn_mcp_connection(
         thread_rt: thread_rt.clone(),
         process_id,
         child,
-        process_tree_cleanup: Some(process_tree_cleanup),
+        process_tree_cleanup,
         cmd_rx,
         stdout_task: None,
-        stderr_task: Some(stderr_task),
+        stderr_task,
         execve_gate: None,
         info: entry.info.clone(),
         completion: entry.completion.clone(),
@@ -623,6 +688,46 @@ async fn get_or_start_mcp_connection(
 
 fn json_value_size_bytes(value: &Value) -> usize {
     serde_json::to_string(value).map(|s| s.len()).unwrap_or(0)
+}
+
+#[cfg(test)]
+mod runtime_tests {
+    use super::*;
+    use std::process::Stdio;
+
+    #[tokio::test]
+    async fn cleanup_untracked_mcp_process_terminates_spawned_child() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let stderr_path = tmp.path().join("stderr.log");
+        let argv = vec!["sh".to_string(), "-c".to_string(), "sleep 30".to_string()];
+
+        let mut cmd = Command::new(&argv[0]);
+        cmd.args(argv.iter().skip(1));
+        cmd.stderr(Stdio::piped());
+        omne_process_primitives::configure_command_for_process_tree(&mut cmd);
+
+        let mut child = cmd.spawn().context("spawn rollback mcp child")?;
+        let mut process_tree_cleanup = Some(
+            omne_process_primitives::ProcessTreeCleanup::new(&child)
+                .context("capture rollback mcp process tree cleanup")?,
+        );
+        let stderr = child.stderr.take().expect("stderr should be piped");
+        let stderr_task = Some(tokio::spawn(async move {
+            capture_rotating_log(stderr, stderr_path, process_log_max_bytes_per_part()).await
+        }));
+
+        cleanup_untracked_mcp_process(
+            &mut child,
+            &mut process_tree_cleanup,
+            stderr_task,
+            &argv,
+            "test",
+        )
+        .await;
+
+        assert!(child.try_wait()?.is_some(), "child should be terminated");
+        Ok(())
+    }
 }
 
 async fn maybe_write_mcp_result_artifact(
