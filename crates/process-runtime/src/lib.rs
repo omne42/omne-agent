@@ -181,6 +181,22 @@ fn go_subcommand_uses_network(argv: &[String]) -> bool {
     }
 }
 
+fn uv_subcommand_uses_network(argv: &[String]) -> bool {
+    match first_non_option_arg(argv, 1) {
+        Some("pip") => pip_subcommand_uses_network_from(argv, 2),
+        Some("sync") => true,
+        Some("tool") => matches!(
+            first_non_option_arg(argv, 2),
+            Some("install" | "upgrade" | "run")
+        ),
+        _ => false,
+    }
+}
+
+fn uv_invocation_hides_network_intent(argv: &[String]) -> bool {
+    matches!(first_non_option_arg(argv, 1), Some("run")) && argv.len() > 2
+}
+
 fn env_option_takes_value(arg: &str) -> bool {
     matches!(
         arg,
@@ -408,6 +424,8 @@ fn argv_uses_network(argv: &[String], depth_remaining: usize) -> bool {
         "pip" | "pip3" => pip_subcommand_uses_network_from(argv, 1),
         "cargo" => cargo_subcommand_uses_network(argv),
         "go" => go_subcommand_uses_network(argv),
+        "uv" => uv_subcommand_uses_network(argv),
+        "uvx" => true,
         "env" => {
             let wrapped = env_wrapped_command(argv);
             !wrapped.is_empty() && argv_uses_network(wrapped, depth_remaining.saturating_sub(1))
@@ -434,6 +452,7 @@ fn argv_hides_network_intent(argv: &[String], depth_remaining: usize) -> bool {
             !wrapped.is_empty()
                 && argv_hides_network_intent(wrapped, depth_remaining.saturating_sub(1))
         }
+        "uv" => uv_invocation_hides_network_intent(argv),
         "python" | "python3" => python_invocation_hides_network_intent(argv, depth_remaining),
         "node" | "nodejs" | "deno" | "bun" => {
             node_invocation_hides_network_intent(argv, depth_remaining)
@@ -630,6 +649,14 @@ mod tests {
         ])));
         assert!(command_uses_network(&argv(&["go", "get", "example.com/x"])));
         assert!(command_uses_network(&argv(&["go", "mod", "download"])));
+        assert!(command_uses_network(&argv(&[
+            "uv", "pip", "install", "requests"
+        ])));
+        assert!(command_uses_network(&argv(&["uv", "sync"])));
+        assert!(command_uses_network(&argv(&[
+            "uv", "tool", "install", "ruff"
+        ])));
+        assert!(command_uses_network(&argv(&["uvx", "ruff", "--version"])));
     }
 
     #[test]
@@ -644,5 +671,23 @@ mod tests {
         ])));
         assert!(!command_uses_network(&argv(&["cargo", "build"])));
         assert!(!command_uses_network(&argv(&["go", "test", "./..."])));
+        assert!(!command_uses_network(&argv(&[
+            "uv",
+            "pip",
+            "uninstall",
+            "requests"
+        ])));
+        assert!(!command_uses_network(&argv(&["uv", "run", "python", "-V"])));
+    }
+
+    #[test]
+    fn uv_run_is_fail_closed_when_it_hides_network_intent() {
+        assert!(command_hides_network_intent(&argv(&[
+            "uv",
+            "run",
+            "python",
+            "server.py"
+        ])));
+        assert!(!command_hides_network_intent(&argv(&["uv", "sync"])));
     }
 }
