@@ -70,11 +70,11 @@
 
 key 的稳定性（v0.2.0 实现口径）：
 
-- `file/write`：`path + create_parent_dirs`
+- `file/write`：`path + create_parent_dirs + text_sha256`
 - `file/delete`：`path + recursive`
 - `fs/mkdir`：`path + recursive`
-- `file/edit`：`path`
-- `file/patch`：`path`
+- `file/edit`：`path + edits_sha256`
+- `file/patch`：`path + patch_sha256`
 - `process/start`：使用 `params` 的完整 JSON 序列化（避免遗漏风险字段）
 - 其它 action：`{action}|{params_json}`
 

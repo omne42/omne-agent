@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Fixed
+- `omne-app-server`：remembered approval 对 `file/write`、`file/edit`、`file/patch` 不再只按路径复用，而是把写入文本 / edit 集合 / patch 内容纳入稳定指纹；同一路径但不同修改内容会重新请求审批，避免把文件变更审批退化成粗粒度白名单。
 - `omne-app-server`：MCP stdio server 现在会真正遵守 `mcp.json` 里的 `inherit_env=false`，启动前先清空宿主环境并只保留基础 stdio baseline 变量再注入显式 `env`，避免 app-server 进程环境被误透传给 MCP 子进程；并补齐对应回归测试。
 - `omne-core`：`Orchestrator::run()` 现在会在执行 hook 前先写出临时 `result.json` 供 hook 读取，但只有 hook 成功后才会持久化最终 `sessions/<id>/result`；如果 hook 失败则会清理临时 result 文件，避免 hook 既拿不到输入快照、又把失败 run 留成“成功完成”的最终状态。
 - `omne-app-server`：`process/list` / `process/inspect` 现在会先对 `argv` 做 redaction 再返回给外部调用方，并补齐回归测试，避免运行态进程信息把 token/password/cookie 类命令参数直接暴露出去。
