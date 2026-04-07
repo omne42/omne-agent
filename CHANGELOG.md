@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Fixed
+- `omne-core`：停止在 crate 根级 re-export legacy orchestration 的 domain/run/orchestrator surface，改为只保留运行时通用入口（paths/redaction/sandbox/storage/threads），减少 `omne-agent` 与 foundation/runtime 边界继续糊在一起。
 - `omne-app-server`：remembered approval 对 `file/write`、`file/edit`、`file/patch` 不再只按路径复用，而是把写入文本 / edit 集合 / patch 内容纳入稳定指纹；同一路径但不同修改内容会重新请求审批，避免把文件变更审批退化成粗粒度白名单。
 - `omne-repo-symbols-runtime`：Rust 符号索引现在会按 `src/foo.rs`、`src/foo/bar.rs` 这类文件系统模块路径补齐隐式模块前缀，`repo/goto_definition` 不再把 `mod foo;` 对应文件里的符号都降成裸尾名；并补齐对应回归测试。
 - `omne-app-server`：MCP stdio server 现在会真正遵守 `mcp.json` 里的 `inherit_env=false`，启动前先清空宿主环境并只保留基础 stdio baseline 变量再注入显式 `env`，避免 app-server 进程环境被误透传给 MCP 子进程；并补齐对应回归测试。
