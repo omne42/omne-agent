@@ -112,7 +112,7 @@ fail-closed（写死）：
   - `mcp/list_tools` ↔ `mcp_list_tools`
   - `mcp/list_resources` ↔ `mcp_list_resources`
   - `mcp/call { server, tool, arguments }` ↔ `mcp_call`
-- `mcp/*` 必须经过：`mode gate → sandbox → execpolicy → approval handling`（顺序写死，见 `docs/modes.md`/`docs/approvals.md`）。
+- `mcp/*` 先经过 `allowed_tools`、必要的 config/schema 校验与 hard boundary（例如 read-only、network deny、spawn 前 execution gateway 准备）；进入策略合并阶段后，再按 `mode gate → execpolicy → approval handling` 继续（见 `docs/modes.md`/`docs/approvals.md`）。
   - mode：v1 建议默认对 `mcp/*` 采取 `prompt`（或直接 `deny`），避免默认放权。
   - approval：启用 MCP 时强烈建议 `ApprovalPolicy=manual`。
   - `prompt_strict`（已实现；见 `docs/approvals.md`）：v0.2.x 中 `mcp/call` 默认写入 `approval.requirement="prompt_strict"`，并且不可被 `remember` 自动复用。

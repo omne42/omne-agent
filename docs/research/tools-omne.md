@@ -165,7 +165,7 @@ Primary sources:
 
 1. facade 先映射到明确 internal action
 2. 复用既有 handler 执行路径
-3. 继续走 `allowed_tools -> mode -> sandbox -> execpolicy -> approval`
+3. 继续走 `allowed_tools -> hard boundary/config validation -> mode -> execpolicy -> approval`
 4. facade wrapper 事件写入 `facade_tool/op/mapped_action`
 
 稳定错误码：

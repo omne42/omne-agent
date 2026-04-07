@@ -1186,6 +1186,78 @@ modes:
         Ok(())
     }
 
+    #[tokio::test]
+    async fn process_start_hard_boundary_precedes_mode_and_execpolicy() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let mut exec_policy = omne_execpolicy::Policy::empty();
+        exec_policy.add_prefix_rule(&["curl".to_string()], ExecDecision::Forbidden)?;
+
+        let mut server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        server.exec_policy = exec_policy;
+        let thread_id = create_test_thread_shared(&server, repo_dir).await?;
+
+        handle_thread_configure(
+            &server,
+            ThreadConfigureParams {
+                thread_id,
+                approval_policy: Some(omne_protocol::ApprovalPolicy::Manual),
+                sandbox_policy: None,
+                sandbox_writable_roots: None,
+                sandbox_network_access: Some(omne_protocol::SandboxNetworkAccess::Deny),
+                mode: Some("coder".to_string()),
+                role: Some("chat".to_string()),
+                model: None,
+                clear_model: false,
+                thinking: None,
+                clear_thinking: false,
+                show_thinking: None,
+                clear_show_thinking: false,
+                openai_base_url: None,
+                clear_openai_base_url: false,
+                allowed_tools: None,
+                execpolicy_rules: None,
+                clear_execpolicy_rules: false,
+            },
+        )
+        .await?;
+
+        let result = handle_process_start(
+            &server,
+            ProcessStartParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                argv: vec!["curl".to_string(), "https://example.com".to_string()],
+                cwd: None,
+                timeout_ms: None,
+            },
+        )
+        .await?;
+
+        assert!(result["denied"].as_bool().unwrap_or(false));
+        assert_eq!(result["error_code"].as_str(), Some("sandbox_network_denied"));
+        assert_eq!(result["sandbox_network_access"].as_str(), Some("deny"));
+        assert!(result.get("decision_source").is_none());
+
+        let events = server
+            .thread_store
+            .read_events_since(thread_id, EventSeq::ZERO)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("thread not found"))?;
+        assert!(
+            !events.iter().any(|event| matches!(
+                event.kind,
+                omne_protocol::ThreadEventKind::ApprovalRequested { .. }
+            )),
+            "hard boundary denial should not emit ApprovalRequested"
+        );
+
+        Ok(())
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn process_start_uses_gateway_prepared_canonical_cwd() -> anyhow::Result<()> {

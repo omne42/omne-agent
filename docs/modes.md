@@ -66,21 +66,31 @@
 
 ---
 
-## 3) 与现有策略的组合顺序（写死）
+## 3) 与现有策略的组合关系（写死）
 
-执行时的判定链路顺序固定为：
+统一语义分成两段：
 
-`mode gate → sandbox → execpolicy → approval handling`
+1. `allowed_tools` 与 tool-specific hard boundary / config validation 可以先 fail-closed。
+2. 进入策略合并阶段后，顺序固定为：`mode gate → execpolicy → approval handling`。
+
+这里的 hard boundary 不是 prompt 语义，而是不会产生产审批准入的 fail-closed 检查。典型例子包括：
+
+- sandbox 路径/写入边界（例如 `read-only/workspace-write/full_access`）
+- `sandbox_network_access=deny` 的 argv 分类与 generic launcher fail-closed
+- execution gateway 的 preflight / path identity 校验
+- secret path / schema / config 装载之类必须先验证的工具前置条件
 
 解释：
 
-- **mode gate**：按能力组/路径规则/per-tool override 做第一层硬裁决（`deny/prompt/allow`）。
-- **sandbox**：路径与可写根等硬边界（例如 `read-only/workspace-write`）。
-- **execpolicy**：命令前缀规则（allow/prompt/forbidden）。
+- **mode gate**：按能力组/路径规则/per-tool override 做第一层策略裁决（`deny/prompt/allow`）。
+- **execpolicy**：命令前缀规则（allow/prompt/prompt_strict/forbidden）。
 - execpolicy 规范与用法见：`docs/execpolicy.md`（v0.2.0 支持 global `--execpolicy-rules` + per-mode `command.execpolicy_rules` + per-thread `thread/configure.execpolicy_rules`）。
-- **approval handling**：当需要审批时（来源可能是 mode 或 execpolicy），由 `ApprovalPolicy` 决定停/自动决策。
+- **approval handling**：当 mode 或 execpolicy 产生 `prompt/prompt_strict` 时，由 `ApprovalPolicy` 决定停/自动决策。
 
-合并规则：任一层 `deny` 即 deny；否则任一层 `prompt` 即 prompt；否则 allow。
+合并规则：
+
+- hard boundary 拒绝优先于后续策略裁决。
+- 进入策略合并阶段后，任一层 `deny/forbidden` 即 deny；否则任一层 `prompt/prompt_strict` 即进入审批；否则 allow。
 
 ---
 

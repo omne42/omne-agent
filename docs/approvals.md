@@ -84,12 +84,14 @@ key 的稳定性（v0.2.0 实现口径）：
 
 ## 4) 与 mode / sandbox / execpolicy 的组合顺序（写死）
 
-执行判定链路顺序固定为：
+执行判定链路分成两段：
 
-`mode gate → sandbox → execpolicy → approval handling`
+- `allowed_tools` 与 hard boundary / config validation 可以先 fail-closed
+- 进入策略合并阶段后：`mode gate → execpolicy → approval handling`
 
 规则：
 
+- hard boundary 拒绝：硬拒绝（不走审批；approval policy 不能覆盖）。
 - 任一层 `deny`（execpolicy 的 `forbidden` 视为 deny）：硬拒绝（不走审批；approval policy 不能覆盖 deny）。
 - 任一层 `prompt` 且没有 deny：进入 `approval handling`（按 `ApprovalPolicy` 决定自动/人工）。
 - 否则：allow，继续执行。

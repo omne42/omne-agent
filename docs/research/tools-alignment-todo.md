@@ -7,7 +7,7 @@
 - [x] A1 Facade 收敛：默认 model-facing 工具面收敛到 `workspace/process/thread/artifact`（可选 `integration`）。
 - [x] A2 Help-first：聚合工具统一 `op=help`，返回 `quickstart + advanced`。
 - [x] A3 路由复用：`facade op -> legacy action`，不改后端细粒度 handler。
-- [x] A4 安全链路不降级：继续经过 `allowed_tools -> mode -> sandbox -> execpolicy -> approval`。
+- [x] A4 安全链路不降级：继续经过 `allowed_tools -> hard boundary/config validation -> mode -> execpolicy -> approval`。
 - [x] A5 观测：每轮输出 `tool_count` / `tool_schema_bytes`。
 - [x] A6 成本收益实测：`legacy_bytes=7669` -> `facade_bytes=1815`（约 `76.33%` 降幅）。
 - [x] A7 角色维度首版：`ToolRoleProfile`（`chatter/default/codder`）已接入工具暴露裁剪。

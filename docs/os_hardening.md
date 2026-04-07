@@ -102,7 +102,7 @@ fail-closed（只对配置解析）：
 
 hardening 不能改变权限裁决链路：
 
-`mode gate → sandbox → execpolicy → approval handling → process/start (hardening applied)`
+`allowed_tools → hard boundary / config validation → mode gate → execpolicy → approval handling → process/start (hardening applied)`
 
 也就是说：
 
