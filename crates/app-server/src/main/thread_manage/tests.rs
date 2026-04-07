@@ -4747,6 +4747,54 @@ base_url = "https://project.example/v1"
     }
 
     #[tokio::test]
+    async fn thread_delete_notifies_stale_mcp_start_waiters() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let waiter = Arc::new(tokio::sync::Notify::new());
+        let ready = Arc::new(tokio::sync::Notify::new());
+        let waiter_task = {
+            let waiter = waiter.clone();
+            let ready = ready.clone();
+            tokio::spawn(async move {
+                let notified = waiter.notified();
+                ready.notify_one();
+                tokio::time::timeout(Duration::from_secs(1), notified).await
+            })
+        };
+        ready.notified().await;
+
+        server
+            .mcp
+            .lock()
+            .await
+            .starting
+            .insert((thread_id, "local".to_string()), waiter);
+
+        let result = handle_thread_delete(
+            &server,
+            ThreadDeleteParams {
+                thread_id,
+                force: false,
+            },
+        )
+        .await?;
+
+        assert!(result.deleted);
+        let manager = server.mcp.lock().await;
+        assert!(!manager.starting.contains_key(&(thread_id, "local".to_string())));
+        drop(manager);
+        assert!(waiter_task.await?.is_ok(), "stale waiter should be notified");
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn thread_pause_force_waits_for_active_turn_processes_to_stop() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");

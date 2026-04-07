@@ -485,10 +485,11 @@ async fn remove_mcp_connections_for_process(server: &Server, process_id: Process
 }
 
 async fn remove_mcp_connections_for_thread(server: &Server, thread_id: ThreadId) -> usize {
-    let (removed, removed_process_ids) = {
+    let (removed, removed_process_ids, removed_waiters) = {
         let mut manager = server.mcp.lock().await;
         let before = manager.connections.len();
         let mut removed_process_ids = Vec::new();
+        let mut removed_waiters = Vec::new();
         manager.connections.retain(|(id, _), conn| {
             if *id == thread_id {
                 removed_process_ids.push(conn.process_id);
@@ -497,10 +498,21 @@ async fn remove_mcp_connections_for_thread(server: &Server, thread_id: ThreadId)
                 true
             }
         });
-        manager.starting.retain(|(id, _), _| *id != thread_id);
+        manager.starting.retain(|(id, _), waiter| {
+            if *id == thread_id {
+                removed_waiters.push(waiter.clone());
+                false
+            } else {
+                true
+            }
+        });
         let removed = before.saturating_sub(manager.connections.len());
-        (removed, removed_process_ids)
+        (removed, removed_process_ids, removed_waiters)
     };
+
+    for waiter in removed_waiters {
+        waiter.notify_waiters();
+    }
 
     if removed == 0 {
         return 0;
