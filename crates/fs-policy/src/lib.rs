@@ -76,23 +76,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn secret_path_matches_env_style_sensitive_files() {
-        assert!(is_secret_rel_path(Path::new(".env")));
-        assert!(is_secret_rel_path(Path::new(".env.local")));
-        assert!(is_secret_rel_path(Path::new(".env.production")));
-        assert!(!is_secret_rel_path(Path::new(".env.example")));
-        assert!(!is_secret_rel_path(Path::new(".env.template")));
-        assert!(!is_secret_rel_path(Path::new("src/main.rs")));
-    }
-
-    #[test]
-    fn read_blocked_path_matches_sensitive_env_variants() {
-        assert!(is_read_blocked_rel_path(Path::new(".env")));
-        assert!(is_read_blocked_rel_path(Path::new(".env.local")));
-        assert!(is_read_blocked_rel_path(Path::new(".env.production")));
-        assert!(!is_read_blocked_rel_path(Path::new(".env.example")));
-        assert!(!is_read_blocked_rel_path(Path::new(".env.template")));
-        assert!(!is_read_blocked_rel_path(Path::new(".environment")));
-        assert!(!is_read_blocked_rel_path(Path::new("config.env")));
+    fn env_style_secret_and_read_protection_share_semantics() {
+        for (path, expected) in [
+            (".env", true),
+            (".env.local", true),
+            (".env.production", true),
+            (".env.development.local", true),
+            (".env_test", true),
+            (".env-test", true),
+            (".env.example", false),
+            (".env.example.local", false),
+            (".env.template", false),
+            (".ENV.LOCAL", true),
+            (".environment", false),
+            (".envrc", false),
+            ("config.env", false),
+            ("src/main.rs", false),
+        ] {
+            let path = Path::new(path);
+            assert_eq!(
+                is_secret_rel_path(path),
+                expected,
+                "secret: {}",
+                path.display()
+            );
+            assert_eq!(
+                is_read_blocked_rel_path(path),
+                expected,
+                "read-blocked: {}",
+                path.display()
+            );
+        }
     }
 }
