@@ -6,7 +6,7 @@ use async_trait::async_trait;
 
 use super::*;
 use crate::events::{EventBus, RunEvent};
-use crate::hooks::NoopHookRunner;
+use crate::hooks::{HookRunner, NoopHookRunner};
 use crate::storage::FsStorage;
 
 struct PanicArchitect;
@@ -89,6 +89,42 @@ impl Merger for PanicMerger {
         _prs: &[PullRequest],
     ) -> anyhow::Result<MergeResult> {
         panic!("merger should not be called")
+    }
+}
+
+struct FailingHookRunner;
+
+#[async_trait]
+impl HookRunner for FailingHookRunner {
+    async fn run(
+        &self,
+        _hook: &HookSpec,
+        _omne_paths: &PmPaths,
+        _session_paths: &SessionPaths,
+        _result: &RunResult,
+    ) -> anyhow::Result<()> {
+        anyhow::bail!("hook boom")
+    }
+}
+
+struct ResultFileCheckingHookRunner;
+
+#[async_trait]
+impl HookRunner for ResultFileCheckingHookRunner {
+    async fn run(
+        &self,
+        _hook: &HookSpec,
+        _omne_paths: &PmPaths,
+        session_paths: &SessionPaths,
+        _result: &RunResult,
+    ) -> anyhow::Result<()> {
+        let result_path = session_paths.root().join("result.json");
+        anyhow::ensure!(
+            tokio::fs::try_exists(&result_path).await?,
+            "hook should receive a prewritten result artifact: {}",
+            result_path.display()
+        );
+        Ok(())
     }
 }
 
@@ -474,6 +510,150 @@ async fn concurrent_tasks_convert_panics_to_failed_prs() -> anyhow::Result<()> {
 
     let session_paths = SessionPaths::new(&repo.name, result.session.id);
     let _ = tokio::fs::remove_dir_all(session_paths.root()).await;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn run_does_not_persist_result_when_hook_fails() -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let omne_paths = PmPaths::new(dir.path().join(".omne_data"));
+    let storage = FsStorage::new(omne_paths.data_dir());
+
+    let repo = Repository {
+        name: crate::domain::RepositoryName::sanitize("repo"),
+        bare_path: PathBuf::from("/nonexistent/bare.git"),
+        lock_path: dir.path().join("repo.lock"),
+    };
+
+    let orchestrator = Orchestrator {
+        storage: Arc::new(storage),
+        hook_runner: Arc::new(FailingHookRunner),
+        events: EventBus::default(),
+        architect: Arc::new(PanicArchitect),
+        coder: Arc::new(DelayedCoder),
+        merger: Arc::new(NoopMerger),
+    };
+
+    let err = orchestrator
+        .run(
+            &omne_paths,
+            repo.clone(),
+            RunRequest {
+                pr_name: crate::domain::PrName::sanitize("test"),
+                prompt: "x".to_string(),
+                base_branch: "main".to_string(),
+                tasks: Some(vec![TaskSpec {
+                    id: crate::domain::TaskId::sanitize("a"),
+                    title: "A".to_string(),
+                    description: None,
+                }]),
+                apply_patch: None,
+                hook: Some(HookSpec::Webhook {
+                    url: "https://example.invalid/hook".to_string(),
+                }),
+                max_concurrency: 1,
+                cargo_test: false,
+                auto_merge: false,
+            },
+        )
+        .await
+        .expect_err("hook failure should abort run");
+    assert!(err.to_string().contains("hook failed"));
+
+    let sessions_dir = omne_paths.data_dir().join("sessions");
+    let mut entries = tokio::fs::read_dir(&sessions_dir).await?;
+    let session_dir = entries
+        .next_entry()
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("missing stored session"))?
+        .path();
+    let session_id = session_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| anyhow::anyhow!("missing session id"))?
+        .parse::<SessionId>()?;
+
+    assert!(
+        !tokio::fs::try_exists(session_dir.join("result.json"))
+            .await
+            .unwrap_or(false),
+        "storage should not persist result.json when hook fails"
+    );
+    assert!(
+        !tokio::fs::try_exists(
+            SessionPaths::new(&repo.name, session_id)
+                .root()
+                .join("result.json")
+        )
+        .await
+        .unwrap_or(false),
+        "tmp result.json should be cleaned up when hook fails"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn run_prewrites_result_artifact_before_running_hook() -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let omne_paths = PmPaths::new(dir.path().join(".omne_data"));
+    let storage = FsStorage::new(omne_paths.data_dir());
+
+    let repo = Repository {
+        name: crate::domain::RepositoryName::sanitize("repo"),
+        bare_path: PathBuf::from("/nonexistent/bare.git"),
+        lock_path: dir.path().join("repo.lock"),
+    };
+
+    let orchestrator = Orchestrator {
+        storage: Arc::new(storage.clone()),
+        hook_runner: Arc::new(ResultFileCheckingHookRunner),
+        events: EventBus::default(),
+        architect: Arc::new(PanicArchitect),
+        coder: Arc::new(DelayedCoder),
+        merger: Arc::new(NoopMerger),
+    };
+
+    let result = orchestrator
+        .run(
+            &omne_paths,
+            repo,
+            RunRequest {
+                pr_name: crate::domain::PrName::sanitize("test"),
+                prompt: "x".to_string(),
+                base_branch: "main".to_string(),
+                tasks: Some(vec![TaskSpec {
+                    id: crate::domain::TaskId::sanitize("a"),
+                    title: "A".to_string(),
+                    description: None,
+                }]),
+                apply_patch: None,
+                hook: Some(HookSpec::Webhook {
+                    url: "https://example.invalid/hook".to_string(),
+                }),
+                max_concurrency: 1,
+                cargo_test: false,
+                auto_merge: false,
+            },
+        )
+        .await?;
+
+    assert!(
+        tokio::fs::try_exists(
+            SessionPaths::new(&result.session.repo, result.session.id)
+                .root()
+                .join("result.json")
+        )
+        .await?
+    );
+    assert!(
+        storage
+            .get_json(&format!("sessions/{}/result", result.session.id))
+            .await?
+            .is_some(),
+        "successful hook run should persist the final result"
+    );
 
     Ok(())
 }
