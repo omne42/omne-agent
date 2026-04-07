@@ -568,6 +568,24 @@ mod tests {
     }
 
     #[test]
+    fn detects_git_network_subcommands_after_config_env_and_sentinel() {
+        assert!(command_uses_network(&argv(&[
+            "git",
+            "--config-env=http.extraHeader=OMNE_HTTP_HEADER",
+            "fetch",
+        ])));
+        assert!(command_uses_network(&argv(&["git", "--", "push",])));
+        assert!(command_uses_network(&argv(
+            &["git", "-Crepo", "ls-remote",]
+        )));
+        assert!(!command_uses_network(&argv(&[
+            "git",
+            "--config-env=http.extraHeader=OMNE_HTTP_HEADER",
+            "status",
+        ])));
+    }
+
+    #[test]
     fn non_network_commands_are_not_flagged() {
         assert!(!command_uses_network(&argv(&["ls"])));
         assert!(!command_uses_network(&argv(&["python"])));
