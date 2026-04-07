@@ -2038,7 +2038,7 @@ prefix_rule(
 
         let mut child = cmd.spawn()?;
         let mut process_tree_cleanup =
-            Some(omne_process_primitives::ProcessTreeCleanup::new(&mut child)?);
+            Some(omne_process_primitives::ProcessTreeCleanup::new(&child)?);
         let mut execve_gate = None;
 
         cleanup_untracked_spawned_process(
