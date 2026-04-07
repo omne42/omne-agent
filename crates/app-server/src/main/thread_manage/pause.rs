@@ -49,6 +49,7 @@ async fn handle_thread_pause(
             turn_id,
             reason.clone(),
             "pause active turn",
+            ClosedProcessCommandPolicy::WaitForExplicitStop,
         )
         .await?;
 

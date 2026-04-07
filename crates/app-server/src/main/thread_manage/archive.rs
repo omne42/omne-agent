@@ -41,6 +41,22 @@ async fn running_turn_process_entries(
     running
 }
 
+#[cfg(test)]
+const STOP_TURN_INTERRUPT_GRACE: Duration = Duration::from_millis(50);
+#[cfg(not(test))]
+const STOP_TURN_INTERRUPT_GRACE: Duration = Duration::from_secs(2);
+
+#[cfg(test)]
+const STOP_TURN_KILL_WAIT: Duration = Duration::from_millis(500);
+#[cfg(not(test))]
+const STOP_TURN_KILL_WAIT: Duration = Duration::from_secs(10);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ClosedProcessCommandPolicy {
+    ReconcileAggressively,
+    WaitForExplicitStop,
+}
+
 #[cfg(unix)]
 fn os_process_exists(pid: u32) -> bool {
     use nix::errno::Errno;
@@ -104,12 +120,43 @@ async fn reconcile_closed_process_entry(
     Ok(())
 }
 
+async fn reconcile_closed_process_entry_if_provably_stopped(
+    server: &Server,
+    process_id: ProcessId,
+    entry: &ProcessEntry,
+    lifecycle: &'static str,
+) -> anyhow::Result<bool> {
+    let snapshot = entry.info.lock().await.clone();
+    if !matches!(snapshot.status, ProcessStatus::Running) {
+        server.processes.lock().await.remove(&process_id);
+        entry.completion.mark_complete();
+        return Ok(true);
+    }
+
+    #[cfg(unix)]
+    if let Some(os_pid) = snapshot.os_pid {
+        if os_process_exists(os_pid) {
+            send_kill_signal(os_pid)
+                .with_context(|| format!("force-stop orphaned process during {lifecycle}"))?;
+            wait_for_os_process_exit(os_pid, Duration::from_secs(5))
+                .await
+                .with_context(|| format!("wait for orphaned process during {lifecycle}"))?;
+        }
+        server.processes.lock().await.remove(&process_id);
+        entry.completion.mark_complete();
+        return Ok(true);
+    }
+
+    Ok(false)
+}
+
 async fn send_lifecycle_process_command(
     server: &Server,
     process_id: ProcessId,
     entry: &ProcessEntry,
     command: ProcessCommand,
     lifecycle: &'static str,
+    closed_policy: ClosedProcessCommandPolicy,
 ) -> anyhow::Result<()> {
     if entry.cmd_tx.send(command).await.is_ok() {
         return Ok(());
@@ -120,7 +167,24 @@ async fn send_lifecycle_process_command(
         lifecycle,
         "process command channel closed during lifecycle cleanup; reconciling stale entry",
     );
-    reconcile_closed_process_entry(server, process_id, entry, lifecycle).await
+    match closed_policy {
+        ClosedProcessCommandPolicy::ReconcileAggressively => {
+            reconcile_closed_process_entry(server, process_id, entry, lifecycle).await
+        }
+        ClosedProcessCommandPolicy::WaitForExplicitStop => {
+            if reconcile_closed_process_entry_if_provably_stopped(server, process_id, entry, lifecycle)
+                .await?
+            {
+                return Ok(());
+            }
+            tracing::warn!(
+                process_id = %process_id,
+                lifecycle,
+                "process command channel closed but stop is not yet provable; keeping entry pending",
+            );
+            Ok(())
+        }
+    }
 }
 
 async fn wait_for_process_entries_to_complete(
@@ -190,6 +254,7 @@ async fn stop_turn_processes(
     turn_id: TurnId,
     reason: Option<String>,
     lifecycle: &'static str,
+    closed_policy: ClosedProcessCommandPolicy,
 ) -> anyhow::Result<()> {
     let running = running_turn_process_entries(server, thread_id, turn_id).await;
     if running.is_empty() {
@@ -205,6 +270,7 @@ async fn stop_turn_processes(
                 reason: reason.clone(),
             },
             lifecycle,
+            closed_policy,
         )
         .await?;
     }
@@ -213,8 +279,7 @@ async fn stop_turn_processes(
         .iter()
         .map(|(_, entry)| entry.clone())
         .collect::<Vec<_>>();
-    let interrupt_grace = Duration::from_secs(2);
-    if tokio::time::timeout(interrupt_grace, async {
+    if tokio::time::timeout(STOP_TURN_INTERRUPT_GRACE, async {
         for entry in &entries {
             entry.completion.wait().await;
         }
@@ -238,6 +303,7 @@ async fn stop_turn_processes(
                 reason: reason.clone(),
             },
             lifecycle,
+            closed_policy,
         )
         .await?;
     }
@@ -253,7 +319,7 @@ async fn stop_turn_processes(
         &survivor_entries,
         &survivor_ids,
         lifecycle,
-        Duration::from_secs(10),
+        STOP_TURN_KILL_WAIT,
     )
     .await
 }
@@ -304,6 +370,7 @@ async fn handle_thread_archive(
             turn_id,
             reason.clone(),
             "archive active turn",
+            ClosedProcessCommandPolicy::ReconcileAggressively,
         )
         .await?;
 
@@ -357,6 +424,7 @@ async fn handle_thread_archive(
                     reason: reason.clone(),
                 },
                 "archive",
+                ClosedProcessCommandPolicy::ReconcileAggressively,
             )
             .await?;
         }
