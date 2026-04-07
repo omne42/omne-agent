@@ -442,6 +442,10 @@ impl UnmatchedCommandPolicy {
     }
 }
 
+fn default_unmatched_command_policy() -> UnmatchedCommandPolicy {
+    UnmatchedCommandPolicy::Prompt
+}
+
 struct ProcessExecAuthorizationContext<'a> {
     thread_root: &'a Path,
     thread_store: &'a ThreadStore,

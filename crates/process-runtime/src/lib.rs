@@ -39,15 +39,24 @@ fn git_global_option_takes_value(arg: &str) -> bool {
         "-C" | "-c"
             | "--exec-path"
             | "--git-dir"
+            | "--list-cmds"
             | "--namespace"
             | "--super-prefix"
             | "--work-tree"
             | "--config-env"
+            | "--attr-source"
     )
 }
 
 fn git_option_has_inline_value(arg: &str) -> bool {
     (arg.starts_with("-C") || arg.starts_with("-c")) && arg.len() > 2 || arg.contains('=')
+}
+
+fn git_network_subcommand_name(arg: &str) -> bool {
+    matches!(
+        arg,
+        "clone" | "fetch" | "pull" | "push" | "ls-remote" | "submodule"
+    )
 }
 
 fn git_subcommand(argv: &[String]) -> Option<&str> {
@@ -69,12 +78,7 @@ fn git_subcommand(argv: &[String]) -> Option<&str> {
 
 fn git_subcommand_uses_network(argv: &[String]) -> bool {
     git_subcommand(argv)
-        .map(|subcommand| {
-            matches!(
-                subcommand,
-                "clone" | "fetch" | "pull" | "push" | "ls-remote" | "submodule"
-            )
-        })
+        .map(git_network_subcommand_name)
         .unwrap_or(false)
 }
 
@@ -502,8 +506,20 @@ mod tests {
         assert!(command_uses_network(&argv(&["git", "-C", "repo", "fetch"])));
         assert!(command_uses_network(&argv(&[
             "git",
+            "--git-dir",
+            "/tmp/repo.git",
+            "push"
+        ])));
+        assert!(command_uses_network(&argv(&[
+            "git",
             "--git-dir=.git",
             "pull"
+        ])));
+        assert!(command_uses_network(&argv(&[
+            "git",
+            "--attr-source",
+            "HEAD",
+            "ls-remote"
         ])));
         assert!(command_uses_network(&argv(&[
             "git",
@@ -512,9 +528,43 @@ mod tests {
         ])));
         assert!(!command_uses_network(&argv(&["git", "status"])));
         assert!(!command_uses_network(&argv(&[
+            "git",
+            "--attr-source",
+            "HEAD",
+            "status"
+        ])));
+        assert!(!command_uses_network(&argv(&[
             "git", "-C", "repo", "status"
         ])));
         assert!(!command_uses_network(&argv(&["git"])));
+    }
+
+    #[test]
+    fn detects_git_network_subcommands_after_mixed_global_options() {
+        assert!(command_uses_network(&argv(&[
+            "git",
+            "--namespace",
+            "review",
+            "-c",
+            "http.extraHeader=x",
+            "--work-tree",
+            "repo",
+            "pull"
+        ])));
+        assert!(command_uses_network(&argv(&[
+            "git",
+            "--list-cmds",
+            "main,others",
+            "fetch"
+        ])));
+        assert!(!command_uses_network(&argv(&[
+            "git",
+            "--namespace",
+            "review",
+            "--work-tree",
+            "repo",
+            "status"
+        ])));
     }
 
     #[test]

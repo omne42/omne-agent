@@ -445,7 +445,7 @@ async fn handle_execve_gate_decide(
                 exec_policy: &ctx.exec_policy,
                 thread_execpolicy_rules: &thread_execpolicy_rules,
                 argv: &args.argv,
-                unmatched_command_policy: UnmatchedCommandPolicy::Prompt,
+                unmatched_command_policy: default_unmatched_command_policy(),
             },
         },
         |mode| mode.permissions.command,
@@ -753,6 +753,94 @@ mod execve_gate_tests {
     }
 
     #[tokio::test]
+    async fn execve_gate_escalates_unmatched_commands_instead_of_running_them()
+    -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let exec_policy = omne_execpolicy::Policy::empty();
+
+        let mut server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        server.exec_policy = exec_policy.clone();
+        let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        handle_thread_configure(
+            &server,
+            ThreadConfigureParams {
+                thread_id,
+                approval_policy: Some(omne_protocol::ApprovalPolicy::Manual),
+                sandbox_policy: None,
+                sandbox_writable_roots: None,
+                sandbox_network_access: None,
+                mode: None,
+                role: None,
+                model: None,
+                clear_model: false,
+                thinking: None,
+                clear_thinking: false,
+                show_thinking: None,
+                clear_show_thinking: false,
+                openai_base_url: None,
+                clear_openai_base_url: false,
+                allowed_tools: None,
+                execpolicy_rules: None,
+                clear_execpolicy_rules: false,
+            },
+        )
+        .await?;
+
+        let thread_rt = server.get_or_load_thread(thread_id).await?;
+        let socket_path = tmp.path().join("execve.sock");
+        let token = "test-token".to_string();
+
+        let gate = match spawn_execve_gate(
+            ExecveGateContext {
+                thread_id,
+                turn_id: None,
+                token: token.clone(),
+                thread_root: repo_dir,
+                thread_store: server.thread_store.clone(),
+                exec_policy,
+                thread_rt,
+            },
+            socket_path.clone(),
+        )
+        .await
+        {
+            Ok(gate) => gate,
+            Err(err) if unix_socket_bind_not_permitted(&err) => {
+                eprintln!("skipping execve gate test: unix socket bind not permitted");
+                return Ok(());
+            }
+            Err(err) => return Err(err),
+        };
+
+        let stream = tokio::net::UnixStream::connect(&socket_path).await?;
+        let (read_half, mut write_half) = stream.into_split();
+        let mut lines = tokio::io::BufReader::new(read_half).lines();
+        mcp_initialize(&mut lines, &mut write_half).await?;
+
+        let resp = mcp_tools_call(
+            &mut lines,
+            &mut write_half,
+            2,
+            EXECVE_GATE_TOOL_DECIDE,
+            serde_json::json!({ "token": token, "argv": ["echo", "ok"] }),
+        )
+        .await?;
+
+        let payload = mcp_payload(&resp)?;
+        assert_eq!(payload["decision"], "escalate");
+        assert!(payload["approval_id"].as_str().is_some_and(|id| !id.is_empty()));
+
+        shutdown_execve_gate(gate).await;
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn execve_gate_denies_read_only_sandbox_policy() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");
@@ -1015,6 +1103,8 @@ mod execve_gate_tests {
             serde_json::json!(["python", "-m", "pip", "install", "requests"]),
             serde_json::json!(["cargo", "install", "ripgrep"]),
             serde_json::json!(["go", "get", "example.com/x"]),
+            serde_json::json!(["git", "--git-dir", "/tmp/repo.git", "fetch"]),
+            serde_json::json!(["git", "--attr-source", "HEAD", "push"]),
         ] {
             let resp = mcp_tools_call(
                 &mut lines,
@@ -1674,7 +1764,30 @@ modes:
         .await?;
         let payload = mcp_payload(&resp)?;
         assert_eq!(payload["decision"], "escalate");
-        assert!(payload["approval_id"].as_str().is_some());
+        let approval_id: omne_protocol::ApprovalId = payload["approval_id"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing approval_id"))?
+            .parse()?;
+        let events = server
+            .thread_store
+            .read_events_since(thread_id, EventSeq::ZERO)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("thread not found"))?;
+        let approval_event = events.into_iter().find_map(|event| match event.kind {
+            omne_protocol::ThreadEventKind::ApprovalRequested {
+                approval_id: got,
+                action,
+                params,
+                ..
+            } if got == approval_id => Some((action, params)),
+            _ => None,
+        });
+        let (action, params) =
+            approval_event.ok_or_else(|| anyhow::anyhow!("missing approval request event"))?;
+        assert_eq!(action, "process/execve");
+        assert_eq!(params["approval"]["source"], "execve-wrapper");
+        assert_eq!(params["approval"]["requirement"], "prompt");
+        assert_eq!(params["argv"], serde_json::json!(["echo", "ok"]));
 
         shutdown_execve_gate(gate).await;
         Ok(())
