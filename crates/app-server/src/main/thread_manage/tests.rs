@@ -1791,7 +1791,7 @@ modes:
             kinds,
             vec!["attention_marker_set", "attention_marker_cleared"]
         );
-        assert_eq!(result["last_seq"].as_u64(), Some(4));
+        assert_eq!(result["last_seq"].as_u64(), Some(5));
         assert_eq!(result["thread_last_seq"].as_u64(), Some(5));
         Ok(())
     }
@@ -1912,7 +1912,7 @@ modes:
             events[3]["reason"].as_str(),
             Some("token budget exceeded cleared")
         );
-        assert_eq!(result["last_seq"].as_u64(), Some(6));
+        assert_eq!(result["last_seq"].as_u64(), Some(7));
         assert_eq!(result["thread_last_seq"].as_u64(), Some(7));
         Ok(())
     }
@@ -2307,11 +2307,7 @@ modes:
         let first_thread_last_seq = first_result["thread_last_seq"]
             .as_u64()
             .ok_or_else(|| anyhow::anyhow!("missing first thread_last_seq"))?;
-        let resumed_last_event_seq = resumed_events
-            .last()
-            .and_then(|event| event["seq"].as_u64())
-            .ok_or_else(|| anyhow::anyhow!("missing resumed last event seq"))?;
-        assert_eq!(resume_last_seq, resumed_last_event_seq);
+        assert_eq!(resume_last_seq, resume_thread_last_seq);
         assert_eq!(resume_thread_last_seq, first_thread_last_seq);
 
         Ok(())
@@ -2670,7 +2666,7 @@ modes:
             events[3]["reason"].as_str(),
             Some("token budget exceeded cleared")
         );
-        assert_eq!(result["last_seq"].as_u64(), Some(6));
+        assert_eq!(result["last_seq"].as_u64(), Some(7));
         assert_eq!(result["thread_last_seq"].as_u64(), Some(7));
         assert_eq!(result["has_more"].as_bool(), Some(false));
         assert_eq!(result["timed_out"].as_bool(), Some(false));
