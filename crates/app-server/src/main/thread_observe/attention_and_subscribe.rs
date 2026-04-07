@@ -407,40 +407,18 @@ async fn enrich_pending_approvals_with_child_thread_state(
 
     let mut snapshots = HashMap::<ThreadId, ChildThreadAttentionSnapshot>::new();
     for child_thread_id in child_thread_ids {
-        let events = match server
-            .thread_store
-            .read_events_since(child_thread_id, EventSeq::ZERO)
-            .await
-        {
-            Ok(Some(events)) => events,
+        let child_state = match server.thread_store.read_state(child_thread_id).await {
+            Ok(Some(state)) => state,
             Ok(None) => continue,
             Err(err) => {
                 tracing::debug!(
                     thread_id = %child_thread_id,
                     error = %err,
-                    "skip child thread summary enrichment: failed to read events"
+                    "skip child thread summary enrichment: failed to read child thread state"
                 );
                 continue;
             }
         };
-
-        let mut child_state = ThreadState::new(child_thread_id);
-        let mut apply_failed = false;
-        for event in &events {
-            if let Err(err) = child_state.apply(event) {
-                tracing::debug!(
-                    thread_id = %child_thread_id,
-                    event_seq = event.seq.0,
-                    error = %err,
-                    "skip child thread summary enrichment: failed to apply event"
-                );
-                apply_failed = true;
-                break;
-            }
-        }
-        if apply_failed {
-            continue;
-        }
 
         snapshots.insert(
             child_thread_id,

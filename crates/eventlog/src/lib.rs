@@ -169,6 +169,54 @@ pub async fn read_events_since(
     Ok(out)
 }
 
+pub async fn read_state(
+    expected_thread_id: ThreadId,
+    log_path: &Path,
+) -> anyhow::Result<ThreadState> {
+    let bytes = match tokio::fs::read(log_path).await {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(ThreadState::new(expected_thread_id));
+        }
+        Err(err) => return Err(err).with_context(|| format!("read {}", log_path.display())),
+    };
+
+    let mut state = ThreadState::new(expected_thread_id);
+    let mut expected_next = EventSeq(1);
+    for line in bytes.split(|b| *b == b'\n') {
+        if line.is_empty() {
+            continue;
+        }
+        let event: ThreadEvent = match serde_json::from_slice(line) {
+            Ok(event) => event,
+            Err(err) => {
+                if bytes.last() != Some(&b'\n') {
+                    break;
+                }
+                return Err(err).context("parse event line from jsonl");
+            }
+        };
+        if event.thread_id != expected_thread_id {
+            anyhow::bail!(
+                "event log thread_id mismatch: expected {}, got {}",
+                expected_thread_id,
+                event.thread_id
+            );
+        }
+        if event.seq != expected_next {
+            anyhow::bail!(
+                "event log seq is not contiguous: expected {}, got {}",
+                expected_next,
+                event.seq
+            );
+        }
+        expected_next = EventSeq(event.seq.0 + 1);
+        state.apply(&event)?;
+    }
+
+    Ok(state)
+}
+
 fn lock_path_for(log_path: &Path) -> PathBuf {
     let mut lock_path = log_path.to_path_buf();
     lock_path.set_extension(format!(
@@ -819,6 +867,38 @@ mod tests {
         assert_eq!(events[0].seq, event.seq);
         let bytes = tokio::fs::read(&log_path).await?;
         assert!(bytes.ends_with(b"\n"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn read_state_replays_events_without_collecting_event_vec() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let log_path = dir.path().join("events.jsonl");
+        let thread_id = ThreadId::new();
+
+        let mut writer = EventLogWriter::open(thread_id, log_path.clone()).await?;
+        writer
+            .append(ThreadEventKind::ThreadCreated {
+                cwd: "/tmp".to_string(),
+            })
+            .await?;
+        writer
+            .append(ThreadEventKind::ProcessStarted {
+                process_id: ProcessId::new(),
+                turn_id: None,
+                os_pid: Some(123),
+                argv: vec!["sleep".to_string(), "1".to_string()],
+                cwd: "/tmp".to_string(),
+                stdout_path: "/tmp/stdout.log".to_string(),
+                stderr_path: "/tmp/stderr.log".to_string(),
+            })
+            .await?;
+        drop(writer);
+
+        let state = read_state(thread_id, &log_path).await?;
+        assert_eq!(state.cwd.as_deref(), Some("/tmp"));
+        assert_eq!(state.running_processes.len(), 1);
+        assert_eq!(state.last_seq, EventSeq(2));
         Ok(())
     }
 
