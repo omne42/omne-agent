@@ -44,6 +44,21 @@ enum ProcessSignalTarget {
     External(ProcessInfo),
 }
 
+async fn reconcile_stale_managed_process(
+    server: &Server,
+    process_id: ProcessId,
+    entry: &ProcessEntry,
+) {
+    {
+        let mut info = entry.info.lock().await;
+        if matches!(info.status, ProcessStatus::Running) {
+            info.status = ProcessStatus::Abandoned;
+        }
+    }
+    server.processes.lock().await.remove(&process_id);
+    entry.completion.mark_complete();
+}
+
 async fn load_process_signal_target(
     server: &Server,
     process_id: ProcessId,
@@ -54,6 +69,14 @@ async fn load_process_signal_target(
     };
     if let Some(entry) = entry {
         let info = entry.info.lock().await.clone();
+        if matches!(info.status, ProcessStatus::Running)
+            && info
+                .os_pid
+                .is_some_and(|os_pid| !super::list::os_process_matches_argv(os_pid, &info.argv))
+        {
+            reconcile_stale_managed_process(server, process_id, &entry).await;
+            anyhow::bail!("process is no longer running: {}", process_id);
+        }
         return Ok(ProcessSignalTarget::Managed(entry, info));
     }
 
@@ -642,7 +665,7 @@ modes:
         .await?;
 
         let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
-        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
         let thread_id = handle.thread_id();
         drop(handle);
 
@@ -675,7 +698,7 @@ modes:
         tokio::fs::create_dir_all(&repo_dir).await?;
 
         let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
-        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
         let thread_id = handle.thread_id();
         drop(handle);
 
@@ -734,7 +757,7 @@ modes:
         tokio::fs::create_dir_all(&repo_dir).await?;
 
         let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
-        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
         let thread_id = handle.thread_id();
         drop(handle);
 
@@ -1099,6 +1122,73 @@ modes:
                 _
             )
         ));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn process_kill_rejects_stale_managed_os_pid_and_evicts_registry_entry()
+    -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let child = std::process::Command::new("sleep").arg("30").spawn()?;
+        let os_pid = child.id();
+        let _ = nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(os_pid as i32),
+            nix::sys::signal::Signal::SIGKILL,
+        );
+        let _ = nix::sys::wait::waitpid(nix::unistd::Pid::from_raw(os_pid as i32), None);
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        configure_thread_mode(&server, thread_id, "code").await?;
+
+        let process_id = ProcessId::new();
+        let (cmd_tx, mut cmd_rx) = mpsc::channel(1);
+        tokio::spawn(async move { while cmd_rx.recv().await.is_some() {} });
+        let now = "2026-01-01T00:00:00Z".to_string();
+        server.processes.lock().await.insert(
+            process_id,
+            ProcessEntry {
+                thread_id,
+                info: Arc::new(tokio::sync::Mutex::new(ProcessInfo {
+                    process_id,
+                    thread_id,
+                    turn_id: None,
+                    os_pid: Some(os_pid),
+                    argv: vec!["sleep".to_string(), "30".to_string()],
+                    cwd: repo_dir.display().to_string(),
+                    started_at: now.clone(),
+                    status: ProcessStatus::Running,
+                    exit_code: None,
+                    stdout_path: repo_dir.join("stdout.log").display().to_string(),
+                    stderr_path: repo_dir.join("stderr.log").display().to_string(),
+                    last_update_at: now,
+                })),
+                cmd_tx,
+                completion: ProcessCompletion::new(),
+            },
+        );
+
+        let err = handle_process_kill(
+            &server,
+            ProcessKillParams {
+                process_id,
+                turn_id: None,
+                approval_id: None,
+                reason: Some("cleanup".to_string()),
+            },
+        )
+        .await
+        .expect_err("stale managed pid should fail");
+
+        assert!(err.to_string().contains("process is no longer running"));
+        assert!(!server.processes.lock().await.contains_key(&process_id));
         Ok(())
     }
 }
