@@ -536,8 +536,8 @@ async fn handle_thread_config_explain(
     let role_catalog = omne_core::roles::RoleCatalog::builtin();
 
     let default_model = "gpt-4.1".to_string();
-    let default_openai_provider = crate::project_config::DEFAULT_OPENAI_PROVIDER.to_string();
-    let default_openai_base_url = crate::project_config::DEFAULT_OPENAI_BASE_URL.to_string();
+    let default_openai_provider = crate::project_config::default_openai_provider_name().to_string();
+    let default_openai_base_url = crate::project_config::default_openai_base_url().to_string();
     let default_mode = "code".to_string();
     let default_role = "coder".to_string();
     let default_thinking = thinking_label(ditto_core::config::ThinkingIntensity::default()).to_string();

@@ -103,7 +103,11 @@ pub(super) fn filter_and_paginate_thread_events(
         }
     }
 
-    let last_seq = events.last().map(|e| e.seq.0).unwrap_or(since.0);
+    let last_seq = if has_more {
+        events.last().map(|e| e.seq.0).unwrap_or(since.0)
+    } else {
+        thread_last_seq
+    };
     ThreadEventBatch {
         events,
         last_seq,
@@ -614,6 +618,93 @@ async fn handle_thread_subscribe_request(
         Err(response) => return *response,
     };
     jsonrpc_ok_or_internal(id, handle_thread_subscribe(server, params).await)
+}
+
+#[cfg(test)]
+mod thread_event_batch_tests {
+    use super::*;
+    use time::OffsetDateTime;
+
+    fn test_event(seq: u64, kind: omne_protocol::ThreadEventKind) -> omne_protocol::ThreadEvent {
+        omne_protocol::ThreadEvent {
+            seq: EventSeq(seq),
+            timestamp: OffsetDateTime::UNIX_EPOCH,
+            thread_id: ThreadId::new(),
+            kind,
+        }
+    }
+
+    #[test]
+    fn filtered_batch_advances_last_seq_to_raw_stream_end_when_not_paginated() {
+        let batch = filter_and_paginate_thread_events(
+            vec![
+                test_event(
+                    1,
+                    omne_protocol::ThreadEventKind::ThreadPaused { reason: None },
+                ),
+                test_event(
+                    2,
+                    omne_protocol::ThreadEventKind::ThreadUnpaused { reason: None },
+                ),
+            ],
+            EventSeq(0),
+            Some(&[omne_protocol::ThreadEventKindTag::ThreadPaused]),
+            None,
+        );
+
+        assert_eq!(batch.events.len(), 1);
+        assert_eq!(batch.events[0].seq.0, 1);
+        assert_eq!(batch.last_seq, 2);
+        assert_eq!(batch.thread_last_seq, 2);
+        assert!(!batch.has_more);
+    }
+
+    #[test]
+    fn filtered_batch_without_matches_still_advances_cursor() {
+        let batch = filter_and_paginate_thread_events(
+            vec![test_event(
+                3,
+                omne_protocol::ThreadEventKind::ThreadUnpaused { reason: None },
+            )],
+            EventSeq(2),
+            Some(&[omne_protocol::ThreadEventKindTag::ThreadPaused]),
+            None,
+        );
+
+        assert!(batch.events.is_empty());
+        assert_eq!(batch.last_seq, 3);
+        assert_eq!(batch.thread_last_seq, 3);
+        assert!(!batch.has_more);
+    }
+
+    #[test]
+    fn paginated_batch_keeps_last_seq_at_last_returned_event() {
+        let batch = filter_and_paginate_thread_events(
+            vec![
+                test_event(
+                    4,
+                    omne_protocol::ThreadEventKind::ThreadPaused { reason: None },
+                ),
+                test_event(
+                    5,
+                    omne_protocol::ThreadEventKind::ThreadUnpaused { reason: None },
+                ),
+                test_event(
+                    6,
+                    omne_protocol::ThreadEventKind::ThreadPaused { reason: None },
+                ),
+            ],
+            EventSeq(3),
+            Some(&[omne_protocol::ThreadEventKindTag::ThreadPaused]),
+            Some(1),
+        );
+
+        assert_eq!(batch.events.len(), 1);
+        assert_eq!(batch.events[0].seq.0, 4);
+        assert_eq!(batch.last_seq, 4);
+        assert_eq!(batch.thread_last_seq, 6);
+        assert!(batch.has_more);
+    }
 }
 
 #[cfg(test)]
