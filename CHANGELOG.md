@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Fixed
+- `omne-core`：`Orchestrator::run()` 现在会在执行 hook 前先写出临时 `result.json` 供 hook 读取，但只有 hook 成功后才会持久化最终 `sessions/<id>/result`；如果 hook 失败则会清理临时 result 文件，避免 hook 既拿不到输入快照、又把失败 run 留成“成功完成”的最终状态。
 - `omne-app-server`：`turn/started` 现在会先安装 `active_turn` 再发通知，消除多连接 daemon 模式下“事件已启动但并发 interrupt 仍报 no active turn”的竞态窗口，并补齐顺序回归测试。
 - `omne-process-runtime` / `omne-app-server`：扩展 `sandbox_network_access=deny` 的 best-effort argv 检测，覆盖 `npm install`、`pip install`、`cargo install`、`go get` 等常见包管理器/工具链入口及其 `process/start`/`execve gate` 回归测试，减少通过 generic launcher 绕过网络 deny 的空间。
 - `omne-process-runtime`：收敛 `command_uses_network` 辅助函数的 needless lifetime / `match_like_matches_macro` 形式，恢复 `cargo clippy --workspace --all-targets --all-features -- -D warnings` 在当前主线上的通过性。

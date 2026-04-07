@@ -342,17 +342,9 @@ impl Orchestrator {
             merge,
         };
 
-        self.write_result_artifacts(session_paths.as_ref(), &result)
-            .await?;
-
-        self.storage
-            .put_json(
-                &format!("sessions/{}/result", result.session.id),
-                &serde_json::to_value(&result)?,
-            )
-            .await?;
-
         if let Some(hook) = &request.hook {
+            self.write_result_artifacts(session_paths.as_ref(), &result)
+                .await?;
             self.events.emit(RunEvent::HookStarted);
             match self
                 .run_hook(omne_paths, session_paths.as_ref(), &result, hook)
@@ -362,12 +354,23 @@ impl Orchestrator {
                     self.events.emit(RunEvent::HookFinished { ok: true });
                 }
                 Err(err) => {
+                    self.remove_result_artifacts(session_paths.as_ref()).await;
                     self.events.emit(RunEvent::HookFinished { ok: false });
                     return Err(err)
                         .with_context(|| format!("hook failed for session {}", result.session.id));
                 }
             }
         }
+
+        self.write_result_artifacts(session_paths.as_ref(), &result)
+            .await?;
+
+        self.storage
+            .put_json(
+                &format!("sessions/{}/result", result.session.id),
+                &serde_json::to_value(&result)?,
+            )
+            .await?;
 
         Ok(result)
     }
@@ -678,6 +681,15 @@ impl Orchestrator {
         let result_json = serde_json::to_vec_pretty(result)?;
         tokio::fs::write(session_paths.root().join("result.json"), &result_json).await?;
         Ok(())
+    }
+
+    async fn remove_result_artifacts(&self, session_paths: &SessionPaths) {
+        let path = session_paths.root().join("result.json");
+        if let Err(err) = tokio::fs::remove_file(&path).await
+            && err.kind() != std::io::ErrorKind::NotFound
+        {
+            warn!(path = %path.display(), error = %err, "failed to remove result artifact after hook failure");
+        }
     }
 }
 
