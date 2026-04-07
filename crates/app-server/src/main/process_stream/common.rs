@@ -703,18 +703,22 @@ where
     }
 }
 
-async fn evaluate_thread_process_exec_governance<F, G>(
-    thread_store: &ThreadStore,
-    exec_policy: &omne_execpolicy::Policy,
-    thread_rt: &Arc<ThreadRuntime>,
-    thread_root: &Path,
-    snapshot: &ThreadProcessExecSnapshot,
+struct ThreadProcessExecGovernanceContext<'a> {
+    thread_store: &'a ThreadStore,
+    exec_policy: &'a omne_execpolicy::Policy,
+    thread_rt: &'a Arc<ThreadRuntime>,
+    thread_root: &'a Path,
+    snapshot: &'a ThreadProcessExecSnapshot,
     thread_id: ThreadId,
     turn_id: Option<TurnId>,
     approval_id: Option<omne_protocol::ApprovalId>,
-    cwd: &Path,
+    cwd: &'a Path,
     action: &'static str,
-    argv: &[String],
+    argv: &'a [String],
+}
+
+async fn evaluate_thread_process_exec_governance<F, G>(
+    ctx: &ThreadProcessExecGovernanceContext<'_>,
     base_decision_for_mode: F,
     approval_params_for_requirement: G,
 ) -> anyhow::Result<ProcessExecGovernance>
@@ -724,23 +728,23 @@ where
 {
     evaluate_process_exec_governance(
         &ProcessExecGovernanceContext {
-            cwd,
-            sandbox_policy: snapshot.sandbox_policy,
-            sandbox_network_access: snapshot.sandbox_network_access,
+            cwd: ctx.cwd,
+            sandbox_policy: ctx.snapshot.sandbox_policy,
+            sandbox_network_access: ctx.snapshot.sandbox_network_access,
             authorization: ProcessExecAuthorizationContext {
-                thread_root,
-                thread_store,
-                thread_rt,
-                thread_id,
-                turn_id,
-                approval_id,
-                approval_policy: snapshot.approval_policy,
-                mode_name: &snapshot.mode_name,
-                role_name: &snapshot.role_name,
-                action,
-                exec_policy,
-                thread_execpolicy_rules: &snapshot.thread_execpolicy_rules,
-                argv,
+                thread_root: ctx.thread_root,
+                thread_store: ctx.thread_store,
+                thread_rt: ctx.thread_rt,
+                thread_id: ctx.thread_id,
+                turn_id: ctx.turn_id,
+                approval_id: ctx.approval_id,
+                approval_policy: ctx.snapshot.approval_policy,
+                mode_name: &ctx.snapshot.mode_name,
+                role_name: &ctx.snapshot.role_name,
+                action: ctx.action,
+                exec_policy: ctx.exec_policy,
+                thread_execpolicy_rules: &ctx.snapshot.thread_execpolicy_rules,
+                argv: ctx.argv,
                 unmatched_command_policy: default_unmatched_command_policy(),
             },
         },
