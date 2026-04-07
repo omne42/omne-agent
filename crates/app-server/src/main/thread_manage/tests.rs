@@ -4745,4 +4745,135 @@ base_url = "https://project.example/v1"
         assert!(!server.processes.lock().await.contains_key(&process_id));
         Ok(())
     }
+
+    #[cfg(unix)]
+    async fn wait_for_pid_file(path: &std::path::Path) -> anyhow::Result<u32> {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Ok(raw) = tokio::fs::read_to_string(path).await
+                && let Ok(pid) = raw.trim().parse::<u32>()
+            {
+                return Ok(pid);
+            }
+            if tokio::time::Instant::now() >= deadline {
+                anyhow::bail!("timed out waiting for pid file: {}", path.display());
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    }
+
+    #[cfg(unix)]
+    async fn wait_for_process_exit(pid: u32) -> anyhow::Result<()> {
+        fn os_process_exists(pid: u32) -> bool {
+            use nix::errno::Errno;
+            use nix::sys::signal::kill;
+            use nix::unistd::Pid;
+
+            match kill(Pid::from_raw(pid as i32), None) {
+                Ok(()) => true,
+                Err(Errno::EPERM) => true,
+                Err(Errno::ESRCH) => false,
+                Err(_) => false,
+            }
+        }
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            if !os_process_exists(pid) {
+                return Ok(());
+            }
+            if tokio::time::Instant::now() >= deadline {
+                anyhow::bail!("timed out waiting for pid {pid} to exit");
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn thread_delete_force_kills_background_children() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+        let thread_rt = server.get_or_load_thread(thread_id).await?;
+
+        let pid_file = repo_dir.join("background.pid");
+        let script = format!("sleep 30 & echo $! > '{}'; wait", pid_file.display());
+        let mut cmd = Command::new("sh");
+        cmd.arg("-c").arg(script);
+        cmd.stdin(Stdio::null());
+        cmd.stdout(Stdio::null());
+        cmd.stderr(Stdio::null());
+        omne_process_primitives::configure_command_for_process_tree(&mut cmd);
+        let child = cmd.spawn().context("spawn background shell")?;
+        let process_tree_cleanup = Some(omne_process_primitives::ProcessTreeCleanup::new(&child)?);
+
+        let process_id = ProcessId::new();
+        let started_at = time::OffsetDateTime::now_utc().format(&Rfc3339)?;
+        let info = Arc::new(tokio::sync::Mutex::new(ProcessInfo {
+            process_id,
+            thread_id,
+            turn_id: None,
+            os_pid: child.id(),
+            argv: vec!["sh".to_string(), "-c".to_string(), "sleep 30 & wait".to_string()],
+            cwd: repo_dir.display().to_string(),
+            started_at: started_at.clone(),
+            status: ProcessStatus::Running,
+            exit_code: None,
+            stdout_path: String::new(),
+            stderr_path: String::new(),
+            last_update_at: started_at,
+        }));
+        let (cmd_tx, cmd_rx) = mpsc::channel(1);
+        let completion = ProcessCompletion::new();
+        server.processes.lock().await.insert(
+            process_id,
+            ProcessEntry {
+                thread_id,
+                info: info.clone(),
+                cmd_tx: cmd_tx.clone(),
+                completion: completion.clone(),
+            },
+        );
+
+        let actor = tokio::spawn(run_process_actor(ProcessActorArgs {
+            server: (*server).clone(),
+            thread_rt: thread_rt.clone(),
+            process_id,
+            child,
+            process_tree_cleanup,
+            cmd_rx,
+            stdout_task: None,
+            stderr_task: None,
+            execve_gate: None,
+            info,
+            completion: completion.clone(),
+        }));
+
+        let background_pid = wait_for_pid_file(&pid_file).await?;
+        let thread_dir = server.thread_store.thread_dir(thread_id);
+        let result = handle_thread_delete(
+            &server,
+            ThreadDeleteParams {
+                thread_id,
+                force: true,
+            },
+        )
+        .await?;
+
+        tokio::time::timeout(Duration::from_secs(5), actor)
+            .await
+            .context("wait for actor to finish after thread/delete")??;
+        wait_for_process_exit(background_pid).await?;
+
+        assert!(result.deleted);
+        assert!(!thread_dir.exists());
+        assert!(!server.processes.lock().await.contains_key(&process_id));
+        Ok(())
+    }
 }
