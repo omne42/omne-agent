@@ -1145,6 +1145,7 @@ dependencies = [
 name = "http-kit"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "reqwest",
  "serde",
  "serde_json",
@@ -1944,7 +1945,6 @@ dependencies = [
  "omne-git-runtime",
  "omne-integrity-primitives",
  "omne-notify-env",
- "omne-process-primitives 0.1.0",
  "omne-process-runtime",
  "omne-protocol",
  "omne-repo-scan-runtime",
@@ -2185,21 +2185,9 @@ dependencies = [
 [[package]]
 name = "omne-process-primitives"
 version = "0.1.0"
-dependencies = [
- "omne-system-package-primitives 0.1.0",
- "rustix 1.1.4",
- "sysinfo",
- "tempfile",
- "tokio",
- "win32job",
-]
-
-[[package]]
-name = "omne-process-primitives"
-version = "0.1.0"
 source = "git+https://github.com/omne42/omne-runtime.git?rev=9c69b43d8b51a4fbc3e87450fb74fb67c0e62532#9c69b43d8b51a4fbc3e87450fb74fb67c0e62532"
 dependencies = [
- "omne-system-package-primitives 0.1.0 (git+https://github.com/omne42/omne-runtime.git?rev=9c69b43d8b51a4fbc3e87450fb74fb67c0e62532)",
+ "omne-system-package-primitives",
  "rustix 1.1.4",
  "same-file",
  "sysinfo",
@@ -2253,10 +2241,6 @@ dependencies = [
  "tree-sitter-rust",
  "walkdir",
 ]
-
-[[package]]
-name = "omne-system-package-primitives"
-version = "0.1.0"
 
 [[package]]
 name = "omne-system-package-primitives"
@@ -2916,7 +2900,7 @@ version = "0.1.0"
 dependencies = [
  "error-kit",
  "omne-fs-primitives 0.1.0 (git+https://github.com/omne42/omne-runtime.git?rev=9c69b43d8b51a4fbc3e87450fb74fb67c0e62532)",
- "omne-process-primitives 0.1.0 (git+https://github.com/omne42/omne-runtime.git?rev=9c69b43d8b51a4fbc3e87450fb74fb67c0e62532)",
+ "omne-process-primitives",
  "serde_json",
  "structured-text-kit",
  "tokio",
