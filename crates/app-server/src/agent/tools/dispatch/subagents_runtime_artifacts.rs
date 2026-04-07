@@ -317,27 +317,6 @@ fn should_walk_isolated_workspace_entry(
     !is_isolated_runtime_rel_path(rel)
 }
 
-#[cfg(unix)]
-fn create_isolated_symlink(
-    target: &std::path::Path,
-    destination: &std::path::Path,
-) -> std::io::Result<()> {
-    std::os::unix::fs::symlink(target, destination)
-}
-
-#[cfg(windows)]
-fn create_isolated_symlink(
-    target: &std::path::Path,
-    destination: &std::path::Path,
-) -> std::io::Result<()> {
-    let metadata = std::fs::metadata(target);
-    if metadata.as_ref().is_ok_and(|meta| meta.is_dir()) {
-        std::os::windows::fs::symlink_dir(target, destination)
-    } else {
-        std::os::windows::fs::symlink_file(target, destination)
-    }
-}
-
 async fn prepare_isolated_workspace(
     server: &super::Server,
     parent_thread_id: ThreadId,
@@ -493,15 +472,8 @@ async fn copy_workspace_into_isolated_root(
                 continue;
             }
             if entry.file_type().is_symlink() {
-                if let Some(parent) = destination.parent() {
-                    std::fs::create_dir_all(parent)
-                        .with_context(|| format!("create {}", parent.display()))?;
-                }
-                let target = std::fs::read_link(entry.path())
-                    .with_context(|| format!("read symlink {}", entry.path().display()))?;
-                create_isolated_symlink(&target, &destination).with_context(|| {
-                    format!("symlink {} -> {}", destination.display(), target.display())
-                })?;
+                // Copy-backend isolation must not preserve symlinks because they can point outside
+                // the isolated root and silently pierce the boundary.
                 continue;
             }
             if !entry.file_type().is_file() {
@@ -1110,4 +1082,62 @@ async fn try_write_isolated_workspace_patch_artifact(
         "truncated": patch.1,
         "read_cmd": format!("omne artifact read {} {}", thread_id, artifact_id),
     }))
+}
+
+#[cfg(test)]
+mod subagents_runtime_artifacts_tests {
+    use super::*;
+
+    struct TestDir(std::path::PathBuf);
+
+    impl TestDir {
+        fn new() -> anyhow::Result<Self> {
+            let path = std::env::temp_dir().join(format!(
+                "omne-isolated-copy-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)?
+                    .as_nanos()
+            ));
+            std::fs::create_dir_all(&path)
+                .with_context(|| format!("create {}", path.display()))?;
+            Ok(Self(path))
+        }
+
+        fn path(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn copy_backend_skips_symlinks_that_point_outside_workspace() -> anyhow::Result<()> {
+        let source_root = TestDir::new()?;
+        let isolated_root = TestDir::new()?;
+        let outside = TestDir::new()?;
+
+        std::fs::write(source_root.path().join("keep.txt"), "keep")?;
+        let outside_target = outside.path().join("secret.txt");
+        std::fs::write(&outside_target, "secret")?;
+        std::os::unix::fs::symlink(&outside_target, source_root.path().join("escape.txt"))?;
+
+        copy_workspace_into_isolated_root(source_root.path(), isolated_root.path(), 1024, 4096)
+            .await?;
+
+        assert_eq!(
+            std::fs::read_to_string(isolated_root.path().join("keep.txt"))?,
+            "keep"
+        );
+        assert!(
+            !isolated_root.path().join("escape.txt").exists(),
+            "copy backend should skip symlinks instead of preserving them"
+        );
+        Ok(())
+    }
 }
