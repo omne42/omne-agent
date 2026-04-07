@@ -94,6 +94,24 @@ async fn handle_process_start_inner(
     params: ProcessStartParams,
     extra_env: Option<&std::collections::BTreeMap<String, String>>,
 ) -> anyhow::Result<Value> {
+    async fn capture_process_tree_cleanup(
+        child: &mut tokio::process::Child,
+        execve_gate: &mut Option<ExecveGateHandle>,
+        argv: &[String],
+    ) -> anyhow::Result<omne_process_primitives::ProcessTreeCleanup> {
+        match omne_process_primitives::ProcessTreeCleanup::new(child) {
+            Ok(cleanup) => Ok(cleanup),
+            Err(err) => {
+                if let Some(gate) = execve_gate.take() {
+                    shutdown_execve_gate(gate).await;
+                }
+                let _ = child.start_kill();
+                let _ = child.wait().await;
+                Err(err).with_context(|| format!("capture process tree cleanup for {:?}", argv))
+            }
+        }
+    }
+
     if params.argv.is_empty() {
         anyhow::bail!("argv must not be empty");
     }
@@ -376,7 +394,6 @@ async fn handle_process_start_inner(
     cmd.stdin(Stdio::null());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
-    cmd.kill_on_drop(true);
     let combined_env_opt = (!combined_env.is_empty()).then_some(&combined_env);
     if let Some(env) = combined_env_opt {
         cmd.envs(env.iter());
@@ -408,6 +425,7 @@ async fn handle_process_start_inner(
     if let Some(prepared_cwd) = cmd.as_std().get_current_dir() {
         cwd_str = prepared_cwd.display().to_string();
     }
+    omne_process_primitives::configure_command_for_process_tree(&mut cmd);
     let effective_env_summary = apply_child_process_hardening(&mut cmd, combined_env_opt)
         .context("apply child process hardening")?;
     let mut child = match cmd.spawn() {
@@ -419,6 +437,8 @@ async fn handle_process_start_inner(
             return Err(err).with_context(|| format!("spawn {:?}", params.argv));
         }
     };
+    let process_tree_cleanup =
+        capture_process_tree_cleanup(&mut child, &mut execve_gate, &params.argv).await?;
 
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
@@ -491,6 +511,7 @@ async fn handle_process_start_inner(
         thread_rt,
         process_id,
         child,
+        process_tree_cleanup: Some(process_tree_cleanup),
         cmd_rx,
         stdout_task,
         stderr_task,

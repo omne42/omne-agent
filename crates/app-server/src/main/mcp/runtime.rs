@@ -175,6 +175,23 @@ async fn spawn_mcp_connection(
     server_name: &str,
     server_cfg: &McpServerConfig,
 ) -> anyhow::Result<McpConnection> {
+    async fn capture_process_tree_cleanup(
+        child: &mut tokio::process::Child,
+        argv: &[String],
+        server_name: &str,
+    ) -> anyhow::Result<omne_process_primitives::ProcessTreeCleanup> {
+        match omne_process_primitives::ProcessTreeCleanup::new(child) {
+            Ok(cleanup) => Ok(cleanup),
+            Err(err) => {
+                let _ = child.start_kill();
+                let _ = child.wait().await;
+                Err(err).with_context(|| {
+                    format!("capture process tree cleanup for mcp server {argv:?} ({server_name})")
+                })
+            }
+        }
+    }
+
     let config_fingerprint = mcp_server_config_fingerprint(server_cfg);
     if !matches!(server_cfg.transport(), McpTransport::Stdio) {
         anyhow::bail!("unsupported mcp transport (expected stdio)");
@@ -226,10 +243,10 @@ async fn spawn_mcp_connection(
         .into());
     }
     let combined_env_opt = (!env.is_empty()).then_some(env);
+    omne_process_primitives::configure_command_for_process_tree(&mut cmd);
     let _effective_env_summary = apply_child_process_hardening(&mut cmd, combined_env_opt)
         .context("apply child process hardening for mcp server")?;
     let max_bytes_per_part = process_log_max_bytes_per_part();
-    cmd.kill_on_drop(true);
 
     let stdout_log = omne_jsonrpc::StdoutLog {
         path: stdout_path.clone(),
@@ -250,6 +267,8 @@ async fn spawn_mcp_connection(
     let mut child = client
         .take_child()
         .ok_or_else(|| anyhow::anyhow!("mcp transport does not expose a child process"))?;
+    let process_tree_cleanup =
+        capture_process_tree_cleanup(&mut child, argv, server_name).await?;
     let stderr = child
         .stderr
         .take()
@@ -305,6 +324,7 @@ async fn spawn_mcp_connection(
         thread_rt: thread_rt.clone(),
         process_id,
         child,
+        process_tree_cleanup: Some(process_tree_cleanup),
         cmd_rx,
         stdout_task: None,
         stderr_task: Some(stderr_task),
