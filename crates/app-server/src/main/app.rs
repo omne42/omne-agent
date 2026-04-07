@@ -303,21 +303,40 @@ fn extract_thread_id(params: &serde_json::Value) -> Option<&str> {
 }
 
 #[cfg(unix)]
+async fn remove_stale_unix_socket_if_safe(listen_path: &Path) -> anyhow::Result<()> {
+    use std::os::unix::fs::FileTypeExt;
+    use tokio::net::UnixStream;
+
+    let metadata = tokio::fs::symlink_metadata(listen_path)
+        .await
+        .with_context(|| format!("stat unix socket path {}", listen_path.display()))?;
+    if !metadata.file_type().is_socket() {
+        anyhow::bail!(
+            "listen path exists and is not a unix socket: {}",
+            listen_path.display()
+        );
+    }
+
+    if UnixStream::connect(listen_path).await.is_ok() {
+        anyhow::bail!("daemon already running: {}", listen_path.display());
+    }
+
+    tokio::fs::remove_file(listen_path)
+        .await
+        .with_context(|| format!("remove stale unix socket {}", listen_path.display()))
+}
+
+#[cfg(unix)]
 async fn serve_unix_socket(server: Arc<Server>, listen_path: PathBuf) -> anyhow::Result<()> {
     use std::os::unix::fs::PermissionsExt;
-    use tokio::net::{UnixListener, UnixStream};
+    use tokio::net::UnixListener;
 
     if let Some(parent) = listen_path.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
 
     if tokio::fs::try_exists(&listen_path).await? {
-        if UnixStream::connect(&listen_path).await.is_ok() {
-            anyhow::bail!("daemon already running: {}", listen_path.display());
-        }
-        tokio::fs::remove_file(&listen_path)
-            .await
-            .with_context(|| format!("remove stale unix socket {}", listen_path.display()))?;
+        remove_stale_unix_socket_if_safe(&listen_path).await?;
     }
 
     let listener = UnixListener::bind(&listen_path)?;
@@ -394,6 +413,84 @@ async fn write_lines_to_socket(
         if writer.flush().await.is_err() {
             break;
         }
+    }
+}
+
+#[cfg(test)]
+mod app_tests {
+    use super::*;
+
+    async fn run_request_loop_for_test(
+        server: Arc<Server>,
+        input: &str,
+    ) -> anyhow::Result<Vec<serde_json::Value>> {
+        let (mut writer, reader) = tokio::io::duplex(1024);
+        writer.write_all(input.as_bytes()).await?;
+        drop(writer);
+
+        let (out_tx, mut out_rx) = mpsc::channel::<String>(8);
+        run_request_loop(
+            server,
+            reader,
+            out_tx,
+            #[cfg(unix)]
+            None,
+        )
+        .await?;
+
+        let mut responses = Vec::new();
+        while let Some(line) = out_rx.recv().await {
+            responses.push(serde_json::from_str(&line)?);
+        }
+        Ok(responses)
+    }
+
+    #[tokio::test]
+    async fn run_request_loop_invalid_json_returns_parse_error_response() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let responses = run_request_loop_for_test(server, "{invalid json}\n").await?;
+
+        assert_eq!(responses.len(), 1);
+        assert_eq!(responses[0]["id"], serde_json::Value::Null);
+        assert_eq!(
+            responses[0]["error"]["code"].as_i64(),
+            Some(JSONRPC_PARSE_ERROR as i64)
+        );
+        assert_eq!(responses[0]["error"]["message"].as_str(), Some("parse error"));
+        assert!(responses[0]["error"]["data"]["error"]
+            .as_str()
+            .is_some_and(|error| !error.is_empty()));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn remove_stale_unix_socket_rejects_non_socket_path() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let listen_path = tmp.path().join("daemon.sock");
+        tokio::fs::write(&listen_path, "not a socket").await?;
+
+        let err = remove_stale_unix_socket_if_safe(&listen_path)
+            .await
+            .expect_err("non-socket path should be rejected");
+        let message = err.to_string();
+        assert!(message.contains("is not a unix socket"));
+        assert!(tokio::fs::try_exists(&listen_path).await?);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn remove_stale_unix_socket_removes_socket_file() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let listen_path = tmp.path().join("daemon.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&listen_path)?;
+        drop(listener);
+
+        remove_stale_unix_socket_if_safe(&listen_path).await?;
+        assert!(!tokio::fs::try_exists(&listen_path).await?);
+        Ok(())
     }
 }
 

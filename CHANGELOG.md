@@ -16,6 +16,7 @@
 - `omne-core`：`Orchestrator::run()` 现在会在执行 hook 前先写出临时 `result.json` 供 hook 读取，但只有 hook 成功后才会持久化最终 `sessions/<id>/result`；如果 hook 失败则会清理临时 result 文件，避免 hook 既拿不到输入快照、又把失败 run 留成“成功完成”的最终状态。
 - `omne-app-server`：`process/list` / `process/inspect` 现在会先对 `argv` 做 redaction 再返回给外部调用方，并补齐回归测试，避免运行态进程信息把 token/password/cookie 类命令参数直接暴露出去。
 - `omne-app-server`：`turn/started` 现在会先安装 `active_turn` 再发通知，消除多连接 daemon 模式下“事件已启动但并发 interrupt 仍报 no active turn”的竞态窗口，并补齐顺序回归测试。
+- `omne-app-server`：unix socket daemon 启动前只会移除 stale socket 文件，不再把任何“连不上”的现有路径都当作可删 socket；同时为 JSON-RPC parse error 补齐回归测试，避免客户端在坏输入时挂等。
 - `omne-process-runtime` / `omne-app-server`：扩展 `sandbox_network_access=deny` 的 best-effort argv 检测，覆盖 `npm install`、`pip install`、`cargo install`、`go get` 等常见包管理器/工具链入口及其 `process/start`/`execve gate` 回归测试，减少通过 generic launcher 绕过网络 deny 的空间。
 - `omne-process-runtime`：收敛 `command_uses_network` 辅助函数的 needless lifetime / `match_like_matches_macro` 形式，恢复 `cargo clippy --workspace --all-targets --all-features -- -D warnings` 在当前主线上的通过性。
 - `omne-app-server`：补齐 `.env.local` / `.env.production` 在 `file/patch`、`file/edit`、`file/delete` 上的拒绝回归测试，防止 env-style secret 路径只在 `file/write` 有保护而其它写路径再次退化。
