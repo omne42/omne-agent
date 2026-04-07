@@ -718,6 +718,34 @@ mod provider_protocol_tests {
             provider_runtime_cache_key(&target_b, &env)
         );
     }
+
+    #[test]
+    fn provider_runtime_cache_key_changes_when_http_metadata_changes() {
+        let env = ditto_core::config::Env {
+            dotenv: std::collections::BTreeMap::from([(
+                "YUNWU_API_KEY".to_string(),
+                "shared-key".to_string(),
+            )]),
+        };
+
+        let mut target_a = sample_provider_route_target();
+        target_a.provider_config.http_headers =
+            std::collections::BTreeMap::from([("x-tenant".to_string(), "alpha".to_string())]);
+        target_a.provider_config.http_query_params =
+            std::collections::BTreeMap::from([("workspace".to_string(), "main".to_string())]);
+
+        let mut target_b = target_a.clone();
+        target_b.provider_config.http_headers =
+            std::collections::BTreeMap::from([("x-tenant".to_string(), "beta".to_string())]);
+
+        let mut target_c = target_a.clone();
+        target_c.provider_config.http_query_params =
+            std::collections::BTreeMap::from([("workspace".to_string(), "review".to_string())]);
+
+        let base_key = provider_runtime_cache_key(&target_a, &env);
+        assert_ne!(base_key, provider_runtime_cache_key(&target_b, &env));
+        assert_ne!(base_key, provider_runtime_cache_key(&target_c, &env));
+    }
 }
 
 #[cfg(test)]
