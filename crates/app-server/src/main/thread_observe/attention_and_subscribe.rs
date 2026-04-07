@@ -1,6 +1,45 @@
 use super::*;
 use omne_eventlog::ThreadState;
 
+#[derive(serde::Deserialize)]
+struct ThreadNotificationEnvelope {
+    method: String,
+    #[serde(default)]
+    params: Option<ThreadNotificationParams>,
+}
+
+#[derive(serde::Deserialize)]
+struct ThreadNotificationParams {
+    thread_id: Option<String>,
+}
+
+fn is_thread_event_notification_for(line: &str, thread_id: ThreadId) -> bool {
+    let Ok(notification) = serde_json::from_str::<ThreadNotificationEnvelope>(line) else {
+        return false;
+    };
+    if notification.method != "thread/event" {
+        return false;
+    }
+    notification
+        .params
+        .and_then(|params| params.thread_id)
+        .is_some_and(|value| value == thread_id.to_string())
+}
+
+async fn wait_for_thread_event_notification(
+    notify_rx: &mut tokio::sync::broadcast::Receiver<String>,
+    thread_id: ThreadId,
+) {
+    loop {
+        match notify_rx.recv().await {
+            Ok(line) if is_thread_event_notification_for(&line, thread_id) => return,
+            Ok(_) => continue,
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => return,
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+        }
+    }
+}
+
 pub(crate) async fn handle_thread_attention(
     server: &Server,
     params: ThreadAttentionParams,
@@ -3645,8 +3684,8 @@ pub(crate) async fn handle_thread_subscribe(
     }
 
     let wait_ms = params.wait_ms.unwrap_or(30_000).min(300_000);
-    let poll_interval = Duration::from_millis(200);
     let deadline = tokio::time::Instant::now() + Duration::from_millis(wait_ms);
+    let mut notify_rx = server.notify_tx.subscribe();
 
     let since = EventSeq(params.since_seq);
     let mut timed_out = false;
@@ -3673,6 +3712,72 @@ pub(crate) async fn handle_thread_subscribe(
             return Ok(build_thread_subscribe_response(batch, true));
         }
 
-        tokio::time::sleep(poll_interval).await;
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if tokio::time::timeout(
+            remaining,
+            wait_for_thread_event_notification(&mut notify_rx, params.thread_id),
+        )
+        .await
+        .is_err()
+        {
+            timed_out = true;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn thread_notification_line(method: &str, thread_id: ThreadId) -> String {
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": {
+                "thread_id": thread_id,
+            }
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn thread_event_notification_filter_matches_only_target_thread() {
+        let thread_id = ThreadId::new();
+        let other_thread_id = ThreadId::new();
+
+        assert!(is_thread_event_notification_for(
+            &thread_notification_line("thread/event", thread_id),
+            thread_id,
+        ));
+        assert!(!is_thread_event_notification_for(
+            &thread_notification_line("item/delta", thread_id),
+            thread_id,
+        ));
+        assert!(!is_thread_event_notification_for(
+            &thread_notification_line("thread/event", other_thread_id),
+            thread_id,
+        ));
+        assert!(!is_thread_event_notification_for("not-json", thread_id));
+    }
+
+    #[tokio::test]
+    async fn wait_for_thread_event_notification_ignores_unrelated_messages() -> anyhow::Result<()> {
+        let (tx, _) = tokio::sync::broadcast::channel::<String>(8);
+        let thread_id = ThreadId::new();
+        let other_thread_id = ThreadId::new();
+        let mut notify_rx = tx.subscribe();
+
+        let waiter = tokio::spawn(async move {
+            wait_for_thread_event_notification(&mut notify_rx, thread_id).await;
+        });
+
+        tx.send(thread_notification_line("item/delta", thread_id))?;
+        tx.send(thread_notification_line("thread/event", other_thread_id))?;
+        tokio::task::yield_now().await;
+        assert!(!waiter.is_finished());
+
+        tx.send(thread_notification_line("thread/event", thread_id))?;
+        tokio::time::timeout(Duration::from_secs(1), waiter).await??;
+        Ok(())
     }
 }
