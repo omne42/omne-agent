@@ -2386,6 +2386,69 @@ modes:
     }
 
     #[tokio::test]
+    async fn thread_subscribe_wakes_on_matching_notification_without_poll_delay()
+    -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let server = Arc::new(crate::build_test_server_shared(tmp.path().join(".omne_data")));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        let last_seq = handle.last_seq().0;
+        drop(handle);
+
+        let server_for_subscribe = server.clone();
+        let subscribe_task = tokio::spawn(async move {
+            let started = tokio::time::Instant::now();
+            let response = handle_thread_subscribe(
+                &server_for_subscribe,
+                ThreadSubscribeParams {
+                    thread_id,
+                    since_seq: last_seq,
+                    kinds: None,
+                    max_events: None,
+                    wait_ms: Some(1_000),
+                },
+            )
+            .await?;
+            Ok::<_, anyhow::Error>((started.elapsed(), response))
+        });
+
+        tokio::time::timeout(Duration::from_millis(100), async {
+            loop {
+                if server.notify_tx.receiver_count() > 0 {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .context("subscribe task did not register its notification receiver in time")?;
+        let rt = server.get_or_load_thread(thread_id).await?;
+        rt.append_event(omne_protocol::ThreadEventKind::ThreadPaused {
+            reason: Some("wake subscribe".to_string()),
+        })
+        .await?;
+
+        let (elapsed, response) = tokio::time::timeout(Duration::from_millis(150), subscribe_task)
+            .await
+            .context("timed out waiting for subscribe response")??;
+        assert!(!response.timed_out);
+        assert_eq!(response.events.len(), 1);
+        assert_eq!(
+            response.events[0].kind.tag(),
+            omne_protocol::ThreadEventKindTag::ThreadPaused
+        );
+        assert!(
+            elapsed < Duration::from_millis(150),
+            "subscribe should wake from thread notification without waiting for the old 200ms poll"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn thread_subscribe_kind_filter_includes_token_budget_markers() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");

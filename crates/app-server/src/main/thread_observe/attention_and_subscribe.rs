@@ -1,5 +1,7 @@
 use super::*;
 use omne_eventlog::ThreadState;
+use serde_json::Value;
+use tokio::sync::broadcast;
 
 pub(crate) async fn handle_thread_attention(
     server: &Server,
@@ -3645,8 +3647,8 @@ pub(crate) async fn handle_thread_subscribe(
     }
 
     let wait_ms = params.wait_ms.unwrap_or(30_000).min(300_000);
-    let poll_interval = Duration::from_millis(200);
     let deadline = tokio::time::Instant::now() + Duration::from_millis(wait_ms);
+    let mut notify_rx = (wait_ms > 0).then(|| server.notify_tx.subscribe());
 
     let since = EventSeq(params.since_seq);
     let mut timed_out = false;
@@ -3673,6 +3675,37 @@ pub(crate) async fn handle_thread_subscribe(
             return Ok(build_thread_subscribe_response(batch, true));
         }
 
-        tokio::time::sleep(poll_interval).await;
+        let Some(notify_rx) = notify_rx.as_mut() else {
+            return Ok(build_thread_subscribe_response(batch, true));
+        };
+        timed_out = !wait_for_matching_thread_notification(notify_rx, params.thread_id, deadline).await;
     }
+}
+
+async fn wait_for_matching_thread_notification(
+    notify_rx: &mut broadcast::Receiver<String>,
+    thread_id: ThreadId,
+    deadline: tokio::time::Instant,
+) -> bool {
+    loop {
+        match tokio::time::timeout_at(deadline, notify_rx.recv()).await {
+            Ok(Ok(line)) => {
+                if notification_targets_thread(&line, thread_id) {
+                    return true;
+                }
+            }
+            Ok(Err(broadcast::error::RecvError::Lagged(_))) => return true,
+            Ok(Err(broadcast::error::RecvError::Closed)) => return false,
+            Err(_) => return false,
+        }
+    }
+}
+
+fn notification_targets_thread(line: &str, thread_id: ThreadId) -> bool {
+    let expected = thread_id.to_string();
+    serde_json::from_str::<Value>(line)
+        .ok()
+        .and_then(|value| value.get("params").cloned())
+        .and_then(|params| params.get("thread_id").and_then(Value::as_str).map(str::to_string))
+        .is_some_and(|actual| actual == expected)
 }
