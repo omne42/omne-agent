@@ -455,7 +455,7 @@ mod app_tests {
         assert_eq!(responses[0]["id"], serde_json::Value::Null);
         assert_eq!(
             responses[0]["error"]["code"].as_i64(),
-            Some(JSONRPC_PARSE_ERROR as i64)
+            Some(JSONRPC_PARSE_ERROR)
         );
         assert_eq!(responses[0]["error"]["message"].as_str(), Some("parse error"));
         assert!(responses[0]["error"]["data"]["error"]
