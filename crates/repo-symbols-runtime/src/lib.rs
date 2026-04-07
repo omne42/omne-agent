@@ -100,7 +100,7 @@ pub fn collect_repo_symbols(req: RepoSymbolsRequest) -> anyhow::Result<RepoSymbo
         }
 
         let rel = entry.path().strip_prefix(&req.root).unwrap_or(entry.path());
-        if omne_fs_policy::is_secret_rel_path(rel) {
+        if omne_fs_policy::is_repo_tool_hidden_rel_path(rel) {
             continue;
         }
         if !include_matcher.is_match(rel) {
@@ -376,6 +376,32 @@ mod outer {
             out.symbols
                 .iter()
                 .any(|s| s.kind == "struct" && s.name == "foo::bar::Baz")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn collect_repo_symbols_skips_hidden_runtime_dirs() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let root = tmp.path().to_path_buf();
+        std::fs::create_dir_all(root.join("src"))?;
+        std::fs::create_dir_all(root.join(".omne_data"))?;
+        std::fs::write(root.join("src/lib.rs"), "pub fn visible() {}\n")?;
+        std::fs::write(root.join(".omne_data/hidden.rs"), "pub fn hidden() {}\n")?;
+
+        let out = collect_repo_symbols(RepoSymbolsRequest {
+            root,
+            include_glob: "**/*.rs".to_string(),
+            max_files: 100,
+            max_bytes_per_file: 1024 * 1024,
+            max_symbols: 100,
+        })?;
+
+        assert!(out.symbols.iter().any(|sym| sym.name == "visible"));
+        assert!(
+            !out.symbols
+                .iter()
+                .any(|sym| sym.path == ".omne_data/hidden.rs")
         );
         Ok(())
     }

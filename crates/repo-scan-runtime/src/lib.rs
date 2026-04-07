@@ -76,7 +76,7 @@ pub fn scan_repo_index(
         }
 
         let rel = entry.path().strip_prefix(&root).unwrap_or(entry.path());
-        if omne_fs_policy::is_secret_rel_path(rel) {
+        if omne_fs_policy::is_repo_tool_hidden_rel_path(rel) {
             continue;
         }
         if let Some(ref matcher) = include_matcher
@@ -142,7 +142,7 @@ pub fn search_repo(req: RepoGrepRequest) -> anyhow::Result<RepoGrepOutcome> {
         }
 
         let rel = entry.path().strip_prefix(&req.root).unwrap_or(entry.path());
-        if omne_fs_policy::is_secret_rel_path(rel) {
+        if omne_fs_policy::is_repo_tool_hidden_rel_path(rel) {
             continue;
         }
         if let Some(ref matcher) = include_matcher
@@ -255,6 +255,42 @@ mod tests {
         assert!(!out.matches.iter().any(|m| m.path == ".env.local"));
         assert!(!out.matches.iter().any(|m| m.path == ".env.production"));
         assert!(out.matches.iter().any(|m| m.path == ".env.example"));
+        Ok(())
+    }
+
+    #[test]
+    fn repo_tools_skip_omne_data_runtime_files() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let root = tmp.path().to_path_buf();
+        std::fs::create_dir_all(root.join(".omne_data"))?;
+        std::fs::write(root.join("visible.txt"), "needle\n")?;
+        std::fs::write(root.join(".omne_data").join("AGENTS.md"), "needle\n")?;
+
+        let index = scan_repo_index(root.clone(), None, 100)?;
+        assert!(index.paths.iter().any(|path| path == "visible.txt"));
+        assert!(
+            !index
+                .paths
+                .iter()
+                .any(|path| path == ".omne_data/AGENTS.md")
+        );
+
+        let grep = search_repo(RepoGrepRequest {
+            root,
+            query: "needle".to_string(),
+            is_regex: false,
+            include_glob: None,
+            max_matches: 10,
+            max_bytes_per_file: 1024 * 1024,
+            max_files: 100,
+        })?;
+        assert!(grep.matches.iter().any(|m| m.path == "visible.txt"));
+        assert!(
+            !grep
+                .matches
+                .iter()
+                .any(|m| m.path == ".omne_data/AGENTS.md")
+        );
         Ok(())
     }
 
