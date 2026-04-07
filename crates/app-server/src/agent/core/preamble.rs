@@ -24,8 +24,6 @@ use tokio_util::sync::CancellationToken;
 type OpenAiItem = Value;
 
 const DEFAULT_MODEL: &str = "gpt-4.1";
-const DEFAULT_OPENAI_PROVIDER: &str = crate::project_config::DEFAULT_OPENAI_PROVIDER;
-const DEFAULT_OPENAI_BASE_URL: &str = crate::project_config::DEFAULT_OPENAI_BASE_URL;
 const DEFAULT_MAX_AGENT_STEPS: usize = 24;
 const DEFAULT_MAX_TOOL_CALLS: usize = 128;
 const DEFAULT_MAX_PARALLEL_TOOL_CALLS: usize = 8;
@@ -888,7 +886,7 @@ fn default_base_url_for_upstream_api(upstream_api: ditto_core::config::ProviderA
         }
         ditto_core::config::ProviderApi::AnthropicMessages => "https://api.anthropic.com/v1",
         ditto_core::config::ProviderApi::OpenaiResponses | ditto_core::config::ProviderApi::OpenaiChatCompletions => {
-            DEFAULT_OPENAI_BASE_URL
+            crate::project_config::default_openai_base_url()
         }
     }
 }

@@ -93,7 +93,7 @@ async fn handle_thread_models(
                 .ok()
                 .filter(|s| !s.trim().is_empty())
         })
-        .unwrap_or_else(|| crate::project_config::DEFAULT_OPENAI_PROVIDER.to_string());
+        .unwrap_or_else(|| crate::project_config::default_openai_provider_name().to_string());
 
     let provider_overrides = project.providers.get(&provider);
     let provider_config =

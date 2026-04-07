@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Fixed
+- `omne-app-server`：`thread/events` / `thread/subscribe` 在使用 `kinds` 过滤且当前批次没有更多匹配事件时，现在会把 `last_seq` 推进到原始事件流的最新序号，避免客户端因过滤掉中间事件而反复重放同一批原始事件；同时把默认 provider/base_url 的 vendor-specific 选择收束回 `project_config` helper，并让默认 base_url 从 builtin runtime registry 派生，减少控制面散落的硬编码。
 - `omne-process-runtime`：补充 `git --config-env=... fetch`、`git -- push` 与 `git -Crepo ls-remote` 的网络命令回归测试，锁定全局选项与 `--` sentinel 后的 git 子命令识别语义，避免 `sandbox_network_access=deny` 的 best-effort 检测再次回退。
 - `omne-core`：把 structured error redaction 中对 `CatalogArgValueData::Unsupported` 的处理改回显式分支，继续保留当前脱敏语义，同时避免未来再新增 catalog 参数变体时被 `_` 静默吞掉。
 - `omne-app-server`：大型 `mcp_result` artifact 在写盘前现在会先对 JSON 结果做结构化脱敏，敏感 key（如 `token`/`authorization`/`api_key`）不再把原始值永久落盘，并补齐对应回归测试。

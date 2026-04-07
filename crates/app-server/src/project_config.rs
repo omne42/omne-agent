@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+use anyhow::Context;
 use config_kit::{
     ConfigDocument, ConfigFormat, ConfigFormatSet, ConfigLoadOptions, try_load_config_document,
 };
@@ -55,9 +56,10 @@ pub struct LoadedProjectConfig {
     pub ui: ProjectUiOverrides,
 }
 
-pub(crate) const DEFAULT_OPENAI_PROVIDER: &str = "openai-codex-apikey";
-pub(crate) const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
+const DEFAULT_OPENAI_PROVIDER_HINT: &str = "openai-codex-apikey";
+const FALLBACK_OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
 const OPENAI_RUNTIME_PROVIDER: &str = "openai";
+const RESERVED_PROJECT_CONFIG_NAMESPACES: &[&str] = &["project_config", "openai", "ui"];
 
 pub(crate) struct ProviderBaseUrlOverrideWarning {
     pub code: String,
@@ -70,14 +72,6 @@ struct ProjectConfigToml {
     project_config: ProjectConfigSection,
     #[serde(default)]
     openai: ProjectOpenAiSection,
-    #[serde(default)]
-    google: ProjectProviderNamespaceSection,
-    #[serde(default)]
-    gemini: ProjectProviderNamespaceSection,
-    #[serde(default)]
-    claude: ProjectProviderNamespaceSection,
-    #[serde(default)]
-    anthropic: ProjectProviderNamespaceSection,
     #[serde(default)]
     ui: ProjectUiSection,
 }
@@ -104,12 +98,6 @@ struct ProjectOpenAiSection {
     models: BTreeMap<String, ModelConfig>,
     #[serde(default)]
     routing: Option<ditto_core::config::ProviderRoutingConfig>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct ProjectProviderNamespaceSection {
-    #[serde(default)]
-    providers: BTreeMap<String, ProviderConfig>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -185,7 +173,7 @@ fn provider_auth_from_preset_hint(
                 .iter()
                 .map(|key| (*key).to_string())
                 .collect::<Vec<_>>();
-            if provider_name_hint == DEFAULT_OPENAI_PROVIDER
+            if provider_name_hint == default_openai_provider_name()
                 && !keys.iter().any(|key| key == "OMNE_OPENAI_API_KEY")
             {
                 keys.push("OMNE_OPENAI_API_KEY".to_string());
@@ -211,9 +199,22 @@ fn provider_auth_from_preset_hint(
 
 fn canonical_runtime_provider_hint(provider_name_hint: &str) -> &str {
     match provider_name_hint.trim() {
-        DEFAULT_OPENAI_PROVIDER => OPENAI_RUNTIME_PROVIDER,
+        DEFAULT_OPENAI_PROVIDER_HINT => OPENAI_RUNTIME_PROVIDER,
         other => other,
     }
+}
+
+pub(crate) fn default_openai_provider_name() -> &'static str {
+    DEFAULT_OPENAI_PROVIDER_HINT
+}
+
+pub(crate) fn default_openai_base_url() -> &'static str {
+    ditto_core::runtime_registry::builtin_runtime_registry_catalog()
+        .provider_preset(canonical_runtime_provider_hint(
+            default_openai_provider_name(),
+        ))
+        .and_then(|preset| preset.default_base_url)
+        .unwrap_or(FALLBACK_OPENAI_BASE_URL)
 }
 
 fn normalize_routing_provider_aliases(routing: &mut ditto_core::config::ProviderRoutingConfig) {
@@ -268,12 +269,12 @@ pub(crate) fn resolve_provider_config(
         .map(str::trim)
         .unwrap_or("")
         .is_empty()
-        && provider_name_hint == DEFAULT_OPENAI_PROVIDER
+        && provider_name_hint == default_openai_provider_name()
     {
-        config.base_url = Some(DEFAULT_OPENAI_BASE_URL.to_string());
+        config.base_url = Some(default_openai_base_url().to_string());
     }
 
-    if config.auth.is_none() && provider_name_hint == DEFAULT_OPENAI_PROVIDER {
+    if config.auth.is_none() && provider_name_hint == default_openai_provider_name() {
         config.auth = Some(ditto_core::config::ProviderAuth::HttpHeaderEnv {
             header: "authorization".to_string(),
             keys: vec![
@@ -366,6 +367,37 @@ fn merge_provider_namespace_aliases(
     }
 }
 
+fn provider_namespace_sections_from_contents(
+    contents: &str,
+) -> anyhow::Result<Vec<(String, BTreeMap<String, ProviderConfig>)>> {
+    let value: toml::Value = toml::from_str(contents)
+        .with_context(|| "parse project config TOML for provider namespaces")?;
+    let root = match value {
+        toml::Value::Table(root) => root,
+        _ => return Ok(Vec::new()),
+    };
+
+    let mut out = Vec::new();
+    for (namespace, section) in root {
+        if RESERVED_PROJECT_CONFIG_NAMESPACES.contains(&namespace.as_str()) {
+            continue;
+        }
+        let toml::Value::Table(section_table) = section else {
+            continue;
+        };
+        let Some(namespace_providers) = section_table.get("providers") else {
+            continue;
+        };
+        let providers: BTreeMap<String, ProviderConfig> =
+            namespace_providers.clone().try_into().map_err(|err| {
+                anyhow::anyhow!("parse provider namespace [{namespace}.providers]: {err}")
+            })?;
+        out.push((namespace.clone(), providers));
+    }
+
+    Ok(out)
+}
+
 fn insert_openai_provider_aliases(providers: &mut BTreeMap<String, ProviderConfig>) {
     let snapshot = providers
         .iter()
@@ -456,6 +488,8 @@ pub async fn load_project_config(thread_root: &Path) -> LoadedProjectConfig {
     let mut config_ui_show_thinking: Option<bool> = None;
 
     if let Some(document) = config_document {
+        let provider_namespace_sections =
+            provider_namespace_sections_from_contents(document.contents());
         match document
             .parse_as::<ProjectConfigToml>(ConfigFormatSet::TOML)
             .map_err(anyhow::Error::new)
@@ -469,26 +503,24 @@ pub async fn load_project_config(thread_root: &Path) -> LoadedProjectConfig {
                     clean_string_list(parsed.openai.fallback_providers);
                 config_openai_providers = parsed.openai.providers;
                 insert_openai_provider_aliases(&mut config_openai_providers);
-                merge_provider_namespace_aliases(
-                    &mut config_openai_providers,
-                    "google",
-                    parsed.google.providers,
-                );
-                merge_provider_namespace_aliases(
-                    &mut config_openai_providers,
-                    "gemini",
-                    parsed.gemini.providers,
-                );
-                merge_provider_namespace_aliases(
-                    &mut config_openai_providers,
-                    "claude",
-                    parsed.claude.providers,
-                );
-                merge_provider_namespace_aliases(
-                    &mut config_openai_providers,
-                    "anthropic",
-                    parsed.anthropic.providers,
-                );
+                match provider_namespace_sections {
+                    Ok(namespace_sections) => {
+                        for (namespace, providers) in namespace_sections {
+                            merge_provider_namespace_aliases(
+                                &mut config_openai_providers,
+                                &namespace,
+                                providers,
+                            );
+                        }
+                    }
+                    Err(err) => {
+                        let msg = err.to_string();
+                        load_error = Some(match load_error {
+                            Some(existing) => format!("{existing}; {msg}"),
+                            None => msg,
+                        });
+                    }
+                }
                 config_openai_models = parsed.openai.models;
                 config_openai_routing = parsed.openai.routing.map(|mut routing| {
                     normalize_routing_provider_aliases(&mut routing);
@@ -589,6 +621,11 @@ pub async fn load_project_openai_overrides(thread_root: &Path) -> ProjectOpenAiO
 mod tests {
     use super::*;
     use ditto_core::config::ThinkingIntensity;
+
+    #[test]
+    fn default_openai_base_url_tracks_builtin_registry() {
+        assert_eq!(default_openai_base_url(), "https://api.openai.com/v1");
+    }
 
     #[tokio::test]
     async fn loads_provider_reasoning_and_auth_command_from_config_toml() -> anyhow::Result<()> {
@@ -973,6 +1010,53 @@ keys = ["YUNWU_API_KEY"]
                 .contains_key("openai.providers.openai-auth-command")
         );
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn loads_custom_provider_namespace_without_hardcoded_vendor_list() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let root = tmp.path();
+        let omne_data = root.join(".omne_data");
+        tokio::fs::create_dir_all(&omne_data).await?;
+
+        tokio::fs::write(
+            omne_data.join("config.toml"),
+            r#"
+[project_config]
+enabled = true
+
+[openai]
+provider = "gateway.providers.edge"
+
+[gateway.providers.edge]
+base_url = "https://gateway.example/v1"
+normalize_to = "openai_chat_completions"
+"#,
+        )
+        .await?;
+
+        let loaded = load_project_config(root).await;
+        assert!(loaded.enabled);
+        assert_eq!(
+            loaded.openai.provider.as_deref(),
+            Some("gateway.providers.edge")
+        );
+        assert_eq!(
+            loaded
+                .openai
+                .providers
+                .get("gateway.providers.edge")
+                .and_then(|provider| provider.base_url.as_deref()),
+            Some("https://gateway.example/v1")
+        );
+        assert!(
+            loaded
+                .openai
+                .providers
+                .contains_key("gateway.provider.edge")
+        );
+        assert!(loaded.openai.providers.contains_key("gateway.edge"));
         Ok(())
     }
 

@@ -392,7 +392,7 @@ pub async fn run_agent_turn(
                 .ok()
                 .filter(|s| !s.trim().is_empty())
         })
-        .unwrap_or_else(|| DEFAULT_OPENAI_PROVIDER.to_string());
+        .unwrap_or_else(|| crate::project_config::default_openai_provider_name().to_string());
     let legacy_fallback_providers = std::env::var("OMNE_OPENAI_FALLBACK_PROVIDERS")
         .ok()
         .map(|value| parse_csv_list(&value))

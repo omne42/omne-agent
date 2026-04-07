@@ -57,6 +57,7 @@ Turn 的边界：
 - 客户端订阅使用 `since_seq`（从 `since_seq + 1` 推送/重放）。
 - `thread/events` 与 `thread/subscribe` 都支持可选 `kinds` 过滤（同一枚举与规范化规则）。
 - `max_events` 在 `kinds` 过滤之后生效；`has_more` 表示“按当前过滤条件”还有后续事件。
+- `last_seq` 默认按原始事件流推进：如果当前批次在应用 `kinds` 过滤后已经没有更多匹配事件，`last_seq` 会推进到线程原始流尾部，避免客户端因中间不匹配事件而反复重放同一批原始事件；只有在 `has_more=true` 时，`last_seq` 才保持为“最后一个已返回匹配事件”的 `seq`，用于继续分页当前过滤结果。
 - 服务端允许重复投递（at-least-once），客户端按 `seq` 去重即可。
 - 不引入 ack 作为正确性前提：不丢保证来自落盘 log。
 
@@ -64,7 +65,7 @@ Turn 的边界：
 
 - 已消费到 `attention_marker_cleared(marker=token_budget_warning, seq=K)` 后，下一次用 `since_seq=K` 继续。
 - 服务端只返回 `seq > K` 的事件，因此不会重复返回 `token_budget_warning` 的 set/clear；只会返回更晚的事件（例如 `token_budget_exceeded` 的 set/clear 与后续 `turn_completed`）。
-- `thread_last_seq` 表示该时刻线程尾部序号（用于客户端判断是否追平），`last_seq` 表示本次返回批次尾部序号。
+- `thread_last_seq` 表示该时刻线程尾部序号（用于客户端判断是否追平）；`last_seq` 表示下一次请求应继续使用的游标，因此在 filtered 读取里可能大于“最后一个已返回事件”的 `seq`。
 
 ---
 
