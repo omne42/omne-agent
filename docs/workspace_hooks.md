@@ -77,7 +77,7 @@ omne thread hook-run <thread_id> archive
 
 workspace hook 最终会走 `process/start`：
 
-- 仍受 `mode gate → sandbox → execpolicy → approval handling` 约束。
+- 仍受 `allowed_tools`、hard boundary / config validation，以及进入策略合并后的 `mode gate → execpolicy → approval handling` 约束。
 - 仍是非交互进程：hook 命令必须是非交互式（否则就会“卡住”，只能 `process/kill`）。
 
 ---

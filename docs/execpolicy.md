@@ -8,16 +8,17 @@
 
 ## 0) 范围与合并顺序（写死）
 
-执行判定链路顺序固定为：
+执行判定链路分成两段：
 
-`mode gate → sandbox → execpolicy → approval handling`
+- `allowed_tools` 与 hard boundary / config validation 可以先 fail-closed
+- 进入策略合并阶段后：`mode gate → execpolicy → approval handling`
 
 ExecPolicy 只负责 `process/start` 的**命令前缀规则**：
 
 - `forbidden`：硬拒绝（不走审批）
 - `prompt_strict`：需要审批，且**强制人工审批**（不能被 `auto_approve/unless_trusted` 自动放行；见 `docs/approvals.md`）
 - `prompt`：需要审批（由 `ApprovalPolicy` 决定人工/自动）
-- `allow`：ExecPolicy 不拦截（仍可能被 mode/sandbox 拦截或要求审批）
+- `allow`：ExecPolicy 不拦截（仍可能被 hard boundary / mode 拦截或要求审批）
 
 合并优先级：`forbidden > prompt_strict > prompt > allow`（取最大值）。
 

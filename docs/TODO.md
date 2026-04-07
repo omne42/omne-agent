@@ -19,7 +19,7 @@
 
 - Node **不实现** agent loop / tools / approvals / sandbox / execpolicy / eventlog（这些全部留在 Rust）。
 - TUI 是当前唯一 UI client：业务状态来自 `Thread/Turn/Item` 落盘与回放；UI state 必须可重建。
-- 任何副作用（写盘/跑命令/联网）必须通过 `omne-app-server` 的 JSON-RPC 工具接口触发，并接受 `mode gate → sandbox → execpolicy → approvals` 裁决。
+- 任何副作用（写盘/跑命令/联网）必须通过 `omne-app-server` 的 JSON-RPC 工具接口触发，并接受 `allowed_tools`、hard boundary / config validation，以及进入策略合并后的 `mode gate → execpolicy → approvals` 裁决。
 
 ### 待办项（建议拆分）
 

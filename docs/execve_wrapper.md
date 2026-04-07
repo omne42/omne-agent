@@ -35,7 +35,7 @@
 
 现状（启用前）：
 
-- `process/start` 只接收 `argv: Vec<String>`（不接受单字符串命令），并对顶层 argv 做 `mode → sandbox → execpolicy → approvals`。
+- `process/start` 只接收 `argv: Vec<String>`（不接受单字符串命令）。当前实现会先过 `allowed_tools` 与 hard boundary（如 sandbox/network/gateway fail-closed），再进入 `mode → execpolicy → approvals`。
 - 如果 argv 本身就是 `bash -lc ...`，那么 shell 内部实际跑了哪些子命令，v0.2.0/0.2.x **默认看不见**。
 
 现状（启用后）：

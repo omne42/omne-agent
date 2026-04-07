@@ -10,7 +10,7 @@
 
 ## 0) 核心原则（别做成后门）
 
-- hook **不能绕过** `mode gate → sandbox → execpolicy → approval`（见 `docs/modes.md`、`docs/approvals.md`）。
+- hook **不能绕过** `allowed_tools`、hard boundary / config validation，以及进入策略合并后的 `mode gate → execpolicy → approval`（见 `docs/modes.md`、`docs/approvals.md`）。
 - hook 默认只做两件事：
   1. 生成/更新 artifacts（可预览、可回放）
   2. 注入 `additional_context`（安全提醒/约束提示），并且必须可审计
