@@ -32,6 +32,7 @@ async fn handle_thread_fork(
     let mut skipped_active_turn_approvals =
         std::collections::HashSet::<omne_protocol::ApprovalId>::new();
     let mut copied_active_turn_started = false;
+    let preserve_system_prompt_snapshot = cwd == parent_root;
 
     for event in events {
         let kind = event.kind;
@@ -41,9 +42,12 @@ async fn handle_thread_fork(
             | omne_protocol::ThreadEventKind::ThreadUnarchived { .. }
             | omne_protocol::ThreadEventKind::ThreadPaused { .. }
             | omne_protocol::ThreadEventKind::ThreadUnpaused { .. } => {}
-            kind @ omne_protocol::ThreadEventKind::ThreadSystemPromptSnapshot { .. } => {
+            kind @ omne_protocol::ThreadEventKind::ThreadSystemPromptSnapshot { .. }
+                if preserve_system_prompt_snapshot =>
+            {
                 forked.append(kind).await?;
             }
+            omne_protocol::ThreadEventKind::ThreadSystemPromptSnapshot { .. } => {}
             kind @ omne_protocol::ThreadEventKind::ThreadConfigUpdated { .. } => {
                 forked
                     .append(rewrite_thread_config_for_fork(kind, &parent_root, &cwd))

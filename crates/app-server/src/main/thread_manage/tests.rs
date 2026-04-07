@@ -1449,6 +1449,64 @@ modes:
     }
 
     #[tokio::test]
+    async fn thread_fork_with_new_cwd_drops_system_prompt_snapshot() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let parent_repo = tmp.path().join("parent");
+        let child_repo = tmp.path().join("child");
+        tokio::fs::create_dir_all(&parent_repo).await?;
+        tokio::fs::create_dir_all(&child_repo).await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(parent_repo).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let rt = server.get_or_load_thread(thread_id).await?;
+        rt.append_event(omne_protocol::ThreadEventKind::ThreadSystemPromptSnapshot {
+            prompt_sha256: "snapshot-hash".to_string(),
+            prompt_text: "# frozen system prompt".to_string(),
+            source: Some("test".to_string()),
+        })
+        .await?;
+
+        let forked = handle_thread_fork(
+            &server,
+            ThreadForkParams {
+                thread_id,
+                cwd: Some(child_repo.display().to_string()),
+            },
+        )
+        .await?;
+        let forked_thread_id = forked.thread_id;
+
+        let forked_rt = server.get_or_load_thread(forked_thread_id).await?;
+        let (fork_hash, fork_text) = {
+            let handle = forked_rt.handle.lock().await;
+            let state = handle.state();
+            (
+                state.system_prompt_sha256.clone(),
+                state.system_prompt_text.clone(),
+            )
+        };
+        assert!(fork_hash.is_none());
+        assert!(fork_text.is_none());
+
+        let forked_events = server
+            .thread_store
+            .read_events_since(forked_thread_id, EventSeq::ZERO)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("forked thread not found: {forked_thread_id}"))?;
+        assert!(!forked_events.iter().any(|event| {
+            matches!(
+                event.kind,
+                omne_protocol::ThreadEventKind::ThreadSystemPromptSnapshot { .. }
+            )
+        }));
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn thread_fork_with_new_cwd_rebases_workspace_scoped_thread_config()
     -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
