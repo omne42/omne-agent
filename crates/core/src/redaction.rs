@@ -168,7 +168,7 @@ fn redact_catalog_arg_value(value: &mut CatalogArgValueData) {
         }
         CatalogArgValueData::Bool(_) => {}
         CatalogArgValueData::NestedText(message) => redact_structured_message(message),
-        _ => {}
+        CatalogArgValueData::Unsupported => {}
     }
 }
 
