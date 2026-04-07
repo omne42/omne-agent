@@ -33,6 +33,43 @@ mod thread_manage_tests {
         )
     }
 
+    fn running_process_entry_with_live_channel(
+        thread_id: ThreadId,
+    ) -> (
+        ProcessId,
+        Arc<tokio::sync::Mutex<ProcessInfo>>,
+        ProcessEntry,
+        mpsc::Receiver<ProcessCommand>,
+    ) {
+        let process_id = ProcessId::new();
+        let info = Arc::new(tokio::sync::Mutex::new(ProcessInfo {
+            process_id,
+            thread_id,
+            turn_id: None,
+            os_pid: None,
+            argv: vec!["sleep".to_string(), "1".to_string()],
+            cwd: ".".to_string(),
+            started_at: "2026-04-06T00:00:00Z".to_string(),
+            status: ProcessStatus::Running,
+            exit_code: None,
+            stdout_path: "stdout.log".to_string(),
+            stderr_path: "stderr.log".to_string(),
+            last_update_at: "2026-04-06T00:00:00Z".to_string(),
+        }));
+        let (cmd_tx, cmd_rx) = mpsc::channel(1);
+        (
+            process_id,
+            info.clone(),
+            ProcessEntry {
+                thread_id,
+                info,
+                cmd_tx,
+                completion: ProcessCompletion::new(),
+            },
+            cmd_rx,
+        )
+    }
+
     fn running_process_entry_with_closed_channel(
         thread_id: ThreadId,
     ) -> (ProcessId, Arc<tokio::sync::Mutex<ProcessInfo>>, ProcessEntry) {
@@ -4647,7 +4684,8 @@ base_url = "https://project.example/v1"
         let thread_id = handle.thread_id();
         drop(handle);
 
-        let (process_id, _info, entry) = running_process_entry(thread_id);
+        let (process_id, _info, entry, _cmd_rx) =
+            running_process_entry_with_live_channel(thread_id);
         let completion = entry.completion.clone();
         server.processes.lock().await.insert(process_id, entry);
 
@@ -4918,7 +4956,8 @@ base_url = "https://project.example/v1"
         let thread_id = handle.thread_id();
         drop(handle);
 
-        let (process_id, _info, entry) = running_process_entry(thread_id);
+        let (process_id, _info, entry, _cmd_rx) =
+            running_process_entry_with_live_channel(thread_id);
         let completion = entry.completion.clone();
         server.processes.lock().await.insert(process_id, entry);
 
