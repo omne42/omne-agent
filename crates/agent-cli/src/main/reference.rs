@@ -204,8 +204,7 @@ fn do_reference_repo_import(
             continue;
         }
 
-        let file_name = entry.file_name().to_string_lossy();
-        if file_name == ".env" || file_name.starts_with(".env.") {
+        if omne_fs_policy::is_secret_rel_path(rel) {
             removed.push(ReferenceRepoRemovedEntry {
                 path: rel.to_string_lossy().to_string(),
                 bytes: None,
@@ -272,4 +271,34 @@ fn do_reference_repo_import(
         .with_context(|| format!("write {}", manifest_path.display()))?;
 
     Ok(manifest)
+}
+
+#[cfg(test)]
+mod reference_tests {
+    use super::*;
+
+    #[test]
+    fn reference_import_skips_all_env_style_secret_variants() -> anyhow::Result<()> {
+        let omne_root = tempfile::tempdir()?;
+        let source = tempfile::tempdir()?;
+
+        std::fs::write(source.path().join(".env.local"), "SECRET=1\n")?;
+        std::fs::write(source.path().join(".env_prod"), "SECRET=1\n")?;
+        std::fs::write(source.path().join(".env-staging"), "SECRET=1\n")?;
+        std::fs::write(source.path().join(".env.example"), "SAFE=1\n")?;
+
+        let manifest = do_reference_repo_import(omne_root.path(), source.path(), true, 1024)?;
+        let removed = manifest
+            .removed
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(removed.contains(&".env.local"));
+        assert!(removed.contains(&".env_prod"));
+        assert!(removed.contains(&".env-staging"));
+        assert!(!removed.contains(&".env.example"));
+        assert!(omne_root.path().join("reference/repo/.env.example").exists());
+        Ok(())
+    }
 }

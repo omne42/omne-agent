@@ -2,7 +2,10 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
-use omne_eventlog::{EventLogWriter, ThreadState, read_events_since as read_events_since_jsonl};
+use omne_eventlog::{
+    EventLogWriter, ThreadState, read_events_since as read_events_since_jsonl,
+    read_state as read_state_jsonl,
+};
 use omne_protocol::{EventSeq, ProcessId, ThreadEvent, ThreadEventKind, ThreadId, ToolId};
 
 use crate::PmPaths;
@@ -182,15 +185,16 @@ impl ThreadStore {
     }
 
     pub async fn read_state(&self, thread_id: ThreadId) -> anyhow::Result<Option<ThreadState>> {
-        let Some(events) = self.read_events_since(thread_id, EventSeq::ZERO).await? else {
-            return Ok(None);
-        };
-
-        let mut state = ThreadState::new(thread_id);
-        for event in &events {
-            state.apply(event)?;
+        let dir = self.thread_dir(thread_id);
+        match tokio::fs::metadata(&dir).await {
+            Ok(meta) if meta.is_dir() => {}
+            Ok(_) => anyhow::bail!("thread dir is not a directory: {}", dir.display()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(err) => return Err(err).with_context(|| format!("stat {}", dir.display())),
         }
-        Ok(Some(state))
+
+        let log_path = self.events_log_path(thread_id);
+        Ok(Some(read_state_jsonl(thread_id, &log_path).await?))
     }
 }
 
