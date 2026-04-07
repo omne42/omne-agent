@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Fixed
+- `omne-app-server`：大型 `mcp_result` artifact 在写盘前现在会先对 JSON 结果做结构化脱敏，敏感 key（如 `token`/`authorization`/`api_key`）不再把原始值永久落盘，并补齐对应回归测试。
 - `omne-app-server`：`thread/delete(force=true)`、`thread/archive(force=true)` 等批量回收路径在 `cmd_tx` 已关闭时不再静默忽略并卡在后续 drain/wait 阶段；现在会同步回收失效进程项，并补齐关闭 command channel 的回归测试。
 - `omne-app-server`：线程级 MCP 清理现在会同步唤醒被移除的 `starting` waiters，避免 `thread/delete` 等清理路径把并发等待同一 MCP 启动的请求永久挂住；并补齐对应回归测试。
 - `omne-app-server`：`process/start` 在子进程已成功启动但 `ProcessStarted` 事件落盘失败时，现在会主动终止尚未注册的进程树并等待退出，不再留下控制面不可见的孤儿进程；并补齐对应回归测试。
