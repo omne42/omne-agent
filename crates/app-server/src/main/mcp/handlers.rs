@@ -1,52 +1,6 @@
-fn normalized_mcp_server_program_name(program: &str) -> String {
-    let mut name = program
-        .rsplit(['/', '\\'])
-        .next()
-        .unwrap_or(program)
-        .to_ascii_lowercase();
-    if let Some(stripped) = name.strip_suffix(".exe") {
-        name = stripped.to_string();
-    }
-    name
-}
-
-fn mcp_server_command_uses_generic_launcher(argv: &[String]) -> bool {
-    let Some(program) = argv.first() else {
-        return false;
-    };
-    if argv.len() <= 1 {
-        return false;
-    }
-    matches!(
-        normalized_mcp_server_program_name(program).as_str(),
-        "python"
-            | "python3"
-            | "node"
-            | "bun"
-            | "deno"
-            | "ruby"
-            | "perl"
-            | "php"
-            | "java"
-            | "sh"
-            | "bash"
-            | "zsh"
-            | "fish"
-            | "pwsh"
-            | "powershell"
-            | "cmd"
-    )
-}
-
-fn mcp_server_command_uses_path_invocation(argv: &[String]) -> bool {
-    argv.first()
-        .is_some_and(|program| program.contains('/') || program.contains('\\'))
-}
-
 fn mcp_server_command_requires_network_denial(argv: &[String]) -> bool {
     omne_process_runtime::command_uses_network(argv)
-        || mcp_server_command_uses_generic_launcher(argv)
-        || mcp_server_command_uses_path_invocation(argv)
+        || omne_process_runtime::command_hides_network_intent(argv)
 }
 
 async fn handle_mcp_list_servers(server: &Server, params: McpListServersParams) -> anyhow::Result<Value> {

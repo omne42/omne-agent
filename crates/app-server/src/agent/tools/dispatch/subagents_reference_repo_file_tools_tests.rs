@@ -834,6 +834,51 @@ modes:
     }
 
     #[tokio::test]
+    async fn plan_directive_architect_fail_closes_invalid_file_read_args() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let project_dir = tmp.path().join("project");
+        tokio::fs::create_dir_all(project_dir.join(".omne_data/spec")).await?;
+        tokio::fs::write(project_dir.join("note.txt"), "hello-plan\n").await?;
+        tokio::fs::write(
+            project_dir.join(".omne_data/spec/modes.yaml"),
+            r#"
+version: 1
+modes:
+  architect:
+    description: "plan architect allow read"
+    permissions:
+      read: { decision: allow }
+"#,
+        )
+        .await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join("omne_root"));
+        let handle = server.thread_store.create_thread(project_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let turn_id = TurnId::new();
+        append_plan_turn_started(&server, thread_id, turn_id).await?;
+
+        let err = run_tool_call_once(
+            &server,
+            thread_id,
+            Some(turn_id),
+            "file_read",
+            serde_json::json!({ "path": 42 }),
+            None,
+        )
+        .await
+        .expect_err("expected invalid file_read args to be denied by architect mode gate");
+
+        assert!(
+            err.to_string()
+                .contains("tool blocked by /plan architect mode gate")
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn plan_directive_architect_file_read_honors_deny_globs() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let project_dir = tmp.path().join("project");
