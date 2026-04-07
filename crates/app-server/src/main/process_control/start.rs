@@ -742,6 +742,52 @@ mod process_start_tests {
     }
 
     #[tokio::test]
+    async fn process_start_denies_generic_launchers_when_network_access_is_denied()
+    -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+        tokio::fs::write(repo_dir.join("server.py"), "print('ok')\n").await?;
+        tokio::fs::write(repo_dir.join("server.js"), "console.log('ok');\n").await?;
+        tokio::fs::write(repo_dir.join("script.sh"), "echo ok\n").await?;
+
+        let server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        let handle = server.thread_store.create_thread(repo_dir).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        for argv in [
+            vec![
+                "python".to_string(),
+                "-m".to_string(),
+                "http.server".to_string(),
+            ],
+            vec!["python".to_string(), "server.py".to_string()],
+            vec!["node".to_string(), "server.js".to_string()],
+            vec!["bash".to_string(), "script.sh".to_string()],
+        ] {
+            let result = handle_process_start(
+                &server,
+                ProcessStartParams {
+                    thread_id,
+                    turn_id: None,
+                    approval_id: None,
+                    argv,
+                    cwd: None,
+                    timeout_ms: None,
+                },
+            )
+            .await?;
+
+            assert!(result["denied"].as_bool().unwrap_or(false));
+            assert_eq!(result["sandbox_network_access"].as_str(), Some("deny"));
+        }
+
+        assert!(server.processes.lock().await.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn process_start_allows_local_path_invocations_when_network_access_is_denied()
     -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
