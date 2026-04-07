@@ -524,15 +524,16 @@ async fn enforce_plan_directive_architect_mode_gate(
         tool_action,
         args,
     )
-    .await;
+    .await
+    .unwrap_or(omne_core::modes::Decision::Deny);
 
-    if matches!(effective_decision, Some(omne_core::modes::Decision::Deny)) {
+    if effective_decision == omne_core::modes::Decision::Deny {
         anyhow::bail!(
             "tool blocked by /plan architect mode gate: tool={tool_name} action={tool_action}"
         );
     }
 
-    if matches!(effective_decision, Some(omne_core::modes::Decision::Prompt)) {
+    if effective_decision == omne_core::modes::Decision::Prompt {
         let approval_policy = {
             let handle = thread_rt.handle.lock().await;
             handle.state().approval_policy
