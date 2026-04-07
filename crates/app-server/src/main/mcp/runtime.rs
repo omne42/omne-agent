@@ -4,6 +4,16 @@ const OMNE_MCP_FILE_ENV: &str = "OMNE_MCP_FILE";
 const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
 
 const MCP_RESULT_ARTIFACT_THRESHOLD_BYTES: usize = 256 * 1024;
+const MCP_STDIO_BASELINE_ENV_VARS: [&str; 8] = [
+    "PATH",
+    "HOME",
+    "USERPROFILE",
+    "TMPDIR",
+    "TEMP",
+    "TMP",
+    "SystemRoot",
+    "SYSTEMROOT",
+];
 
 type McpConfig = omne_mcp_kit::Config;
 type McpServerConfig = omne_mcp_kit::ServerConfig;
@@ -158,6 +168,18 @@ fn mcp_server_config_fingerprint(server_cfg: &McpServerConfig) -> String {
     out
 }
 
+fn apply_mcp_server_env(cmd: &mut Command, server_cfg: &McpServerConfig) {
+    if !server_cfg.inherit_env() {
+        cmd.env_clear();
+        for key in MCP_STDIO_BASELINE_ENV_VARS {
+            if let Some(value) = std::env::var_os(key) {
+                cmd.env(key, value);
+            }
+        }
+    }
+    cmd.envs(server_cfg.env().iter());
+}
+
 fn mcp_process_runtime_dir(thread_dir: &Path, process_id: ProcessId) -> PathBuf {
     thread_dir
         .join("runtime")
@@ -229,7 +251,7 @@ async fn spawn_mcp_connection(
             .unwrap_or(thread_root),
     );
     cmd.stderr(std::process::Stdio::piped());
-    cmd.envs(env.iter());
+    apply_mcp_server_env(&mut cmd, server_cfg);
     if let Err(err) = prepare_process_exec_gateway_command(
         argv,
         thread_root,
@@ -687,8 +709,36 @@ async fn deny_mcp_disabled(
 #[cfg(test)]
 mod mcp_runtime_tests {
     use super::*;
+    use std::ffi::{OsStr, OsString};
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
+    use std::collections::BTreeMap;
+
+    struct LockedEnvGuard {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl LockedEnvGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var(key).ok();
+            set_locked_process_env(key, value);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for LockedEnvGuard {
+        fn drop(&mut self) {
+            restore_locked_process_env(self.key, self.previous.as_deref());
+        }
+    }
+
+    fn command_env_map(cmd: &Command) -> BTreeMap<OsString, Option<OsString>> {
+        cmd.as_std()
+            .get_envs()
+            .map(|(key, value)| (key.to_os_string(), value.map(|value| value.to_os_string())))
+            .collect()
+    }
 
     #[test]
     fn mcp_process_runtime_dir_uses_runtime_namespace() {
@@ -744,6 +794,48 @@ mod mcp_runtime_tests {
             err.to_string().contains("execution boundary denied command"),
             "unexpected error: {err:#}"
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn apply_mcp_server_env_respects_inherit_env_false() -> anyhow::Result<()> {
+        let _env_lock = app_server_process_env_lock().lock().await;
+        let _guard = LockedEnvGuard::set("OMNE_MCP_ENV_TEST_SECRET", "super-secret");
+
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+        tokio::fs::write(
+            repo_dir.join("mcp.json"),
+            r#"{ "version": 1, "servers": { "local": { "transport": "stdio", "argv": ["printf", "ok"], "inherit_env": false, "env": { "OMNE_MCP_EXPLICIT": "1" } } } }"#,
+        )
+        .await?;
+
+        let cfg = load_mcp_config(&repo_dir).await?;
+        let server_cfg = cfg.servers().get("local").expect("local server");
+        let mut cmd = Command::new("printf");
+        apply_mcp_server_env(&mut cmd, server_cfg);
+        let env_map = command_env_map(&cmd);
+
+        assert!(
+            !env_map.contains_key(OsStr::new("OMNE_MCP_ENV_TEST_SECRET")),
+            "inherit_env=false should not keep host-only env"
+        );
+        assert_eq!(
+            env_map
+                .get(OsStr::new("OMNE_MCP_EXPLICIT"))
+                .and_then(|value| value.as_deref()),
+            Some(OsStr::new("1"))
+        );
+        if let Some(path) = std::env::var_os("PATH") {
+            assert_eq!(
+                env_map
+                    .get(OsStr::new("PATH"))
+                    .and_then(|value| value.as_deref()),
+                Some(path.as_os_str())
+            );
+        }
+
         Ok(())
     }
 }
