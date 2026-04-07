@@ -219,10 +219,42 @@ mod tests {
         let root = tmp.path().to_path_buf();
         std::fs::write(root.join("a.txt"), "ok")?;
         std::fs::write(root.join(".env"), "secret")?;
+        std::fs::write(root.join(".env.local"), "secret-local")?;
+        std::fs::write(root.join(".env.production"), "secret-production")?;
+        std::fs::write(root.join(".env.example"), "example")?;
 
         let out = scan_repo_index(root, None, 100)?;
         assert!(out.paths.iter().any(|p| p == "a.txt"));
         assert!(!out.paths.iter().any(|p| p == ".env"));
+        assert!(!out.paths.iter().any(|p| p == ".env.local"));
+        assert!(!out.paths.iter().any(|p| p == ".env.production"));
+        assert!(out.paths.iter().any(|p| p == ".env.example"));
+        Ok(())
+    }
+
+    #[test]
+    fn grep_skips_secret_file_variants() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let root = tmp.path().to_path_buf();
+        std::fs::write(root.join("visible.txt"), "needle\n")?;
+        std::fs::write(root.join(".env.local"), "needle\n")?;
+        std::fs::write(root.join(".env.production"), "needle\n")?;
+        std::fs::write(root.join(".env.example"), "needle\n")?;
+
+        let out = search_repo(RepoGrepRequest {
+            root,
+            query: "needle".to_string(),
+            is_regex: false,
+            include_glob: None,
+            max_matches: 10,
+            max_bytes_per_file: 1024 * 1024,
+            max_files: 100,
+        })?;
+
+        assert!(out.matches.iter().any(|m| m.path == "visible.txt"));
+        assert!(!out.matches.iter().any(|m| m.path == ".env.local"));
+        assert!(!out.matches.iter().any(|m| m.path == ".env.production"));
+        assert!(out.matches.iter().any(|m| m.path == ".env.example"));
         Ok(())
     }
 

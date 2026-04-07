@@ -1394,6 +1394,18 @@ mod thread_resume_recovery_tests {
             "process recovery should clear stale runtime tracking without fabricating ProcessExited"
         );
 
+        let recovered = handle_process_list(&server, ProcessListParams { thread_id: Some(thread_id) })
+            .await?;
+        let process = recovered
+            .iter()
+            .find(|info| info.process_id == process_id)
+            .ok_or_else(|| anyhow::anyhow!("missing recovered process in process/list"))?;
+        assert!(
+            matches!(process.status, ProcessStatus::Abandoned),
+            "resume should leave stale processes derivable as abandoned, got {:?}",
+            process.status
+        );
+
         Ok(())
     }
 }
