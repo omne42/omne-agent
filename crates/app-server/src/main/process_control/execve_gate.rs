@@ -1041,6 +1041,81 @@ mod execve_gate_tests {
     }
 
     #[tokio::test]
+    async fn execve_gate_denies_generic_launchers_when_network_access_is_denied()
+    -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+
+        let exec_policy = omne_execpolicy::Policy::empty();
+
+        let mut server = crate::build_test_server_shared(tmp.path().join(".omne_data"));
+        server.exec_policy = exec_policy.clone();
+        let handle = server.thread_store.create_thread(repo_dir.clone()).await?;
+        let thread_id = handle.thread_id();
+        drop(handle);
+
+        let thread_rt = server.get_or_load_thread(thread_id).await?;
+        let socket_path = tmp.path().join("execve.sock");
+        let token = "test-token".to_string();
+
+        let gate = match spawn_execve_gate(
+            ExecveGateContext {
+                thread_id,
+                turn_id: None,
+                token: token.clone(),
+                thread_root: repo_dir,
+                thread_rt,
+                thread_store: server.thread_store.clone(),
+                exec_policy,
+            },
+            socket_path.clone(),
+        )
+        .await
+        {
+            Ok(gate) => gate,
+            Err(err) if err.to_string().contains("Operation not permitted") => {
+                return Ok(());
+            }
+            Err(err) => return Err(err),
+        };
+
+        let stream = tokio::net::UnixStream::connect(&socket_path).await?;
+        let (read_half, mut write_half) = stream.into_split();
+        let mut lines = tokio::io::BufReader::new(read_half).lines();
+        mcp_initialize(&mut lines, &mut write_half).await?;
+
+        for argv in [
+            serde_json::json!(["python", "-m", "http.server"]),
+            serde_json::json!(["python", "server.py"]),
+            serde_json::json!(["node", "server.js"]),
+            serde_json::json!(["bash", "script.sh"]),
+        ] {
+            let resp = mcp_tools_call(
+                &mut lines,
+                &mut write_half,
+                2,
+                EXECVE_GATE_TOOL_DECIDE,
+                serde_json::json!({
+                    "token": token,
+                    "argv": argv,
+                }),
+            )
+            .await?;
+            let payload = mcp_payload(&resp)?;
+            assert_eq!(payload["decision"], "deny");
+            assert!(
+                payload["reason"]
+                    .as_str()
+                    .is_some_and(|reason| reason.contains("sandbox_network_access=deny"))
+            );
+        }
+
+        shutdown_execve_gate(gate).await;
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn execve_gate_denies_cwd_outside_workspace() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir()?;
         let repo_dir = tmp.path().join("repo");

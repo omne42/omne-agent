@@ -132,7 +132,8 @@ fn process_exec_boundary_denial(
     }
 
     if sandbox_network_access == omne_protocol::SandboxNetworkAccess::Deny
-        && omne_process_runtime::command_uses_network(argv)
+        && (omne_process_runtime::command_uses_network(argv)
+            || omne_process_runtime::command_hides_network_intent(argv))
     {
         return Some(ProcessExecBoundaryDeny::SandboxNetworkDenied);
     }
@@ -371,7 +372,7 @@ fn process_exec_governance_denied_reason(
             format!("sandbox_policy=read_only forbids {action_label}")
         }
         ProcessExecGovernanceDenied::SandboxNetworkDenied => {
-            "sandbox_network_access=deny blocked this command via best-effort argv network classification"
+            "sandbox_network_access=deny blocked this command via argv network classification or fail-closed launcher detection"
                 .to_string()
         }
         ProcessExecGovernanceDenied::GatewayDenied(reason) => reason.clone(),

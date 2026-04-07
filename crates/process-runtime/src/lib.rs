@@ -261,6 +261,32 @@ fn python_eval_uses_network(argv: &[String], depth_remaining: usize) -> bool {
     false
 }
 
+fn python_invocation_hides_network_intent(argv: &[String], depth_remaining: usize) -> bool {
+    if depth_remaining == 0 {
+        return false;
+    }
+    let mut index = 1usize;
+    while let Some(arg) = argv.get(index) {
+        match arg.as_str() {
+            "-c" | "--command" => return false,
+            "-m" | "--module" => {
+                let Some(module) = argv.get(index + 1) else {
+                    return false;
+                };
+                let module = module.to_ascii_lowercase();
+                return !matches!(module.as_str(), "pip" | "pip3");
+            }
+            _ => {
+                if !arg.starts_with('-') || arg == "-" {
+                    return true;
+                }
+            }
+        }
+        index += 1;
+    }
+    false
+}
+
 fn node_eval_uses_network(argv: &[String], depth_remaining: usize) -> bool {
     if depth_remaining == 0 {
         return false;
@@ -301,6 +327,25 @@ fn node_eval_uses_network(argv: &[String], depth_remaining: usize) -> bool {
     false
 }
 
+fn node_invocation_hides_network_intent(argv: &[String], depth_remaining: usize) -> bool {
+    if depth_remaining == 0 {
+        return false;
+    }
+    let mut index = 1usize;
+    while let Some(arg) = argv.get(index) {
+        match arg.as_str() {
+            "-e" | "--eval" => return false,
+            _ => {
+                if !arg.starts_with('-') || arg == "-" {
+                    return true;
+                }
+            }
+        }
+        index += 1;
+    }
+    false
+}
+
 fn shell_invocation_uses_network(argv: &[String], depth_remaining: usize) -> bool {
     if depth_remaining == 0 {
         return false;
@@ -319,6 +364,27 @@ fn shell_invocation_uses_network(argv: &[String], depth_remaining: usize) -> boo
         }
         if !arg.starts_with('-') || arg == "-" {
             return false;
+        }
+        index += 1;
+    }
+    false
+}
+
+fn shell_invocation_hides_network_intent(argv: &[String], depth_remaining: usize) -> bool {
+    if depth_remaining == 0 {
+        return false;
+    }
+    let mut index = 1usize;
+    while let Some(arg) = argv.get(index) {
+        if arg == "--" {
+            index += 1;
+            continue;
+        }
+        if arg == "-c" || arg.ends_with('c') && arg.starts_with('-') {
+            return false;
+        }
+        if !arg.starts_with('-') || arg == "-" {
+            return true;
         }
         index += 1;
     }
@@ -355,6 +421,30 @@ fn argv_uses_network(argv: &[String], depth_remaining: usize) -> bool {
     }
 }
 
+fn argv_hides_network_intent(argv: &[String], depth_remaining: usize) -> bool {
+    let Some(program) = argv.first() else {
+        return false;
+    };
+
+    let name = normalized_program_name(program);
+
+    match name.as_str() {
+        "env" => {
+            let wrapped = env_wrapped_command(argv);
+            !wrapped.is_empty()
+                && argv_hides_network_intent(wrapped, depth_remaining.saturating_sub(1))
+        }
+        "python" | "python3" => python_invocation_hides_network_intent(argv, depth_remaining),
+        "node" | "nodejs" | "deno" | "bun" => {
+            node_invocation_hides_network_intent(argv, depth_remaining)
+        }
+        "bash" | "rbash" | "sh" | "dash" | "zsh" | "ksh" => {
+            shell_invocation_hides_network_intent(argv, depth_remaining)
+        }
+        _ => false,
+    }
+}
+
 // This is a best-effort argv classifier used by omne-agent's network deny gate.
 // It only covers commands that are clearly network-oriented from argv alone; it
 // is not an OS-level network isolation primitive and should not be treated as one.
@@ -362,9 +452,16 @@ pub fn command_uses_network(argv: &[String]) -> bool {
     argv_uses_network(argv, 4)
 }
 
+// `sandbox_network_access=deny` treats certain launcher-style invocations as
+// fail-closed because argv alone cannot reliably prove the launched script or
+// module is local-only.
+pub fn command_hides_network_intent(argv: &[String]) -> bool {
+    argv_hides_network_intent(argv, 4)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::command_uses_network;
+    use super::{command_hides_network_intent, command_uses_network};
 
     fn argv(items: &[&str]) -> Vec<String> {
         items.iter().map(|item| item.to_string()).collect()
@@ -426,6 +523,46 @@ mod tests {
         assert!(!command_uses_network(&argv(&["bash", "script.sh"])));
         assert!(!command_uses_network(&argv(&[
             "env", "FOO=bar", "printenv", "FOO"
+        ])));
+    }
+
+    #[test]
+    fn generic_launchers_that_hide_script_or_module_intent_are_flagged_for_fail_closed_network_denial()
+     {
+        assert!(command_hides_network_intent(&argv(&[
+            "python",
+            "-m",
+            "http.server"
+        ])));
+        assert!(command_hides_network_intent(&argv(&[
+            "python",
+            "server.py"
+        ])));
+        assert!(command_hides_network_intent(&argv(&["node", "server.js"])));
+        assert!(command_hides_network_intent(&argv(&["bash", "script.sh"])));
+        assert!(command_hides_network_intent(&argv(&[
+            "env",
+            "FOO=bar",
+            "python",
+            "server.py"
+        ])));
+        assert!(!command_hides_network_intent(&argv(&[
+            "python",
+            "-c",
+            "print('hello')"
+        ])));
+        assert!(!command_hides_network_intent(&argv(&[
+            "node",
+            "-e",
+            "console.log('hello')"
+        ])));
+        assert!(!command_hides_network_intent(&argv(&[
+            "bash",
+            "-lc",
+            "echo ok && pwd"
+        ])));
+        assert!(!command_hides_network_intent(&argv(&[
+            "python", "-m", "pip", "install", "requests"
         ])));
     }
 
