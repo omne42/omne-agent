@@ -862,6 +862,7 @@ struct ProcessStartMarkerInfo {
     argv: Vec<String>,
 }
 
+#[cfg(test)]
 async fn build_attention_markers(
     server: &Server,
     thread_id: ThreadId,
