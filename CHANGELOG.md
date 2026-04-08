@@ -8,6 +8,8 @@
 ## [Unreleased]
 
 ### Fixed
+- `omne-app-server` / `omne-app-server-protocol`：`mcp/list_servers` 不再静默过滤掉 `unix` / `streamable_http` 这类当前 runtime 尚未接线的配置；响应现在会显式返回 transport 与 `supported` 标记，同时对“已配置但当前 runtime 不支持的 transport”返回稳定的 typed failed response，避免客户端把它误判成“没有配置 server”或裸 RPC 异常。
+- `omne` 仓库治理：`scripts/check-workspace.sh ci` 现在会实际运行 `cargo test` 和 `cargo clippy`，`pre-commit` 复用 `./scripts/check-workspace.sh local` 作为单一入口，并补齐分支前缀校验，减少“文档写了但 main PR 没真正卡住”的质量门禁漂移。
 - `omne-app-server`：`thread/events` / `thread/subscribe` 在使用 `kinds` 过滤且当前批次没有更多匹配事件时，现在会把 `last_seq` 推进到原始事件流的最新序号，避免客户端因过滤掉中间事件而反复重放同一批原始事件；同时把默认 provider/base_url 的 vendor-specific 选择收束回 `project_config` helper，并让默认 base_url 从 builtin runtime registry 派生，减少控制面散落的硬编码。
 - `omne-process-runtime`：补充 `git --config-env=... fetch`、`git -- push` 与 `git -Crepo ls-remote` 的网络命令回归测试，锁定全局选项与 `--` sentinel 后的 git 子命令识别语义，避免 `sandbox_network_access=deny` 的 best-effort 检测再次回退。
 - `omne-core`：把 structured error redaction 中对 `CatalogArgValueData::Unsupported` 的处理改回显式分支，继续保留当前脱敏语义，同时避免未来再新增 catalog 参数变体时被 `_` 静默吞掉。
@@ -185,6 +187,7 @@
 - `omne-protocol`/`omne-app-server`/`omne`：新增 `AgentStep` 事件与 `agent/step` JSON-RPC 通知，用于按 step 记录模型输出/工具调用与结果；并将 agent tool loop 抽为可复用模块以便观测与维护。
 
 ### Changed
+- `omne-agent` 文档系统：新增根级 `ARCHITECTURE.md` 作为 workspace 顶层分层地图，并把它接入 `README.md`、`AGENTS.md`、`docs/README.md`、`docs/docs-system-map.md` 与 `scripts/check-docs-system.sh`，让入口层级与 foundation 侧 harness 规范对齐。
 - `omne`/`omne-app-server`：`omne_root` 默认目录改为 `./.omne_data/`（可用 `--omne-root` 或 `OMNE_ROOT` 覆盖）。
 - `omne-app-server`：OpenAI Responses raw-history 落盘默认改为明文（可用 `OMNE_OPENAI_RESPONSES_HISTORY_CODEC=encrypted` 启用本地加密落盘）。
 - `omne-app-server`：OpenAI-compatible chat 请求会默认携带 `prompt_cache_key=<thread_id>`，用于提升跨 turn 的 prompt cache 命中机会（是否命中取决于上游 provider/gateway 实现与配置）。

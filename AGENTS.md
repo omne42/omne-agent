@@ -5,6 +5,7 @@
 ## 先看哪里
 
 - 外部概览：`README.md`
+- 顶层分层：`ARCHITECTURE.md`
 - 文档入口：`docs/README.md`
 - 文档系统地图：`docs/docs-system-map.md`
 - 当前起点与范围：`docs/start.md`

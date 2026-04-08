@@ -1,16 +1,40 @@
-# Commit 规则（强制）：Conventional Commits + Changelog 绑定 + Rust gates
+# 提交与分支规则（强制）：Branch Prefix + Conventional Commits + Changelog 绑定 + Rust gates
 
-本项目的所有提交必须满足三类约束：
+本项目的所有提交必须满足四类约束：
 
-1. **Commit message 必须是标准格式（Conventional Commits）**
-2. **每次提交必须同时包含 `CHANGELOG.md` 与实际变更**（禁止 changelog-only / non-changelog commit）
-3. **提交前必须通过 Rust gates**（format/type check + 单文件行数上限；不通过会拒绝提交）
+1. **分支名必须使用允许的前缀**
+2. **Commit message 必须是标准格式（Conventional Commits）**
+3. **每次提交必须同时包含 `CHANGELOG.md` 与实际变更**（禁止 changelog-only / non-changelog commit）
+4. **提交前必须通过 workspace gates**（至少 docs-system + format/type check；CI 继续追加 tests/clippy）
 
 > 说明：本规则通过仓库内置的 `githooks/` 强制执行（`pre-commit` + `commit-msg`）。`git commit --no-verify` 可以绕过客户端 hooks，但在我们的自动化流水线（AI Coder/CI/本地 git 服务端 hook）里同样会做强校验，因此不应依赖绕过。
 
 ---
 
-## 1) Commit message 标准格式
+## 1) 分支命名
+
+允许的分支名：
+
+- `main`
+- `master`
+- `feat/<name>`
+- `fix/<name>`
+- `docs/<name>`
+- `refactor/<name>`
+- `perf/<name>`
+- `test/<name>`
+- `chore/<name>`
+- `build/<name>`
+- `ci/<name>`
+- `revert/<name>`
+
+示例：
+
+- `fix/mcp-visibility`
+- `docs/architecture-map`
+- `ci/strengthen-rust-gates`
+
+## 2) Commit message 标准格式
 
 采用 Conventional Commits：
 
@@ -53,7 +77,7 @@
 
 ---
 
-## 2) 提交 gate：CHANGELOG + Rust gates
+## 3) 提交 gate：CHANGELOG + Rust gates
 
 ### CHANGELOG 规则（强制）
 
@@ -69,8 +93,8 @@
 
 在 `git commit` 前必须通过：
 
-- 格式：`cargo fmt --all -- --check`
-- 类型/编译：`cargo check --workspace --all-targets`
+- 本地 hook：`./scripts/check-workspace.sh local`
+- CI / PR：`./scripts/check-workspace.sh ci`
 
 若失败：
 
@@ -79,7 +103,7 @@
 
 ---
 
-## 3) 启用 hooks（一次性设置）
+## 4) 启用 hooks（一次性设置）
 
 本仓库将 hooks 存在 `githooks/` 目录中（可被 git 跟踪）。需要在本地设置一次：
 

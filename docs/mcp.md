@@ -92,6 +92,7 @@ fail-closed（写死）：
 - thread start/resume 时按需建立连接（lazy）：只有当需要 list/call 某个 server 时才启动/连接。
 - resume 不承诺复用旧连接：连接是可重建的缓存，不是权威状态。
 - v1 建议每个 thread 独立管理 MCP server 进程（避免跨 thread 共享导致审计/权限边界混乱）。
+- `mcp/list_servers` 应返回所有已配置 server 的稳定描述（至少 `name`、`transport`，以及当前 runtime 是否支持该 transport 的布尔标记），不要把非当前实现支持的 transport 静默过滤掉；否则用户无法区分“没有配置”与“配置存在但当前 runtime 不支持”。
 - stdio MCP server 的启动边界应与 `process/start` 对齐：在真正 `spawn()` 前，按同一套 execution gateway 预处理 `argv/cwd/workspace_root`，避免 `mcp/*` 只复用审批语义却绕过本地执行边界。
 
 事件化（建议）：
@@ -113,7 +114,8 @@ fail-closed（写死）：
   - `mcp/list_resources` ↔ `mcp_list_resources`
   - `mcp/call { server, tool, arguments }` ↔ `mcp_call`
 - `mcp/*` 先经过 `allowed_tools`、必要的 config/schema 校验与 hard boundary（例如 read-only、network deny、spawn 前 execution gateway 准备）；进入策略合并阶段后，再按 `mode gate → execpolicy → approval handling` 继续（见 `docs/modes.md`/`docs/approvals.md`）。
-  - mode：v1 建议默认对 `mcp/*` 采取 `prompt`（或直接 `deny`），避免默认放权。
+  - 如果 server 已配置但 transport 超出当前 runtime 支持范围，应返回稳定的 typed failed response，而不是裸 RPC error。
+- mode：v1 建议默认对 `mcp/*` 采取 `prompt`（或直接 `deny`），避免默认放权。
   - approval：启用 MCP 时强烈建议 `ApprovalPolicy=manual`。
   - `prompt_strict`（已实现；见 `docs/approvals.md`）：v0.2.x 中 `mcp/call` 默认写入 `approval.requirement="prompt_strict"`，并且不可被 `remember` 自动复用。
   - 被拒绝时返回稳定 `error_code`，便于客户端自动分类（例如 `allowed_tools_denied`、`mode_denied`、`sandbox_policy_denied`、`sandbox_network_denied`、`execpolicy_denied`、`execpolicy_load_denied`、`approval_denied`）。

@@ -2,6 +2,37 @@
 set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+branch_name="$(git branch --show-current 2>/dev/null || true)"
+
+validate_branch_name() {
+  local branch="$1"
+  local regex='^(main|master|(feat|fix|docs|refactor|perf|test|chore|build|ci|revert)/.+)$'
+  [[ -z "$branch" ]] && return 0
+  if [[ ! "$branch" =~ $regex ]]; then
+    cat >&2 <<EOF
+pre-commit: invalid branch name.
+
+Allowed branch names:
+  main
+  master
+  feat/<name>
+  fix/<name>
+  docs/<name>
+  refactor/<name>
+  perf/<name>
+  test/<name>
+  chore/<name>
+  build/<name>
+  ci/<name>
+  revert/<name>
+
+Got: $branch
+EOF
+    exit 1
+  fi
+}
+
+validate_branch_name "$branch_name"
 
 staged_files="$(git diff --cached --name-only --diff-filter=ACMRD || true)"
 if [[ -z "${staged_files//[[:space:]]/}" ]]; then
@@ -77,20 +108,9 @@ EOF
   exit 1
 fi
 
-workspace_root=""
-if [[ -f "$repo_root/Cargo.toml" ]]; then
-  workspace_root="$repo_root"
-fi
-
-if [[ -z "$workspace_root" ]]; then
-  echo "pre-commit: no Cargo workspace found; skipping rust fmt/check (docs-only repo right now)." >&2
-  exit 0
-fi
-
-echo "pre-commit: running Rust gates in $workspace_root" >&2
+echo "pre-commit: running workspace local gates in $repo_root" >&2
 
 (
-  cd "$workspace_root"
-  cargo fmt --all -- --check
-  cargo check --workspace --all-targets
+  cd "$repo_root"
+  ./scripts/check-workspace.sh local
 )
