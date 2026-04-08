@@ -6,6 +6,8 @@
   - 对外概览与最小验证入口。
 - `AGENTS.md`
   - 当前执行者指南与仓库地图，但不是完整规范手册。
+- `ARCHITECTURE.md`
+  - workspace 顶层分层与依赖方向地图。
 - `docs/README.md`
   - 文档导航入口。
 - `docs/start.md`

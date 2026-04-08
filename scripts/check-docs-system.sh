@@ -33,6 +33,7 @@ require_agents_length() {
 
 require_file "$root/README.md"
 require_file "$root/AGENTS.md"
+require_file "$root/ARCHITECTURE.md"
 require_file "$root/docs/README.md"
 require_file "$root/docs/docs-system-map.md"
 require_file "$root/docs/start.md"
@@ -45,14 +46,18 @@ require_file "$root/docs/permissions_matrix.md"
 require_file "$root/docs/research/README.md"
 
 require_contains "$root/README.md" "AGENTS.md"
+require_contains "$root/README.md" "ARCHITECTURE.md"
 require_contains "$root/README.md" "docs/README.md"
 require_contains "$root/README.md" "docs/docs-system-map.md"
 require_contains "$root/AGENTS.md" "README.md"
+require_contains "$root/AGENTS.md" "ARCHITECTURE.md"
 require_contains "$root/AGENTS.md" "docs/README.md"
 require_contains "$root/AGENTS.md" "docs/docs-system-map.md"
 require_contains "$root/docs/README.md" "../README.md"
 require_contains "$root/docs/README.md" "../AGENTS.md"
+require_contains "$root/docs/README.md" "../ARCHITECTURE.md"
 require_contains "$root/docs/README.md" "docs/docs-system-map.md"
+require_contains "$root/docs/docs-system-map.md" "ARCHITECTURE.md"
 require_agents_length "$root/AGENTS.md" 120
 
 echo "docs system check passed"

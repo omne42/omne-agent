@@ -8,6 +8,7 @@
 
 - `../README.md`：仓库外部概览与最小验证入口
 - `../AGENTS.md`：执行者短地图
+- `../ARCHITECTURE.md`：workspace 顶层分层与依赖方向
 - `docs/docs-system-map.md`：文档系统地图（README / AGENTS / docs / reports / research 的分工）
 - `docs/v0.2.0_parity.md`：v0.2.0 对齐清单（实现状态 + TODO）
 - `docs/TODO.md`：新增待办项与版本计划（例如 v0.3.0 Node.js）

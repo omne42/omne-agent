@@ -13,7 +13,7 @@ run_rust_gates() {
   cargo check --workspace --all-targets
 }
 
-run_full_rust_gates() {
+run_ci_rust_gates() {
   run_rust_gates
   cargo test --workspace
   cargo clippy --workspace --all-targets --all-features -- -D warnings
@@ -22,9 +22,13 @@ run_full_rust_gates() {
 cd "$root"
 
 case "$mode" in
-  local|ci)
+  local)
     run_docs_system
     run_rust_gates
+    ;;
+  ci)
+    run_docs_system
+    run_ci_rust_gates
     ;;
   docs-system)
     run_docs_system
@@ -34,7 +38,7 @@ case "$mode" in
     ;;
   full)
     run_docs_system
-    run_full_rust_gates
+    run_ci_rust_gates
     ;;
   *)
     echo "unknown mode: $mode" >&2

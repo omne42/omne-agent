@@ -14,6 +14,7 @@
 这个仓库采用 agent-first 的文档系统。先看这些文件：
 
 - `AGENTS.md`
+- `ARCHITECTURE.md`
 - `docs/README.md`
 - `docs/docs-system-map.md`
 - `docs/start.md`

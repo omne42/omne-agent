@@ -433,6 +433,7 @@ modes:
         assert_eq!(parsed.servers.len(), 1);
         assert_eq!(parsed.servers[0].name, "local");
         assert_eq!(parsed.servers[0].transport, "stdio");
+        assert_eq!(parsed.servers[0].supported, Some(true));
         Ok(())
     }
 
@@ -475,13 +476,14 @@ modes:
 
         assert_eq!(parsed.servers[0].name, "local");
         assert_eq!(parsed.servers[0].transport, "stdio");
+        assert_eq!(parsed.servers[0].supported, Some(true));
         assert!(result["servers"][0].get("argv").is_none());
         assert!(result["servers"][0].get("env_keys").is_none());
         Ok(())
     }
 
     #[tokio::test]
-    async fn mcp_list_servers_filters_unsupported_transports() -> anyhow::Result<()> {
+    async fn mcp_list_servers_surfaces_unsupported_transports() -> anyhow::Result<()> {
         let _lock = MCP_TEST_MUTEX.lock().await;
         let _guard = McpEnabledOverrideGuard::new(Some(true));
 
@@ -515,9 +517,59 @@ modes:
         let parsed: omne_app_server_protocol::McpListServersResponse =
             serde_json::from_value(result)?;
 
-        assert_eq!(parsed.servers.len(), 1);
+        assert_eq!(parsed.servers.len(), 2);
         assert_eq!(parsed.servers[0].name, "local");
         assert_eq!(parsed.servers[0].transport, "stdio");
+        assert_eq!(parsed.servers[0].supported, Some(true));
+        assert_eq!(parsed.servers[1].name, "remote");
+        assert_eq!(parsed.servers[1].transport, "streamable_http");
+        assert_eq!(parsed.servers[1].supported, Some(false));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn mcp_list_tools_unsupported_transport_returns_typed_failed_response() -> anyhow::Result<()>
+    {
+        let _lock = MCP_TEST_MUTEX.lock().await;
+        let _guard = McpEnabledOverrideGuard::new(Some(true));
+
+        let tmp = tempfile::tempdir()?;
+        let repo_dir = tmp.path().join("repo");
+        tokio::fs::create_dir_all(&repo_dir).await?;
+        tokio::fs::write(
+            repo_dir.join("mcp.json"),
+            r#"{
+  "version": 1,
+  "servers": {
+    "remote": { "transport": "streamable_http", "url": "https://example.test/mcp" }
+  }
+}"#,
+        )
+        .await?;
+
+        let server = build_test_server_shared(repo_dir.join(".omne_data"));
+        let thread_id = create_test_thread_shared(&server, repo_dir.clone()).await?;
+
+        let result = handle_mcp_list_tools(
+            &server,
+            McpListToolsParams {
+                thread_id,
+                turn_id: None,
+                approval_id: None,
+                server: "remote".to_string(),
+            },
+        )
+        .await?;
+        let parsed: omne_app_server_protocol::McpFailedResponse =
+            serde_json::from_value(result)?;
+
+        assert!(parsed.failed);
+        assert_eq!(parsed.server, "remote");
+        assert!(
+            parsed.error.contains("unsupported mcp transport"),
+            "unexpected error: {}",
+            parsed.error
+        );
         Ok(())
     }
 

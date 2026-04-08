@@ -3,6 +3,18 @@ fn mcp_server_command_requires_network_denial(argv: &[String]) -> bool {
         || omne_process_runtime::command_hides_network_intent(argv)
 }
 
+fn mcp_transport_label(transport: McpTransport) -> &'static str {
+    match transport {
+        McpTransport::Stdio => "stdio",
+        McpTransport::Unix => "unix",
+        McpTransport::StreamableHttp => "streamable_http",
+    }
+}
+
+fn mcp_transport_supported(transport: McpTransport) -> bool {
+    matches!(transport, McpTransport::Stdio)
+}
+
 async fn handle_mcp_list_servers(server: &Server, params: McpListServersParams) -> anyhow::Result<Value> {
     let (thread_rt, thread_root) = load_thread_root(server, params.thread_id).await?;
     let (approval_policy, mode_name, allowed_tools) = {
@@ -97,10 +109,10 @@ async fn handle_mcp_list_servers(server: &Server, params: McpListServersParams) 
         let servers = cfg
             .servers()
             .iter()
-            .filter(|(_, cfg)| matches!(cfg.transport(), McpTransport::Stdio))
-            .map(|(name, _cfg)| omne_app_server_protocol::McpServerDescriptor {
+            .map(|(name, server_cfg)| omne_app_server_protocol::McpServerDescriptor {
                 name: name.to_string(),
-                transport: "stdio".to_string(),
+                transport: mcp_transport_label(server_cfg.transport()).to_string(),
+                supported: Some(mcp_transport_supported(server_cfg.transport())),
             })
             .collect::<Vec<_>>();
 
@@ -451,9 +463,12 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
         .await?;
         return Ok(result);
     };
-    let argv = server_cfg.argv();
-    if argv.is_empty() {
-        let err = anyhow::anyhow!("mcp server {server_name} is not stdio-configured");
+    if !mcp_transport_supported(server_cfg.transport()) {
+        let error = format!(
+            "unsupported mcp transport for current runtime: {}",
+            mcp_transport_label(server_cfg.transport())
+        );
+        let result = mcp_failed_response(tool_id, &error, server_name)?;
         thread_rt
             .append_event(omne_protocol::ThreadEventKind::ToolStarted {
                 tool_id,
@@ -462,17 +477,23 @@ async fn handle_mcp_action(server: &Server, req: McpActionRequest) -> anyhow::Re
                 params: Some(approval_params.clone()),
             })
             .await?;
-        append_mcp_tool_failed(
-            &thread_rt,
-            tool_id,
-            err.to_string(),
-            serde_json::json!({
-                "server": server_name,
-                "stage": "validate_server",
-            }),
-        )
-        .await?;
-        return Err(err);
+        append_mcp_tool_failed(&thread_rt, tool_id, error, result.clone()).await?;
+        return Ok(result);
+    }
+    let argv = server_cfg.argv();
+    if argv.is_empty() {
+        let error = format!("mcp server {server_name} transport=stdio is missing argv");
+        let result = mcp_failed_response(tool_id, &error, server_name)?;
+        thread_rt
+            .append_event(omne_protocol::ThreadEventKind::ToolStarted {
+                tool_id,
+                turn_id: req.turn_id,
+                tool: req.action.to_string(),
+                params: Some(approval_params.clone()),
+            })
+            .await?;
+        append_mcp_tool_failed(&thread_rt, tool_id, error, result.clone()).await?;
+        return Ok(result);
     }
 
     if sandbox_network_access == omne_protocol::SandboxNetworkAccess::Deny

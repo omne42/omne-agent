@@ -208,6 +208,9 @@ pub struct McpFailedResponse {
 pub struct McpServerDescriptor {
     pub name: String,
     pub transport: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub supported: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
