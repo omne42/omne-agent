@@ -98,20 +98,13 @@ fn prepare_process_exec_gateway_command(
     let request = request.with_env(command.get_envs().filter_map(|(key, value)| {
         value.map(|value| (key.to_os_string(), value.to_os_string()))
     }));
-    let mut gateway_command = std::process::Command::new(command.get_program());
-    gateway_command.args(command.get_args());
-    if let Some(current_dir) = command.get_current_dir() {
-        gateway_command.current_dir(current_dir);
-    }
-    for (key, value) in command.get_envs() {
-        if let Some(value) = value {
-            gateway_command.env(key, value);
-        } else {
-            gateway_command.env_remove(key);
-        }
-    }
-    let (_event, result) = process_exec_gateway().prepare_command(&request, gateway_command);
-    result.map(|_| ())
+    process_exec_gateway()
+        .preflight(&request)
+        .map(|_| ())
+        .map_err(|err| {
+            let (_, error) = err.into_parts();
+            error
+        })
 }
 
 enum ProcessExecBoundaryDeny {
@@ -197,15 +190,6 @@ fn process_exec_gateway_error_reason(err: &omne_execution_gateway::ExecError) ->
             "execution boundary denied command: policy_default_isolation_mismatch (requested={}, policy_default={})",
             requested.as_str(),
             policy_default.as_str()
-        ),
-        omne_execution_gateway::ExecError::PreparedCommandMismatch {
-            requested_program,
-            requested_args,
-            actual_program,
-            actual_args,
-            ..
-        } => format!(
-            "execution boundary denied command: prepared_command_mismatch (requested_program={requested_program:?}, requested_args={requested_args:?}, actual_program={actual_program:?}, actual_args={actual_args:?})"
         ),
         omne_execution_gateway::ExecError::Sandbox(message) => {
             format!("execution boundary denied command: sandbox ({message})")
